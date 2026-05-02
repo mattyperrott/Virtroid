@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen
+        name="screen_padding">
+        24dp
+    </dimen>
+    <dimen
+        name="card_radius">
+        24dp
+    </dimen>
+    <dimen
+        name="card_radius_large">
+        32dp
+    </dimen>
+    <dimen
+        name="touch_round">
+        44dp
+    </dimen>
+    <dimen
+        name="status_bar_height">
+        54dp
+    </dimen>
+</resources>

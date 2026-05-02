@@ -1,0 +1,384 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/sessionRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/v_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/sessionTopBar"
+            android:layout_width="match_parent"
+            android:layout_height="76dp"
+            android:background="@drawable/bg_viewer_top_bar"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="12dp">
+
+            <ImageButton
+                android:id="@+id/sessionDisconnectButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginEnd="12dp"
+                android:background="@drawable/bg_red_soft_24"
+                android:contentDescription="@string/session_disconnect"
+                android:padding="11dp"
+                android:src="@drawable/ic_power"
+                android:tint="@color/v_danger" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/sessionTitleText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="Primary Nexus"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:id="@+id/connection_dot"
+                        android:layout_width="6dp"
+                        android:layout_height="6dp"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/bg_dot_accent" />
+
+                    <TextView
+                        android:id="@+id/sessionSubtitleText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Relay / Ready"
+                        android:textColor="@color/v_accent"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/sessionCameraButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_surface_24"
+                android:contentDescription="@string/session_camera"
+                android:padding="11dp"
+                android:src="@drawable/ic_camera"
+                android:tint="@color/v_text_primary" />
+
+            <ImageButton
+                android:id="@+id/sessionUploadButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_surface_24"
+                android:contentDescription="@string/session_upload"
+                android:padding="11dp"
+                android:src="@drawable/ic_upload"
+                android:tint="@color/v_text_primary" />
+
+            <View
+                android:id="@+id/sessionOptionalActionsDivider"
+                android:layout_width="1dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="8dp"
+                android:background="@color/v_border" />
+
+            <ImageButton
+                android:id="@+id/sessionControlsButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:background="@drawable/bg_accent_soft_circle"
+                android:contentDescription="@string/session_controls"
+                android:padding="11dp"
+                android:src="@drawable/ic_tune"
+                android:tint="@color/v_accent" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/sessionSurfaceContainer"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_viewer_wallpaper">
+
+            <FrameLayout
+                android:id="@+id/sessionPreviewOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <LinearLayout
+                    android:id="@+id/guest_status_bar"
+                    android:layout_width="match_parent"
+                    android:layout_height="34dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="18dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:text="12:30"
+                        android:textColor="@color/v_white"
+                        android:textSize="12sp" />
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_marginEnd="6dp"
+                        android:src="@drawable/ic_status_wifi" />
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_marginEnd="6dp"
+                        android:src="@drawable/ic_status_signal" />
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="16dp"
+                        android:src="@drawable/ic_status_battery" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/guest_search"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="top"
+                    android:layout_marginStart="34dp"
+                    android:layout_marginTop="68dp"
+                    android:layout_marginEnd="34dp"
+                    android:background="@drawable/bg_search_widget"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="18dp"
+                    android:paddingEnd="16dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:text="G   Private Search..."
+                        android:textColor="#E6FFFFFF"
+                        android:textSize="15sp" />
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_tune"
+                        android:tint="#E6FFFFFF" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/guest_shortcuts"
+                    android:layout_width="match_parent"
+                    android:layout_height="92dp"
+                    android:layout_gravity="bottom"
+                    android:layout_marginStart="40dp"
+                    android:layout_marginEnd="40dp"
+                    android:layout_marginBottom="160dp"
+                    android:gravity="center"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="64dp"
+                        android:layout_height="92dp"
+                        android:gravity="center"
+                        android:orientation="vertical">
+                        <ImageView
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:background="@drawable/bg_viewer_shortcut"
+                            android:padding="16dp"
+                            android:src="@drawable/ic_storage"
+                            android:tint="@color/v_accent" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:text="Vault"
+                            android:textColor="@color/v_white"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <Space android:layout_width="32dp" android:layout_height="1dp" />
+
+                    <LinearLayout
+                        android:layout_width="64dp"
+                        android:layout_height="92dp"
+                        android:gravity="center"
+                        android:orientation="vertical">
+                        <ImageView
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:background="@drawable/bg_viewer_shortcut"
+                            android:padding="16dp"
+                            android:src="@drawable/ic_camera"
+                            android:tint="@color/v_white" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:text="Camera"
+                            android:textColor="@color/v_white"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <Space android:layout_width="32dp" android:layout_height="1dp" />
+
+                    <LinearLayout
+                        android:layout_width="64dp"
+                        android:layout_height="92dp"
+                        android:gravity="center"
+                        android:orientation="vertical">
+                        <ImageView
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:background="@drawable/bg_viewer_shortcut"
+                            android:padding="16dp"
+                            android:src="@drawable/ic_upload"
+                            android:tint="@color/v_white" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:text="Files"
+                            android:textColor="@color/v_white"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <Space android:layout_width="32dp" android:layout_height="1dp" />
+
+                    <LinearLayout
+                        android:layout_width="64dp"
+                        android:layout_height="92dp"
+                        android:gravity="center"
+                        android:orientation="vertical">
+                        <ImageView
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:background="@drawable/bg_viewer_shortcut"
+                            android:padding="16dp"
+                            android:src="@drawable/ic_tune"
+                            android:tint="@color/v_white" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:text="Settings"
+                            android:textColor="@color/v_white"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/guest_dock"
+                    android:layout_width="match_parent"
+                    android:layout_height="72dp"
+                    android:layout_gravity="bottom"
+                    android:layout_marginStart="28dp"
+                    android:layout_marginEnd="28dp"
+                    android:layout_marginBottom="76dp"
+                    android:background="@drawable/bg_viewer_dock"
+                    android:gravity="center"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="@drawable/bg_viewer_shortcut"
+                        android:padding="13dp"
+                        android:src="@drawable/ic_phone"
+                        android:tint="@color/v_accent" />
+
+                    <Space android:layout_width="34dp" android:layout_height="1dp" />
+
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="@drawable/bg_viewer_shortcut"
+                        android:padding="13dp"
+                        android:src="@drawable/ic_status_wifi"
+                        android:tint="#5EC8FF" />
+
+                    <Space android:layout_width="34dp" android:layout_height="1dp" />
+
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="@drawable/bg_viewer_shortcut"
+                        android:padding="13dp"
+                        android:src="@drawable/ic_fingerprint"
+                        android:tint="@color/v_accent" />
+
+                    <Space android:layout_width="34dp" android:layout_height="1dp" />
+
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="@drawable/bg_viewer_shortcut"
+                        android:padding="13dp"
+                        android:src="@drawable/ic_tune"
+                        android:tint="@color/v_white" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <TextureView
+                android:id="@+id/sessionSurfaceView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="center" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <View
+        android:id="@+id/host_home_indicator"
+        android:layout_width="140dp"
+        android:layout_height="6dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/bg_home_indicator" />
+</FrameLayout>

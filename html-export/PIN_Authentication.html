@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=430, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Virtdroid - Verification</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #131514;
+            color: #ffffff;
+            -webkit-font-smoothing: antialiased;
+        }
+        /* Lock screen specific adjustments */
+        .numpad-btn {
+            transition: all 0.15s ease-out;
+        }
+        .numpad-btn:active {
+            background-color: #2a302c;
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body class="flex flex-col h-[932px] w-[430px] mx-auto bg-[#131514] overflow-hidden relative">
+
+    <!-- Top Area for PIN Entry -->
+    <div class="flex flex-col items-center justify-center flex-shrink-0 pt-32 pb-16">
+        <div class="h-16 w-16 rounded-full bg-[#1c1f1c] border border-[#2a302c] text-[#A0D8B3] flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(160,216,179,0.05)]">
+            <i class="ph-fill ph-lock-key text-3xl"></i>
+        </div>
+        
+        <h1 class="text-2xl font-semibold mb-2 tracking-tight">Unlock Identity</h1>
+        <p class="text-[#A0D8B3] text-sm mb-12 flex items-center gap-2">
+            <i class="ph ph-shield-check"></i>
+            Decrypting local state
+        </p>
+
+        <!-- PIN Dots Indicator -->
+        <div class="flex items-center gap-4">
+            <!-- Filled -->
+            <div class="w-3.5 h-3.5 rounded-full bg-[#A0D8B3] shadow-[0_0_10px_rgba(160,216,179,0.3)]"></div>
+            <div class="w-3.5 h-3.5 rounded-full bg-[#A0D8B3] shadow-[0_0_10px_rgba(160,216,179,0.3)]"></div>
+            <div class="w-3.5 h-3.5 rounded-full bg-[#A0D8B3] shadow-[0_0_10px_rgba(160,216,179,0.3)]"></div>
+            <!-- Empty -->
+            <div class="w-3.5 h-3.5 rounded-full border-2 border-[#2a302c] bg-transparent"></div>
+            <div class="w-3.5 h-3.5 rounded-full border-2 border-[#2a302c] bg-transparent"></div>
+            <div class="w-3.5 h-3.5 rounded-full border-2 border-[#2a302c] bg-transparent"></div>
+        </div>
+    </div>
+
+    <!-- Numpad Area (Pushed to bottom naturally, but fixed layout for mobile) -->
+    <div class="flex-1 flex flex-col justify-end pb-12 px-10">
+        <div class="grid grid-cols-3 gap-y-6 gap-x-8 max-w-[320px] mx-auto w-full">
+            
+            <!-- Row 1 -->
+            <button class="numpad-btn w-20 h-20 rounded-full flex items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">1</button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                2
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">ABC</span>
+            </button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                3
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">DEF</span>
+            </button>
+
+            <!-- Row 2 -->
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                4
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">GHI</span>
+            </button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                5
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">JKL</span>
+            </button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                6
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">MNO</span>
+            </button>
+
+            <!-- Row 3 -->
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                7
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">PQRS</span>
+            </button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                8
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">TUV</span>
+            </button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex flex-col items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">
+                9
+                <span class="text-[10px] font-normal text-gray-500 mt:-0.5 h-3 tracking-widest uppercase">WXYZ</span>
+            </button>
+
+            <!-- Row 4 -->
+            <button class="numpad-btn w-20 h-20 rounded-full flex items-center justify-center text-[#A0D8B3] hover:bg-[#1c1f1c] text-2xl mx-auto">
+                <i class="ph ph-fingerprint text-3xl"></i>
+            </button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex items-center justify-center bg-[#1c1f1c] hover:bg-[#202321] text-2xl font-medium mx-auto text-white">0</button>
+            <button class="numpad-btn w-20 h-20 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-[#1c1f1c] text-2xl mx-auto">
+                <i class="ph-fill ph-backspace"></i>
+            </button>
+        </div>
+        
+        <div class="mt-10 text-center">
+            <button class="text-xs text-gray-500 font-medium tracking-wide uppercase hover:text-gray-300">Use Passphrase instead</button>
+        </div>
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,13 @@
+[Unit]
+Description=Prepare binderfs for ReDroid
+DefaultDependencies=no
+After=systemd-modules-load.service local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/virtdroid-binderfs-setup.sh
+
+[Install]
+WantedBy=multi-user.target

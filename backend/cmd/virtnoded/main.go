@@ -1,0 +1,2112 @@
+package main
+
+import (
+	"archive/tar"
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/rand"
+	_ "embed"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"io/fs"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"virtdroid/backend/internal/config"
+)
+
+var errContainerNotFound = errors.New("container not found")
+
+//go:embed assets/scrcpy-server.jar
+var scrcpyServerJar []byte
+
+const scrcpyServerMountPath = "/opt/virtdroid/scrcpy-server.jar"
+const viewerCryptMountPath = "/opt/virtdroid/virtdroid-viewercrypt"
+const viewerScriptMountPath = "/vendor/bin/virtdroid-viewer.sh"
+const viewerInitMountPath = "/vendor/etc/init/virtdroid-viewer.rc"
+
+const (
+	scrcpyPlainPort     = 7007
+	encryptedViewerPort = 7017
+)
+
+const viewerScriptContent = `#!/system/bin/sh
+set -eu
+
+PATH=/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin
+SRC=/opt/virtdroid/scrcpy-server.jar
+DST=/data/local/tmp/scrcpy-server.jar
+LOG=/data/local/tmp/virtdroid-viewer.log
+VIEWERCRYPT=/opt/virtdroid/virtdroid-viewercrypt
+IP=$(getprop virtdroid.viewer.client_ip)
+SIZE=$(getprop virtdroid.viewer.max_size)
+BITRATE=$(getprop virtdroid.viewer.bit_rate)
+
+if [ -z "$IP" ]; then
+  IP=127.0.0.1
+fi
+if [ -z "$SIZE" ]; then
+  SIZE=1600
+fi
+if [ -z "$BITRATE" ]; then
+  BITRATE=4000000
+fi
+exec >>"$LOG" 2>&1
+echo "viewer-start $(date +%s) ip=$IP size=$SIZE bitrate=$BITRATE"
+rm -f "$DST"
+cp "$SRC" "$DST"
+chown shell:shell "$DST" || true
+chmod 0644 "$DST" || true
+restorecon "$DST" >/dev/null 2>&1 || true
+env CLASSPATH="$DST" PATH="$PATH" app_process / org.server.scrcpy.Server "/$IP" "$SIZE" "$BITRATE" &
+SERVER_PID=$!
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if ss -ltn 2>/dev/null | grep -q ':7007'; then
+    break
+  fi
+  sleep 1
+done
+if ! ss -ltn 2>/dev/null | grep -q ':7007'; then
+  echo "scrcpy plaintext listener did not open"
+  kill "$SERVER_PID" >/dev/null 2>&1 || true
+  exit 1
+fi
+chmod 0755 "$VIEWERCRYPT" >/dev/null 2>&1 || true
+"$VIEWERCRYPT" -listen "127.0.0.1:7017" -upstream "127.0.0.1:7007"
+STATUS=$?
+kill "$SERVER_PID" >/dev/null 2>&1 || true
+exit "$STATUS"
+`
+
+const viewerInitContent = `service virtdroid_viewer /system/bin/sh /vendor/bin/virtdroid-viewer.sh
+    class late_start
+    user shell
+    group shell log graphics input audio video inet
+    oneshot
+    disabled
+    seclabel u:r:shell:s0
+`
+
+type runtimeAssignment struct {
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	Status           string  `json:"status"`
+	DesiredState     string  `json:"desired_state"`
+	ConnectionStatus string  `json:"connection_status"`
+	PersonaVersion   int     `json:"persona_version"`
+	AndroidImage     string  `json:"android_image"`
+	AndroidVersion   string  `json:"android_version"`
+	WidthPx          int     `json:"width_px"`
+	HeightPx         int     `json:"height_px"`
+	DensityDpi       int     `json:"density_dpi"`
+	BlobAutoSnapshot bool    `json:"blob_auto_snapshot"`
+	BlobStoreKind    *string `json:"blob_store_kind"`
+	BlobManifestJSON *string `json:"blob_manifest_json"`
+	ADBPort          *int    `json:"adb_port"`
+	ViewerPort       *int    `json:"viewer_port"`
+	WipeRequested    bool    `json:"wipe_requested"`
+	LastError        *string `json:"last_error"`
+}
+
+type relayTarget struct {
+	SessionID  string `json:"session_id"`
+	RuntimeID  string `json:"runtime_id"`
+	DeviceID   string `json:"device_id"`
+	HostID     string `json:"host_id"`
+	ViewerPort int    `json:"viewer_port"`
+}
+
+type dockerInspectResponse struct {
+	ID    string `json:"Id"`
+	Name  string `json:"Name"`
+	State struct {
+		Running   bool   `json:"Running"`
+		Status    string `json:"Status"`
+		StartedAt string `json:"StartedAt"`
+	} `json:"State"`
+	NetworkSettings struct {
+		IPAddress string `json:"IPAddress"`
+		Networks  map[string]struct {
+			IPAddress string `json:"IPAddress"`
+			Gateway   string `json:"Gateway"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
+}
+
+const (
+	androidStartupGrace  = 30 * time.Second
+	viewerPrepareTimeout = 60 * time.Second
+)
+
+type nodeAgent struct {
+	cfg          config.NodeConfig
+	controlPlane *http.Client
+	docker       *http.Client
+}
+
+func main() {
+	cfg := config.LoadNode()
+	node := &nodeAgent{
+		cfg: cfg,
+		controlPlane: &http.Client{
+			Timeout: 20 * time.Second,
+		},
+		docker: dockerHTTPClient(),
+	}
+	if os.Getenv("NODE_BLOB_SMOKE_TEST") == "1" {
+		if err := node.runBlobSmokeTest(context.Background()); err != nil {
+			log.Fatalf("blob smoke test failed: %v", err)
+		}
+		log.Printf("blob smoke test ok: store=%s", cfg.BlobStoreKind)
+		return
+	}
+	if os.Getenv("NODE_BLOB_PREFLIGHT") == "1" {
+		report := node.runBlobPreflight(context.Background())
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(report); err != nil {
+			log.Fatalf("encode blob preflight report: %v", err)
+		}
+		if !report.OK {
+			os.Exit(1)
+		}
+		return
+	}
+
+	if err := os.MkdirAll(cfg.RuntimeRoot, 0o755); err != nil {
+		log.Fatalf("prepare runtime root: %v", err)
+	}
+	if err := node.ensureAssets(); err != nil {
+		log.Fatalf("prepare node assets: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":   true,
+			"role": "virtnoded",
+			"id":   cfg.NodeID,
+		})
+	})
+	mux.HandleFunc("/capabilities", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, node.capabilities())
+	})
+	mux.HandleFunc("POST /api/v1/internal/viewer/prepare", node.handlePrepareViewer)
+	mux.HandleFunc("CONNECT /api/v1/relay/{id}", node.handleRelaySession)
+
+	server := &http.Server{
+		Addr:              cfg.BindAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go node.heartbeatLoop(ctx)
+	go node.reconcileLoop(ctx)
+	go func() {
+		log.Printf("virtnoded listening on %s", server.Addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	cancel()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown error: %v", err)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (n *nodeAgent) assetDir() string {
+	return filepath.Join(filepath.Dir(n.cfg.RuntimeRoot), "assets")
+}
+
+func (n *nodeAgent) scrcpyServerPath() string {
+	return filepath.Join(n.assetDir(), "scrcpy-server.jar")
+}
+
+func (n *nodeAgent) viewerCryptPath() string {
+	return filepath.Join(n.assetDir(), "virtdroid-viewercrypt")
+}
+
+func (n *nodeAgent) viewerScriptPath() string {
+	return filepath.Join(n.assetDir(), "virtdroid-viewer.sh")
+}
+
+func (n *nodeAgent) viewerInitPath() string {
+	return filepath.Join(n.assetDir(), "virtdroid-viewer.rc")
+}
+
+func (n *nodeAgent) runBlobSmokeTest(ctx context.Context) error {
+	store, err := n.blobStore(n.cfg.BlobStoreKind)
+	if err != nil {
+		return err
+	}
+
+	root, err := os.MkdirTemp("", "virtdroid-blob-smoke-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(root)
+
+	sourceDir := filepath.Join(root, "source")
+	restoreDir := filepath.Join(root, "restore")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "misc", "profile"), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "settings.json"), []byte(`{"ok":true,"purpose":"blob-smoke"}`), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "misc", "profile", "state.txt"), []byte("virtdroid blob smoke\n"), 0o600); err != nil {
+		return err
+	}
+
+	masterKey := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, masterKey); err != nil {
+		return err
+	}
+	runtimeID := "blob-smoke-" + time.Now().UTC().Format("20060102T150405Z")
+
+	manifest, err := store.persistFromDir(ctx, runtimeID, sourceDir, masterKey)
+	if err != nil {
+		return err
+	}
+	if manifest == nil || len(manifest.Chunks) == 0 {
+		return errors.New("blob smoke manifest has no chunks")
+	}
+	defer func() {
+		if cleaner, ok := store.(interface {
+			deleteManifest(context.Context, *blobManifest) error
+		}); ok {
+			_ = cleaner.deleteManifest(context.Background(), manifest)
+			return
+		}
+		_ = store.clearRuntime(context.Background(), runtimeID)
+	}()
+
+	if err := store.restoreToDir(ctx, runtimeID, manifest, restoreDir, masterKey); err != nil {
+		return err
+	}
+	return compareDirectoryContents(sourceDir, restoreDir)
+}
+
+func compareDirectoryContents(sourceDir, restoreDir string) error {
+	sourceFiles := map[string][]byte{}
+	if err := filepath.WalkDir(sourceDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relativePath, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		payload, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sourceFiles[filepath.ToSlash(relativePath)] = payload
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	restoredFiles := map[string][]byte{}
+	if err := filepath.WalkDir(restoreDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relativePath, err := filepath.Rel(restoreDir, path)
+		if err != nil {
+			return err
+		}
+		payload, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		restoredFiles[filepath.ToSlash(relativePath)] = payload
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if len(sourceFiles) != len(restoredFiles) {
+		return fmt.Errorf("restored file count mismatch: source=%d restored=%d", len(sourceFiles), len(restoredFiles))
+	}
+	for key, sourcePayload := range sourceFiles {
+		restoredPayload, ok := restoredFiles[key]
+		if !ok {
+			return fmt.Errorf("restored file missing: %s", key)
+		}
+		if !bytes.Equal(sourcePayload, restoredPayload) {
+			return fmt.Errorf("restored file mismatch: %s", key)
+		}
+	}
+	return nil
+}
+
+func (n *nodeAgent) ensureAssets() error {
+	if err := os.MkdirAll(n.assetDir(), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(n.scrcpyServerPath(), scrcpyServerJar, 0o644); err != nil {
+		return err
+	}
+	viewerCryptPayload, err := os.ReadFile(n.cfg.ViewerCryptPath)
+	if err != nil {
+		return fmt.Errorf("read viewer encryption proxy %s: %w", n.cfg.ViewerCryptPath, err)
+	}
+	if err := os.WriteFile(n.viewerCryptPath(), viewerCryptPayload, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(n.viewerScriptPath(), []byte(viewerScriptContent), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(n.viewerInitPath(), []byte(viewerInitContent), 0o644); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *nodeAgent) capabilities() map[string]any {
+	blobStoreKind := strings.TrimSpace(n.cfg.BlobStoreKind)
+	if blobStoreKind == "" {
+		blobStoreKind = blobStoreLocal
+	}
+	return map[string]any{
+		"id":                  n.cfg.NodeID,
+		"name":                n.cfg.NodeName,
+		"advertise_addr":      n.cfg.AdvertiseAddr,
+		"relay_port":          n.cfg.RelayPort,
+		"docker_socket":       dockerSocketAvailable(),
+		"binder":              binderAvailable(),
+		"blob_store_kind":     blobStoreKind,
+		"renterd_configured":  strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" && strings.TrimSpace(n.cfg.RenterdPassword) != "",
+		"renterd_bucket":      defaultBlobBucket(n.cfg.RenterdBucket),
+		"renterd_contractset": strings.TrimSpace(n.cfg.RenterdContractSet),
+	}
+}
+
+func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) {
+	if n.cfg.SharedSecret != "" && r.Header.Get("X-Virtdroid-Node-Secret") != n.cfg.SharedSecret {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node secret"})
+		return
+	}
+
+	var req struct {
+		RuntimeID string `json:"runtime_id"`
+		MaxSize   int    `json:"max_size"`
+		BitRate   int    `json:"bit_rate"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if strings.TrimSpace(req.RuntimeID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "runtime_id is required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), viewerPrepareTimeout)
+	defer cancel()
+
+	assignments, err := n.fetchAssignments(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+
+	var runtime *runtimeAssignment
+	for i := range assignments {
+		if assignments[i].ID == req.RuntimeID {
+			runtime = &assignments[i]
+			break
+		}
+	}
+	if runtime == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "runtime is not assigned to this node"})
+		return
+	}
+	if runtime.Status != "running" || runtime.ViewerPort == nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime is not ready for viewer sessions"})
+		return
+	}
+
+	maxSize := req.MaxSize
+	if maxSize <= 0 {
+		maxSize = max(runtime.WidthPx, runtime.HeightPx)
+	}
+	bitRate := req.BitRate
+	if bitRate <= 0 {
+		bitRate = 8_000_000
+	}
+
+	if err := n.prepareViewer(ctx, *runtime, maxSize, bitRate); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok":          true,
+		"viewer_port": runtime.ViewerPort,
+	})
+}
+
+func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.PathValue("id"))
+	relayToken := strings.TrimSpace(r.Header.Get("X-Virtdroid-Relay-Token"))
+	if sessionID == "" || relayToken == "" {
+		http.Error(w, "missing relay session details", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	target, err := n.fetchRelayTarget(ctx, sessionID, relayToken)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if target.HostID != n.cfg.NodeID {
+		http.Error(w, "session is assigned to a different node", http.StatusNotFound)
+		return
+	}
+
+	inspect, err := n.inspectContainer(ctx, containerNameForRuntime(target.RuntimeID))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("inspect runtime container: %v", err), http.StatusBadGateway)
+		return
+	}
+	if !inspect.State.Running {
+		http.Error(w, "runtime container is not running", http.StatusBadGateway)
+		return
+	}
+
+	upstream, err := n.openViewerTunnel(ctx, containerNameForRuntime(target.RuntimeID))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("open viewer tunnel: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		upstream.Close()
+		http.Error(w, "relay hijacking unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, rw, err := hijacker.Hijack()
+	if err != nil {
+		upstream.Close()
+		return
+	}
+
+	if _, err := rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		clientConn.Close()
+		upstream.Close()
+		return
+	}
+	if err := rw.Flush(); err != nil {
+		clientConn.Close()
+		upstream.Close()
+		return
+	}
+
+	go func() {
+		_, _ = io.Copy(upstream, clientConn)
+	}()
+	_, _ = io.Copy(clientConn, upstream)
+	clientConn.Close()
+	upstream.Close()
+}
+
+func (n *nodeAgent) heartbeatLoop(ctx context.Context) {
+	ticker := time.NewTicker(n.cfg.HeartbeatInterval)
+	defer ticker.Stop()
+
+	n.sendHeartbeat(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n.sendHeartbeat(ctx)
+		}
+	}
+}
+
+func (n *nodeAgent) reconcileLoop(ctx context.Context) {
+	ticker := time.NewTicker(n.cfg.ReconcileInterval)
+	defer ticker.Stop()
+
+	n.reconcileOnce(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n.reconcileOnce(ctx)
+		}
+	}
+}
+
+func (n *nodeAgent) sendHeartbeat(ctx context.Context) {
+	body, err := json.Marshal(n.capabilities())
+	if err != nil {
+		log.Printf("marshal heartbeat: %v", err)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		n.cfg.ControlPlaneURL+"/api/v1/internal/hosts/heartbeat",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		log.Printf("new heartbeat request: %v", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if n.cfg.SharedSecret != "" {
+		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	}
+
+	resp, err := n.controlPlane.Do(req)
+	if err != nil {
+		log.Printf("heartbeat failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		log.Printf("heartbeat rejected: status=%d body=%s", resp.StatusCode, string(payload))
+		return
+	}
+
+	log.Printf("heartbeat ok: node=%s", n.cfg.NodeID)
+}
+
+func (n *nodeAgent) reconcileOnce(ctx context.Context) {
+	assignments, err := n.fetchAssignments(ctx)
+	if err != nil {
+		log.Printf("fetch assignments: %v", err)
+		return
+	}
+
+	for _, runtime := range assignments {
+		if err := n.reconcileRuntime(ctx, runtime); err != nil {
+			message := fmt.Sprintf("Reconcile failed: %v", err)
+			log.Printf("runtime %s: %s", runtime.ID, message)
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", message)
+			lastError := message
+			_ = n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+				Status:           "error",
+				ConnectionStatus: "offline",
+				LastError:        &lastError,
+			})
+		}
+	}
+}
+
+func (n *nodeAgent) reconcileRuntime(ctx context.Context, runtime runtimeAssignment) error {
+	switch {
+	case runtime.DesiredState == "deleted":
+		return n.deleteRuntime(ctx, runtime)
+	case runtime.WipeRequested || runtime.Status == "wiping":
+		return n.wipeRuntime(ctx, runtime)
+	case runtime.DesiredState == "running":
+		return n.ensureRuntimeRunning(ctx, runtime)
+	default:
+		return n.ensureRuntimeStopped(ctx, runtime, false)
+	}
+}
+
+func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAssignment) error {
+	containerName := containerNameForRuntime(runtime.ID)
+	adbPort := adbPortForRuntime(runtime.ID)
+	if runtime.ViewerPort == nil {
+		return errors.New("runtime has no viewer port assigned")
+	}
+	inspect, err := n.inspectContainer(ctx, containerName)
+	if err != nil && !errors.Is(err, errContainerNotFound) {
+		return err
+	}
+
+	if err == nil && inspect.State.Running {
+		if !androidRuntimeReady(inspect) {
+			return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+				Status:           "starting",
+				ConnectionStatus: "connecting",
+				ContainerName:    stringPtr(containerName),
+				ADBPort:          &adbPort,
+				LastError:        stringPtr(""),
+			})
+		}
+
+		return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+			Status:           "running",
+			ConnectionStatus: "online",
+			ContainerName:    stringPtr(containerName),
+			ADBPort:          &adbPort,
+		})
+	}
+
+	if err == nil {
+		if stopErr := n.stopAndRemoveContainer(ctx, containerName); stopErr != nil {
+			return stopErr
+		}
+	}
+
+	restoredSnapshot, err := n.prepareSessionData(runtime)
+	if err != nil {
+		return fmt.Errorf("prepare session data: %w", err)
+	}
+	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
+
+	if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
+		return fmt.Errorf("pull runtime image: %w", err)
+	}
+	persona := buildSessionPersona(runtime)
+	personaJSON := marshalSessionPersona(persona)
+	if err := n.createContainer(ctx, containerName, runtime, dataDir, adbPort, persona); err != nil {
+		return fmt.Errorf("create container: %w", err)
+	}
+	if err := n.startContainer(ctx, containerName); err != nil {
+		return fmt.Errorf("start container: %w", err)
+	}
+
+	restoreMessage := "fresh session container"
+	if restoredSnapshot {
+		restoreMessage = "fresh session container restored from encrypted userdata blob"
+	}
+	_ = n.appendRuntimeLog(
+		ctx,
+		runtime.ID,
+		"node",
+		"info",
+		fmt.Sprintf(
+			"Runtime container %s started on port %d with persona %s and %s.",
+			containerName,
+			adbPort,
+			personaSummary(persona),
+			restoreMessage,
+		),
+	)
+	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+		Status:            "starting",
+		ConnectionStatus:  "connecting",
+		ContainerName:     stringPtr(containerName),
+		ADBPort:           &adbPort,
+		LastError:         stringPtr(""),
+		ActivePersonaJSON: stringPtr(personaJSON),
+	})
+}
+
+func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAssignment, clearWipe bool) error {
+	containerName := containerNameForRuntime(runtime.ID)
+	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
+	_, inspectErr := n.inspectContainer(ctx, containerName)
+	hadContainer := inspectErr == nil
+	if inspectErr != nil && !errors.Is(inspectErr, errContainerNotFound) {
+		return inspectErr
+	}
+	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+		return err
+	}
+
+	persisted := &persistedBlob{}
+	shouldPersistOrClearBlob := hadContainer || directoryHasEntries(dataDir)
+	if shouldPersistOrClearBlob {
+		var err error
+		persisted, err = n.persistSessionData(runtime)
+		if err != nil {
+			return fmt.Errorf("persist encrypted userdata blob: %w", err)
+		}
+	}
+	if persisted != nil && persisted.SnapshotAt != nil {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Encrypted userdata blob updated for the stopped session.")
+	}
+	if persisted != nil && persisted.Manifest != nil {
+		_ = n.appendRuntimeLog(
+			ctx,
+			runtime.ID,
+			"node",
+			"info",
+			fmt.Sprintf(
+				"Blob manifest prepared: store=%s snapshot=%s chunks=%d bytes=%d.",
+				persisted.Manifest.Store,
+				persisted.Manifest.SnapshotID,
+				len(persisted.Manifest.Chunks),
+				persisted.Manifest.TotalBytes,
+			),
+		)
+	}
+
+	status := runtimeStatusUpdate{
+		Status:             "stopped",
+		ConnectionStatus:   "offline",
+		ContainerName:      nil,
+		ADBPort:            nil,
+		LastError:          runtime.LastError,
+		BlobLastSnapshotAt: persisted.SnapshotAt,
+		ClearWipeRequested: clearWipe,
+		ClearActivePersona: true,
+	}
+	if persisted != nil && persisted.Manifest != nil {
+		status.BlobStoreKind = stringPtr(persisted.Manifest.Store)
+		status.BlobManifestJSON = stringPtr(marshalBlobManifest(persisted.Manifest))
+	}
+	if persisted != nil && persisted.ClearExisting {
+		status.ClearBlobManifest = true
+	}
+	if err := n.reportRuntimeStatus(ctx, runtime.ID, status); err != nil {
+		return err
+	}
+	if shouldPersistOrClearBlob && persisted != nil {
+		return n.cleanupBlobStorage(runtime, persisted.Manifest)
+	}
+	return nil
+}
+
+func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) error {
+	if err := n.ensureRuntimeStopped(ctx, runtime, false); err != nil {
+		return err
+	}
+
+	runtimeRoot := filepath.Join(n.cfg.RuntimeRoot, runtime.ID)
+	dataDir := filepath.Join(runtimeRoot, "data")
+	if err := os.RemoveAll(dataDir); err != nil {
+		return fmt.Errorf("remove runtime data dir: %w", err)
+	}
+	if err := n.clearSnapshot(runtime); err != nil {
+		return fmt.Errorf("remove encrypted userdata blob: %w", err)
+	}
+
+	now := time.Now().UTC()
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Runtime data directory and encrypted userdata blob wiped.")
+	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+		Status:             "stopped",
+		ConnectionStatus:   "offline",
+		ContainerName:      nil,
+		ADBPort:            nil,
+		ClearWipeRequested: true,
+		ClearBlobManifest:  true,
+		BlobLastSnapshotAt: &now,
+		LastError:          nil,
+		ClearActivePersona: true,
+	})
+}
+
+func (n *nodeAgent) deleteRuntime(ctx context.Context, runtime runtimeAssignment) error {
+	containerName := containerNameForRuntime(runtime.ID)
+	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+		return err
+	}
+
+	runtimeRoot := filepath.Join(n.cfg.RuntimeRoot, runtime.ID)
+	if err := os.RemoveAll(runtimeRoot); err != nil {
+		return fmt.Errorf("remove runtime root: %w", err)
+	}
+	if err := n.clearSnapshot(runtime); err != nil {
+		return fmt.Errorf("remove runtime blob data: %w", err)
+	}
+
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Runtime removed from node storage.")
+	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+		Deleted: true,
+	})
+}
+
+func (n *nodeAgent) fetchAssignments(ctx context.Context) ([]runtimeAssignment, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		fmt.Sprintf("%s/api/v1/internal/hosts/%s/assignments", n.cfg.ControlPlaneURL, url.PathEscape(n.cfg.NodeID)),
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if n.cfg.SharedSecret != "" {
+		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	}
+
+	resp, err := n.controlPlane.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("assignments rejected: status=%d body=%s", resp.StatusCode, string(payload))
+	}
+
+	var payload struct {
+		Items []runtimeAssignment `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload.Items, nil
+}
+
+func (n *nodeAgent) fetchRelayTarget(ctx context.Context, sessionID, relayToken string) (relayTarget, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		n.cfg.ControlPlaneURL+"/api/v1/internal/sessions/"+url.PathEscape(sessionID)+"/relay",
+		nil,
+	)
+	if err != nil {
+		return relayTarget{}, err
+	}
+	if n.cfg.SharedSecret != "" {
+		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	}
+	req.Header.Set("X-Virtdroid-Relay-Token", relayToken)
+
+	resp, err := n.controlPlane.Do(req)
+	if err != nil {
+		return relayTarget{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return relayTarget{}, fmt.Errorf("resolve relay target: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+
+	var target relayTarget
+	if err := json.NewDecoder(resp.Body).Decode(&target); err != nil {
+		return relayTarget{}, err
+	}
+	return target, nil
+}
+
+type runtimeStatusUpdate struct {
+	Status             string     `json:"status,omitempty"`
+	ConnectionStatus   string     `json:"connection_status,omitempty"`
+	ContainerName      *string    `json:"container_name,omitempty"`
+	ADBPort            *int       `json:"adb_port,omitempty"`
+	LastError          *string    `json:"last_error,omitempty"`
+	BlobStoreKind      *string    `json:"blob_store_kind,omitempty"`
+	BlobManifestJSON   *string    `json:"blob_manifest_json,omitempty"`
+	BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at,omitempty"`
+	ClearWipeRequested bool       `json:"clear_wipe_requested,omitempty"`
+	ActivePersonaJSON  *string    `json:"active_persona_json,omitempty"`
+	ClearActivePersona bool       `json:"clear_active_persona,omitempty"`
+	ClearBlobManifest  bool       `json:"clear_blob_manifest,omitempty"`
+	Deleted            bool       `json:"deleted,omitempty"`
+}
+
+func (n *nodeAgent) reportRuntimeStatus(ctx context.Context, runtimeID string, update runtimeStatusUpdate) error {
+	body := map[string]any{
+		"host_id":        n.cfg.NodeID,
+		"deleted":        update.Deleted,
+		"container_name": update.ContainerName,
+		"adb_port":       update.ADBPort,
+		"last_error":     update.LastError,
+	}
+	if update.Status != "" {
+		body["status"] = update.Status
+	}
+	if update.ConnectionStatus != "" {
+		body["connection_status"] = update.ConnectionStatus
+	}
+	if update.BlobLastSnapshotAt != nil {
+		body["blob_last_snapshot_at"] = update.BlobLastSnapshotAt
+	}
+	if update.BlobStoreKind != nil {
+		body["blob_store_kind"] = update.BlobStoreKind
+	}
+	if update.BlobManifestJSON != nil {
+		body["blob_manifest_json"] = update.BlobManifestJSON
+	}
+	if update.ClearWipeRequested {
+		body["clear_wipe_requested"] = true
+	}
+	if update.ActivePersonaJSON != nil {
+		body["active_persona_json"] = update.ActivePersonaJSON
+	}
+	if update.ClearActivePersona {
+		body["clear_active_persona"] = true
+	}
+	if update.ClearBlobManifest {
+		body["clear_blob_manifest"] = true
+	}
+
+	return n.postControlPlane(ctx, fmt.Sprintf("/api/v1/internal/runtimes/%s/status", url.PathEscape(runtimeID)), body)
+}
+
+func (n *nodeAgent) appendRuntimeLog(ctx context.Context, runtimeID, source, level, message string) error {
+	return n.postControlPlane(ctx, fmt.Sprintf("/api/v1/internal/runtimes/%s/logs", url.PathEscape(runtimeID)), map[string]any{
+		"source":  source,
+		"level":   level,
+		"message": message,
+	})
+}
+
+func (n *nodeAgent) postControlPlane(ctx context.Context, path string, body any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.cfg.ControlPlaneURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if n.cfg.SharedSecret != "" {
+		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	}
+
+	resp, err := n.controlPlane.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("control plane rejected request: status=%d body=%s", resp.StatusCode, string(payload))
+	}
+	return nil
+}
+
+func (n *nodeAgent) ensureImage(ctx context.Context, image string) error {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return errors.New("empty image")
+	}
+
+	inspectReq, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"http://docker/images/"+url.PathEscape(image)+"/json",
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	inspectResp, err := n.docker.Do(inspectReq)
+	if err != nil {
+		return err
+	}
+	defer inspectResp.Body.Close()
+
+	if inspectResp.StatusCode == http.StatusOK {
+		_, _ = io.Copy(io.Discard, inspectResp.Body)
+		return nil
+	}
+	if inspectResp.StatusCode != http.StatusNotFound {
+		payload, _ := io.ReadAll(io.LimitReader(inspectResp.Body, 4096))
+		return fmt.Errorf("docker image inspect failed: status=%d body=%s", inspectResp.StatusCode, string(payload))
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://docker/images/create?fromImage="+url.QueryEscape(image),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("docker image pull failed: status=%d body=%s", resp.StatusCode, string(payload))
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+func (n *nodeAgent) inspectContainer(ctx context.Context, containerName string) (dockerInspectResponse, error) {
+	var inspect dockerInspectResponse
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/containers/"+url.PathEscape(containerName)+"/json", nil)
+	if err != nil {
+		return inspect, err
+	}
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return inspect, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return inspect, errContainerNotFound
+	}
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return inspect, fmt.Errorf("docker inspect failed: status=%d body=%s", resp.StatusCode, string(payload))
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&inspect); err != nil {
+		return inspect, err
+	}
+	return inspect, nil
+}
+
+func (n *nodeAgent) createContainer(ctx context.Context, containerName string, runtime runtimeAssignment, dataDir string, adbPort int, persona sessionPersona) error {
+	cmd := []string{
+		"androidboot.use_memfd=1",
+		"androidboot.redroid_gpu_mode=guest",
+		"androidboot.redroid_fps=15",
+		fmt.Sprintf("androidboot.redroid_width=%d", runtime.WidthPx),
+		fmt.Sprintf("androidboot.redroid_height=%d", runtime.HeightPx),
+		fmt.Sprintf("androidboot.redroid_dpi=%d", runtime.DensityDpi),
+	}
+	cmd = append(cmd, personaOverrideProps(persona)...)
+
+	body := map[string]any{
+		"Image": runtime.AndroidImage,
+		"Cmd":   cmd,
+		"ExposedPorts": map[string]any{
+			"5555/tcp": map[string]any{},
+		},
+		"HostConfig": map[string]any{
+			"Privileged": true,
+			"Binds": []string{
+				dataDir + ":/data",
+				n.scrcpyServerPath() + ":" + scrcpyServerMountPath + ":ro",
+				n.viewerCryptPath() + ":" + viewerCryptMountPath + ":ro",
+				n.viewerScriptPath() + ":" + viewerScriptMountPath + ":ro",
+				n.viewerInitPath() + ":" + viewerInitMountPath + ":ro",
+			},
+			"PortBindings": map[string]any{
+				"5555/tcp": []map[string]string{
+					{
+						"HostIp":   "127.0.0.1",
+						"HostPort": strconv.Itoa(adbPort),
+					},
+				},
+			},
+		},
+	}
+	if networkName := strings.TrimSpace(n.cfg.DockerNetworkName); networkName != "" {
+		body["HostConfig"].(map[string]any)["NetworkMode"] = networkName
+		body["NetworkingConfig"] = map[string]any{
+			"EndpointsConfig": map[string]any{
+				networkName: map[string]any{},
+			},
+		}
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://docker/containers/create?name="+url.QueryEscape(containerName),
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("docker create failed: status=%d body=%s", resp.StatusCode, string(payload))
+	}
+
+	return nil
+}
+
+func (n *nodeAgent) startContainer(ctx context.Context, containerName string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker/containers/"+url.PathEscape(containerName)+"/start", nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotModified {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("docker start failed: status=%d body=%s", resp.StatusCode, string(payload))
+	}
+
+	return nil
+}
+
+func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment, maxSize, bitRate int) error {
+	containerName := containerNameForRuntime(runtime.ID)
+	inspect, err := n.inspectContainer(ctx, containerName)
+	if err != nil {
+		return err
+	}
+	if !inspect.State.Running {
+		return errors.New("runtime container is not running")
+	}
+	if !androidRuntimeReady(inspect) {
+		return errors.New("android runtime is still booting")
+	}
+
+	clientIP := "127.0.0.1"
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Preparing viewer via in-guest init service.")
+	if err := n.startViewerService(ctx, containerName, clientIP, maxSize, bitRate); err != nil {
+		return fmt.Errorf("start viewer service: %w", err)
+	}
+	if err := n.waitForViewerPort(ctx, runtime, containerName); err != nil {
+		return err
+	}
+
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", fmt.Sprintf("Encrypted viewer proxy prepared on guest port %d.", encryptedViewerPort))
+	return nil
+}
+
+func (n *nodeAgent) viewerCommandLogPath(runtimeID string) string {
+	return filepath.Join(n.cfg.RuntimeRoot, runtimeID, "viewer-adb.log")
+}
+
+func (n *nodeAgent) adbSerialForRuntime(runtime runtimeAssignment, inspect dockerInspectResponse) (string, error) {
+	if runtime.ADBPort != nil && *runtime.ADBPort > 0 {
+		if host := strings.TrimSpace(n.cfg.ADBHost); host != "" {
+			return net.JoinHostPort(host, strconv.Itoa(*runtime.ADBPort)), nil
+		}
+	}
+
+	if containerIP := containerIPAddress(inspect, n.cfg.DockerNetworkName); containerIP != "" {
+		return net.JoinHostPort(containerIP, "5555"), nil
+	}
+
+	if runtime.ADBPort != nil && *runtime.ADBPort > 0 {
+		if gateway := defaultGatewayIP(); gateway != "" {
+			return net.JoinHostPort(gateway, strconv.Itoa(*runtime.ADBPort)), nil
+		}
+	}
+
+	return "", errors.New("runtime container has no reachable ADB address")
+}
+
+func (n *nodeAgent) adbConnect(ctx context.Context, serial string) error {
+	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(connectCtx, n.cfg.ADBPath, "connect", serial)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	_, err = n.adbShellCapture(ctx, serial, "true")
+	return err
+}
+
+func (n *nodeAgent) adbPush(ctx context.Context, serial string, localPath string, remotePath string) error {
+	cmd := exec.CommandContext(ctx, n.cfg.ADBPath, "-s", serial, "push", localPath, remotePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (n *nodeAgent) adbShellCapture(ctx context.Context, serial string, shellCmd string) (string, error) {
+	cmd := exec.CommandContext(ctx, n.cfg.ADBPath, "-s", serial, "shell", "sh", "-c", shellCmd)
+	output, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(output))
+	if err != nil {
+		if trimmed != "" {
+			return trimmed, fmt.Errorf("%w: %s", err, trimmed)
+		}
+		return trimmed, err
+	}
+	return trimmed, nil
+}
+
+func (n *nodeAgent) adbLogcatCapture(ctx context.Context, serial string, lines int) (string, error) {
+	if lines <= 0 {
+		lines = 200
+	}
+	return n.adbShellCapture(ctx, serial, fmt.Sprintf("logcat -b all -d -t %d 2>/dev/null", lines))
+}
+
+func (n *nodeAgent) startViewerServer(runtimeID string, adbSerial string, maxSize int, bitRate int) error {
+	logPath := n.viewerCommandLogPath(runtimeID)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return err
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+
+	shellCmd := fmt.Sprintf(
+		"CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / org.server.scrcpy.Server /0.0.0.0 %d %d false",
+		maxSize,
+		bitRate,
+	)
+	cmd := exec.Command(n.cfg.ADBPath, "-s", adbSerial, "shell", shellCmd)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return err
+	}
+
+	go func() {
+		defer logFile.Close()
+		if err := cmd.Wait(); err != nil {
+			log.Printf("viewer adb command exited for runtime %s: %v", runtimeID, err)
+			return
+		}
+		log.Printf("viewer adb command exited cleanly for runtime %s", runtimeID)
+	}()
+
+	return nil
+}
+
+func (n *nodeAgent) setContainerProp(ctx context.Context, containerName, key, value string) error {
+	_, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+		{"setprop", key, value},
+		{"/system/bin/setprop", key, value},
+		{"toybox", "setprop", key, value},
+		{"/system/bin/toybox", "setprop", key, value},
+	})
+	return err
+}
+
+func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clientIP string, maxSize, bitRate int) error {
+	clientIP = strings.TrimSpace(clientIP)
+	if clientIP == "" {
+		clientIP = "127.0.0.1"
+	}
+	shellCmd := fmt.Sprintf(
+		"rm -f /data/local/tmp/virtdroid-viewer.log; "+
+			"setprop virtdroid.viewer.client_ip %s; "+
+			"setprop virtdroid.viewer.max_size %d; "+
+			"setprop virtdroid.viewer.bit_rate %d; "+
+			"if [ \"$(getprop init.svc.virtdroid_viewer)\" = \"running\" ]; then "+
+			"setprop ctl.stop virtdroid_viewer >/dev/null 2>&1 || true; "+
+			"for i in 1 2 3 4 5 6 7 8 9 10; do "+
+			"svc=$(getprop init.svc.virtdroid_viewer); "+
+			"[ \"$svc\" = \"stopped\" ] && break; "+
+			"sleep 1; "+
+			"done; "+
+			"fi; "+
+			"setprop ctl.start virtdroid_viewer; "+
+			"for i in 1 2 3 4 5 6 7 8 9 10; do "+
+			"svc=$(getprop init.svc.virtdroid_viewer); "+
+			"if [ \"$svc\" = \"running\" ] && ss -ltn 2>/dev/null | grep -q ':%d'; then exit 0; fi; "+
+			"sleep 1; "+
+			"done; "+
+			"echo \"service=$svc\"; "+
+			"ss -ltn 2>/dev/null || true; "+
+			"cat /data/local/tmp/virtdroid-viewer.log 2>/dev/null || true; "+
+			"exit 1",
+		shellEscape(clientIP),
+		maxSize,
+		bitRate,
+		encryptedViewerPort,
+	)
+	output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+		{"/system/bin/sh", "-c", shellCmd},
+		{"sh", "-c", shellCmd},
+	})
+	if err != nil {
+		if trimmed := strings.TrimSpace(output); trimmed != "" {
+			return fmt.Errorf("%w: %s", err, trimmed)
+		}
+		return err
+	}
+	return nil
+}
+
+func (n *nodeAgent) startViewerProcessInContainer(ctx context.Context, containerName string, maxSize, bitRate int) error {
+	shellCmd := fmt.Sprintf(
+		"setprop ctl.stop virtdroid_viewer >/dev/null 2>&1 || true; "+
+			"if [ -f /data/local/tmp/virtdroid-viewer.pid ]; then kill $(cat /data/local/tmp/virtdroid-viewer.pid) >/dev/null 2>&1 || true; rm -f /data/local/tmp/virtdroid-viewer.pid; fi; "+
+			"setprop virtdroid.viewer.client_ip 127.0.0.1; "+
+			"setprop virtdroid.viewer.max_size %d; "+
+			"setprop virtdroid.viewer.bit_rate %d; "+
+			"echo $$ > /data/local/tmp/virtdroid-viewer.pid; "+
+			"exec /system/bin/sh %s",
+		maxSize,
+		bitRate,
+		shellEscape(viewerScriptMountPath),
+	)
+	return n.execInContainerDetachedAny(ctx, containerName, "", nil, [][]string{
+		{"/system/bin/sh", "-c", shellCmd},
+		{"sh", "-c", shellCmd},
+	})
+}
+
+func (n *nodeAgent) stopAndRemoveContainer(ctx context.Context, containerName string) error {
+	inspect, err := n.inspectContainer(ctx, containerName)
+	if err != nil {
+		return err
+	}
+
+	if inspect.State.Running {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker/containers/"+url.PathEscape(containerName)+"/stop?t=20", nil)
+		if err != nil {
+			return err
+		}
+		resp, err := n.docker.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotModified && resp.StatusCode != http.StatusNotFound {
+			payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			return fmt.Errorf("docker stop failed: status=%d body=%s", resp.StatusCode, string(payload))
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, "http://docker/containers/"+url.PathEscape(containerName)+"?force=true", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return errContainerNotFound
+	}
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("docker remove failed: status=%d body=%s", resp.StatusCode, string(payload))
+	}
+
+	return nil
+}
+
+func (n *nodeAgent) execInContainerDetached(ctx context.Context, containerName string, user string, env []string, cmd []string) error {
+	payload, err := json.Marshal(map[string]any{
+		"AttachStdout": false,
+		"AttachStderr": false,
+		"Cmd":          cmd,
+		"Env":          env,
+		"User":         user,
+	})
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://docker/containers/"+url.PathEscape(containerName)+"/exec",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("docker exec create failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var created struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return err
+	}
+	if created.ID == "" {
+		return errors.New("docker exec create returned empty id")
+	}
+
+	startPayload, err := json.Marshal(map[string]any{
+		"Detach": true,
+		"Tty":    false,
+	})
+	if err != nil {
+		return err
+	}
+
+	startReq, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://docker/exec/"+url.PathEscape(created.ID)+"/start",
+		bytes.NewReader(startPayload),
+	)
+	if err != nil {
+		return err
+	}
+	startReq.Header.Set("Content-Type", "application/json")
+
+	startResp, err := n.docker.Do(startReq)
+	if err != nil {
+		return err
+	}
+	defer startResp.Body.Close()
+
+	if startResp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(startResp.Body, 4096))
+		return fmt.Errorf("docker exec start failed: status=%d body=%s", startResp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func (n *nodeAgent) createDockerExec(ctx context.Context, containerName string, user string, env []string, attachStdin bool, attachStderr bool, tty bool, cmd []string) (string, error) {
+	payload, err := json.Marshal(map[string]any{
+		"AttachStdout": true,
+		"AttachStderr": attachStderr,
+		"AttachStdin":  attachStdin,
+		"Cmd":          cmd,
+		"Env":          env,
+		"Tty":          tty,
+		"User":         user,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://docker/containers/"+url.PathEscape(containerName)+"/exec",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("docker exec create failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var created struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", err
+	}
+	if created.ID == "" {
+		return "", errors.New("docker exec create returned empty id")
+	}
+	return created.ID, nil
+}
+
+type dockerAttachConn struct {
+	net.Conn
+	reader *bufio.Reader
+	buf    bytes.Buffer
+}
+
+func (c *dockerAttachConn) Read(p []byte) (int, error) {
+	for c.buf.Len() == 0 {
+		header := make([]byte, 8)
+		if _, err := io.ReadFull(c.reader, header); err != nil {
+			return 0, err
+		}
+
+		streamType := header[0]
+		frameSize := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+		if frameSize < 0 {
+			return 0, fmt.Errorf("invalid docker attach frame size: %d", frameSize)
+		}
+		if frameSize == 0 {
+			continue
+		}
+
+		payload := make([]byte, frameSize)
+		if _, err := io.ReadFull(c.reader, payload); err != nil {
+			return 0, err
+		}
+
+		switch streamType {
+		case 1:
+			c.buf.Write(payload)
+		case 2:
+			log.Printf("viewer tunnel stderr from %s", strings.TrimSpace(string(payload)))
+		default:
+			log.Printf("viewer tunnel ignored docker stream type=%d size=%d", streamType, frameSize)
+		}
+	}
+	return c.buf.Read(p)
+}
+
+func (n *nodeAgent) openViewerTunnel(ctx context.Context, containerName string) (net.Conn, error) {
+	execID, err := n.createDockerExec(
+		ctx,
+		containerName,
+		"",
+		nil,
+		true,
+		false,
+		false,
+		[]string{"/system/bin/sh", "-c", fmt.Sprintf("toybox nc 127.0.0.1 %[1]d || /system/bin/toybox nc 127.0.0.1 %[1]d || nc 127.0.0.1 %[1]d", encryptedViewerPort)},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	unixConn, err := net.DialTimeout("unix", "/var/run/docker.sock", 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	body := `{"Detach":false,"Tty":false}`
+	request := fmt.Sprintf(
+		"POST /v1.50/exec/%s/start HTTP/1.1\r\nHost: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+		url.PathEscape(execID),
+		len(body),
+		body,
+	)
+	if _, err := unixConn.Write([]byte(request)); err != nil {
+		unixConn.Close()
+		return nil, err
+	}
+
+	reader := bufio.NewReader(unixConn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		unixConn.Close()
+		return nil, err
+	}
+	if !strings.Contains(statusLine, "101") && !strings.Contains(statusLine, "200") {
+		headers, _ := io.ReadAll(io.LimitReader(reader, 4096))
+		unixConn.Close()
+		return nil, fmt.Errorf("docker exec start rejected: %s %s", strings.TrimSpace(statusLine), strings.TrimSpace(string(headers)))
+	}
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			unixConn.Close()
+			return nil, err
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+
+	return &dockerAttachConn{Conn: unixConn, reader: reader}, nil
+}
+
+func (n *nodeAgent) execInContainerDetachedAny(ctx context.Context, containerName string, user string, env []string, candidates [][]string) error {
+	if len(candidates) == 0 {
+		return errors.New("no exec command variants provided")
+	}
+
+	var lastErr error
+	for _, cmd := range candidates {
+		if err := n.execInContainerDetached(ctx, containerName, user, env, cmd); err == nil {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("%s: %w", strings.Join(cmd, " "), err)
+		}
+	}
+
+	return lastErr
+}
+
+func (n *nodeAgent) execInContainerCapture(ctx context.Context, containerName string, user string, env []string, cmd []string) (string, error) {
+	payload, err := json.Marshal(map[string]any{
+		"AttachStdout": true,
+		"AttachStderr": true,
+		"Cmd":          cmd,
+		"Env":          env,
+		"Tty":          true,
+		"User":         user,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://docker/containers/"+url.PathEscape(containerName)+"/exec",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("docker exec create failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var created struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", err
+	}
+	if created.ID == "" {
+		return "", errors.New("docker exec create returned empty id")
+	}
+
+	startPayload, err := json.Marshal(map[string]any{
+		"Detach": false,
+		"Tty":    true,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	startReq, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://docker/exec/"+url.PathEscape(created.ID)+"/start",
+		bytes.NewReader(startPayload),
+	)
+	if err != nil {
+		return "", err
+	}
+	startReq.Header.Set("Content-Type", "application/json")
+
+	startResp, err := n.docker.Do(startReq)
+	if err != nil {
+		return "", err
+	}
+	defer startResp.Body.Close()
+
+	output, readErr := io.ReadAll(io.LimitReader(startResp.Body, 64*1024))
+	if startResp.StatusCode >= 300 {
+		return string(output), fmt.Errorf("docker exec start failed: status=%d body=%s", startResp.StatusCode, string(output))
+	}
+	if readErr != nil {
+		return string(output), readErr
+	}
+
+	inspectReq, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"http://docker/exec/"+url.PathEscape(created.ID)+"/json",
+		nil,
+	)
+	if err != nil {
+		return string(output), err
+	}
+
+	inspectResp, err := n.docker.Do(inspectReq)
+	if err != nil {
+		return string(output), err
+	}
+	defer inspectResp.Body.Close()
+
+	if inspectResp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(inspectResp.Body, 4096))
+		return string(output), fmt.Errorf("docker exec inspect failed: status=%d body=%s", inspectResp.StatusCode, string(body))
+	}
+
+	var inspect struct {
+		ExitCode int  `json:"ExitCode"`
+		Running  bool `json:"Running"`
+	}
+	if err := json.NewDecoder(inspectResp.Body).Decode(&inspect); err != nil {
+		return string(output), err
+	}
+	if inspect.Running {
+		return string(output), errors.New("docker exec capture still running")
+	}
+	if inspect.ExitCode != 0 {
+		return string(output), fmt.Errorf("docker exec exited with code %d", inspect.ExitCode)
+	}
+
+	return string(output), nil
+}
+
+func (n *nodeAgent) execInContainerCaptureAny(ctx context.Context, containerName string, user string, env []string, candidates [][]string) (string, error) {
+	if len(candidates) == 0 {
+		return "", errors.New("no exec command variants provided")
+	}
+
+	var lastErr error
+	var lastOutput string
+	for _, cmd := range candidates {
+		output, err := n.execInContainerCapture(ctx, containerName, user, env, cmd)
+		if err == nil {
+			return output, nil
+		}
+		lastErr = fmt.Errorf("%s: %w", strings.Join(cmd, " "), err)
+		lastOutput = output
+	}
+
+	return lastOutput, lastErr
+}
+
+func (n *nodeAgent) copyFileToContainer(ctx context.Context, containerName string, targetPath string, contents []byte, mode int64) error {
+	parentDir := path.Dir(targetPath)
+	fileName := path.Base(targetPath)
+
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: fileName,
+		Mode: mode,
+		Size: int64(len(contents)),
+	}); err != nil {
+		return err
+	}
+	if _, err := tw.Write(contents); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPut,
+		"http://docker/containers/"+url.PathEscape(containerName)+"/archive?path="+url.QueryEscape(parentDir),
+		bytes.NewReader(archive.Bytes()),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("docker archive copy failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssignment, containerName string) error {
+	const attempts = 30
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+			{"ss", "-ltn"},
+			{"/system/bin/ss", "-ltn"},
+			{"/bin/ss", "-ltn"},
+			{"toybox", "ss", "-ltn"},
+			{"/system/bin/toybox", "ss", "-ltn"},
+			{"netstat", "-ltn"},
+			{"toybox", "netstat", "-ltn"},
+			{"/system/bin/toybox", "netstat", "-ltn"},
+		})
+		if err == nil && strings.Contains(output, fmt.Sprintf(":%d", encryptedViewerPort)) {
+			return nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+
+		select {
+		case <-ctx.Done():
+			lastErr = ctx.Err()
+			attempt = attempts
+		case <-time.After(1 * time.Second):
+		}
+	}
+
+	var diagnostics []string
+	if hostLog, err := os.ReadFile(n.viewerCommandLogPath(runtime.ID)); err == nil {
+		if trimmed := strings.TrimSpace(string(hostLog)); trimmed != "" {
+			diagnostics = append(diagnostics, "host viewer log: "+summarizeLogOutput(trimmed))
+		}
+	}
+	if guestLog, guestErr := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+		{"cat", "/data/local/tmp/virtdroid-viewer.log"},
+		{"/system/bin/cat", "/data/local/tmp/virtdroid-viewer.log"},
+		{"toybox", "cat", "/data/local/tmp/virtdroid-viewer.log"},
+		{"/system/bin/toybox", "cat", "/data/local/tmp/virtdroid-viewer.log"},
+	}); guestErr == nil && strings.TrimSpace(guestLog) != "" {
+		diagnostics = append(diagnostics, "guest viewer log: "+summarizeLogOutput(guestLog))
+	}
+	if logOutput, logErr := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+		{"logcat", "-b", "all", "-d", "-t", "200"},
+		{"/system/bin/logcat", "-b", "all", "-d", "-t", "200"},
+		{"toybox", "logcat", "-b", "all", "-d", "-t", "200"},
+		{"/system/bin/toybox", "logcat", "-b", "all", "-d", "-t", "200"},
+	}); logErr == nil && strings.TrimSpace(logOutput) != "" {
+		diagnostics = append(diagnostics, "logcat: "+summarizeLogOutput(logOutput))
+	}
+	if len(diagnostics) > 0 {
+		return fmt.Errorf("encrypted viewer port %d did not open after %d seconds: %s", encryptedViewerPort, attempts, strings.Join(diagnostics, " | "))
+	}
+	if lastErr != nil {
+		return fmt.Errorf("encrypted viewer port %d did not open after %d seconds: %w", encryptedViewerPort, attempts, lastErr)
+	}
+	return fmt.Errorf("encrypted viewer port %d did not open after %d seconds", encryptedViewerPort, attempts)
+}
+
+func (n *nodeAgent) androidBootCompleted(ctx context.Context, containerName string) (bool, error) {
+	sysBootCompleted, sysErr := n.getProp(ctx, containerName, "sys.boot_completed")
+	if strings.TrimSpace(sysBootCompleted) == "1" {
+		return true, nil
+	}
+
+	devBootCompleted, devErr := n.getProp(ctx, containerName, "dev.bootcomplete")
+	if strings.TrimSpace(devBootCompleted) == "1" {
+		return true, nil
+	}
+
+	bootAnimState, animErr := n.getProp(ctx, containerName, "init.svc.bootanim")
+	if strings.TrimSpace(bootAnimState) == "stopped" {
+		return true, nil
+	}
+
+	if sysErr != nil && devErr != nil && animErr != nil {
+		return false, fmt.Errorf("read Android boot properties: %v | %v | %v", sysErr, devErr, animErr)
+	}
+
+	return false, nil
+}
+
+func (n *nodeAgent) getProp(ctx context.Context, containerName string, prop string) (string, error) {
+	return n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+		{"getprop", prop},
+		{"/system/bin/getprop", prop},
+		{"/bin/getprop", prop},
+		{"toybox", "getprop", prop},
+		{"/system/bin/toybox", "getprop", prop},
+	})
+}
+
+func summarizeLogOutput(output string) string {
+	const maxLen = 2000
+	trimmed := strings.TrimSpace(output)
+	if len(trimmed) <= maxLen {
+		return trimmed
+	}
+	return trimmed[len(trimmed)-maxLen:]
+}
+
+func shellEscape(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func containerIPAddress(inspect dockerInspectResponse, preferredNetwork string) string {
+	if preferredNetwork = strings.TrimSpace(preferredNetwork); preferredNetwork != "" {
+		if network, ok := inspect.NetworkSettings.Networks[preferredNetwork]; ok {
+			if ip := strings.TrimSpace(network.IPAddress); ip != "" {
+				return ip
+			}
+		}
+	}
+	if ip := strings.TrimSpace(inspect.NetworkSettings.IPAddress); ip != "" {
+		return ip
+	}
+	for _, network := range inspect.NetworkSettings.Networks {
+		if ip := strings.TrimSpace(network.IPAddress); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func containerGateway(inspect dockerInspectResponse, preferredNetwork string) string {
+	if preferredNetwork = strings.TrimSpace(preferredNetwork); preferredNetwork != "" {
+		if network, ok := inspect.NetworkSettings.Networks[preferredNetwork]; ok {
+			if gateway := strings.TrimSpace(network.Gateway); gateway != "" {
+				return gateway
+			}
+		}
+	}
+	for _, network := range inspect.NetworkSettings.Networks {
+		if gateway := strings.TrimSpace(network.Gateway); gateway != "" {
+			return gateway
+		}
+	}
+	return ""
+}
+
+func defaultGatewayIP() string {
+	data, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[1] != "00000000" {
+			continue
+		}
+
+		raw, err := hex.DecodeString(fields[2])
+		if err != nil || len(raw) != 4 {
+			continue
+		}
+		return net.IPv4(raw[3], raw[2], raw[1], raw[0]).String()
+	}
+
+	return ""
+}
+
+func androidRuntimeReady(inspect dockerInspectResponse) bool {
+	if !inspect.State.Running {
+		return false
+	}
+
+	startedAt := strings.TrimSpace(inspect.State.StartedAt)
+	if startedAt == "" {
+		return false
+	}
+
+	startedAtTime, err := time.Parse(time.RFC3339Nano, startedAt)
+	if err != nil {
+		return false
+	}
+
+	return time.Since(startedAtTime) >= androidStartupGrace
+}
+
+func dockerHTTPClient() *http.Client {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", "/var/run/docker.sock")
+		},
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Minute,
+	}
+}
+
+func containerNameForRuntime(runtimeID string) string {
+	sanitized := strings.ReplaceAll(runtimeID, "-", "")
+	if len(sanitized) > 16 {
+		sanitized = sanitized[:16]
+	}
+	return "virtdroid-" + sanitized
+}
+
+func adbPortForRuntime(runtimeID string) int {
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(runtimeID))
+	return 20000 + int(hasher.Sum32()%20000)
+}
+
+func dockerSocketAvailable() bool {
+	return fileExists("/var/run/docker.sock")
+}
+
+func binderAvailable() bool {
+	candidates := []string{
+		"/dev/binder",
+		"/dev/binderfs",
+		"/dev/binderfs/binder",
+	}
+
+	for _, path := range candidates {
+		if fileExists(path) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func derefInt(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

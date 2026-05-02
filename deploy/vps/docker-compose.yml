@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: virtdroid-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-virtdroid}
+      POSTGRES_USER: ${POSTGRES_USER:-virtdroid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U virtdroid -d virtdroid"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  virtdroidd:
+    build:
+      context: ../../backend
+    container_name: virtdroidd
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      BIND_ADDR: :8080
+      DATABASE_URL: postgres://${POSTGRES_USER:-virtdroid}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtdroid}?sslmode=disable
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL, for example https://your-domain.example}
+      PUBLIC_RELAY_URL: ${PUBLIC_RELAY_URL:?set PUBLIC_RELAY_URL, for example https://your-domain.example}
+      NODE_SHARED_SECRET: ${NODE_SHARED_SECRET:?set NODE_SHARED_SECRET}
+      BOOTSTRAP_INVITE_TOKEN: ${BOOTSTRAP_INVITE_TOKEN:?set BOOTSTRAP_INVITE_TOKEN for private alpha onboarding}
+      BOOTSTRAP_RATE_LIMIT_PER_MINUTE: ${BOOTSTRAP_RATE_LIMIT_PER_MINUTE:-5}
+      BOOTSTRAP_MAX_BODY_BYTES: ${BOOTSTRAP_MAX_BODY_BYTES:-32768}
+    ports:
+      - "${HOST_API_BIND:-127.0.0.1}:8080:8080"
+
+  virtnoded:
+    build:
+      context: ../../backend
+    container_name: virtnoded
+    command: ["virtnoded"]
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID to the host docker group id, e.g. getent group docker | cut -d: -f3}"
+    restart: unless-stopped
+    depends_on:
+      - virtdroidd
+    environment:
+      NODE_BIND_ADDR: :8090
+      CONTROL_PLANE_URL: http://virtdroidd:8080
+      NODE_ID: ${NODE_ID:-mp-vps-storage}
+      NODE_NAME: ${NODE_NAME:-mp-vps-storage}
+      NODE_ADVERTISE_ADDR: ${NODE_ADVERTISE_ADDR:?set NODE_ADVERTISE_ADDR}
+      NODE_ADB_PATH: /usr/bin/adb
+      NODE_SHARED_SECRET: ${NODE_SHARED_SECRET:?set NODE_SHARED_SECRET}
+      NODE_BLOB_STORE_KIND: ${NODE_BLOB_STORE_KIND:-local-disk}
+      NODE_SIA_RENTERD_WORKER_URL: ${NODE_SIA_RENTERD_WORKER_URL:-}
+      NODE_SIA_RENTERD_PASSWORD: ${NODE_SIA_RENTERD_PASSWORD:-}
+      NODE_SIA_RENTERD_BUCKET: ${NODE_SIA_RENTERD_BUCKET:-virtdroid}
+      NODE_SIA_RENTERD_MIN_SHARDS: ${NODE_SIA_RENTERD_MIN_SHARDS:-}
+      NODE_SIA_RENTERD_TOTAL_SHARDS: ${NODE_SIA_RENTERD_TOTAL_SHARDS:-}
+      NODE_SIA_RENTERD_CONTRACT_SET: ${NODE_SIA_RENTERD_CONTRACT_SET:-}
+      NODE_HEARTBEAT_INTERVAL: 30s
+      NODE_RECONCILE_INTERVAL: 10s
+      NODE_DOCKER_NETWORK: vps_default
+      NODE_RUNTIME_ROOT: /srv/virtdroid/runtimes
+    ports:
+      - "${HOST_RELAY_BIND:-127.0.0.1}:8090:8090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/binderfs:/dev/binderfs:ro
+      - /srv/virtdroid:/srv/virtdroid
+
+  renterd:
+    image: ghcr.io/siafoundation/renterd:master
+    container_name: virtdroid-renterd
+    restart: unless-stopped
+    profiles:
+      - renterd
+    environment:
+      RENTERD_API_PASSWORD: ${RENTERD_API_PASSWORD:-}
+      RENTERD_SEED: ${RENTERD_SEED:-}
+      RENTERD_LOG_LEVEL: ${RENTERD_LOG_LEVEL:-info}
+    ports:
+      - "127.0.0.1:9980:9980"
+      - "127.0.0.1:9981:9981"
+    volumes:
+      - renterd-data:/data
+    stop_grace_period: 5m
+
+  edge:
+    image: haproxy:lts
+    container_name: virtdroid-edge
+    restart: unless-stopped
+    profiles:
+      - edge
+    depends_on:
+      - virtdroidd
+      - virtnoded
+    ports:
+      - "443:443"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ${HAPROXY_CERT_PATH:-/srv/virtdroid/tls/virtdroid.pem}:/usr/local/etc/haproxy/certs/virtdroid.pem:ro
+
+volumes:
+  postgres-data:
+  renterd-data:
