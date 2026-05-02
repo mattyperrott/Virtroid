@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/newRuntimeRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -335,11 +336,10 @@
         android:paddingEnd="24dp"
         android:paddingTop="20dp"
         android:paddingBottom="32dp">
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/provisionRuntimeButton"
             android:layout_width="match_parent"
             android:layout_height="60dp"
-            android:background="@drawable/bg_white_round"
             android:text="Provision Runtime"
             android:textAllCaps="false"
             android:textColor="@color/v_bg"
@@ -350,6 +350,9 @@
             android:minHeight="0dp"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
-            android:gravity="center" />
+            android:gravity="center"
+            app:backgroundTint="@color/v_white"
+            app:cornerRadius="999dp"
+            app:rippleColor="@color/v_border_soft" />
     </LinearLayout>
 </FrameLayout>

@@ -150,6 +150,7 @@ class SessionActivity : AppCompatActivity() {
             }
 
             override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {
+                binding.sessionPreviewImage.isVisible = false
                 binding.sessionPreviewOverlay.isVisible = false
             }
         }

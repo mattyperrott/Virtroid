@@ -187,6 +187,9 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtime.id))
         }
+        cardBinding.actionControlsButton.setOnClickListener {
+            startActivity(ControlsActivity.createIntent(this, runtime.id))
+        }
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {

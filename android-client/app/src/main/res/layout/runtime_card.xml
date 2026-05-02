@@ -258,6 +258,17 @@
                 app:strokeWidth="1dp" />
 
             <ImageButton
+                android:id="@+id/actionControlsButton"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/bg_surface_light_circle"
+                android:contentDescription="@string/runtime_controls"
+                android:padding="15dp"
+                android:src="@drawable/ic_tune"
+                android:tint="@color/v_text_muted" />
+
+            <ImageButton
                 android:id="@+id/deleteRuntimeButton"
                 android:layout_width="56dp"
                 android:layout_height="56dp"
