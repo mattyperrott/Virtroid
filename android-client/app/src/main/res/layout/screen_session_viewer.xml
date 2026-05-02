@@ -74,7 +74,7 @@
                         android:includeFontPadding="false"
                         android:maxLines="1"
                         android:ellipsize="end"
-                        android:text="Relay / Ready"
+                        android:text="Secure • 24ms"
                         android:textColor="@color/v_accent"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -127,10 +127,18 @@
             android:layout_weight="1"
             android:background="@drawable/bg_viewer_wallpaper">
 
+            <ImageView
+                android:id="@+id/sessionPreviewImage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="@drawable/session_viewer_wallpaper_preview" />
+
             <FrameLayout
                 android:id="@+id/sessionPreviewOverlay"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent">
+                android:layout_height="match_parent"
+                android:visibility="gone">
 
                 <LinearLayout
                     android:id="@+id/guest_status_bar"

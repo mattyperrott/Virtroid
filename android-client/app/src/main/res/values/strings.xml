@@ -81,15 +81,15 @@
     <string name="runtime_state_provisioning">Provisioning • Preparing Session</string>
     <string name="runtime_state_unknown">Offline</string>
     <string name="runtime_stat_one_label">UPTIME</string>
-    <string name="runtime_stat_two_label">LOAD</string>
-    <string name="runtime_stat_three_label">RELAY</string>
+    <string name="runtime_stat_two_label">REGION</string>
+    <string name="runtime_stat_three_label">PING</string>
     <string name="runtime_stat_live">Live</string>
     <string name="runtime_stat_saved">Saved</string>
     <string name="runtime_stat_load_unknown">--</string>
     <string name="runtime_stat_ping_live">Ready</string>
     <string name="runtime_stat_ping_offline">Idle</string>
-    <string name="runtime_connect_display">Connect Display</string>
-    <string name="runtime_start">Start</string>
+    <string name="runtime_connect_display">Connect</string>
+    <string name="runtime_start">Start Node</string>
     <string name="runtime_stop">Stop</string>
     <string name="runtime_delete">Delete</string>
     <string name="runtime_controls">Controls</string>
@@ -120,7 +120,7 @@
     <string name="controls_storage">STORAGE</string>
     <string name="controls_state_running">Running</string>
     <string name="controls_state_stopped">Stopped</string>
-    <string name="controls_tunnel_encrypted">Relay</string>
+    <string name="controls_tunnel_encrypted">Encrypted</string>
     <string name="controls_storage_volatile">Volatile</string>
     <string name="controls_storage_persistent">Persistent</string>
     <string name="controls_session_parameters">SESSION PARAMETERS</string>
@@ -145,7 +145,7 @@
     <string name="controls_confirm">Confirm</string>
     <string name="controls_cancel">Cancel</string>
     <string name="controls_display_dialog_title">Display &amp; Output</string>
-    <string name="controls_tunnel_direct">Relay</string>
+    <string name="controls_tunnel_direct">Encrypted</string>
     <string name="controls_loaded">Loaded</string>
 
     <string name="session_title_fallback">Private Session</string>

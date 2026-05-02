@@ -449,15 +449,21 @@
                             android:includeFontPadding="false"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <Switch
+                    <FrameLayout
                         android:id="@+id/cameraPassthroughSwitch"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:checked="true"
+                        android:layout_width="52dp"
+                        android:layout_height="30dp"
+                        android:background="@drawable/bg_switch_track_on"
                         android:clickable="false"
-                        android:focusable="false"
-                        android:thumbTint="@color/v_bg"
-                        android:trackTint="@color/v_accent" />
+                        android:focusable="false">
+
+                        <View
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="end|center_vertical"
+                            android:layout_marginEnd="4dp"
+                            android:background="@drawable/bg_switch_thumb_dark" />
+                    </FrameLayout>
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/consoleLogsRow"
