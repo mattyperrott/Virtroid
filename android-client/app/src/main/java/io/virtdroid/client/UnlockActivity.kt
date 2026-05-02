@@ -1,0 +1,140 @@
+package io.virtdroid.client
+
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
+import androidx.core.view.updatePadding
+import io.virtdroid.client.databinding.ScreenPinAuthenticationBinding
+import io.virtdroid.client.security.AppLockStore
+import io.virtdroid.client.security.enableSecureWindow
+
+class UnlockActivity : AppCompatActivity() {
+    private lateinit var binding: ScreenPinAuthenticationBinding
+    private lateinit var appLockStore: AppLockStore
+    private var pinBuffer = StringBuilder()
+    private var showingPassphrase = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableSecureWindow()
+        binding = ScreenPinAuthenticationBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.unlockRoot) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(
+                left = 24 + bars.left,
+                top = 28 + bars.top,
+                right = 24 + bars.right,
+                bottom = 28 + bars.bottom,
+            )
+            insets
+        }
+
+        appLockStore = AppLockStore(this)
+        if (!appLockStore.hasCredential()) {
+            launchOnboarding()
+            return
+        }
+
+        val pinButtons = listOf(
+            binding.pinButton0 to "0",
+            binding.pinButton1 to "1",
+            binding.pinButton2 to "2",
+            binding.pinButton3 to "3",
+            binding.pinButton4 to "4",
+            binding.pinButton5 to "5",
+            binding.pinButton6 to "6",
+            binding.pinButton7 to "7",
+            binding.pinButton8 to "8",
+            binding.pinButton9 to "9",
+        )
+        pinButtons.forEach { (button, value) ->
+            button.setOnClickListener { appendPin(value) }
+        }
+        binding.pinDeleteButton.setOnClickListener {
+            if (pinBuffer.isNotEmpty()) {
+                pinBuffer.deleteAt(pinBuffer.lastIndex)
+                updateDots()
+            }
+        }
+        binding.unlockButton.setOnClickListener { unlockWithPassphrase() }
+        binding.switchUnlockModeText.setOnClickListener { toggleUnlockMode() }
+
+        showingPassphrase = appLockStore.mode == AppLockStore.LockMode.PASSPHRASE
+        renderMode()
+    }
+
+    private fun appendPin(value: String) {
+        if (showingPassphrase || pinBuffer.length >= 6) return
+        pinBuffer.append(value)
+        updateDots()
+        if (pinBuffer.length == 6) {
+            if (appLockStore.verify(pinBuffer.toString())) {
+                launchMain()
+            } else {
+                pinBuffer = StringBuilder()
+                updateDots()
+                toast(getString(R.string.lock_invalid_pin))
+            }
+        }
+    }
+
+    private fun unlockWithPassphrase() {
+        val value = binding.passphraseInput.text?.toString().orEmpty()
+        if (appLockStore.verify(value)) {
+            launchMain()
+        } else {
+            toast(getString(R.string.lock_invalid_passphrase))
+        }
+    }
+
+    private fun toggleUnlockMode() {
+        showingPassphrase = !showingPassphrase
+        renderMode()
+    }
+
+    private fun renderMode() {
+        val passphraseOnly = appLockStore.mode == AppLockStore.LockMode.PASSPHRASE
+        val effectivePassphrase = passphraseOnly || showingPassphrase
+        binding.passphraseSection.isVisible = effectivePassphrase
+        binding.pinPad.isVisible = !effectivePassphrase
+        binding.pinDotsRow.isVisible = !effectivePassphrase
+        binding.switchUnlockModeText.isVisible = !passphraseOnly
+    }
+
+    private fun updateDots() {
+        val dots = listOf(binding.pinDot1, binding.pinDot2, binding.pinDot3, binding.pinDot4, binding.pinDot5, binding.pinDot6)
+        dots.forEachIndexed { index, view ->
+            view.setBackgroundResource(
+                if (index < pinBuffer.length) R.drawable.bg_pin_dot_active else R.drawable.bg_pin_dot_inactive,
+            )
+        }
+    }
+
+    private fun launchMain() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        )
+        finish()
+    }
+
+    private fun launchOnboarding() {
+        startActivity(
+            Intent(this, OnboardingActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        )
+        finish()
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+}

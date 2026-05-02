@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="20dp"
+    app:cardBackgroundColor="@color/v_surface"
+    app:cardCornerRadius="32dp"
+    app:cardElevation="0dp"
+    app:strokeColor="@color/v_border"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_surface_light_16">
+
+                <ImageView
+                    android:id="@+id/runtimeIcon"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_phone"
+                    android:tint="@color/v_accent" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/runtimeTitleText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="7dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:id="@+id/runtimeStatusDot"
+                        android:layout_width="7dp"
+                        android:layout_height="7dp"
+                        android:layout_marginEnd="7dp"
+                        android:background="@drawable/bg_dot_muted" />
+
+                    <TextView
+                        android:id="@+id/runtimeSubtitleText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:maxLines="1"
+                        android:textColor="@color/v_text_muted"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/runtimeControlsButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/bg_surface_light_circle"
+                android:contentDescription="@string/runtime_controls"
+                android:padding="13dp"
+                android:src="@drawable/ic_tune"
+                android:tint="@color/v_text_primary" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/runtimeStatsRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/runtimeStatOneLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="0.08"
+                    android:text="@string/runtime_stat_one_label"
+                    android:textAllCaps="true"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/runtimeStatOneValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="7dp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="14dp"
+                android:background="@color/v_border_soft" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/runtimeStatTwoLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="0.08"
+                    android:text="@string/runtime_stat_two_label"
+                    android:textAllCaps="true"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/runtimeStatTwoValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="7dp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="14dp"
+                android:background="@color/v_border_soft" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/runtimeStatThreeLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="0.08"
+                    android:text="@string/runtime_stat_three_label"
+                    android:textAllCaps="true"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/runtimeStatThreeValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="7dp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/connectRuntimeButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="26dp"
+            android:fontFamily="sans"
+            android:includeFontPadding="false"
+            android:minHeight="56dp"
+            android:text="@string/runtime_connect_display"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            app:backgroundTint="@color/v_accent"
+            app:icon="@drawable/ic_chevron_right"
+            app:iconGravity="textEnd"
+            app:iconPadding="12dp"
+            app:iconTint="@color/v_bg"
+            app:rippleColor="@color/v_accent_soft" />
+
+        <LinearLayout
+            android:id="@+id/runtimeActionRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/startRuntimeButton"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:fontFamily="sans"
+                android:includeFontPadding="false"
+                android:minHeight="56dp"
+                android:text="@string/runtime_start"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                app:backgroundTint="@color/v_surface_2"
+                app:icon="@drawable/ic_play"
+                app:iconGravity="textStart"
+                app:iconPadding="12dp"
+                app:iconTint="@color/v_accent"
+                app:strokeColor="@color/v_border"
+                app:strokeWidth="1dp" />
+
+            <ImageButton
+                android:id="@+id/deleteRuntimeButton"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/bg_red_soft_24"
+                android:contentDescription="@string/runtime_delete"
+                android:padding="15dp"
+                android:src="@drawable/ic_delete"
+                android:tint="@color/v_danger" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/runtimeErrorText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:fontFamily="sans"
+            android:includeFontPadding="false"
+            android:textColor="@color/v_danger"
+            android:textSize="13sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

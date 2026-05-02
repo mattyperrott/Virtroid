@@ -1,0 +1,355 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/newRuntimeRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/v_bg">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+        <LinearLayout
+            android:id="@+id/status_bar"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:gravity="bottom|center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="8dp">
+            <TextView
+                android:id="@+id/text_status_time"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="09:41"
+                android:textColor="@color/v_text_primary"
+                android:textSize="14sp"
+                android:fontFamily="sans"
+                android:includeFontPadding="false" />
+            <LinearLayout
+                android:id="@+id/text_status_icons"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:orientation="horizontal">
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_marginEnd="7dp"
+                    android:src="@drawable/ic_status_wifi" />
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_marginEnd="7dp"
+                    android:src="@drawable/ic_status_signal" />
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_status_battery" />
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout
+            android:id="@+id/top_nav"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="12dp">
+            <ImageButton
+                android:id="@+id/newRuntimeCloseButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_surface_circle"
+                android:contentDescription="@string/new_runtime_close"
+                android:padding="13dp"
+                android:src="@drawable/ic_close"
+                android:tint="@color/v_text_primary" />
+            <TextView
+                android:id="@+id/text_nav_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="New Runtime"
+                android:textColor="@color/v_text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:fontFamily="sans"
+                android:includeFontPadding="false" />
+            <View
+                android:layout_width="44dp"
+                android:layout_height="44dp" />
+        </LinearLayout>
+        <ScrollView
+            android:id="@+id/create_session_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="false"
+            android:clipToPadding="false"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+            <LinearLayout
+                android:id="@+id/create_session_scroll_content"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="160dp">
+                <TextView
+                    android:id="@+id/label_identity"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="IDENTITY"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="0.08"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="12dp" />
+                <LinearLayout
+                    android:id="@+id/session_name_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_surface2_24"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:layout_marginBottom="32dp">
+                    <EditText
+                        android:id="@+id/sessionNameInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:background="@android:color/transparent"
+                        android:hint="Session Name (e.g. Work Alt)"
+                        android:inputType="textCapWords"
+                        android:textColor="@color/v_text_primary"
+                        android:textColorHint="@color/v_text_dim"
+                        android:textSize="17sp"
+                        android:singleLine="true" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/label_threat_model"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="THREAT MODEL"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="0.08"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="0dp"
+                    android:layout_marginBottom="12dp" />
+                <LinearLayout
+                    android:id="@+id/option_standard_persistent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_surface_stroke_24"
+                    android:padding="18dp"
+                    android:layout_marginBottom="12dp">
+                    <RadioButton
+                        android:id="@+id/radio_standard"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:buttonTint="@color/v_text_muted" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="8dp">
+                        <TextView
+                            android:id="@+id/text_standard_title"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Standard Persistent"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false" />
+                        <TextView
+                            android:id="@+id/text_standard_subtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Data is saved between sessions. Acts like a normal second phone."
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="14sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:lineSpacingExtra="3dp"
+                            android:layout_marginTop="6dp" />
+                    </LinearLayout>
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/option_ephemeral"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_selected_card_24"
+                    android:padding="18dp"
+                    android:layout_marginBottom="32dp">
+                    <RadioButton
+                        android:id="@+id/radio_ephemeral"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:buttonTint="@color/v_accent" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="8dp">
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+                            <TextView
+                                android:id="@+id/text_ephemeral_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Amnesic / Ephemeral"
+                                android:textColor="@color/v_accent"
+                                android:textSize="16sp"
+                                android:textStyle="bold"
+                                android:fontFamily="sans"
+                                android:includeFontPadding="false" />
+                            <TextView
+                                android:id="@+id/chip_recommended"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Recommended"
+                                android:textColor="@color/v_accent"
+                                android:textSize="10sp"
+                                android:textStyle="bold"
+                                android:fontFamily="sans"
+                                android:includeFontPadding="false"
+                                android:paddingStart="8dp"
+                                android:paddingEnd="8dp"
+                                android:paddingTop="3dp"
+                                android:paddingBottom="3dp"
+                                android:background="@drawable/bg_accent_soft_12" />
+                        </LinearLayout>
+                        <TextView
+                            android:id="@+id/text_ephemeral_subtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="RAM-only partition. Local session state is cleared on disconnect."
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="14sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:lineSpacingExtra="3dp"
+                            android:layout_marginTop="6dp" />
+                    </LinearLayout>
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/settings_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_surface2_24"
+                    android:padding="2dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:padding="16dp">
+                        <TextView
+                            android:id="@+id/switch_force_tor_label"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Force Tor Routing"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="15sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false" />
+                        <Switch
+                            android:id="@+id/switch_force_tor"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checked="true"
+                            android:text="" />
+                    </LinearLayout>
+                    <View
+                        android:id="@+id/divider_toggles"
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="@color/v_border_soft"
+                        android:layout_marginStart="16dp"
+                        android:layout_marginEnd="16dp" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:padding="16dp">
+                        <TextView
+                            android:id="@+id/switch_audio_passthrough_label"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Audio Passthrough"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="15sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false" />
+                        <Switch
+                            android:id="@+id/audioPassthroughSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checked="false"
+                            android:text="" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/bottom_action"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="@color/v_bg"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="32dp">
+        <Button
+            android:id="@+id/provisionRuntimeButton"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:background="@drawable/bg_white_round"
+            android:text="Provision Runtime"
+            android:textAllCaps="false"
+            android:textColor="@color/v_bg"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:fontFamily="sans"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:gravity="center" />
+    </LinearLayout>
+</FrameLayout>

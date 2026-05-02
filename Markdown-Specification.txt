@@ -1,0 +1,1003 @@
+# Cloud Android Platform
+
+## Full Rundown Specification
+
+---
+
+## 1. Product Definition
+
+The platform provides each user with a personal cloud-hosted Android device that can be started on demand, remotely interacted with, restarted, identity-reset, or fully destroyed.
+
+The system is built around four distinct components:
+
+- Runtime Layer — the live Android session
+- Persona Layer — the virtual device identity
+- State Layer — the persistent user and app data
+- Client Layer — the Android app used to access and control the cloud device
+
+The main product goal is to let a user operate a cloud Android environment that is:
+
+- remotely accessible
+- isolated per user
+- persistent where needed
+- disposable where needed
+- identity-flexible
+- storage-protected through encryption and distribution
+
+---
+
+## 2. Core System Model
+
+### 2.1 Runtime Layer
+
+The runtime is the active Android environment the user sees and interacts with.
+
+#### Properties
+
+- created only when needed
+- temporary by design
+- destroyed when a session ends, restarts, or is reset
+- not used as the permanent source of truth
+
+#### Responsibilities
+
+- execute the Android operating environment
+- run installed applications
+- render the remote user interface
+- receive restored persona and state at startup
+- accept live user input
+
+#### Design intent
+
+The runtime is disposable. It should always be possible to destroy it and recreate it without losing the user’s persistent data unless a full wipe is requested.
+
+---
+
+### 2.2 Persona Layer
+
+The persona is the synthetic virtual identity of the cloud device.
+
+#### Properties
+
+- independent from the runtime
+- persistent across ordinary restarts
+- replaceable without deleting the user’s data
+- deleted during full factory reset
+
+#### Contents
+
+- device model identity
+- brand/manufacturer identity
+- product identity
+- build identity
+- hardware capability profile
+- display profile
+- synthetic device-linked identifiers used by the virtual device profile
+
+#### Purpose
+
+The persona defines what kind of device the cloud Android appears to be. It is the continuity layer for device identity, separate from the actual live runtime.
+
+---
+
+### 2.3 State Layer
+
+The state contains the user’s persistent cloud-device data.
+
+#### Properties
+
+- persistent across sessions
+- restored into each new runtime
+- encrypted before storage
+- stored separately from the runtime
+- preserved during restart and persona reset
+- destroyed during factory reset
+
+#### Contents
+
+- installed applications
+- application data
+- user files
+- downloads
+- imported media
+- app preferences
+- retained user-created content
+
+#### Purpose
+
+The state is the continuity layer for the user’s cloud device content.
+
+---
+
+### 2.4 Client Layer
+
+The client is the Android application the user installs on their physical phone or tablet to access the platform.
+
+#### Properties
+
+- acts as the primary user interface
+- acts as the control surface for cloud-device operations
+- does not act as the long-term source of truth for user data
+- may hold short-term credentials and temporary upload artifacts only as needed
+
+#### Roles
+
+The client serves two major roles:
+
+##### A. Control Plane Role
+
+- user authentication
+- trusted-device enrollment
+- session lifecycle control
+- persona reset initiation
+- factory reset initiation
+- file upload initiation
+- camera capture and upload initiation
+
+##### B. Interaction Role
+
+- render the live cloud Android session
+- forward touch/navigation/input
+- maintain the user’s active session connection
+- reconnect if appropriate
+
+#### Design intent
+
+The client is a secure access terminal, not the persistent storage location of the user’s cloud device.
+
+---
+
+## 3. Distributed Encrypted Storage Model
+
+### 3.1 Overview
+
+Persistent data must be stored in a way that reduces reliance on any single storage location.
+
+The platform stores persistent bundles using an encrypt-then-split-then-distribute model.
+
+This applies to:
+
+- state bundles
+- persona bundles
+
+### 3.2 Storage Pipeline
+
+For each persistent bundle:
+
+1. bundle data is assembled
+2. bundle is serialized
+3. bundle is compressed if needed
+4. bundle is encrypted into ciphertext
+5. ciphertext is split into shards
+6. shards are distributed across separate storage nodes
+7. metadata needed for reconstruction is stored separately
+
+### 3.3 Key Properties
+
+- Encryption-first  
+  Data is encrypted before splitting.
+
+- Shard-based distribution  
+  No single node stores the complete encrypted bundle.
+
+- Metadata separation  
+  Shard mapping and reconstruction metadata are stored separately from the shards themselves.
+
+- Node distrust assumption  
+  Each storage node is treated as untrusted.
+
+### 3.4 Security Outcome
+
+A single compromised storage node should not provide enough information to reconstruct usable user data.
+
+---
+
+## 4. User Capabilities
+
+The user can:
+
+- sign in
+- register the client device as trusted
+- view their cloud-device status
+- start a cloud Android session
+- reconnect to an active session
+- restart the live runtime
+- reset the virtual persona while keeping data
+- factory reset the entire cloud device
+- upload files into the cloud device
+- capture photos/videos locally and import them into the cloud device
+- manage trusted client devices
+
+---
+
+## 5. Lifecycle Operations
+
+### 5.1 Start Session
+
+When a user starts their cloud device:
+
+1. user is authenticated
+2. client device is validated as trusted
+3. a new runtime is created
+4. the current persona is applied
+5. the current state is reconstructed from distributed storage
+6. state is restored into the runtime
+7. the session connection is authorized
+8. the client connects and begins interaction
+
+### 5.2 Reconnect Session
+
+If a runtime is still active:
+
+- the user reconnects to it
+
+If no runtime is active:
+
+- a new runtime is created using the current persona and current state
+
+### 5.3 Restart Session
+
+A restart means:
+
+- destroy current runtime
+- keep persona
+- keep state
+- create a new runtime
+- restore persona and state again
+
+### 5.4 Persona Reset
+
+A persona reset means:
+
+- destroy current runtime
+- retire current persona
+- generate a new persona
+- preserve existing state
+- next runtime starts with new persona and same state
+
+### 5.5 Factory Reset
+
+A factory reset means:
+
+- destroy current runtime
+- delete persona bundle
+- delete state bundle
+- delete reconstruction metadata
+- remove shard references
+- revoke active access permissions
+- next start creates an entirely new cloud device
+
+---
+
+## 6. Android Client App Specification
+
+### 6.1 Purpose
+
+The client app is the user-facing access point for the platform.
+
+It is responsible for:
+
+- identity and access
+- cloud-device control
+- session interaction
+- uploads
+- security-sensitive confirmations
+
+### 6.2 Core Client Functions
+
+#### Authentication
+
+- start and complete sign-in
+- maintain authenticated session
+- support reauthentication when required
+
+#### Trusted Device Enrollment
+
+- register the physical client as an allowed access device
+- maintain local device trust identity
+- allow device revocation from account controls
+
+#### Dashboard / Device Overview
+
+- show whether the cloud device is offline, starting, active, restarting, resetting, or wiped
+- present major actions clearly
+
+#### Session Controls
+
+- start
+- reconnect
+- restart
+- persona reset
+- factory reset
+
+#### Remote Session Interface
+
+- render remote Android surface
+- forward touch/input/navigation
+- show session health
+- handle disconnect/reconnect states
+
+#### File Import
+
+- open local file selection
+- upload file into active cloud device
+- show progress and result
+
+#### Camera Import
+
+- open camera inside client app
+- capture photo or video
+- upload directly to cloud device
+- avoid unnecessary permanent client-side storage
+
+#### Trusted Device Management
+
+- list trusted devices
+- revoke device access
+- show last activity if available
+
+### 6.3 Client-Side Security Responsibilities
+
+The client must:
+
+- require authentication before cloud-device actions
+- maintain only the minimum local sensitive state necessary
+- protect local device credentials
+- require explicit confirmation for destructive actions
+- avoid becoming a long-term store for cloud-device data
+
+### 6.4 Client Data Handling Rules
+
+The client should:
+
+- keep persistent local storage minimal
+- use temporary storage only when needed for file/media handling
+- delete temporary capture artifacts after successful upload where appropriate
+- treat the cloud device, not the client, as the destination of truth
+
+---
+
+## 7. Session Access Model
+
+### 7.1 Trusted Device Requirement
+
+A user may access the platform from multiple physical devices, but each must be registered and trusted.
+
+### 7.2 Session Authorization Requirement
+
+A runtime session can only be accessed when:
+
+- user authentication is valid
+- client device is trusted
+- runtime access is currently authorized
+
+### 7.3 Controlled Runtime Access
+
+The client must not directly attach to raw runtime infrastructure without platform mediation and authorization.
+
+---
+
+## 8. Remote Interaction Model
+
+### 8.1 Display and Input
+
+The user interacts with the cloud Android through:
+
+- remote display
+- touch gestures
+- navigation controls
+- general runtime interaction events
+
+### 8.2 Session Continuity
+
+The client must:
+
+- maintain the active session while authorized
+- detect lost connection
+- allow the user to reconnect where possible
+- stop interaction when session access expires
+
+---
+
+## 9. File and Media Transfer Model
+
+### 9.1 File Import Flow
+
+The user can:
+
+- choose a local file
+- upload it into the cloud Android
+- have it appear within the cloud-device environment
+
+This flow is tied to the active cloud device and active authorization context.
+
+### 9.2 Camera Import Flow
+
+The user can:
+
+- open an in-app camera flow
+- capture an image or video
+- upload it directly into the cloud device
+
+This media should not need to remain stored on the local phone unless explicitly intended.
+
+---
+
+## 10. Security Model
+
+### 10.1 Access Control
+
+All meaningful actions require:
+
+- valid user identity
+- valid trusted device
+- valid current authorization
+
+### 10.2 Persistent Data Protection
+
+Persistent persona and state data must:
+
+- be encrypted before storage
+- be split and distributed
+- have reconstruction metadata controlled separately
+
+### 10.3 Runtime Isolation
+
+Each user runtime must be isolated from other users.
+
+### 10.4 Destructive Action Protection
+
+Persona reset and factory reset must:
+
+- require explicit confirmation
+- invalidate active sessions as needed
+- be clearly communicated as consequential actions
+
+---
+
+## 11. System Constraints
+
+The system must preserve these rules:
+
+- runtime is ephemeral
+- persona is separate from state
+- client is separate from runtime, persona, and state
+- persistent data is encrypted before distribution
+- shards are distributed across independent storage nodes
+- metadata is not co-located with complete persistent bundle data
+- direct uncontrolled runtime access is not allowed
+
+---
+
+## 12. Operational Intent
+
+The intended user experience is:
+
+a personal Android device in the cloud that can be started, used, reset, and destroyed on demand, while preserving only what the user chooses to preserve.
+
+The intended system behavior is:
+
+- disposable execution
+- controlled persistence
+- replaceable identity
+- distributed protected storage
+- secure client-mediated access
+
+---
+
+# Formal Specification
+
+## 1. Definitions
+
+### 1.1 Runtime
+
+An ephemeral Android execution environment.
+
+### 1.2 Persona Bundle
+
+A persistent identity bundle describing the virtual device profile.
+
+### 1.3 State Bundle
+
+A persistent user/application data bundle.
+
+### 1.4 Client
+
+The user-facing application responsible for interaction, access control participation, and transfer initiation.
+
+### 1.5 Bundle
+
+A serialized persistent unit of persona or state data.
+
+### 1.6 Shard
+
+A fragment of an encrypted bundle.
+
+### 1.7 Storage Node
+
+An independent storage location holding a subset of shards.
+
+### 1.8 Manifest
+
+Metadata required to locate and reconstruct a bundle.
+
+---
+
+## 2. System Invariants
+
+### 2.1 Runtime Ephemerality
+
+The runtime MUST NOT be the permanent source of persistent user data.
+
+### 2.2 Persona-State Separation
+
+The persona bundle MUST be stored independently from the state bundle.
+
+### 2.3 Client Separation
+
+The client MUST NOT serve as the authoritative storage location for persona or state.
+
+### 2.4 Encryption Requirement
+
+Persistent bundles MUST be encrypted before being stored.
+
+### 2.5 Sharding Requirement
+
+Encrypted bundles MUST be split into multiple shards before distribution.
+
+### 2.6 Distribution Requirement
+
+Shards MUST be placed across independent storage nodes.
+
+### 2.7 Metadata Separation
+
+Reconstruction metadata MUST be stored separately from shard payload storage.
+
+### 2.8 Trusted Device Requirement
+
+A client device MUST be trusted before being allowed to access the user’s cloud device.
+
+---
+
+## 3. Client Requirements
+
+### 3.1 Authentication Requirement
+
+The client MUST authenticate the user before protected operations.
+
+### 3.2 Authorization Requirement
+
+The client MUST possess valid session authorization before attaching to a runtime.
+
+### 3.3 Controlled Access Requirement
+
+The client MUST NOT bypass platform-controlled runtime access mediation.
+
+### 3.4 Minimal Local Persistence Requirement
+
+The client SHOULD minimize long-term local storage of sensitive data.
+
+### 3.5 Destructive Action Confirmation Requirement
+
+The client MUST require explicit user confirmation for persona reset and factory reset.
+
+### 3.6 Upload Association Requirement
+
+The client MUST associate file and media transfers with the current authorized cloud-device context.
+
+---
+
+## 4. Storage Guarantees
+
+### 4.1 Single-Node Confidentiality
+
+A single storage node MUST NOT contain sufficient information to reconstruct usable persistent bundle contents.
+
+### 4.2 Partial Access Resistance
+
+A subset of shards below reconstruction requirements MUST NOT yield usable bundle recovery.
+
+### 4.3 Manifest Dependency
+
+Bundle reconstruction MUST require manifest access in addition to shard access.
+
+### 4.4 Decryption Integrity
+
+If bundle contents are incomplete or altered, restoration MUST fail rather than silently produce corrupted state.
+
+---
+
+## 5. Lifecycle Operations
+
+### 5.1 StartSession
+
+The system MUST:
+
+1. validate user and trusted client
+2. create runtime
+3. load current persona
+4. reconstruct current state
+5. restore persona and state
+6. authorize client interaction
+
+### 5.2 RestartSession
+
+The system MUST:
+
+1. destroy current runtime
+2. preserve current persona
+3. preserve current state
+4. create replacement runtime
+5. restore persona and state
+
+### 5.3 ResetPersona
+
+The system MUST:
+
+1. destroy current runtime
+2. replace current persona
+3. preserve current state
+4. create replacement runtime on next start
+
+### 5.4 FactoryReset
+
+The system MUST:
+
+1. destroy current runtime
+2. delete current persona bundle
+3. delete current state bundle
+4. delete manifests and shard references
+5. revoke active access context
+6. require a fresh cloud-device initialization for future use
+
+---
+
+## 6. Storage Operations
+
+### 6.1 StoreBundle
+
+The system MUST:
+
+1. serialize bundle
+2. optionally compress bundle
+3. encrypt bundle
+4. split encrypted output into shards
+5. distribute shards
+6. record reconstruction manifest separately
+
+### 6.2 RestoreBundle
+
+The system MUST:
+
+1. locate manifest
+2. locate and retrieve required shards
+3. reconstruct encrypted bundle
+4. decrypt bundle
+5. return the original bundle content
+
+### 6.3 DeleteBundle
+
+The system MUST:
+
+1. delete or invalidate manifest
+2. remove or invalidate shard references
+3. schedule shard deletion or equivalent destruction
+4. prevent future reconstruction
+
+---
+
+## 7. Session and Access Rules
+
+### 7.1 User Binding
+
+A runtime session MUST be bound to a single user cloud-device context.
+
+### 7.2 Trusted Client Binding
+
+A runtime access attempt MUST be associated with a trusted client.
+
+### 7.3 Session Expiry
+
+If session authorization expires, the client MUST lose runtime interaction capability until reauthorized.
+
+---
+
+## 8. File and Media Import Rules
+
+### 8.1 File Import
+
+The client MUST be able to initiate transfer of a user-selected file into the active cloud-device context.
+
+### 8.2 Camera Import
+
+The client MUST be able to capture media and transfer it into the active cloud-device context.
+
+### 8.3 Scoped Transfer Rule
+
+All transfers MUST be scoped to the current authorized device/session context.
+
+---
+
+## 9. Failure Handling Rules
+
+### 9.1 Runtime Loss
+
+If runtime is lost unexpectedly, the platform SHOULD allow creation of a new runtime from the latest valid persona and state.
+
+### 9.2 Client Disconnect
+
+If the client disconnects, the platform MAY allow reconnect depending on session validity and runtime availability.
+
+### 9.3 Partial Storage Loss
+
+If required shards cannot be reconstructed, bundle restoration MUST fail clearly.
+
+### 9.4 Metadata Loss
+
+If manifest data is unavailable, bundle restoration MUST fail clearly.
+
+---
+
+## 10. Security Properties
+
+### 10.1 No Single Storage Point of Full Exposure
+
+The architecture MUST avoid storing complete usable bundle data on a single storage node.
+
+### 10.2 Persistent Data Confidentiality
+
+All stored persona and state data MUST remain encrypted at rest.
+
+### 10.3 Runtime Isolation
+
+User runtimes MUST remain isolated from one another.
+
+### 10.4 Access Mediation
+
+Runtime access MUST be mediated by platform authorization controls.
+
+### 10.5 Intent Enforcement
+
+High-impact destructive actions MUST require deliberate user intent.
+
+---
+
+# Sequence Diagrams
+
+1. Start Session
+
+User
+  |
+  v
+Android Client
+  |
+  | authenticate + validate trusted device
+  v
+Platform Control Layer
+  |
+  | request current persona + state manifests
+  v
+Metadata Service
+  |
+  | return reconstruction metadata
+  v
+Platform Control Layer
+  |
+  | retrieve required shards
+  v
+Distributed Storage Nodes
+  |
+  | return shards
+  v
+Platform Control Layer
+  |
+  | reconstruct + decrypt bundles
+  |
+  | create runtime
+  v
+Runtime Worker
+  |
+  | apply persona + restore state
+  v
+Cloud Runtime
+  |
+  | session ready
+  v
+Platform Control Layer
+  |
+  | authorize client connection
+  v
+Android Client
+  |
+  | render remote session + forward input
+  v
+User
+
+2. Restart Session
+
+User
+  |
+  v
+Android Client
+  |
+  | request restart
+  v
+Platform Control Layer
+  |
+  | destroy current runtime
+  v
+Runtime Worker
+  |
+  | runtime destroyed
+  v
+Platform Control Layer
+  |
+  | load existing persona + state
+  | reconstruct + decrypt bundles
+  |
+  | create fresh runtime
+  v
+Runtime Worker
+  |
+  | apply persona + restore state
+  v
+Cloud Runtime
+  |
+  | session ready
+  v
+Platform Control Layer
+  |
+  | authorize replacement session
+  v
+Android Client
+  |
+  | reconnect to fresh session
+  v
+User
+
+3. Persona Reset
+
+User
+  |
+  v
+Android Client
+  |
+  | request persona reset + confirm
+  v
+Platform Control Layer
+  |
+  | destroy active runtime
+  v
+Runtime Worker
+  |
+  | runtime destroyed
+  v
+Platform Control Layer
+  |
+  | retire current persona
+  | generate new persona bundle
+  | encrypt + shard + distribute new persona
+  v
+Metadata Service + Distributed Storage Nodes
+  |
+  | preserve existing state bundle
+  v
+Platform Control Layer
+  |
+  | update active persona reference
+  v
+Android Client
+  |
+  | user may start/reconnect to new session later
+  v
+User
+
+4. Factory Reset
+
+User
+  |
+  v
+Android Client
+  |
+  | request factory reset + explicit confirmation
+  v
+Platform Control Layer
+  |
+  | destroy active runtime
+  v
+Runtime Worker
+  |
+  | runtime destroyed
+  v
+Platform Control Layer
+  |
+  | revoke active access/session context
+  | delete persona manifest
+  | delete state manifest
+  | remove shard references
+  v
+Metadata Service
+  |
+  | schedule/delete shards
+  v
+Distributed Storage Nodes
+  |
+  | persistent bundles no longer reconstructable
+  v
+Platform Control Layer
+  |
+  | cloud device now empty/uninitialized
+  v
+Android Client
+  |
+  | show wiped state
+  v
+User
+
+5. File Import
+
+User
+  |
+  v
+Android Client
+  |
+  | choose local file
+  | request upload authorization
+  v
+Platform Control Layer
+  |
+  | validate user + trusted device + active cloud device
+  | approve upload
+  v
+Android Client
+  |
+  | upload file
+  v
+Runtime Worker / Runtime Import Layer
+  |
+  | place file into active cloud runtime
+  v
+Cloud Runtime
+  |
+  | file available inside cloud device
+  v
+Android Client
+  |
+  | show success
+  v
+User
+
+6. Camera Import
+
+User
+  |
+  v
+Android Client
+  |
+  | open in-app camera
+  | capture photo/video
+  | request upload authorization
+  v
+Platform Control Layer
+  |
+  | validate user + trusted device + active cloud device
+  | approve media upload
+  v
+Android Client
+  |
+  | upload captured media
+  v
+Runtime Worker / Runtime Import Layer
+  |
+  | place media into active cloud runtime
+  v
+Cloud Runtime
+  |
+  | media visible inside cloud device
+  v
+Android Client
+  |
+  | delete temporary local artifact if applicable
+  | show success
+  v
+User

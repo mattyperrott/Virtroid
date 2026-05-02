@@ -1,0 +1,8 @@
+.gradle/
+local.properties
+build/
+*/build/
+captures/
+*.keystore
+*.jks
+signing/

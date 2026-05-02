@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/v_bg">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="48dp" />
+        <ScrollView
+            android:id="@+id/identity_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="false"
+            android:clipToPadding="false"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+            <LinearLayout
+                android:id="@+id/identity_scroll_content"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="140dp">
+                <TextView
+                    android:id="@+id/icon_identity_shield"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:gravity="center"
+                    android:text="ID"
+                    android:textColor="@color/v_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:layout_marginBottom="24dp"
+                    android:background="@drawable/bg_accent_soft_12" />
+                <TextView
+                    android:id="@+id/text_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Generate Identity"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="30sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:layout_marginBottom="8dp" />
+                <TextView
+                    android:id="@+id/text_description"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Your cryptographic identity is being provisioned locally. This keeps cloud sessions private and pseudonymous."
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="14sp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:lineSpacingExtra="4dp"
+                    android:layout_marginBottom="32dp" />
+                <LinearLayout
+                    android:id="@+id/account_id_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_surface_stroke_24"
+                    android:padding="20dp"
+                    android:layout_marginBottom="12dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="6dp">
+                        <TextView
+                            android:id="@+id/account_id_label"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="ACCOUNT ID"
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:letterSpacing="0.08" />
+                        <Button
+                            android:id="@+id/account_id_copy"
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_transparent"
+                            android:text="CP"
+                            android:textAllCaps="false"
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="0dp"
+                            android:paddingEnd="0dp"
+                            android:gravity="center" />
+                    </LinearLayout>
+                    <TextView
+                        android:id="@+id/account_id_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="vd_acc_9x8f2a1b4c7d9e0f2a1b4c7d"
+                        android:textColor="@color/v_accent"
+                        android:textSize="13sp"
+                        android:fontFamily="monospace"
+                        android:includeFontPadding="false"
+                        android:maxLines="2"
+                        android:ellipsize="end" />
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/device_fingerprint_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_surface_stroke_24"
+                    android:padding="20dp"
+                    android:layout_marginBottom="12dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="6dp">
+                        <TextView
+                            android:id="@+id/device_fingerprint_label"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="DEVICE FINGERPRINT"
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:letterSpacing="0.08" />
+                        <TextView
+                            android:id="@+id/device_fingerprint_badge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Verified"
+                            android:textColor="@color/v_bg"
+                            android:textSize="9sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="2dp"
+                            android:paddingBottom="2dp"
+                            android:background="@drawable/bg_accent_4" />
+                    </LinearLayout>
+                    <TextView
+                        android:id="@+id/device_fingerprint_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="f8c9-4a2b-9e1d-7b5f-3c8a-9d2e"
+                        android:textColor="@color/v_text_primary"
+                        android:textSize="13sp"
+                        android:fontFamily="monospace"
+                        android:includeFontPadding="false"
+                        android:maxLines="2"
+                        android:ellipsize="end" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/text_local_encryption_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Local Encryption"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="18sp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="20dp"
+                    android:layout_marginBottom="6dp" />
+                <TextView
+                    android:id="@+id/text_local_encryption_subtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Choose how to secure your app and sign your state."
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="14sp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:layout_marginBottom="20dp" />
+                <LinearLayout
+                    android:id="@+id/option_pin_code"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_selected_card_24"
+                    android:padding="20dp"
+                    android:layout_marginBottom="12dp">
+                    <TextView
+                        android:id="@+id/icon_pin_option"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:gravity="center"
+                        android:text="PIN"
+                        android:textColor="@color/v_accent"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:background="@drawable/bg_accent_soft_circle" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="16dp">
+                        <TextView
+                            android:id="@+id/text_pin_title"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="PIN Code"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="15sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false" />
+                        <TextView
+                            android:id="@+id/text_pin_subtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Quick 6-digit access. Good balance of convenience and security."
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="14sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:lineSpacingExtra="3dp"
+                            android:layout_marginTop="6dp" />
+                    </LinearLayout>
+                    <View
+                        android:id="@+id/pin_selected_dot"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:background="@drawable/bg_dot_accent_outline" />
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/option_passphrase"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_surface_stroke_24"
+                    android:padding="20dp">
+                    <TextView
+                        android:id="@+id/icon_passphrase_option"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:gravity="center"
+                        android:text="PW"
+                        android:textColor="@color/v_text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:background="@drawable/bg_surface_light_circle" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="16dp">
+                        <TextView
+                            android:id="@+id/text_passphrase_title"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Passphrase"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="15sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false" />
+                        <TextView
+                            android:id="@+id/text_passphrase_subtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Maximum security. Required for heavy threat models."
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="14sp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:lineSpacingExtra="3dp"
+                            android:layout_marginTop="6dp" />
+                    </LinearLayout>
+                    <View
+                        android:id="@+id/passphrase_unselected_dot"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:background="@drawable/bg_dot_muted_outline" />
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/bottom_action"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="@color/v_bg"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="24dp">
+        <Button
+            android:id="@+id/button_continue_setup"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_accent_round"
+            android:text="Continue Setup"
+            android:textAllCaps="false"
+            android:textColor="@color/v_bg"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:fontFamily="sans"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:gravity="center" />
+    </LinearLayout>
+</FrameLayout>
