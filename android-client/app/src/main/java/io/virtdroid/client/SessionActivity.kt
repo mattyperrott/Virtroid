@@ -58,6 +58,7 @@ class SessionActivity : AppCompatActivity() {
                     remoteWidth,
                     remoteHeight,
                 )
+                binding.sessionStreamStatusText.text = getString(R.string.session_stream_receiving)
                 applyRemoteSurfaceBounds(remoteWidth, remoteHeight)
                 hideSystemBars()
             }
@@ -71,6 +72,9 @@ class SessionActivity : AppCompatActivity() {
                     getString(R.string.session_failed_message_inline, message)
                 }
                 if (!endingSession) {
+                    binding.sessionStreamStatusText.text = message
+                    binding.sessionStreamProgress.isVisible = false
+                    binding.sessionStreamStatusOverlay.isVisible = true
                     toast(getString(R.string.session_failed))
                 }
             }
@@ -115,7 +119,10 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionUploadButton.isVisible = false
         binding.sessionCameraButton.isVisible = false
         binding.sessionOptionalActionsDivider.isVisible = false
-        binding.sessionSurfaceView.isOpaque = false
+        binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
+        binding.sessionStreamProgress.isVisible = true
+        binding.sessionStreamStatusOverlay.isVisible = true
+        binding.sessionSurfaceView.isOpaque = true
         binding.sessionSurfaceView.setOnTouchListener { view, event ->
             sessionHost?.sendTouch(event, view.width, view.height) ?: false
         }
@@ -150,8 +157,7 @@ class SessionActivity : AppCompatActivity() {
             }
 
             override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {
-                binding.sessionPreviewImage.isVisible = false
-                binding.sessionPreviewOverlay.isVisible = false
+                binding.sessionStreamStatusOverlay.isVisible = false
             }
         }
         if (binding.sessionSurfaceView.isAvailable) {
@@ -192,6 +198,9 @@ class SessionActivity : AppCompatActivity() {
         }
 
         binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
+        binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
+        binding.sessionStreamProgress.isVisible = true
+        binding.sessionStreamStatusOverlay.isVisible = true
         sessionHost = ScrcpySessionHost(
             context = this,
             relayHost = relayHost,

@@ -1243,7 +1243,17 @@ func (s *Store) CloseSession(ctx context.Context, accountID, deviceID, sessionID
 }
 
 func (s *Store) ListAssignedRuntimes(ctx context.Context, hostID string) ([]Runtime, error) {
-	rows, err := s.db.QueryContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if err := allocateMissingViewerPortsForHostTX(ctx, tx, hostID); err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.QueryContext(ctx,
 		fmt.Sprintf(`SELECT %s FROM runtimes
 		 WHERE host_id = $1
 		   AND deleted_at IS NULL
@@ -1269,10 +1279,79 @@ func (s *Store) ListAssignedRuntimes(ctx context.Context, hostID string) ([]Runt
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	if runtimes == nil {
 		return []Runtime{}, nil
 	}
 	return runtimes, nil
+}
+
+func allocateMissingViewerPortsForHostTX(ctx context.Context, tx *sql.Tx, hostID string) error {
+	hostID = strings.TrimSpace(hostID)
+	if hostID == "" {
+		return nil
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id FROM runtimes
+		 WHERE host_id = $1
+		   AND desired_state = 'running'
+		   AND deleted_at IS NULL
+		   AND viewer_port IS NULL
+		 ORDER BY updated_at
+		 FOR UPDATE`,
+		hostID,
+	)
+	if err != nil {
+		return err
+	}
+
+	var runtimeIDs []string
+	for rows.Next() {
+		var runtimeID string
+		if err := rows.Scan(&runtimeID); err != nil {
+			rows.Close()
+			return err
+		}
+		runtimeIDs = append(runtimeIDs, runtimeID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	for _, runtimeID := range runtimeIDs {
+		viewerPort, err := allocateViewerPortTX(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE runtimes
+			 SET viewer_port = $2,
+			     last_error = NULL,
+			     updated_at = NOW()
+			 WHERE id = $1
+			   AND host_id = $3
+			   AND desired_state = 'running'
+			   AND deleted_at IS NULL
+			   AND viewer_port IS NULL`,
+			runtimeID,
+			viewerPort,
+			hostID,
+		); err != nil {
+			return err
+		}
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "info", fmt.Sprintf("Viewer port %d restored for running runtime assignment.", viewerPort)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Store) RequireRuntimeAssignedToHost(ctx context.Context, runtimeID, hostID string) error {

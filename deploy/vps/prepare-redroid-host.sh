@@ -34,7 +34,8 @@ if ! mountpoint -q /dev/binderfs; then
   exit 1
 fi
 
-install -d -m 0750 -o 1000 -g 1000 /srv/virtdroid /srv/virtdroid/runtimes
+install -d -m 0750 -o 1000 -g 1000 /srv/virtdroid /srv/virtdroid/assets /srv/virtdroid/runtimes
+chown -R 1000:1000 /srv/virtdroid
 
 ls -la /dev/binderfs
 printf 'docker group id: '

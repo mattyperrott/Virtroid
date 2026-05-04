@@ -406,12 +406,12 @@ class OnboardingActivity : AppCompatActivity() {
         if (!binding.provisioningLogContainer.isVisible) {
             binding.iconIdentityShield.animate()
                 .alpha(0f)
-                .translationY(-dp(28).toFloat())
+                .translationY(-dp(18).toFloat())
                 .setDuration(180L)
                 .withEndAction { binding.iconIdentityShield.isVisible = false }
                 .start()
             binding.identityScrollContent.animate()
-                .translationY(-dp(28).toFloat())
+                .translationY(-dp(10).toFloat())
                 .setDuration(260L)
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
@@ -426,7 +426,7 @@ class OnboardingActivity : AppCompatActivity() {
                 .start()
         }
         binding.identityScroll.post {
-            binding.identityScroll.smoothScrollTo(0, dp(56))
+            binding.identityScroll.smoothScrollTo(0, dp(24))
         }
         startActiveDotPulse()
     }

@@ -744,7 +744,6 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 
 func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAssignment, clearWipe bool) error {
 	containerName := containerNameForRuntime(runtime.ID)
-	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
 	_, inspectErr := n.inspectContainer(ctx, containerName)
 	hadContainer := inspectErr == nil
 	if inspectErr != nil && !errors.Is(inspectErr, errContainerNotFound) {
@@ -755,7 +754,7 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 	}
 
 	persisted := &persistedBlob{}
-	shouldPersistOrClearBlob := hadContainer || directoryHasEntries(dataDir)
+	shouldPersistOrClearBlob := hadContainer
 	if shouldPersistOrClearBlob {
 		var err error
 		persisted, err = n.persistSessionData(runtime)
@@ -787,7 +786,7 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 		ConnectionStatus:   "offline",
 		ContainerName:      nil,
 		ADBPort:            nil,
-		LastError:          runtime.LastError,
+		LastError:          stringPtr(""),
 		BlobLastSnapshotAt: persisted.SnapshotAt,
 		ClearWipeRequested: clearWipe,
 		ClearActivePersona: true,

@@ -82,7 +82,7 @@
     <string name="runtime_state_provisioning">Provisioning • Preparing Session</string>
     <string name="runtime_state_unknown">Offline</string>
     <string name="runtime_stat_one_label">UPTIME</string>
-    <string name="runtime_stat_two_label">REGION</string>
+    <string name="runtime_stat_two_label">HARDWARE</string>
     <string name="runtime_stat_three_label">PING</string>
     <string name="runtime_stat_live">Live</string>
     <string name="runtime_stat_saved">Saved</string>
@@ -97,6 +97,17 @@
     <string name="runtime_secure_route">Routed</string>
     <string name="runtime_connectivity_online">Online</string>
     <string name="runtime_connectivity_offline">Offline</string>
+    <string name="runtime_provisioning_title_request">Requesting Runtime Start ...</string>
+    <string name="runtime_provisioning_command_request">&gt; signed start request</string>
+    <string name="runtime_provisioning_detail_request">... sending runtime assignment request_</string>
+    <string name="runtime_provisioning_title_boot">Booting Runtime Instance ...</string>
+    <string name="runtime_provisioning_command_boot">&gt; containerd: create redroid namespace</string>
+    <string name="runtime_provisioning_detail_boot">... waiting for Android runtime services_</string>
+    <string name="runtime_provisioning_title_connect">Preparing Secure Viewer ...</string>
+    <string name="runtime_provisioning_command_connect">&gt; relay attach encrypted viewer</string>
+    <string name="runtime_provisioning_detail_connect">... waiting for encrypted display socket_</string>
+    <string name="runtime_provisioning_title_error">Provisioning Failed ...</string>
+    <string name="runtime_provisioning_command_error">&gt; reconcile runtime</string>
 
     <string name="new_runtime_title">New Runtime</string>
     <string name="new_runtime_identity">Identity</string>
@@ -177,6 +188,8 @@
     <string name="session_camera">Camera</string>
     <string name="session_upload">Upload</string>
     <string name="session_controls">Controls</string>
+    <string name="session_stream_connecting">Opening live Android display...</string>
+    <string name="session_stream_receiving">Receiving live Android display...</string>
     <string name="onboarding_title">Generate Identity</string>
     <string name="onboarding_subtitle">This device creates a local signing key, then registers it with the control plane for signed API requests.</string>
     <string name="onboarding_account_id">ACCOUNT ID</string>
