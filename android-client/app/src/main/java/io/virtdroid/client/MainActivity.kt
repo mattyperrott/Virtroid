@@ -3,6 +3,10 @@ package io.virtdroid.client
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.content.Intent
+import android.view.View
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.AlphaAnimation
+import android.view.animation.Animation
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -56,7 +60,7 @@ class MainActivity : AppCompatActivity() {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.updatePadding(
                 left = 24 + bars.left,
-                top = 52 + bars.top,
+                top = 76 + bars.top,
                 right = 24 + bars.right,
                 bottom = 112 + bars.bottom,
             )
@@ -176,7 +180,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             formatTimestamp(runtime.blobLastSnapshotAt)
         }
-        cardBinding.runtimeStatTwoValue.text = getString(R.string.runtime_stat_load_unknown)
+        cardBinding.runtimeStatTwoValue.text = runtime.hardwareLabel()
         cardBinding.runtimeStatThreeValue.text = if (isLive) {
             getString(R.string.runtime_stat_ping_live)
         } else {
@@ -187,17 +191,22 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeErrorText.text = runtime.lastError.orEmpty()
         cardBinding.connectRuntimeButton.isVisible = isLive
         cardBinding.runtimeActionRow.isVisible = !isLive
+        val provisioningMilestone = runtime.provisioningMilestone()
+        if (provisioningMilestone != null) {
+            showRuntimeProvisioning(cardBinding, provisioningMilestone, animate = false)
+        } else {
+            hideRuntimeProvisioning(cardBinding)
+        }
+        val actionsEnabled = provisioningMilestone == null
+        cardBinding.startRuntimeButton.isEnabled = actionsEnabled
+        cardBinding.actionControlsButton.isEnabled = actionsEnabled
+        cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled
 
         cardBinding.connectRuntimeButton.setOnClickListener {
             connectRuntime(runtime)
         }
         cardBinding.startRuntimeButton.setOnClickListener {
-            mutateRuntime(getString(R.string.status_starting_runtime)) {
-                val accountId = requireAccountId() ?: return@mutateRuntime
-                val deviceId = requireDeviceId() ?: return@mutateRuntime
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                api.startRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
-            }
+            startRuntime(runtime, cardBinding)
         }
         cardBinding.deleteRuntimeButton.setOnClickListener {
             mutateRuntime(getString(R.string.status_deleting_runtime)) {
@@ -214,6 +223,46 @@ class MainActivity : AppCompatActivity() {
         }
         cardBinding.actionControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtime.id))
+        }
+    }
+
+    private fun startRuntime(runtime: RuntimeSummary, cardBinding: RuntimeCardBinding) {
+        showRuntimeProvisioning(
+            cardBinding,
+            RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_request),
+                command = getString(R.string.runtime_provisioning_command_request),
+                detail = getString(R.string.runtime_provisioning_detail_request),
+            ),
+            animate = true,
+        )
+        cardBinding.startRuntimeButton.isEnabled = false
+        cardBinding.actionControlsButton.isEnabled = false
+        cardBinding.deleteRuntimeButton.isEnabled = false
+
+        lifecycleScope.launch {
+            runCatching {
+                val accountId = requireAccountId() ?: throw IOException(getString(R.string.account_missing))
+                val deviceId = requireDeviceId() ?: throw IOException(getString(R.string.device_missing))
+                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                api.startRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
+            }.onSuccess {
+                refreshRuntimes(showBusy = false)
+            }.onFailure { error ->
+                showRuntimeProvisioning(
+                    cardBinding,
+                    RuntimeProvisioningMilestone(
+                        title = getString(R.string.runtime_provisioning_title_error),
+                        command = getString(R.string.runtime_provisioning_command_error),
+                        detail = "... ${error.message ?: getString(R.string.status_error)}",
+                    ),
+                    animate = false,
+                )
+                cardBinding.startRuntimeButton.isEnabled = true
+                cardBinding.actionControlsButton.isEnabled = true
+                cardBinding.deleteRuntimeButton.isEnabled = true
+                showError(error)
+            }
         }
     }
 
@@ -395,6 +444,55 @@ class MainActivity : AppCompatActivity() {
         binding.accessToggleButton.isEnabled = !isBusy
     }
 
+    private fun showRuntimeProvisioning(
+        cardBinding: RuntimeCardBinding,
+        milestone: RuntimeProvisioningMilestone,
+        animate: Boolean,
+    ) {
+        cardBinding.runtimeProvisioningTitleText.text = milestone.title
+        cardBinding.runtimeProvisioningCommandText.text = milestone.command
+        cardBinding.runtimeProvisioningDetailText.text = milestone.detail
+        cardBinding.runtimeInteractiveContent.alpha = 0.08f
+        cardBinding.runtimeProvisioningLogContainer.isVisible = true
+        startRuntimeProvisioningPulse(cardBinding.runtimeProvisioningDot)
+        if (animate) {
+            cardBinding.runtimeProvisioningLogContainer.alpha = 0f
+            cardBinding.runtimeProvisioningLogContainer.translationY = -dp(22).toFloat()
+            cardBinding.runtimeProvisioningLogContainer.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(260L)
+                .setInterpolator(AccelerateDecelerateInterpolator())
+                .start()
+        } else {
+            cardBinding.runtimeProvisioningLogContainer.alpha = 1f
+            cardBinding.runtimeProvisioningLogContainer.translationY = 0f
+        }
+    }
+
+    private fun hideRuntimeProvisioning(cardBinding: RuntimeCardBinding) {
+        cardBinding.runtimeInteractiveContent.alpha = 1f
+        cardBinding.runtimeProvisioningDot.clearAnimation()
+        cardBinding.runtimeProvisioningLogContainer.clearAnimation()
+        cardBinding.runtimeProvisioningLogContainer.isVisible = false
+    }
+
+    private fun startRuntimeProvisioningPulse(view: View) {
+        if (view.animation != null) {
+            return
+        }
+        val animation = AlphaAnimation(0.35f, 1f).apply {
+            duration = 520L
+            repeatMode = Animation.REVERSE
+            repeatCount = Animation.INFINITE
+        }
+        view.startAnimation(animation)
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
+    }
+
     private fun formatTimestamp(value: String?): String {
         if (value.isNullOrBlank()) {
             return getString(R.string.runtime_stat_ping_offline)
@@ -403,6 +501,16 @@ class MainActivity : AppCompatActivity() {
         return runCatching {
             OffsetDateTime.parse(value).format(timestampFormatter)
         }.getOrDefault(value)
+    }
+
+    private fun RuntimeSummary.hardwareLabel(): String {
+        val brand = personaBrand?.trim().orEmpty()
+        val model = personaModel?.trim().orEmpty()
+        return listOf(brand, model)
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase(Locale.US) }
+            .joinToString(" ")
+            .ifBlank { getString(R.string.runtime_stat_load_unknown) }
     }
 
     private fun showError(error: Throwable) {
@@ -426,6 +534,38 @@ class MainActivity : AppCompatActivity() {
             connectionStatus.equals("connecting", ignoreCase = true) ||
             connectionStatus.equals("disconnecting", ignoreCase = true)
     }
+
+    private fun RuntimeSummary.provisioningMilestone(): RuntimeProvisioningMilestone? {
+        if (isReadyForSession() || !isTransitioning()) {
+            return null
+        }
+        if (!lastError.isNullOrBlank()) {
+            return RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_error),
+                command = getString(R.string.runtime_provisioning_command_error),
+                detail = "... ${lastError.orEmpty()}",
+            )
+        }
+
+        return when {
+            connectionStatus.equals("connecting", ignoreCase = true) -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_connect),
+                command = getString(R.string.runtime_provisioning_command_connect),
+                detail = getString(R.string.runtime_provisioning_detail_connect),
+            )
+            else -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_boot),
+                command = getString(R.string.runtime_provisioning_command_boot),
+                detail = getString(R.string.runtime_provisioning_detail_boot),
+            )
+        }
+    }
+
+    private data class RuntimeProvisioningMilestone(
+        val title: String,
+        val command: String,
+        val detail: String,
+    )
 
 	private companion object {
 		val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL

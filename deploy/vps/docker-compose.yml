@@ -41,6 +41,7 @@ services:
       context: ../../backend
     container_name: virtnoded
     command: ["virtnoded"]
+    user: "0:0"
     group_add:
       - "${DOCKER_GID:?set DOCKER_GID to the host docker group id, e.g. getent group docker | cut -d: -f3}"
     restart: unless-stopped

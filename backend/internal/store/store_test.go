@@ -159,6 +159,54 @@ func TestHashRelayTokenDoesNotStoreBearerToken(t *testing.T) {
 	}
 }
 
+func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id FROM runtimes").
+		WithArgs("host-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).
+			AddRow("33333333-3333-3333-3333-333333333333"))
+	mock.ExpectQuery("SELECT viewer_port FROM runtimes").
+		WillReturnRows(sqlmock.NewRows([]string{"viewer_port"}))
+	mock.ExpectExec("UPDATE runtimes").
+		WithArgs("33333333-3333-3333-3333-333333333333", 46000, "host-1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(
+			"33333333-3333-3333-3333-333333333333",
+			"system",
+			"info",
+			"Viewer port 46000 restored for running runtime assignment.",
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT id, account_id, name").
+		WithArgs("host-1").
+		WillReturnRows(runtimeRows(now, 46000))
+	mock.ExpectCommit()
+
+	runtimes, err := st.ListAssignedRuntimes(context.Background(), "host-1")
+	if err != nil {
+		t.Fatalf("ListAssignedRuntimes returned error: %v", err)
+	}
+	if len(runtimes) != 1 {
+		t.Fatalf("len(runtimes) = %d, want 1", len(runtimes))
+	}
+	if runtimes[0].ViewerPort == nil || *runtimes[0].ViewerPort != 46000 {
+		t.Fatalf("viewer port = %v, want 46000", runtimes[0].ViewerPort)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func runtimeRows(now time.Time, viewerPort any) *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"id",

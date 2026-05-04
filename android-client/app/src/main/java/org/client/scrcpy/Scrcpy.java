@@ -154,6 +154,11 @@ public class Scrcpy extends Service {
 
 
     public boolean touchevent(MotionEvent touch_event, boolean landscape, int displayW, int displayH) {
+        if (!socket_status || displayW <= 0 || displayH <= 0 || screenWidth <= 0 || screenHeight <= 0 ||
+                remote_dev_resolution[0] <= 0 || remote_dev_resolution[1] <= 0) {
+            return false;
+        }
+
         float remoteW;
         float remoteH;
         float realH;
