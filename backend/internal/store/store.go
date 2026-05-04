@@ -1336,7 +1336,10 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		     connection_status = $4,
 		     container_name = $5,
 		     adb_port = $6,
-			     viewer_port = CASE WHEN $3 IN ('stopped', 'error') THEN NULL ELSE viewer_port END,
+			     viewer_port = CASE
+			         WHEN $3 = 'stopped' OR ($3 = 'error' AND desired_state <> 'running') THEN NULL
+			         ELSE viewer_port
+			     END,
 			     last_error = $7,
 			     blob_last_snapshot_at = COALESCE($8, blob_last_snapshot_at),
 			     wipe_requested = CASE WHEN $9 THEN FALSE ELSE wipe_requested END,

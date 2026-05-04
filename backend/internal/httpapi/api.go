@@ -612,8 +612,11 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.StartRuntime(r.Context(), accountID, r.PathValue("id"))
+	runtimeID := r.PathValue("id")
+	a.activeBlobKeys.put(runtimeID, blobAccessKey)
+	runtime, err := a.store.StartRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
+		a.activeBlobKeys.clear(runtimeID)
 		switch err {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -624,7 +627,6 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	a.activeBlobKeys.put(runtime.ID, blobAccessKey)
 
 	writeJSON(w, http.StatusAccepted, runtime)
 }
@@ -666,8 +668,11 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.StopRuntime(r.Context(), accountID, r.PathValue("id"))
+	runtimeID := r.PathValue("id")
+	a.activeBlobKeys.put(runtimeID, blobAccessKey)
+	runtime, err := a.store.StopRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
+		a.activeBlobKeys.clear(runtimeID)
 		switch err {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -676,7 +681,6 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	a.activeBlobKeys.put(runtime.ID, blobAccessKey)
 
 	writeJSON(w, http.StatusAccepted, runtime)
 }
@@ -718,8 +722,11 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.WipeRuntime(r.Context(), accountID, r.PathValue("id"))
+	runtimeID := r.PathValue("id")
+	a.activeBlobKeys.put(runtimeID, blobAccessKey)
+	runtime, err := a.store.WipeRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
+		a.activeBlobKeys.clear(runtimeID)
 		switch err {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -728,7 +735,6 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	a.activeBlobKeys.put(runtime.ID, blobAccessKey)
 
 	writeJSON(w, http.StatusAccepted, runtime)
 }
