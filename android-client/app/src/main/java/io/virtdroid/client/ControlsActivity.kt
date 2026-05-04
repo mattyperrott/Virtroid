@@ -312,6 +312,7 @@ class ControlsActivity : AppCompatActivity() {
         val deviceId = sessionStore.deviceId ?: return
         lifecycleScope.launch {
             runCatching {
+                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 api.createSession(
                     baseUrl = sessionStore.baseUrl,
                     accountId = accountId,
@@ -319,6 +320,7 @@ class ControlsActivity : AppCompatActivity() {
                     runtimeId = runtime.id,
                     maxSize = sessionMaxSize(),
                     bitRate = DEFAULT_SESSION_BIT_RATE,
+                    blobAccessKey = blobAccessKey,
                 )
             }.onSuccess { session ->
                 startActivity(

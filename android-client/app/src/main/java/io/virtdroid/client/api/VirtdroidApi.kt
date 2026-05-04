@@ -113,6 +113,8 @@ class VirtdroidApi(
 
     suspend fun bootstrap(
         baseUrl: String,
+        accountId: String,
+        deviceId: String,
         deviceName: String,
         publicKey: String,
         runtimeProfile: DeviceRuntimeProfile,
@@ -120,6 +122,8 @@ class VirtdroidApi(
     ): BootstrapResult =
         withContext(Dispatchers.IO) {
             val requestBody = JSONObject()
+                .put("account_id", accountId)
+                .put("device_id", deviceId)
                 .put("device_name", deviceName)
                 .put("public_key", publicKey)
                 .put("runtime_name", runtimeProfile.runtimeName)
@@ -359,12 +363,14 @@ class VirtdroidApi(
         runtimeId: String,
         maxSize: Int,
         bitRate: Int,
+        blobAccessKey: String,
     ): SessionLaunch = withContext(Dispatchers.IO) {
         val requestBody = JSONObject()
             .put("account_id", accountId)
             .put("device_id", deviceId)
             .put("max_size", maxSize)
             .put("bit_rate", bitRate)
+            .put("blob_access_key", blobAccessKey)
             .toString()
 
         val payload = executeJson(

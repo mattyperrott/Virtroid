@@ -15,7 +15,6 @@ import androidx.lifecycle.lifecycleScope
 import io.virtdroid.client.api.VirtdroidApi
 import io.virtdroid.client.data.SessionStore
 import io.virtdroid.client.databinding.ScreenAccountIdentityBinding
-import io.virtdroid.client.security.AppLockStore
 import io.virtdroid.client.security.enableSecureWindow
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -25,7 +24,6 @@ import java.util.Locale
 class AccountIdentityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenAccountIdentityBinding
     private lateinit var sessionStore: SessionStore
-    private lateinit var appLockStore: AppLockStore
     private val api = VirtdroidApi()
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
 
@@ -37,7 +35,6 @@ class AccountIdentityActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
-        appLockStore = AppLockStore(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.topAppBar) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -47,17 +44,11 @@ class AccountIdentityActivity : AppCompatActivity() {
 
         binding.buttonBack.setOnClickListener { finish() }
         binding.buttonSettings.setOnClickListener { toast(getString(R.string.status_idle)) }
-        binding.buttonManageStorage.setOnClickListener {
-            startActivity(FundStorageActivity.createIntent(this))
-        }
         binding.itemAccountId.setOnClickListener {
             copy("account_id", sessionStore.accountId.orEmpty(), getString(R.string.onboarding_account_copied))
         }
         binding.itemDeviceFingerprint.setOnClickListener {
             copy("device_id", sessionStore.deviceId.orEmpty(), getString(R.string.onboarding_account_copied))
-        }
-        binding.itemAppLock.setOnClickListener {
-            startActivity(Intent(this, UnlockActivity::class.java))
         }
         binding.itemIdentityPassword.setOnClickListener {
             toast(getString(R.string.identity_unlock_title))
@@ -89,11 +80,6 @@ class AccountIdentityActivity : AppCompatActivity() {
         binding.identityEncryptionValue.text = getString(R.string.identity_password_title)
         binding.identityCreatedValue.text = getString(R.string.status_idle)
         binding.identityLastSyncValue.text = getString(R.string.status_idle)
-        binding.itemAppLockSubtitle.text = when (appLockStore.mode) {
-            AppLockStore.LockMode.PIN -> getString(R.string.onboarding_pin_title)
-            AppLockStore.LockMode.PASSPHRASE -> getString(R.string.onboarding_passphrase_title)
-            null -> getString(R.string.onboarding_not_provisioned)
-        }
     }
 
     private fun refreshStorage() {
@@ -110,6 +96,12 @@ class AccountIdentityActivity : AppCompatActivity() {
                 binding.storageBackendValue.text = storage.provider.ifBlank { "local" }
                 binding.storageReadyChip.text = storage.status.ifBlank { getString(R.string.status_idle) }
                 binding.storageCreditValue.text = storage.walletAddress?.takeIf { it.isNotBlank() }?.let(::shortId) ?: "--"
+                binding.storageUsageValue.text = "0"
+                binding.storageUsageUnit.text = " MB"
+                binding.storageUsageSubtitle.text = "No snapshot usage reported"
+                binding.storageSnapshots.text = "No snapshots"
+                binding.storageRunwayIcon.text = "--"
+                binding.storageRunwayValue.text = "--"
                 binding.identityLastSyncValue.text = OffsetDateTime.now().format(timestampFormatter)
             }
         }

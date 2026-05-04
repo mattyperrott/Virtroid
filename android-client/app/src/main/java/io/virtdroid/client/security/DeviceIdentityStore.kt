@@ -1,9 +1,12 @@
 package io.virtdroid.client.security
 
+import android.content.Context
 import android.os.Build
+import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import java.nio.ByteBuffer
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -40,6 +43,36 @@ class DeviceIdentityStore {
         return listOfNotNull(Build.MANUFACTURER, Build.MODEL)
             .joinToString(" ")
             .ifBlank { "Virtdroid Android" }
+    }
+
+    fun deviceFingerprint(context: Context, accountId: String): String {
+        val androidId = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ANDROID_ID,
+        ).orEmpty()
+        val material = listOf(
+            "VIRTDROID-DEVICE-FINGERPRINT-V1",
+            accountId.trim(),
+            publicKeyMaterial(),
+            androidId,
+            Build.BRAND,
+            Build.MANUFACTURER,
+            Build.MODEL,
+            Build.DEVICE,
+            Build.PRODUCT,
+            Build.BOARD,
+            Build.HARDWARE,
+            Build.FINGERPRINT,
+        ).joinToString("\n") { it.trim().ifBlank { "unknown" } }
+
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(material.toByteArray(Charsets.UTF_8))
+            .copyOf(16)
+        digest[6] = ((digest[6].toInt() and 0x0f) or 0x50).toByte()
+        digest[8] = ((digest[8].toInt() and 0x3f) or 0x80).toByte()
+
+        val buffer = ByteBuffer.wrap(digest)
+        return UUID(buffer.long, buffer.long).toString()
     }
 
     fun signedHeaders(

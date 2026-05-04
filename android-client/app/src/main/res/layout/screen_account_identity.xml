@@ -569,21 +569,6 @@
                                 android:includeFontPadding="false" />
                         </LinearLayout>
                     </LinearLayout>
-                    <Button
-                        android:id="@+id/button_manage_storage"
-                        android:layout_width="match_parent"
-                        android:layout_height="52dp"
-                        android:background="@drawable/bg_surface_light_20"
-                        android:text="Manage Storage Preferences"
-                        android:textAllCaps="false"
-                        android:textColor="@color/v_text_primary"
-                        android:textSize="14sp"
-                        android:fontFamily="sans"
-                        android:minWidth="0dp"
-                        android:minHeight="0dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:gravity="center" />
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_security"
@@ -599,60 +584,6 @@
                     android:layout_marginStart="8dp"
                     android:layout_marginTop="0dp"
                     android:layout_marginBottom="12dp" />
-                <LinearLayout
-                    android:id="@+id/item_app_lock"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
-                    android:padding="16dp"
-                    android:layout_marginBottom="12dp">
-                    <ImageView
-                        android:id="@+id/item_app_lock_icon"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:padding="13dp"
-                        android:src="@drawable/ic_lock"
-                        android:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="16dp">
-                        <TextView
-                            android:id="@+id/item_app_lock_title"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="App Lock"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
-                        <TextView
-                            android:id="@+id/item_app_lock_subtitle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="PIN enabled"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:layout_marginTop="4dp" />
-                    </LinearLayout>
-                    <TextView
-                        android:id="@+id/item_app_lock_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
-                </LinearLayout>
                 <LinearLayout
                     android:id="@+id/item_identity_password"
                     android:layout_width="match_parent"
@@ -766,8 +697,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="DANGER ZONE"
-                    android:textColor="@color/v_danger"
-                    android:textSize="13sp"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="12sp"
                     android:textStyle="bold"
                     android:fontFamily="sans"
                     android:includeFontPadding="false"
@@ -810,18 +741,6 @@
                             android:includeFontPadding="false"
                             android:lineSpacingExtra="3dp" />
                     </LinearLayout>
-                    <TextView
-                        android:id="@+id/wipe_user_data_icon"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:gravity="center"
-                        android:text="WI"
-                        android:textColor="@color/v_amber"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:background="@drawable/bg_amber_soft_12" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/item_delete_identity"
@@ -857,18 +776,6 @@
                             android:includeFontPadding="false"
                             android:lineSpacingExtra="3dp" />
                     </LinearLayout>
-                    <TextView
-                        android:id="@+id/delete_identity_icon"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:gravity="center"
-                        android:text="TR"
-                        android:textColor="@color/v_danger"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:background="@drawable/bg_red_soft_12" />
                 </LinearLayout>
             </LinearLayout>
         </ScrollView>

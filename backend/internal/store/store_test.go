@@ -70,6 +70,80 @@ func TestBootstrapAccountDoesNotReserveViewerPort(t *testing.T) {
 	}
 }
 
+func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).
+			AddRow(accountID, now))
+	mock.ExpectQuery("INSERT INTO devices").
+		WithArgs(deviceID, accountID, "Pixel", "public-key").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_id", "name", "public_key", "blob_key_verifier", "created_at", "last_seen_at",
+		}).AddRow(
+			deviceID,
+			accountID,
+			"Pixel",
+			"public-key",
+			nil,
+			now,
+			nil,
+		))
+	mock.ExpectQuery("INSERT INTO runtimes").
+		WithArgs(
+			sqlmock.AnyArg(),
+			accountID,
+			"Primary runtime",
+			defaultAndroidImage,
+			"android-12",
+			720,
+			1600,
+			320,
+			true,
+			"disabled",
+			"upload-only",
+			true,
+			7,
+		).
+		WillReturnRows(runtimeRows(now, nil))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs("33333333-3333-3333-3333-333333333333", "system", "info", "Primary runtime created for new account.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := st.BootstrapAccountWithIdentity(
+		context.Background(),
+		accountID,
+		deviceID,
+		"Pixel",
+		"public-key",
+		CreateRuntimeInput{},
+	)
+	if err != nil {
+		t.Fatalf("BootstrapAccountWithIdentity returned error: %v", err)
+	}
+	if result.Account.ID != accountID {
+		t.Fatalf("account id = %q, want %q", result.Account.ID, accountID)
+	}
+	if result.Device.ID != deviceID {
+		t.Fatalf("device id = %q, want %q", result.Device.ID, deviceID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestHashRelayTokenDoesNotStoreBearerToken(t *testing.T) {
 	token := "relay-secret-token"
 	hashed := hashRelayToken(token)

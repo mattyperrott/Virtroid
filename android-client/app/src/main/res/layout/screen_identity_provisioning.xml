@@ -5,281 +5,275 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/v_bg">
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical">
+
         <View
             android:layout_width="match_parent"
             android:layout_height="42dp" />
+
         <ScrollView
             android:id="@+id/identity_scroll"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:fillViewport="false"
             android:clipToPadding="false"
+            android:fillViewport="false"
             android:overScrollMode="never"
             android:scrollbars="none">
+
             <LinearLayout
                 android:id="@+id/identity_scroll_content"
                 android:layout_width="match_parent"
-	                android:layout_height="wrap_content"
-                    android:minHeight="90dp"
-	                android:orientation="vertical"
+                android:layout_height="wrap_content"
+                android:minHeight="90dp"
+                android:orientation="vertical"
                 android:paddingStart="24dp"
                 android:paddingEnd="24dp"
-                android:paddingBottom="140dp">
+                android:paddingBottom="186dp">
+
                 <ImageView
                     android:id="@+id/icon_identity_shield"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
+                    android:layout_marginBottom="24dp"
+                    android:background="@drawable/bg_accent_soft_12"
                     android:padding="12dp"
                     android:src="@drawable/ic_shield"
-                    android:tint="@color/v_accent"
-                    android:layout_marginBottom="24dp"
-                    android:background="@drawable/bg_accent_soft_12" />
+                    android:tint="@color/v_accent" />
+
                 <TextView
                     android:id="@+id/text_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Generate Identity"
-                    android:textColor="@color/v_text_primary"
-                    android:textSize="30sp"
-                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp"
                     android:fontFamily="sans"
                     android:includeFontPadding="false"
-                    android:layout_marginBottom="8dp" />
+                    android:text="@string/onboarding_title"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="30sp"
+                    android:textStyle="bold" />
+
                 <TextView
                     android:id="@+id/text_description"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="This device creates a local signing key, then registers it with the control plane for signed API requests."
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="14sp"
+                    android:layout_marginBottom="30dp"
                     android:fontFamily="sans"
                     android:includeFontPadding="false"
                     android:lineSpacingExtra="4dp"
-                    android:layout_marginBottom="32dp" />
+                    android:text="@string/onboarding_subtitle"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="14sp" />
+
                 <LinearLayout
                     android:id="@+id/account_id_card"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
+                    android:layout_height="86dp"
+                    android:layout_marginBottom="12dp"
                     android:background="@drawable/bg_surface_stroke_24"
-                    android:padding="20dp"
-                    android:layout_marginBottom="12dp">
+                    android:gravity="center_vertical"
+                    android:orientation="vertical"
+                    android:paddingStart="18dp"
+                    android:paddingEnd="14dp">
+
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:layout_marginBottom="6dp">
+                        android:orientation="horizontal">
+
                         <TextView
                             android:id="@+id/account_id_label"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="ACCOUNT ID"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
                             android:fontFamily="sans"
                             android:includeFontPadding="false"
-                            android:letterSpacing="0.08" />
-	                            <ImageButton
-	                                android:id="@+id/copyAccountButton"
-	                                android:layout_width="22dp"
-	                                android:layout_height="22dp"
-	                                android:background="@drawable/bg_transparent"
-	                                android:contentDescription="@string/onboarding_copy_account"
-	                                android:padding="3dp"
-	                                android:src="@drawable/ic_copy"
-	                                android:tint="@color/v_text_muted" />
+                            android:letterSpacing="0.08"
+                            android:text="@string/onboarding_account_id"
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <FrameLayout
+                            android:id="@+id/accountStatusIndicator"
+                            android:layout_width="30dp"
+                            android:layout_height="22dp"
+                            android:background="@drawable/bg_status_pill_muted"
+                            android:paddingStart="5dp"
+                            android:paddingTop="1dp"
+                            android:paddingEnd="5dp"
+                            android:paddingBottom="1dp">
+
+                            <ImageView
+                                android:id="@+id/accountStatusCheck"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:src="@drawable/ic_check"
+                                android:tint="@color/v_text_dim" />
+                        </FrameLayout>
                     </LinearLayout>
+
                     <TextView
                         android:id="@+id/onboardingAccountIdText"
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="vd_acc_9x8f2a1b4c7d9e0f2a1b4c7d"
-                        android:textColor="@color/v_accent"
-                        android:textSize="13sp"
+                        android:layout_marginTop="8dp"
+                        android:ellipsize="end"
                         android:fontFamily="monospace"
                         android:includeFontPadding="false"
-                        android:maxLines="2"
-                        android:ellipsize="end" />
+                        android:maxLines="1"
+                        android:text="@string/onboarding_not_provisioned"
+                        android:textColor="@color/v_text_primary"
+                        android:textSize="14sp" />
                 </LinearLayout>
+
                 <LinearLayout
                     android:id="@+id/device_fingerprint_card"
                     android:layout_width="match_parent"
-	                android:layout_height="wrap_content"
-                    android:minHeight="90dp"
-	                android:orientation="vertical"
+                    android:layout_height="86dp"
+                    android:layout_marginBottom="28dp"
                     android:background="@drawable/bg_surface_stroke_24"
-                    android:padding="20dp"
-                    android:layout_marginBottom="12dp">
+                    android:gravity="center_vertical"
+                    android:orientation="vertical"
+                    android:paddingStart="18dp"
+                    android:paddingEnd="14dp">
+
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:layout_marginBottom="6dp">
+                        android:orientation="horizontal">
+
                         <TextView
                             android:id="@+id/device_fingerprint_label"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="DEVICE FINGERPRINT"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:letterSpacing="0.08"
+                            android:text="@string/onboarding_device_fingerprint"
                             android:textColor="@color/v_text_muted"
                             android:textSize="11sp"
-                            android:textStyle="bold"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:letterSpacing="0.08" />
-                        <TextView
-                            android:id="@+id/device_fingerprint_badge"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Registered"
-                            android:textColor="@color/v_bg"
-                            android:textSize="9sp"
-                            android:textStyle="bold"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:paddingStart="6dp"
-                            android:paddingEnd="6dp"
-                            android:paddingTop="2dp"
-                            android:paddingBottom="2dp"
-                            android:background="@drawable/bg_accent_4" />
+                            android:textStyle="bold" />
+
+                        <FrameLayout
+                            android:id="@+id/deviceFingerprintStatusIndicator"
+                            android:layout_width="30dp"
+                            android:layout_height="22dp"
+                            android:background="@drawable/bg_status_pill_muted"
+                            android:paddingStart="5dp"
+                            android:paddingTop="1dp"
+                            android:paddingEnd="5dp"
+                            android:paddingBottom="1dp">
+
+                            <ImageView
+                                android:id="@+id/deviceFingerprintStatusCheck"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:src="@drawable/ic_check"
+                                android:tint="@color/v_text_dim" />
+                        </FrameLayout>
                     </LinearLayout>
+
                     <TextView
                         android:id="@+id/onboardingDeviceIdText"
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="f8c9-4a2b-9e1d-7b5f-3c8a-9d2e"
-                        android:textColor="@color/v_text_primary"
-                        android:textSize="13sp"
+                        android:layout_marginTop="8dp"
+                        android:ellipsize="end"
                         android:fontFamily="monospace"
                         android:includeFontPadding="false"
-                        android:maxLines="2"
-                        android:ellipsize="end" />
+                        android:maxLines="1"
+                        android:text="@string/onboarding_not_provisioned"
+                        android:textColor="@color/v_text_primary"
+                        android:textSize="14sp" />
                 </LinearLayout>
+
                 <TextView
                     android:id="@+id/text_local_encryption_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
                     android:text="@string/onboarding_local_encryption"
                     android:textColor="@color/v_text_primary"
-                    android:textSize="18sp"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:layout_marginTop="20dp"
-                    android:layout_marginBottom="6dp" />
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
                 <TextView
                     android:id="@+id/text_local_encryption_subtitle"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/onboarding_local_encryption_body"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="14sp"
+                    android:layout_marginBottom="22dp"
                     android:fontFamily="sans"
                     android:includeFontPadding="false"
-                    android:layout_marginBottom="20dp" />
+                    android:lineSpacingExtra="2dp"
+                    android:text="@string/onboarding_local_encryption_body"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="16sp" />
+
                 <LinearLayout
                     android:id="@+id/passphraseOptionCard"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="116dp"
+                    android:background="@drawable/bg_surface_stroke_24"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_selected_card_24"
-                    android:padding="20dp"
-                    android:layout_marginBottom="12dp">
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp">
+
                     <ImageView
                         android:id="@+id/icon_passphrase_option"
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:padding="10dp"
+                        android:layout_width="54dp"
+                        android:layout_height="54dp"
+                        android:background="@drawable/bg_accent_soft_circle"
+                        android:padding="14dp"
                         android:src="@drawable/ic_storage"
-                        android:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:tint="@color/v_accent" />
+
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
                         android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="16dp">
+                        android:orientation="vertical">
+
                         <TextView
                             android:id="@+id/text_passphrase_title"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
                             android:text="@string/onboarding_passphrase_title"
                             android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:textSize="17sp"
+                            android:textStyle="bold" />
+
                         <TextView
                             android:id="@+id/text_passphrase_subtitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:lineSpacingExtra="3dp"
                             android:text="@string/onboarding_passphrase_body"
                             android:textColor="@color/v_text_muted"
-                            android:textSize="14sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:lineSpacingExtra="3dp"
-                            android:layout_marginTop="6dp" />
+                            android:textSize="15sp" />
                     </LinearLayout>
+
                     <View
                         android:id="@+id/passphraseOptionIndicator"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:background="@drawable/bg_dot_accent_outline" />
-                </LinearLayout>
-                <LinearLayout
-	                android:id="@+id/pinOptionCard"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-	                android:background="@drawable/bg_selected_card_24"
-	                android:padding="20dp">
-                    <ImageView
-                        android:id="@+id/icon_pin_option"
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:padding="10dp"
-                        android:src="@drawable/ic_lock"
-                        android:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="16dp">
-                        <TextView
-                            android:id="@+id/text_pin_title"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/onboarding_pin_title"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
-                        <TextView
-                            android:id="@+id/text_pin_subtitle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/onboarding_pin_body"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="14sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:lineSpacingExtra="3dp"
-                            android:layout_marginTop="6dp" />
-                    </LinearLayout>
-                    <View
-                        android:id="@+id/pinOptionIndicator"
                         android:layout_width="20dp"
                         android:layout_height="20dp"
                         android:background="@drawable/bg_dot_accent_outline" />
@@ -287,32 +281,202 @@
             </LinearLayout>
         </ScrollView>
     </LinearLayout>
+
     <LinearLayout
         android:id="@+id/bottom_action"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:orientation="vertical"
+        android:animateLayoutChanges="true"
         android:background="@color/v_bg"
+        android:orientation="vertical"
         android:paddingStart="24dp"
+        android:paddingTop="12dp"
         android:paddingEnd="24dp"
-        android:paddingTop="16dp"
         android:paddingBottom="24dp">
+
+        <LinearLayout
+            android:id="@+id/provisioningLogContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="14dp"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="34dp"
+                android:layout_height="match_parent">
+
+                <View
+                    android:id="@+id/provisioningTimelineLine"
+                    android:layout_width="2dp"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center_horizontal"
+                    android:background="@drawable/bg_timeline_line" />
+
+                <FrameLayout
+                    android:id="@+id/previousMilestoneDot"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_gravity="top|center_horizontal"
+                    android:layout_marginTop="2dp"
+                    android:background="@drawable/bg_status_pill_success"
+                    android:padding="3dp">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:src="@drawable/ic_check"
+                        android:tint="@color/v_bg" />
+                </FrameLayout>
+
+                <View
+                    android:id="@+id/activeMilestoneDot"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="38dp"
+                    android:background="@drawable/bg_dot_accent_outline" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:id="@+id/previousMilestoneGroup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:alpha="0.62"
+                    android:orientation="vertical"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="8dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/previousMilestoneTitleText"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false"
+                            android:text="@string/provisioning_previous_waiting"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/previousMilestoneStatusText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_chip_dark"
+                            android:fontFamily="monospace"
+                            android:includeFontPadding="false"
+                            android:paddingStart="8dp"
+                            android:paddingTop="3dp"
+                            android:paddingEnd="8dp"
+                            android:paddingBottom="3dp"
+                            android:text="@string/provisioning_done"
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="9sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/previousMilestoneSubtitleText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:fontFamily="monospace"
+                        android:includeFontPadding="false"
+                        android:text="@string/provisioning_previous_descriptor"
+                        android:textColor="@color/v_text_muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/activeMilestoneCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_provisioning_log_active"
+                    android:orientation="vertical"
+                    android:paddingStart="18dp"
+                    android:paddingTop="16dp"
+                    android:paddingEnd="18dp"
+                    android:paddingBottom="16dp">
+
+                    <TextView
+                        android:id="@+id/activeMilestoneTitleText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:text="@string/provisioning_active_waiting"
+                        android:textColor="@color/v_accent"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <LinearLayout
+                        android:id="@+id/activeMilestoneLogBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/bg_provisioning_log_code"
+                        android:orientation="vertical"
+                        android:paddingStart="12dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="12dp"
+                        android:paddingBottom="10dp">
+
+                        <TextView
+                            android:id="@+id/activeMilestoneCommandText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="monospace"
+                            android:includeFontPadding="false"
+                            android:text="@string/provisioning_active_command"
+                            android:textColor="@color/v_accent"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/activeMilestoneDetailText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:ellipsize="end"
+                            android:fontFamily="monospace"
+                            android:includeFontPadding="false"
+                            android:maxLines="2"
+                            android:text="@string/provisioning_active_detail"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
         <Button
             android:id="@+id/continueSetupButton"
             android:layout_width="match_parent"
-            android:layout_height="56dp"
+            android:layout_height="58dp"
             android:background="@drawable/bg_accent_round"
-            android:text="Continue Setup"
-            android:textAllCaps="false"
-            android:textColor="@color/v_bg"
-            android:textSize="14sp"
-            android:textStyle="bold"
             android:fontFamily="sans"
+            android:gravity="center"
             android:minWidth="0dp"
             android:minHeight="0dp"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
-            android:gravity="center" />
+            android:text="@string/onboarding_create_identity"
+            android:textAllCaps="false"
+            android:textColor="@color/v_bg"
+            android:textSize="15sp"
+            android:textStyle="bold" />
     </LinearLayout>
 </FrameLayout>
