@@ -411,7 +411,7 @@ class OnboardingActivity : AppCompatActivity() {
                 .withEndAction { binding.iconIdentityShield.isVisible = false }
                 .start()
             binding.identityScrollContent.animate()
-                .translationY(-dp(72).toFloat())
+                .translationY(-dp(28).toFloat())
                 .setDuration(260L)
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
@@ -426,7 +426,7 @@ class OnboardingActivity : AppCompatActivity() {
                 .start()
         }
         binding.identityScroll.post {
-            binding.identityScroll.smoothScrollTo(0, dp(132))
+            binding.identityScroll.smoothScrollTo(0, dp(56))
         }
         startActiveDotPulse()
     }
