@@ -7,6 +7,7 @@ import android.text.InputType
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import io.virtdroid.client.R
+import io.virtdroid.client.databinding.DialogIdentityPasswordSetupBinding
 import io.virtdroid.client.databinding.DialogSecureTextEntryBinding
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -93,3 +94,43 @@ suspend fun AppCompatActivity.promptIdentityPasswordWithConfirmation(
     val confirmation = promptIdentityPassword(title, confirmHint)?.trim().orEmpty()
     return if (first == confirmation) first else ""
 }
+
+suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
+    suspendCancellableCoroutine { continuation ->
+        val binding = DialogIdentityPasswordSetupBinding.inflate(layoutInflater)
+        binding.passwordInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        binding.passwordConfirmInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+
+        val dialog = Dialog(this).apply {
+            setContentView(binding.root)
+            setCancelable(true)
+            window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            window?.setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+            )
+        }
+
+        fun finishWith(value: String?) {
+            if (continuation.isActive) {
+                continuation.resume(value)
+            }
+            dialog.dismiss()
+        }
+
+        binding.passwordDialogCancelButton.setOnClickListener { finishWith(null) }
+        binding.passwordDialogConfirmButton.setOnClickListener {
+            val first = binding.passwordInput.text?.toString()?.trim().orEmpty()
+            val confirmed = binding.passwordConfirmInput.text?.toString()?.trim().orEmpty()
+            when {
+                first.isBlank() -> binding.passwordInputLayout.error = getString(R.string.identity_password_required)
+                first != confirmed -> binding.passwordConfirmInputLayout.error = getString(R.string.identity_password_mismatch)
+                else -> finishWith(first)
+            }
+        }
+        dialog.setOnCancelListener { finishWith(null) }
+        dialog.show()
+        binding.passwordInput.requestFocus()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        continuation.invokeOnCancellation { dialog.dismiss() }
+    }

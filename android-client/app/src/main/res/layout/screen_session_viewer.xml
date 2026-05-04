@@ -141,49 +141,12 @@
                 android:visibility="gone">
 
                 <LinearLayout
-                    android:id="@+id/guest_status_bar"
-                    android:layout_width="match_parent"
-                    android:layout_height="34dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:paddingStart="20dp"
-                    android:paddingEnd="18dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:text="12:30"
-                        android:textColor="@color/v_white"
-                        android:textSize="12sp" />
-
-                    <ImageView
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
-                        android:layout_marginEnd="6dp"
-                        android:src="@drawable/ic_status_wifi" />
-
-                    <ImageView
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
-                        android:layout_marginEnd="6dp"
-                        android:src="@drawable/ic_status_signal" />
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="16dp"
-                        android:src="@drawable/ic_status_battery" />
-                </LinearLayout>
-
-                <LinearLayout
                     android:id="@+id/guest_search"
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_gravity="top"
                     android:layout_marginStart="34dp"
-                    android:layout_marginTop="68dp"
+                    android:layout_marginTop="34dp"
                     android:layout_marginEnd="34dp"
                     android:background="@drawable/bg_search_widget"
                     android:gravity="center_vertical"

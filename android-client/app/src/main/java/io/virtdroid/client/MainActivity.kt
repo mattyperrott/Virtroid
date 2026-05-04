@@ -19,7 +19,9 @@ import io.virtdroid.client.databinding.ScreenMyRuntimesBinding
 import io.virtdroid.client.security.IdentityPasswordStore
 import io.virtdroid.client.security.enableSecureWindow
 import io.virtdroid.client.security.promptIdentityPassword
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
 import java.time.OffsetDateTime
@@ -34,6 +36,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sessionStore: SessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.US)
+    private var runtimePollJob: Job? = null
+    private var refreshJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,9 +77,6 @@ class MainActivity : AppCompatActivity() {
         binding.logsNavButton.setOnClickListener {
             toast(getString(R.string.bottom_logs_runtime_hint))
         }
-        binding.settingsNavButton.setOnClickListener {
-            startActivity(FundStorageActivity.createIntent(this))
-        }
 
         refreshRuntimes()
     }
@@ -85,7 +86,22 @@ class MainActivity : AppCompatActivity() {
         refreshRuntimes()
     }
 
-    private fun refreshRuntimes() {
+    override fun onPause() {
+        runtimePollJob?.cancel()
+        runtimePollJob = null
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        runtimePollJob?.cancel()
+        refreshJob?.cancel()
+        super.onDestroy()
+    }
+
+    private fun refreshRuntimes(showBusy: Boolean = true) {
+        if (refreshJob?.isActive == true) {
+            return
+        }
         val accountId = sessionStore.accountId
         val deviceId = sessionStore.deviceId
         if (accountId.isNullOrBlank() || deviceId.isNullOrBlank()) {
@@ -95,18 +111,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         val baseUrl = currentBaseUrl()
-        setBusy(true, getString(R.string.status_refreshing))
+        if (showBusy) {
+            setBusy(true, getString(R.string.status_refreshing))
+        }
 
-        lifecycleScope.launch {
+        refreshJob = lifecycleScope.launch {
             runCatching {
                 api.listRuntimes(baseUrl, accountId, deviceId)
             }.onSuccess { runtimes ->
                 renderRuntimes(runtimes)
-                setBusy(false)
+                if (showBusy) {
+                    setBusy(false)
+                }
             }.onFailure { error ->
-                setBusy(false)
-                showError(error)
+                if (showBusy) {
+                    setBusy(false)
+                    showError(error)
+                }
             }
+            refreshJob = null
         }
     }
 
@@ -114,6 +137,7 @@ class MainActivity : AppCompatActivity() {
         binding.runtimeListContainer.removeAllViews()
         binding.runtimeEmptyText.isVisible = runtimes.isEmpty()
         if (runtimes.isEmpty()) {
+            updateRuntimePolling(runtimes)
             return
         }
 
@@ -123,6 +147,7 @@ class MainActivity : AppCompatActivity() {
             bindRuntimeCard(cardBinding, runtime)
             binding.runtimeListContainer.addView(cardBinding.root)
         }
+        updateRuntimePolling(runtimes)
     }
 
     private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary) {
@@ -200,7 +225,8 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             runCatching {
-                val readyRuntime = ensureRuntimeReady(baseUrl, accountId, deviceId, runtime)
+                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                val readyRuntime = ensureRuntimeReady(baseUrl, accountId, deviceId, runtime, blobAccessKey)
                 val session = api.createSession(
                     baseUrl = baseUrl,
                     accountId = accountId,
@@ -208,6 +234,7 @@ class MainActivity : AppCompatActivity() {
                     runtimeId = readyRuntime.id,
                     maxSize = sessionMaxSize(),
                     bitRate = DEFAULT_SESSION_BIT_RATE,
+                    blobAccessKey = blobAccessKey,
                 )
                 Pair(session, readyRuntime)
             }.onSuccess { (session, readyRuntime) ->
@@ -241,13 +268,13 @@ class MainActivity : AppCompatActivity() {
         accountId: String,
         deviceId: String,
         runtime: RuntimeSummary,
+        blobAccessKey: String,
     ): RuntimeSummary {
         if (runtime.isReadyForSession()) {
             return runtime
         }
 
         setBusy(true, getString(R.string.status_starting_runtime_for_session))
-        val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
         api.startRuntime(baseUrl, accountId, deviceId, runtime.id, blobAccessKey)
         return waitForRuntimeReady(baseUrl, accountId, deviceId, runtime.id)
     }
@@ -336,6 +363,25 @@ class MainActivity : AppCompatActivity() {
         return sessionStore.baseUrl
     }
 
+    private fun updateRuntimePolling(runtimes: List<RuntimeSummary>) {
+        val shouldPoll = runtimes.any { it.isTransitioning() }
+        if (!shouldPoll) {
+            runtimePollJob?.cancel()
+            runtimePollJob = null
+            return
+        }
+        if (runtimePollJob?.isActive == true) {
+            return
+        }
+
+        runtimePollJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(RUNTIME_POLL_DELAY_MS)
+                refreshRuntimes(showBusy = false)
+            }
+        }
+    }
+
     private fun sessionMaxSize(): Int {
         val metrics = resources.displayMetrics
         return max(metrics.widthPixels, metrics.heightPixels).coerceIn(720, 1600)
@@ -373,10 +419,19 @@ class MainActivity : AppCompatActivity() {
             !hostId.isNullOrBlank()
     }
 
+    private fun RuntimeSummary.isTransitioning(): Boolean {
+        return desiredState.equals("running", ignoreCase = true) && !isReadyForSession() ||
+            status.equals("starting", ignoreCase = true) ||
+            status.equals("stopping", ignoreCase = true) ||
+            connectionStatus.equals("connecting", ignoreCase = true) ||
+            connectionStatus.equals("disconnecting", ignoreCase = true)
+    }
+
 	private companion object {
 		val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
 		const val DEFAULT_SESSION_BIT_RATE = 4_000_000
 		const val CONNECT_WAIT_ATTEMPTS = 45
         const val CONNECT_WAIT_DELAY_MS = 1_000L
+        const val RUNTIME_POLL_DELAY_MS = 2_000L
     }
 }

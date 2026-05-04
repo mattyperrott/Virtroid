@@ -252,6 +252,17 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 }
 
 func (s *Store) BootstrapAccount(ctx context.Context, deviceName, publicKey string, defaults CreateRuntimeInput) (BootstrapResult, error) {
+	return s.BootstrapAccountWithIdentity(ctx, "", "", deviceName, publicKey, defaults)
+}
+
+func (s *Store) BootstrapAccountWithIdentity(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	deviceName string,
+	publicKey string,
+	defaults CreateRuntimeInput,
+) (BootstrapResult, error) {
 	if strings.TrimSpace(deviceName) == "" {
 		return BootstrapResult{}, errors.New("device name is required")
 	}
@@ -259,8 +270,14 @@ func (s *Store) BootstrapAccount(ctx context.Context, deviceName, publicKey stri
 		return BootstrapResult{}, errors.New("device public key is required")
 	}
 
-	accountID := uuid.NewString()
-	deviceID := uuid.NewString()
+	accountID, err := normalizeBootstrapUUID(accountID, "account id")
+	if err != nil {
+		return BootstrapResult{}, err
+	}
+	deviceID, err = normalizeBootstrapUUID(deviceID, "device id")
+	if err != nil {
+		return BootstrapResult{}, err
+	}
 	runtimeID := uuid.NewString()
 	defaults.Name = strings.TrimSpace(defaults.Name)
 	if defaults.Name == "" {
@@ -333,6 +350,18 @@ func (s *Store) BootstrapAccount(ctx context.Context, deviceName, publicKey stri
 	}
 
 	return result, nil
+}
+
+func normalizeBootstrapUUID(value string, field string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return uuid.NewString(), nil
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return "", fmt.Errorf("%s must be a valid uuid", field)
+	}
+	return parsed.String(), nil
 }
 
 func (s *Store) CreateRuntime(ctx context.Context, accountID string, input CreateRuntimeInput) (Runtime, error) {

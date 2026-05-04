@@ -240,6 +240,8 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, a.cfg.BootstrapMaxBodyBytes)
 
 	var req struct {
+		AccountID        string `json:"account_id"`
+		DeviceID         string `json:"device_id"`
 		DeviceName       string `json:"device_name"`
 		PublicKey        string `json:"public_key"`
 		RuntimeName      string `json:"runtime_name"`
@@ -265,19 +267,26 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := a.store.BootstrapAccount(r.Context(), req.DeviceName, req.PublicKey, store.CreateRuntimeInput{
-		Name:             req.RuntimeName,
-		AndroidImage:     req.AndroidImage,
-		AndroidVersion:   req.AndroidVersion,
-		WidthPx:          req.WidthPx,
-		HeightPx:         req.HeightPx,
-		DensityDpi:       req.DensityDpi,
-		AudioEnabled:     req.AudioEnabled,
-		CameraMode:       req.CameraMode,
-		FileMode:         req.FileMode,
-		BlobAutoSnapshot: req.BlobAutoSnapshot,
-		BlobRetainDays:   req.BlobRetainDays,
-	})
+	result, err := a.store.BootstrapAccountWithIdentity(
+		r.Context(),
+		req.AccountID,
+		req.DeviceID,
+		req.DeviceName,
+		req.PublicKey,
+		store.CreateRuntimeInput{
+			Name:             req.RuntimeName,
+			AndroidImage:     req.AndroidImage,
+			AndroidVersion:   req.AndroidVersion,
+			WidthPx:          req.WidthPx,
+			HeightPx:         req.HeightPx,
+			DensityDpi:       req.DensityDpi,
+			AudioEnabled:     req.AudioEnabled,
+			CameraMode:       req.CameraMode,
+			FileMode:         req.FileMode,
+			BlobAutoSnapshot: req.BlobAutoSnapshot,
+			BlobRetainDays:   req.BlobRetainDays,
+		},
+	)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -751,10 +760,11 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID string `json:"account_id"`
-		DeviceID  string `json:"device_id"`
-		MaxSize   int    `json:"max_size"`
-		BitRate   int    `json:"bit_rate"`
+		AccountID     string `json:"account_id"`
+		DeviceID      string `json:"device_id"`
+		MaxSize       int    `json:"max_size"`
+		BitRate       int    `json:"bit_rate"`
+		BlobAccessKey string `json:"blob_access_key"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -769,6 +779,20 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed device does not match request body"})
 		return
 	}
+
+	blobAccessKey, err := a.store.VerifyDeviceBlobAccessKey(r.Context(), accountID, deviceID, req.BlobAccessKey)
+	if err != nil {
+		switch err {
+		case store.ErrDeviceNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		case store.ErrIdentityNotFound, store.ErrIdentityAuthFailed, store.ErrIdentityKeyRequired:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return
+	}
+
 	runtime, err := a.store.GetRuntime(r.Context(), accountID, r.PathValue("id"))
 	if err != nil {
 		if err == store.ErrRuntimeNotFound {
@@ -782,6 +806,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": store.ErrRuntimeNotReady.Error()})
 		return
 	}
+	a.activeBlobKeys.put(runtime.ID, blobAccessKey)
 
 	host, err := a.store.GetHost(r.Context(), *runtime.HostID)
 	if err != nil {

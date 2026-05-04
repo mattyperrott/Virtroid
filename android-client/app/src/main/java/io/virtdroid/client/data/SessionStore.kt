@@ -43,13 +43,13 @@ class SessionStore(context: Context) {
         fun getString(key: String, defaultValue: String?): String? {
             val encrypted = prefs.getString(encryptedKey(key), null)
             if (!encrypted.isNullOrBlank()) {
-                return decrypt(encrypted)
+                return normalizeDefault(key, decrypt(encrypted), defaultValue)
             }
 
             val legacy = prefs.getString(key, null) ?: return defaultValue
             putString(key, legacy)
             prefs.edit().remove(key).apply()
-            return legacy
+            return normalizeDefault(key, legacy, defaultValue)
         }
 
         fun putString(key: String, value: String?) {
@@ -113,12 +113,21 @@ class SessionStore(context: Context) {
         }
 
         private fun encryptedKey(key: String): String = "enc_$key"
+
+        private fun normalizeDefault(key: String, value: String?, defaultValue: String?): String? {
+            return if (key == KEY_BASE_URL && value == OLD_DEFAULT_BASE_URL) {
+                defaultValue
+            } else {
+                value
+            }
+        }
     }
 
     private companion object {
         const val KEY_BASE_URL = "base_url"
         const val KEY_ACCOUNT_ID = "account_id"
         const val KEY_DEVICE_ID = "device_id"
+        const val OLD_DEFAULT_BASE_URL = "https://176.126.70.76"
         val DEFAULT_BASE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KEYSTORE_ALIAS = "virtdroid_session_prefs_v1"

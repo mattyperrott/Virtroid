@@ -24,7 +24,8 @@ val releaseStorePassword = signingValue("VIRTDROID_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = signingValue("VIRTDROID_RELEASE_KEY_ALIAS")
 val releaseKeyPassword = signingValue("VIRTDROID_RELEASE_KEY_PASSWORD")
 val defaultControlPlaneUrl = signingValue("VIRTDROID_DEFAULT_CONTROL_PLANE_URL")
-    ?: "https://176.126.70.76"
+    ?: "http://176.126.70.76:8080"
+val defaultControlPlaneUsesCleartext = defaultControlPlaneUrl.startsWith("http://", ignoreCase = true)
 val defaultBootstrapToken = signingValue("VIRTDROID_BOOTSTRAP_INVITE_TOKEN") ?: ""
 
 android {
@@ -39,7 +40,7 @@ android {
         versionName = "0.1.0"
         buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(defaultControlPlaneUrl))
         buildConfigField("String", "DEFAULT_BOOTSTRAP_INVITE_TOKEN", buildConfigString(defaultBootstrapToken))
-        manifestPlaceholders["usesCleartextTraffic"] = false
+        manifestPlaceholders["usesCleartextTraffic"] = defaultControlPlaneUsesCleartext
     }
 
     signingConfigs {

@@ -20,8 +20,7 @@ class LauncherActivity : AppCompatActivity() {
             !sessionStore.hasAccess() -> Intent(this, OnboardingActivity::class.java)
             !identityPasswordStore.isConfigured(sessionStore.accountId, sessionStore.deviceId) ->
                 Intent(this, OnboardingActivity::class.java)
-            !appLockStore.hasCredential() -> Intent(this, OnboardingActivity::class.java)
-            !appLockStore.isUnlocked() -> Intent(this, UnlockActivity::class.java)
+            appLockStore.hasCredential() && !appLockStore.isUnlocked() -> Intent(this, UnlockActivity::class.java)
             else -> Intent(this, MainActivity::class.java)
         }
 
