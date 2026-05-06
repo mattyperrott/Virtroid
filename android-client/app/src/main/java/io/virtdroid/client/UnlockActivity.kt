@@ -4,11 +4,16 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import io.virtdroid.client.data.AppLogStore
+import io.virtdroid.client.data.AppSettingsStore
 import io.virtdroid.client.databinding.ScreenPinAuthenticationBinding
 import io.virtdroid.client.security.AppLockStore
 import io.virtdroid.client.security.enableSecureWindow
@@ -16,8 +21,11 @@ import io.virtdroid.client.security.enableSecureWindow
 class UnlockActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPinAuthenticationBinding
     private lateinit var appLockStore: AppLockStore
+    private lateinit var appSettings: AppSettingsStore
+    private lateinit var appLogs: AppLogStore
     private var pinBuffer = StringBuilder()
     private var showingPassphrase = false
+    private var returnToPrevious = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,7 +46,10 @@ class UnlockActivity : AppCompatActivity() {
         }
 
         appLockStore = AppLockStore(this)
-        if (!appLockStore.hasCredential()) {
+        appSettings = AppSettingsStore(this)
+        appLogs = AppLogStore.get(this)
+        returnToPrevious = intent.getBooleanExtra(EXTRA_RETURN_TO_PREVIOUS, false)
+        if (!appLockStore.isEnabled() || !appLockStore.hasCredential()) {
             launchOnboarding()
             return
         }
@@ -66,9 +77,11 @@ class UnlockActivity : AppCompatActivity() {
         }
         binding.unlockButton.setOnClickListener { unlockWithPassphrase() }
         binding.switchUnlockModeText.setOnClickListener { toggleUnlockMode() }
+        binding.buttonFingerprint.setOnClickListener { unlockWithBiometric() }
 
         showingPassphrase = appLockStore.mode == AppLockStore.LockMode.PASSPHRASE
         renderMode()
+        renderBiometric()
     }
 
     private fun appendPin(value: String) {
@@ -76,6 +89,11 @@ class UnlockActivity : AppCompatActivity() {
         pinBuffer.append(value)
         updateDots()
         if (pinBuffer.length == 6) {
+            if (showLockoutIfNeeded()) {
+                pinBuffer = StringBuilder()
+                updateDots()
+                return
+            }
             if (appLockStore.verify(pinBuffer.toString())) {
                 launchMain()
             } else {
@@ -88,6 +106,9 @@ class UnlockActivity : AppCompatActivity() {
 
     private fun unlockWithPassphrase() {
         val value = binding.passphraseInput.text?.toString().orEmpty()
+        if (showLockoutIfNeeded()) {
+            return
+        }
         if (appLockStore.verify(value)) {
             launchMain()
         } else {
@@ -107,6 +128,52 @@ class UnlockActivity : AppCompatActivity() {
         binding.pinPad.isVisible = !effectivePassphrase
         binding.pinDotsRow.isVisible = !effectivePassphrase
         binding.switchUnlockModeText.isVisible = !passphraseOnly
+        renderBiometric()
+    }
+
+    private fun renderBiometric() {
+        val canUseBiometric = appSettings.biometricUnlockEnabled &&
+            appLockStore.mode == AppLockStore.LockMode.PIN &&
+            BiometricManager.from(this).canAuthenticate(BIOMETRIC_AUTHENTICATORS) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+        binding.buttonFingerprint.isVisible = !showingPassphrase && canUseBiometric
+    }
+
+    private fun unlockWithBiometric() {
+        val prompt = BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    appLockStore.markUnlocked()
+                    appLogs.info("Biometric unlock succeeded", "auth")
+                    launchMain()
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    appLogs.warn("Biometric unlock failed", "auth")
+                }
+            },
+        )
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(getString(R.string.biometric_unlock_title))
+                .setSubtitle(getString(R.string.biometric_unlock_subtitle))
+                .setNegativeButtonText(getString(R.string.biometric_unlock_use_pin))
+                .setAllowedAuthenticators(BIOMETRIC_AUTHENTICATORS)
+                .build(),
+        )
+    }
+
+    private fun showLockoutIfNeeded(): Boolean {
+        val remainingMs = appLockStore.lockoutRemainingMs()
+        if (remainingMs <= 0L) {
+            return false
+        }
+        toast(getString(R.string.lock_try_again, (remainingMs / 1_000L).coerceAtLeast(1L)))
+        return true
     }
 
     private fun updateDots() {
@@ -119,6 +186,10 @@ class UnlockActivity : AppCompatActivity() {
     }
 
     private fun launchMain() {
+        if (returnToPrevious) {
+            finish()
+            return
+        }
         startActivity(
             Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
@@ -136,5 +207,10 @@ class UnlockActivity : AppCompatActivity() {
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    companion object {
+        const val EXTRA_RETURN_TO_PREVIOUS = "return_to_previous"
+        private const val BIOMETRIC_AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG
     }
 }

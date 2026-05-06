@@ -13,9 +13,11 @@ type ServerConfig struct {
 	PublicBaseURL               string
 	PublicRelayURL              string
 	NodeSharedSecret            string
-	BootstrapToken              string
 	BootstrapRateLimitPerMinute int
 	BootstrapMaxBodyBytes       int64
+	SessionReaperInterval       time.Duration
+	ActiveSessionTimeout        time.Duration
+	RuntimeIdleTimeout          time.Duration
 }
 
 type NodeConfig struct {
@@ -51,6 +53,9 @@ func LoadServer() ServerConfig {
 	if err != nil {
 		bootstrapMaxBodyBytes = 32768
 	}
+	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
+	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
+	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 3*time.Minute)
 
 	return ServerConfig{
 		AppEnv:                      envOrDefault("APP_ENV", "development"),
@@ -59,9 +64,11 @@ func LoadServer() ServerConfig {
 		PublicBaseURL:               envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
 		PublicRelayURL:              os.Getenv("PUBLIC_RELAY_URL"),
 		NodeSharedSecret:            os.Getenv("NODE_SHARED_SECRET"),
-		BootstrapToken:              os.Getenv("BOOTSTRAP_INVITE_TOKEN"),
 		BootstrapRateLimitPerMinute: bootstrapRateLimit,
 		BootstrapMaxBodyBytes:       int64(bootstrapMaxBodyBytes),
+		SessionReaperInterval:       sessionReaperInterval,
+		ActiveSessionTimeout:        activeSessionTimeout,
+		RuntimeIdleTimeout:          runtimeIdleTimeout,
 	}
 }
 
@@ -135,4 +142,16 @@ func parseEnvInt(key string, fallback int) (int, error) {
 		return fallback, err
 	}
 	return parsed, nil
+}
+
+func parseEnvDuration(key string, fallback time.Duration) time.Duration {
+	value := envOrDefault(key, "")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

@@ -49,9 +49,9 @@ var (
 )
 
 type BootstrapResult struct {
-	Account Account `json:"account"`
-	Device  Device  `json:"device"`
-	Runtime Runtime `json:"runtime"`
+	Account Account  `json:"account"`
+	Device  Device   `json:"device"`
+	Runtime *Runtime `json:"runtime,omitempty"`
 }
 
 type Account struct {
@@ -203,14 +203,17 @@ type RuntimeObservation struct {
 }
 
 type Session struct {
-	ID         string    `json:"id"`
-	RuntimeID  string    `json:"runtime_id"`
-	DeviceID   string    `json:"device_id"`
-	Status     string    `json:"status"`
-	RelayToken string    `json:"relay_token"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
+	ID                    string     `json:"id"`
+	RuntimeID             string     `json:"runtime_id"`
+	DeviceID              string     `json:"device_id"`
+	Status                string     `json:"status"`
+	RelayToken            string     `json:"relay_token,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
+	LastClientHeartbeatAt *time.Time `json:"last_client_heartbeat_at,omitempty"`
+	EndedAt               *time.Time `json:"ended_at,omitempty"`
+	EndReason             *string    `json:"end_reason,omitempty"`
+	ExpiresAt             time.Time  `json:"expires_at"`
 }
 
 type SessionRelayTarget struct {
@@ -219,6 +222,12 @@ type SessionRelayTarget struct {
 	DeviceID   string `json:"device_id"`
 	HostID     string `json:"host_id"`
 	ViewerPort int    `json:"viewer_port"`
+}
+
+type SessionReapResult struct {
+	ExpiredPendingSessions int      `json:"expired_pending_sessions"`
+	StaleActiveSessions    int      `json:"stale_active_sessions"`
+	StoppedRuntimeIDs      []string `json:"stopped_runtime_ids"`
 }
 
 func New(ctx context.Context, databaseURL string) (*Store, error) {
@@ -261,7 +270,7 @@ func (s *Store) BootstrapAccountWithIdentity(
 	deviceID string,
 	deviceName string,
 	publicKey string,
-	defaults CreateRuntimeInput,
+	_ CreateRuntimeInput,
 ) (BootstrapResult, error) {
 	if strings.TrimSpace(deviceName) == "" {
 		return BootstrapResult{}, errors.New("device name is required")
@@ -278,15 +287,6 @@ func (s *Store) BootstrapAccountWithIdentity(
 	if err != nil {
 		return BootstrapResult{}, err
 	}
-	runtimeID := uuid.NewString()
-	defaults.Name = strings.TrimSpace(defaults.Name)
-	if defaults.Name == "" {
-		defaults.Name = "Primary runtime"
-	}
-	defaults.AudioEnabled = true
-	defaults.BlobAutoSnapshot = true
-	defaults = normalizedCreateInput(defaults)
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return BootstrapResult{}, err
@@ -315,33 +315,6 @@ func (s *Store) BootstrapAccountWithIdentity(
 		&result.Device.CreatedAt,
 		&result.Device.LastSeenAt,
 	); err != nil {
-		return BootstrapResult{}, err
-	}
-
-	if err := tx.QueryRowContext(ctx,
-		fmt.Sprintf(`INSERT INTO runtimes (
-			id, account_id, name, status, desired_state, connection_status, android_image, android_version,
-			width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days
-		) VALUES ($1, $2, $3, 'stopped', 'stopped', 'offline', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		RETURNING %s`, runtimeColumns),
-		runtimeID,
-		accountID,
-		defaults.Name,
-		defaults.AndroidImage,
-		defaults.AndroidVersion,
-		defaults.WidthPx,
-		defaults.HeightPx,
-		defaults.DensityDpi,
-		defaults.AudioEnabled,
-		defaults.CameraMode,
-		defaults.FileMode,
-		defaults.BlobAutoSnapshot,
-		defaults.BlobRetainDays,
-	).Scan(scanRuntimeDest(&result.Runtime)...); err != nil {
-		return BootstrapResult{}, err
-	}
-
-	if err := appendRuntimeLogTX(ctx, tx, result.Runtime.ID, "system", "info", "Primary runtime created for new account."); err != nil {
 		return BootstrapResult{}, err
 	}
 
@@ -1185,7 +1158,9 @@ func (s *Store) ResolveSessionRelayTarget(ctx context.Context, sessionID, relayT
 	err := s.db.QueryRowContext(ctx,
 		`UPDATE sessions AS s
 		 SET status = 'active',
-		     updated_at = NOW()
+		     updated_at = NOW(),
+		     last_client_heartbeat_at = NOW(),
+		     expires_at = NOW() + INTERVAL '2 minutes'
 		 FROM runtimes AS r
 		 WHERE s.id = $1
 		   AND s.relay_token = $2
@@ -1218,7 +1193,9 @@ func (s *Store) CloseSession(ctx context.Context, accountID, deviceID, sessionID
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE sessions AS s
 		 SET status = 'closed',
-		     updated_at = NOW()
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = 'client closed'
 		 FROM runtimes AS r
 		 WHERE s.id = $1
 		   AND s.device_id = $2
@@ -1240,6 +1217,165 @@ func (s *Store) CloseSession(ctx context.Context, accountID, deviceID, sessionID
 		return ErrSessionNotFound
 	}
 	return nil
+}
+
+func (s *Store) HeartbeatSession(ctx context.Context, accountID, deviceID, sessionID string) (Session, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	sessionID = strings.TrimSpace(sessionID)
+	if accountID == "" || deviceID == "" || sessionID == "" {
+		return Session{}, ErrSessionNotFound
+	}
+
+	var session Session
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE sessions AS s
+		 SET updated_at = NOW(),
+		     last_client_heartbeat_at = NOW(),
+		     expires_at = NOW() + INTERVAL '2 minutes'
+		 FROM runtimes AS r
+		 WHERE s.id = $1
+		   AND s.device_id = $2
+		   AND r.id = s.runtime_id
+		   AND r.account_id = $3
+		   AND s.status IN ('pending', 'active')
+		   AND s.expires_at > NOW()
+		   AND r.deleted_at IS NULL
+		   AND r.desired_state <> 'deleted'
+		 RETURNING s.id, s.runtime_id, s.device_id, s.status, s.created_at, s.updated_at,
+		           s.last_client_heartbeat_at, s.ended_at, s.end_reason, s.expires_at`,
+		sessionID,
+		deviceID,
+		accountID,
+	).Scan(
+		&session.ID,
+		&session.RuntimeID,
+		&session.DeviceID,
+		&session.Status,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
+		&session.ExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrSessionNotFound
+		}
+		return Session{}, err
+	}
+	return session, nil
+}
+
+func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, runtimeIdleTimeout time.Duration) (SessionReapResult, error) {
+	if activeSessionTimeout <= 0 {
+		activeSessionTimeout = 2 * time.Minute
+	}
+	if runtimeIdleTimeout <= 0 {
+		runtimeIdleTimeout = 3 * time.Minute
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
+	defer tx.Rollback()
+
+	expiredPending, err := queryStringColumnTX(ctx, tx,
+		`UPDATE sessions
+		 SET status = 'expired',
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = 'session expired before relay attach'
+		 WHERE status = 'pending'
+		   AND expires_at <= NOW()
+		 RETURNING id`,
+	)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
+
+	staleActive, err := queryStringColumnTX(ctx, tx,
+		`UPDATE sessions
+		 SET status = 'stale',
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = 'client heartbeat stale'
+		 WHERE status = 'active'
+		   AND (
+		       expires_at <= NOW()
+		       OR COALESCE(last_client_heartbeat_at, updated_at, created_at) < NOW() - $1::interval
+		   )
+		 RETURNING id`,
+		postgresInterval(activeSessionTimeout),
+	)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
+
+	stoppedRuntimeIDs, err := queryStringColumnTX(ctx, tx,
+		`WITH latest_session AS (
+		     SELECT runtime_id, MAX(updated_at) AS last_session_at
+		       FROM sessions
+		      GROUP BY runtime_id
+		 ),
+		 candidates AS (
+		     SELECT r.id
+		       FROM runtimes r
+		       JOIN latest_session ls ON ls.runtime_id = r.id
+		      WHERE r.deleted_at IS NULL
+		        AND r.desired_state = 'running'
+		        AND r.status IN ('starting', 'running', 'error')
+		        AND ls.last_session_at < NOW() - $2::interval
+		        AND NOT EXISTS (
+		            SELECT 1
+		              FROM sessions live
+		             WHERE live.runtime_id = r.id
+		               AND (
+		                    (live.status = 'pending' AND live.expires_at > NOW())
+		                    OR (
+		                        live.status = 'active'
+		                        AND live.expires_at > NOW()
+		                        AND COALESCE(live.last_client_heartbeat_at, live.updated_at, live.created_at) >= NOW() - $1::interval
+		                    )
+		               )
+		        )
+		      FOR UPDATE
+		 ),
+		 updated AS (
+		     UPDATE runtimes r
+		        SET desired_state = 'stopped',
+		            connection_status = 'offline',
+		            last_error = NULL,
+		            updated_at = NOW()
+		       FROM candidates c
+		      WHERE r.id = c.id
+		      RETURNING r.id
+		 )
+		 SELECT id FROM updated`,
+		postgresInterval(activeSessionTimeout),
+		postgresInterval(runtimeIdleTimeout),
+	)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
+
+	for _, runtimeID := range stoppedRuntimeIDs {
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because no active client session is heartbeating."); err != nil {
+			return SessionReapResult{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return SessionReapResult{}, err
+	}
+
+	return SessionReapResult{
+		ExpiredPendingSessions: len(expiredPending),
+		StaleActiveSessions:    len(staleActive),
+		StoppedRuntimeIDs:      stoppedRuntimeIDs,
+	}, nil
 }
 
 func (s *Store) ListAssignedRuntimes(ctx context.Context, hostID string) ([]Runtime, error) {
@@ -1479,9 +1615,10 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 
 	var session Session
 	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO sessions (id, runtime_id, device_id, status, relay_token, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, runtime_id, device_id, status, created_at, updated_at, expires_at`,
+		`INSERT INTO sessions (id, runtime_id, device_id, status, relay_token, expires_at, last_client_heartbeat_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		 RETURNING id, runtime_id, device_id, status, created_at, updated_at,
+		           last_client_heartbeat_at, ended_at, end_reason, expires_at`,
 		sessionID, runtimeID, deviceID, "pending", relayTokenHash, expiresAt,
 	).Scan(
 		&session.ID,
@@ -1490,6 +1627,9 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 		&session.Status,
 		&session.CreatedAt,
 		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
 		&session.ExpiresAt,
 	)
 	session.RelayToken = relayToken
@@ -1543,6 +1683,38 @@ func appendRuntimeLogTX(ctx context.Context, tx *sql.Tx, runtimeID, source, leve
 		strings.TrimSpace(message),
 	)
 	return err
+}
+
+func queryStringColumnTX(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var values []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if values == nil {
+		return []string{}, nil
+	}
+	return values, nil
+}
+
+func postgresInterval(d time.Duration) string {
+	seconds := int64(d.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Sprintf("%d seconds", seconds)
 }
 
 func scanRuntimeDest(runtime *Runtime) []any {

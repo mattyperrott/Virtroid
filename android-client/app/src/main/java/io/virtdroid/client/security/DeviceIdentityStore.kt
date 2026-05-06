@@ -39,6 +39,13 @@ class DeviceIdentityStore {
         return Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP)
     }
 
+    fun deleteDeviceKey() {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        if (keyStore.containsAlias(KEY_ALIAS)) {
+            keyStore.deleteEntry(KEY_ALIAS)
+        }
+    }
+
     fun defaultDeviceName(): String {
         return listOfNotNull(Build.MANUFACTURER, Build.MODEL)
             .joinToString(" ")

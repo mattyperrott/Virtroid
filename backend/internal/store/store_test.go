@@ -8,7 +8,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func TestBootstrapAccountDoesNotReserveViewerPort(t *testing.T) {
+func TestBootstrapAccountDoesNotCreateRuntime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -36,34 +36,14 @@ func TestBootstrapAccountDoesNotReserveViewerPort(t *testing.T) {
 			now,
 			nil,
 		))
-	mock.ExpectQuery("INSERT INTO runtimes").
-		WithArgs(
-			sqlmock.AnyArg(),
-			sqlmock.AnyArg(),
-			"Primary runtime",
-			defaultAndroidImage,
-			"android-12",
-			720,
-			1600,
-			320,
-			true,
-			"disabled",
-			"upload-only",
-			true,
-			7,
-		).
-		WillReturnRows(runtimeRows(now, nil))
-	mock.ExpectExec("INSERT INTO runtime_logs").
-		WithArgs("33333333-3333-3333-3333-333333333333", "system", "info", "Primary runtime created for new account.").
-		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	result, err := st.BootstrapAccount(context.Background(), "Pixel", "public-key", CreateRuntimeInput{})
 	if err != nil {
 		t.Fatalf("BootstrapAccount returned error: %v", err)
 	}
-	if result.Runtime.ViewerPort != nil {
-		t.Fatalf("bootstrap runtime reserved viewer port %d; want nil until start", *result.Runtime.ViewerPort)
+	if result.Runtime != nil {
+		t.Fatalf("bootstrap runtime = %#v; want nil until the user creates one", result.Runtime)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -100,26 +80,6 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 			now,
 			nil,
 		))
-	mock.ExpectQuery("INSERT INTO runtimes").
-		WithArgs(
-			sqlmock.AnyArg(),
-			accountID,
-			"Primary runtime",
-			defaultAndroidImage,
-			"android-12",
-			720,
-			1600,
-			320,
-			true,
-			"disabled",
-			"upload-only",
-			true,
-			7,
-		).
-		WillReturnRows(runtimeRows(now, nil))
-	mock.ExpectExec("INSERT INTO runtime_logs").
-		WithArgs("33333333-3333-3333-3333-333333333333", "system", "info", "Primary runtime created for new account.").
-		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	result, err := st.BootstrapAccountWithIdentity(
@@ -138,6 +98,9 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 	}
 	if result.Device.ID != deviceID {
 		t.Fatalf("device id = %q, want %q", result.Device.ID, deviceID)
+	}
+	if result.Runtime != nil {
+		t.Fatalf("bootstrap runtime = %#v; want nil until the user creates one", result.Runtime)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -201,6 +164,107 @@ func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 	}
 	if runtimes[0].ViewerPort == nil || *runtimes[0].ViewerPort != 46000 {
 		t.Fatalf("viewer port = %v, want 46000", runtimes[0].ViewerPort)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestHeartbeatSessionExtendsLease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	heartbeatAt := now.Add(time.Second)
+	expiresAt := now.Add(2 * time.Minute)
+
+	mock.ExpectQuery("UPDATE sessions AS s").
+		WithArgs(
+			"33333333-3333-3333-3333-333333333333",
+			"22222222-2222-2222-2222-222222222222",
+			"11111111-1111-1111-1111-111111111111",
+		).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "device_id", "status", "created_at", "updated_at",
+			"last_client_heartbeat_at", "ended_at", "end_reason", "expires_at",
+		}).AddRow(
+			"33333333-3333-3333-3333-333333333333",
+			"44444444-4444-4444-4444-444444444444",
+			"22222222-2222-2222-2222-222222222222",
+			"active",
+			now,
+			heartbeatAt,
+			heartbeatAt,
+			nil,
+			nil,
+			expiresAt,
+		))
+
+	session, err := st.HeartbeatSession(
+		context.Background(),
+		"11111111-1111-1111-1111-111111111111",
+		"22222222-2222-2222-2222-222222222222",
+		"33333333-3333-3333-3333-333333333333",
+	)
+	if err != nil {
+		t.Fatalf("HeartbeatSession returned error: %v", err)
+	}
+	if session.RelayToken != "" {
+		t.Fatal("HeartbeatSession returned a bearer relay token")
+	}
+	if session.LastClientHeartbeatAt == nil || !session.LastClientHeartbeatAt.Equal(heartbeatAt) {
+		t.Fatalf("last heartbeat = %v, want %v", session.LastClientHeartbeatAt, heartbeatAt)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE sessions").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).
+			AddRow("11111111-1111-1111-1111-111111111111"))
+	mock.ExpectQuery("UPDATE sessions").
+		WithArgs("120 seconds").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).
+			AddRow("22222222-2222-2222-2222-222222222222"))
+	mock.ExpectQuery("WITH latest_session").
+		WithArgs("120 seconds", "180 seconds").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).
+			AddRow(runtimeID))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(
+			runtimeID,
+			"system",
+			"warn",
+			"Runtime stop queued because no active client session is heartbeating.",
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute, 3*time.Minute)
+	if err != nil {
+		t.Fatalf("ReapStaleSessions returned error: %v", err)
+	}
+	if result.ExpiredPendingSessions != 1 || result.StaleActiveSessions != 1 {
+		t.Fatalf("session counts = %+v, want one expired pending and one stale active", result)
+	}
+	if len(result.StoppedRuntimeIDs) != 1 || result.StoppedRuntimeIDs[0] != runtimeID {
+		t.Fatalf("stopped runtime ids = %v, want [%s]", result.StoppedRuntimeIDs, runtimeID)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

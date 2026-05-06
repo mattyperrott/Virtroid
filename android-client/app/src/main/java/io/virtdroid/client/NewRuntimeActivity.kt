@@ -12,6 +12,7 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtdroid.client.api.RuntimeUpdate
 import io.virtdroid.client.api.VirtdroidApi
+import io.virtdroid.client.data.AppLogStore
 import io.virtdroid.client.data.SessionStore
 import io.virtdroid.client.databinding.ScreenCreateSessionBinding
 import io.virtdroid.client.device.DeviceRuntimeProfile
@@ -22,6 +23,7 @@ class NewRuntimeActivity : AppCompatActivity() {
     private lateinit var binding: ScreenCreateSessionBinding
     private val api = VirtdroidApi()
     private lateinit var sessionStore: SessionStore
+    private lateinit var appLogs: AppLogStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,6 +33,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
+        appLogs = AppLogStore.get(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.newRuntimeRoot) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -59,6 +62,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         val runtimeProfile = DeviceRuntimeProfile.from(this)
         val runtimeName = binding.sessionNameInput.text?.toString().orEmpty().trim()
         binding.provisionRuntimeButton.isEnabled = false
+        appLogs.info("Runtime creation requested", "runtime")
 
         lifecycleScope.launch {
             runCatching {
@@ -82,17 +86,23 @@ class NewRuntimeActivity : AppCompatActivity() {
                         heightPx = runtimeProfile.heightPx,
                         densityDpi = runtimeProfile.densityDpi,
                         audioEnabled = binding.audioPassthroughSwitch.isChecked,
-                        cameraMode = "disabled",
+                        cameraMode = if (binding.cameraPassthroughSwitch.isChecked) {
+                            "passthrough"
+                        } else {
+                            "disabled"
+                        },
                         fileMode = "upload-only",
                         blobAutoSnapshot = true,
                         blobRetainDays = 7,
                     ),
                 )
             }.onSuccess {
+                appLogs.info("Runtime created", "runtime")
                 toast(getString(R.string.runtime_created))
                 setResult(RESULT_OK)
                 finish()
             }.onFailure {
+                appLogs.error(it.message ?: getString(R.string.status_error), "runtime")
                 binding.provisionRuntimeButton.isEnabled = true
                 toast(it.message ?: getString(R.string.status_error))
             }

@@ -26,7 +26,6 @@ val releaseKeyPassword = signingValue("VIRTDROID_RELEASE_KEY_PASSWORD")
 val defaultControlPlaneUrl = signingValue("VIRTDROID_DEFAULT_CONTROL_PLANE_URL")
     ?: "http://176.126.70.76:8080"
 val defaultControlPlaneUsesCleartext = defaultControlPlaneUrl.startsWith("http://", ignoreCase = true)
-val defaultBootstrapToken = signingValue("VIRTDROID_BOOTSTRAP_INVITE_TOKEN") ?: ""
 
 android {
     namespace = "io.virtdroid.client"
@@ -39,7 +38,6 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(defaultControlPlaneUrl))
-        buildConfigField("String", "DEFAULT_BOOTSTRAP_INVITE_TOKEN", buildConfigString(defaultBootstrapToken))
         manifestPlaceholders["usesCleartextTraffic"] = defaultControlPlaneUsesCleartext
     }
 
@@ -87,6 +85,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.drawerlayout:drawerlayout:1.2.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("com.google.android.material:material:1.13.0")

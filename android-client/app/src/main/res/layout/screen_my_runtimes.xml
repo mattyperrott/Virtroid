@@ -37,39 +37,51 @@
 
                 <TextView
                     android:id="@+id/statusText"
+                    style="@style/VirtdroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="6dp"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.15"
-                    android:text="@string/home_secure_client"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
+                    android:text="@string/home_secure_client" />
 
                 <TextView
                     android:id="@+id/text_title"
+                    style="@style/VirtdroidText.ScreenTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:text="@string/home_title"
-                    android:textColor="@color/v_text_primary"
-                    android:textSize="30sp"
-                    android:textStyle="bold" />
+                    android:text="@string/home_title" />
             </LinearLayout>
 
-            <ImageButton
-                android:id="@+id/refreshButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginEnd="12dp"
-                android:background="@drawable/bg_surface_circle"
-                android:contentDescription="@string/status_refreshing"
-                android:padding="13dp"
-                android:src="@drawable/ic_search"
-                android:tint="@color/v_text_primary" />
+            <FrameLayout
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginEnd="12dp">
+
+                <ImageButton
+                    android:id="@+id/notificationButton"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/bg_surface_circle"
+                    android:contentDescription="@string/system_logs_open_errors"
+                    android:padding="13dp"
+                    android:src="@drawable/ic_bell"
+                    android:tint="@color/v_text_primary" />
+
+                <TextView
+                    android:id="@+id/notificationBadgeText"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="top|end"
+                    android:background="@drawable/bg_notification_badge"
+                    android:fontFamily="sans"
+                    android:gravity="center"
+                    android:includeFontPadding="false"
+                    android:text="1"
+                    android:textColor="@color/v_white"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </FrameLayout>
 
             <ImageButton
                 android:id="@+id/accessToggleButton"
@@ -173,23 +185,14 @@
             android:layout_height="match_parent"
             android:layout_weight="2.0">
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/createRuntimeButton"
+                style="@style/VirtdroidButton.Primary"
                 android:layout_width="116dp"
                 android:layout_height="48dp"
                 android:layout_gravity="center"
-                android:background="@drawable/bg_accent_round"
-                android:fontFamily="sans"
-                android:gravity="center"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:text="+ New"
-                android:textAllCaps="false"
-                android:textColor="@color/v_bg"
-                android:textSize="14sp"
-                android:textStyle="bold" />
+                android:minHeight="48dp"
+                android:text="+ New" />
         </FrameLayout>
 
         <FrameLayout
@@ -205,7 +208,7 @@
                 android:background="@drawable/bg_transparent"
                 android:contentDescription="@string/bottom_logs"
                 android:padding="13dp"
-                android:src="@drawable/ic_fingerprint"
+                android:src="@drawable/ic_terminal"
                 android:tint="@color/v_text_muted" />
         </FrameLayout>
 

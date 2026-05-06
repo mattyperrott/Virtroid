@@ -81,14 +81,10 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/text_title"
+                            style="@style/VirtdroidText.ScreenTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Account Identity"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="24sp"
-                            android:textStyle="bold"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:layout_marginBottom="8dp" />
                         <LinearLayout
                             android:layout_width="match_parent"
@@ -103,13 +99,10 @@
                                 android:layout_marginEnd="6dp" />
                             <TextView
                                 android:id="@+id/text_active_session"
+                                style="@style/VirtdroidText.Status"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Active Local Session"
-                                android:textColor="@color/v_text_muted"
-                                android:textSize="13sp"
-                                android:fontFamily="sans"
-                                android:includeFontPadding="false" />
+                                android:text="Active Local Session" />
                         </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
@@ -138,22 +131,16 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_account_id_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Account ID"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Account ID" />
                         <TextView
                             android:id="@+id/item_account_id_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="vd_acc_9x8f2a1b4c7d"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
+                            android:text="@string/account_missing"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -192,22 +179,16 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_device_fingerprint_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Device Fingerprint"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Device Fingerprint" />
                         <TextView
                             android:id="@+id/item_device_fingerprint_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="f8c9-4a2b-9e1d / Registered"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
+                            android:text="@string/device_missing"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -276,7 +257,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:gravity="end"
-                            android:text="Oct 24, 2023"
+                            android:text="@string/account_identity_not_linked"
                             android:textColor="@color/v_text_primary"
                             android:textSize="13sp"
                             android:fontFamily="sans"
@@ -303,7 +284,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:gravity="end"
-                            android:text="2 hours ago"
+                            android:text="@string/account_storage_not_synced"
                             android:textColor="@color/v_text_primary"
                             android:textSize="13sp"
                             android:fontFamily="sans"
@@ -312,15 +293,10 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_decentralized_storage"
+                    style="@style/VirtdroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="DECENTRALIZED STORAGE"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.08"
                     android:layout_marginStart="8dp"
                     android:layout_marginTop="0dp"
                     android:layout_marginBottom="12dp" />
@@ -352,7 +328,7 @@
                                     android:id="@+id/storage_usage_value"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="428"
+                                    android:text="--"
                                     android:textColor="@color/v_text_primary"
                                     android:textSize="38sp"
                                     android:textStyle="bold"
@@ -363,7 +339,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_gravity="bottom"
-                                    android:text=" MB"
+                                    android:text=""
                                     android:textColor="@color/v_text_muted"
                                     android:textSize="24sp"
                                     android:fontFamily="sans"
@@ -373,7 +349,7 @@
                                 android:id="@+id/storage_usage_subtitle"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Snapshot metadata stored"
+                                android:text="@string/account_storage_usage_unreported"
                                 android:textColor="@color/v_text_muted"
                                 android:textSize="13sp"
                                 android:fontFamily="sans"
@@ -390,7 +366,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:gravity="center"
-                                android:text="Ready"
+                                android:text="@string/account_storage_unavailable"
                                 android:textColor="@color/v_accent"
                                 android:textSize="11sp"
                                 android:textStyle="bold"
@@ -407,7 +383,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:gravity="end"
-                                android:text="3 Snapshots"
+                                android:text="@string/account_storage_snapshots_unreported"
                                 android:textColor="@color/v_text_muted"
                                 android:textSize="11sp"
                                 android:fontFamily="sans"
@@ -440,7 +416,7 @@
                                 android:layout_width="40dp"
                                 android:layout_height="40dp"
                                 android:gravity="center"
-                                android:text="HD"
+                                android:text="--"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="11sp"
                                 android:textStyle="bold"
@@ -514,7 +490,7 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:gravity="center"
-                                android:text="~$8.42"
+                                android:text="--"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="14sp"
                                 android:textStyle="bold"
@@ -535,7 +511,7 @@
                                 android:layout_width="40dp"
                                 android:layout_height="40dp"
                                 android:gravity="center"
-                                android:text="27"
+                                android:text="--"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="11sp"
                                 android:textStyle="bold"
@@ -561,7 +537,7 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:gravity="center"
-                                android:text="27 Days"
+                                android:text="@string/account_storage_runway_unreported"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="12sp"
                                 android:textStyle="bold"
@@ -572,15 +548,10 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_security"
+                    style="@style/VirtdroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="SECURITY"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.08"
                     android:layout_marginStart="8dp"
                     android:layout_marginTop="0dp"
                     android:layout_marginBottom="12dp" />
@@ -609,22 +580,16 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_identity_password_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Identity Password"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Identity Password" />
                         <TextView
                             android:id="@+id/item_identity_password_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Set"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
+                            android:text="@string/account_identity_encryption_missing"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -663,22 +628,17 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_device_signing_key_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Device Signing Key"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Device Signing Key" />
                         <TextView
                             android:id="@+id/item_device_signing_key_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Local key configured"
+                            android:text="@string/account_identity_verified"
                             android:textColor="@color/v_accent"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -694,15 +654,10 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_danger_zone"
+                    style="@style/VirtdroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="DANGER ZONE"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.08"
                     android:layout_marginStart="8dp"
                     android:layout_marginTop="20dp"
                     android:layout_marginBottom="12dp" />
@@ -734,8 +689,8 @@
                             android:id="@+id/wipe_user_data_description"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Deletes encrypted user data blobs and runs. Keeps account ID, device identity, storage funds, and app settings."
-                            android:textColor="#99F59E0B"
+                            android:text="@string/account_wipe_local_body"
+                            android:textColor="@color/v_amber_muted"
                             android:textSize="12sp"
                             android:fontFamily="sans"
                             android:includeFontPadding="false"
@@ -769,8 +724,8 @@
                             android:id="@+id/delete_identity_description"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Permanently deletes user data, identity, encryption keys, linked state, and unsaved Sia credits."
-                            android:textColor="#99EF4444"
+                            android:text="@string/account_delete_local_identity_body"
+                            android:textColor="@color/v_danger_muted"
                             android:textSize="12sp"
                             android:fontFamily="sans"
                             android:includeFontPadding="false"

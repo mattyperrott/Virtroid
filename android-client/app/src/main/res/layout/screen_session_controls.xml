@@ -30,16 +30,12 @@
                 android:tint="@color/v_text_primary" />
             <TextView
                 android:id="@+id/text_nav_title"
+                style="@style/VirtdroidText.NavTitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:gravity="center"
-                android:text="Controls"
-                android:textColor="@color/v_text_primary"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:fontFamily="sans"
-                android:includeFontPadding="false" />
+                android:text="Controls" />
             <ImageButton
                 android:id="@+id/controlsConnectButton"
                 android:layout_width="48dp"
@@ -90,23 +86,17 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/controlsRuntimeNameText"
+                            style="@style/VirtdroidText.ContentHeading"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Primary Nexus"
-                            android:textColor="@color/v_text_secondary"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="@string/session_title_fallback"
+                            android:textColor="@color/v_text_secondary" />
                         <TextView
                             android:id="@+id/controlsRuntimeSubtitleText"
+                            style="@style/VirtdroidText.Status"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="ID: 84423ced4-af49-4dc2v-9d97f"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="13sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
+                            android:text="@string/runtime_missing_for_session"
                             android:maxLines="1"
                             android:ellipsize="end"
                             android:layout_marginTop="6dp" />
@@ -204,7 +194,7 @@
                                 android:id="@+id/controlsTunnelValue"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Relay"
+                                android:text="-"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="15sp"
                                 android:textStyle="bold"
@@ -243,7 +233,7 @@
                                 android:id="@+id/controlsStorageValue"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Volatile"
+                                android:text="-"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="15sp"
                                 android:textStyle="bold"
@@ -254,15 +244,10 @@
                 </HorizontalScrollView>
                 <TextView
                     android:id="@+id/label_session_parameters"
+                    style="@style/VirtdroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="SESSION PARAMETERS"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.08"
                     android:layout_marginStart="8dp"
                     android:layout_marginTop="0dp"
                     android:layout_marginBottom="12dp" />
@@ -292,22 +277,16 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_build_info_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Build &amp; Runtime"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Build &amp; Runtime" />
                         <TextView
                             android:id="@+id/controlsBuildBodyText"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Runtime details"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                 </LinearLayout>
@@ -319,6 +298,7 @@
                     android:orientation="horizontal"
                     android:background="@drawable/bg_surface_24"
                     android:padding="16dp"
+                    android:visibility="gone"
                     android:layout_marginBottom="12dp">
                     <ImageView
                         android:id="@+id/item_display_output_icon"
@@ -336,22 +316,16 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_display_output_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Display &amp; Output"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Display &amp; Output" />
                         <TextView
                             android:id="@+id/controlsDisplayBodyText"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Native resolution, 60fps"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -390,22 +364,16 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_camera_passthrough_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Camera Passthrough"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Camera Passthrough" />
                         <TextView
                             android:id="@+id/item_camera_passthrough_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Inject local camera to cloud"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <FrameLayout
@@ -449,22 +417,16 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_console_logs_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Console Logs"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:text="Console Logs" />
                         <TextView
                             android:id="@+id/item_console_logs_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Boot &amp; network events"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -515,22 +477,18 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_wipe_destroy_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Wipe &amp; Destroy"
-                            android:textColor="@color/v_danger"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:textColor="@color/v_danger" />
                         <TextView
                             android:id="@+id/item_wipe_destroy_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Irreversibly delete instance"
-                            android:textColor="#99EF4444"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
+                            android:textColor="@color/v_danger_muted"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -538,7 +496,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="&gt;"
-                        android:textColor="#80EF4444"
+                        android:textColor="@color/v_danger_dim"
                         android:textSize="18sp"
                         android:fontFamily="sans"
                         android:includeFontPadding="false"
@@ -570,22 +528,18 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_destroy_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Destroy Runtime"
-                            android:textColor="@color/v_danger"
-                            android:textSize="15sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false" />
+                            android:textColor="@color/v_danger" />
                         <TextView
                             android:id="@+id/item_destroy_subtitle"
+                            style="@style/VirtdroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Irreversibly delete this instance"
-                            android:textColor="#99EF4444"
-                            android:textSize="12sp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
+                            android:textColor="@color/v_danger_muted"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -593,7 +547,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="&gt;"
-                        android:textColor="#80EF4444"
+                        android:textColor="@color/v_danger_dim"
                         android:textSize="18sp"
                         android:fontFamily="sans"
                         android:includeFontPadding="false"
