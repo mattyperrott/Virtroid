@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -23,6 +25,9 @@ func TestBootstrapAccountDoesNotCreateRuntime(t *testing.T) {
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).
 			AddRow("11111111-1111-1111-1111-111111111111", now))
+	mock.ExpectExec("INSERT INTO account_entitlements").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("INSERT INTO devices").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "Pixel", "public-key").
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -67,6 +72,9 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).
 			AddRow(accountID, now))
+	mock.ExpectExec("INSERT INTO account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("INSERT INTO devices").
 		WithArgs(deviceID, accountID, "Pixel", "public-key").
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -104,6 +112,43 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestCreateRuntimeRequiresEntitlement(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT 1 FROM accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT account_id, source, status").
+		WithArgs(accountID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	_, err = st.CreateRuntime(context.Background(), accountID, CreateRuntimeInput{})
+	if !errors.Is(err, ErrRuntimeEntitlement) {
+		t.Fatalf("CreateRuntime error = %v, want %v", err, ErrRuntimeEntitlement)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestNormalizedCreateInputRejectsUnsafeProfile(t *testing.T) {
+	if _, err := normalizedCreateInput(CreateRuntimeInput{AndroidImage: "attacker/image:latest"}); !errors.Is(err, ErrRuntimeProfile) {
+		t.Fatalf("custom android image error = %v, want %v", err, ErrRuntimeProfile)
+	}
+	if _, err := normalizedCreateInput(CreateRuntimeInput{WidthPx: 1920, HeightPx: 1080, DensityDpi: 320}); !errors.Is(err, ErrRuntimeProfile) {
+		t.Fatalf("oversized profile error = %v, want %v", err, ErrRuntimeProfile)
 	}
 }
 

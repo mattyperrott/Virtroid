@@ -10,12 +10,14 @@ CREATE TABLE IF NOT EXISTS hosts (
     relay_port INTEGER NOT NULL DEFAULT 8090,
     docker_socket BOOLEAN NOT NULL DEFAULT FALSE,
     binder BOOLEAN NOT NULL DEFAULT FALSE,
+    public_key TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS relay_port INTEGER NOT NULL DEFAULT 8090;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS public_key TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS devices (
     id UUID PRIMARY KEY,
@@ -53,6 +55,29 @@ ALTER TABLE account_storage ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAUL
 ALTER TABLE account_storage ADD COLUMN IF NOT EXISTS last_preflight_status TEXT;
 ALTER TABLE account_storage ADD COLUMN IF NOT EXISTS last_preflight_json TEXT;
 ALTER TABLE account_storage ADD COLUMN IF NOT EXISTS last_preflight_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS account_entitlements (
+    account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    source TEXT NOT NULL DEFAULT 'trial',
+    status TEXT NOT NULL DEFAULT 'active',
+    runtime_limit INTEGER NOT NULL DEFAULT 1,
+    active_runtime_limit INTEGER NOT NULL DEFAULT 1,
+    runtime_starts_per_day INTEGER NOT NULL DEFAULT 5,
+    storage_bytes_limit BIGINT NOT NULL DEFAULT 1073741824,
+    trial_runtime_seconds INTEGER NOT NULL DEFAULT 3600,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'trial';
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_limit INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS active_runtime_limit INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_starts_per_day INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS storage_bytes_limit BIGINT NOT NULL DEFAULT 1073741824;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS trial_runtime_seconds INTEGER NOT NULL DEFAULT 3600;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS runtimes (
     id UUID PRIMARY KEY,
@@ -145,6 +170,16 @@ CREATE TABLE IF NOT EXISTS device_request_nonces (
     PRIMARY KEY (account_id, device_id, nonce)
 );
 
+CREATE TABLE IF NOT EXISTS node_request_nonces (
+    node_id TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (node_id, nonce)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_request_nonces_expires_at ON node_request_nonces (expires_at);
+
 CREATE TABLE IF NOT EXISTS runtime_logs (
     id BIGSERIAL PRIMARY KEY,
     runtime_id UUID NOT NULL REFERENCES runtimes(id) ON DELETE CASCADE,
@@ -154,8 +189,22 @@ CREATE TABLE IF NOT EXISTS runtime_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS runtime_start_events (
+    id BIGSERIAL PRIMARY KEY,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    runtime_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE runtime_start_events DROP CONSTRAINT IF EXISTS runtime_start_events_runtime_id_fkey;
+
+INSERT INTO account_entitlements (account_id)
+SELECT id FROM accounts
+ON CONFLICT (account_id) DO NOTHING;
+
 CREATE INDEX IF NOT EXISTS idx_devices_account_id ON devices (account_id);
 CREATE INDEX IF NOT EXISTS idx_account_storage_provider ON account_storage (provider);
+CREATE INDEX IF NOT EXISTS idx_account_entitlements_status ON account_entitlements (status);
 CREATE INDEX IF NOT EXISTS idx_hosts_last_heartbeat_at ON hosts (last_heartbeat_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runtimes_account_id ON runtimes (account_id);
 CREATE INDEX IF NOT EXISTS idx_runtimes_host_id ON runtimes (host_id);
@@ -165,3 +214,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_runtime_id ON sessions (runtime_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status_expires_at ON sessions (status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_client_heartbeat_at ON sessions (last_client_heartbeat_at);
 CREATE INDEX IF NOT EXISTS idx_runtime_logs_runtime_created_at ON runtime_logs (runtime_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runtime_start_events_account_created_at ON runtime_start_events (account_id, created_at DESC);

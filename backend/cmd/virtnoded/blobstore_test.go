@@ -242,6 +242,75 @@ func TestRenterdPreflightFailsWithoutContracts(t *testing.T) {
 	assertPreflightStatus(t, report, "active_contracts", "fail")
 }
 
+func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
+	root := t.TempDir()
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	dataDir := filepath.Join(root, runtimeID, "data")
+	writeFile(t, filepath.Join(dataDir, "app", "secret.db"), "plaintext")
+
+	var blobKeyFetches int
+	var statusUpdates int
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/blob-key"):
+			if got := r.URL.Query().Get("host_id"); got != "" {
+				t.Fatalf("blob-key host_id = %q, want no caller-supplied host", got)
+			}
+			blobKeyFetches++
+			writeJSONForTest(t, w, map[string]any{
+				"blob_key_b64":        base64.RawURLEncoding.EncodeToString(testBlobKey(1)),
+				"blob_key_expires_at": time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+			})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/status"):
+			statusUpdates++
+			w.WriteHeader(http.StatusAccepted)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/logs"):
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Fatalf("unexpected control-plane request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer controlPlane.Close()
+
+	node := &nodeAgent{
+		cfg: config.NodeConfig{
+			NodeID:          "host-1",
+			ControlPlaneURL: controlPlane.URL,
+			RuntimeRoot:     root,
+			BlobStoreKind:   blobStoreLocal,
+		},
+		controlPlane: controlPlane.Client(),
+		docker: &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader(`{"message":"not found"}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	}
+
+	if err := node.ensureRuntimeStopped(context.Background(), runtimeAssignment{
+		ID:               runtimeID,
+		BlobAutoSnapshot: true,
+	}, false); err != nil {
+		t.Fatalf("ensureRuntimeStopped returned error: %v", err)
+	}
+	if blobKeyFetches == 0 {
+		t.Fatal("ensureRuntimeStopped did not fetch a blob key for existing data")
+	}
+	if statusUpdates == 0 {
+		t.Fatal("ensureRuntimeStopped did not report stopped status")
+	}
+	if directoryHasEntries(dataDir) {
+		t.Fatal("plaintext data directory still has entries after stop")
+	}
+	if !directoryHasEntries(filepath.Join(root, "_blobstore", "local")) {
+		t.Fatal("encrypted local blobstore was not populated")
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -278,6 +347,20 @@ func configForRenterdTest(serverURL, password string) config.NodeConfig {
 		RenterdPassword:  password,
 		RenterdBucket:    "virtdroid-test",
 		RuntimeRoot:      filepath.Join(os.TempDir(), "virtdroid-test"),
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func writeJSONForTest(t *testing.T, w http.ResponseWriter, payload any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		t.Fatalf("encode response: %v", err)
 	}
 }
 
