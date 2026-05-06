@@ -1,5 +1,6 @@
 package io.virtdroid.client
 
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -13,8 +14,14 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtdroid.client.api.VirtdroidApi
+import io.virtdroid.client.data.ActiveSessionStore
+import io.virtdroid.client.data.AppLogStore
+import io.virtdroid.client.data.AppSettingsStore
 import io.virtdroid.client.data.SessionStore
 import io.virtdroid.client.databinding.ScreenAccountIdentityBinding
+import io.virtdroid.client.security.AppLockStore
+import io.virtdroid.client.security.DeviceIdentityStore
+import io.virtdroid.client.security.IdentityPasswordStore
 import io.virtdroid.client.security.enableSecureWindow
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -24,6 +31,12 @@ import java.util.Locale
 class AccountIdentityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenAccountIdentityBinding
     private lateinit var sessionStore: SessionStore
+    private lateinit var activeSessionStore: ActiveSessionStore
+    private lateinit var appSettings: AppSettingsStore
+    private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var appLockStore: AppLockStore
+    private lateinit var appLogs: AppLogStore
+    private val deviceIdentityStore = DeviceIdentityStore()
     private val api = VirtdroidApi()
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
 
@@ -35,6 +48,11 @@ class AccountIdentityActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
+        activeSessionStore = ActiveSessionStore(this)
+        appSettings = AppSettingsStore(this)
+        identityPasswordStore = IdentityPasswordStore(this)
+        appLockStore = AppLockStore(this)
+        appLogs = AppLogStore.get(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.topAppBar) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -43,24 +61,27 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
 
         binding.buttonBack.setOnClickListener { finish() }
-        binding.buttonSettings.setOnClickListener { toast(getString(R.string.status_idle)) }
+        binding.buttonSettings.setOnClickListener {
+            startActivity(PrivacySecurityActivity.createIntent(this))
+        }
         binding.itemAccountId.setOnClickListener {
             copy("account_id", sessionStore.accountId.orEmpty(), getString(R.string.onboarding_account_copied))
         }
         binding.itemDeviceFingerprint.setOnClickListener {
-            copy("device_id", sessionStore.deviceId.orEmpty(), getString(R.string.onboarding_account_copied))
+            val fingerprint = linkedDeviceFingerprint()
+            copy("device_fingerprint", fingerprint, getString(R.string.account_fingerprint_copied))
         }
         binding.itemIdentityPassword.setOnClickListener {
-            toast(getString(R.string.identity_unlock_title))
+            startActivity(PrivacySecurityActivity.createIntent(this))
         }
         binding.itemDeviceSigningKey.setOnClickListener {
-            toast(getString(R.string.account_present))
+            copy("device_public_key", deviceIdentityStore.publicKeyMaterial(), getString(R.string.account_device_key_copied))
         }
         binding.itemWipeUserData.setOnClickListener {
-            toast(getString(R.string.controls_wipe_title))
+            confirmLocalDataWipe()
         }
         binding.itemDeleteIdentity.setOnClickListener {
-            toast(getString(R.string.controls_delete_confirm_title))
+            confirmLocalIdentityReset()
         }
 
         renderIdentity()
@@ -70,16 +91,30 @@ class AccountIdentityActivity : AppCompatActivity() {
     private fun renderIdentity() {
         val accountId = sessionStore.accountId.orEmpty()
         val deviceId = sessionStore.deviceId.orEmpty()
+        val hasLinkedIdentity = accountId.isNotBlank() && deviceId.isNotBlank()
 
         binding.itemAccountIdSubtitle.text = accountId.ifBlank { getString(R.string.account_missing) }
         binding.itemDeviceFingerprintSubtitle.text = if (deviceId.isBlank()) {
             getString(R.string.device_missing)
         } else {
-            "${shortId(deviceId)} / Registered"
+            "${shortId(linkedDeviceFingerprint())} / ${getString(R.string.account_identity_verified)}"
         }
-        binding.identityEncryptionValue.text = getString(R.string.identity_password_title)
-        binding.identityCreatedValue.text = getString(R.string.status_idle)
-        binding.identityLastSyncValue.text = getString(R.string.status_idle)
+        binding.textActiveSession.text = if (hasLinkedIdentity) {
+            getString(R.string.account_active_local_session)
+        } else {
+            getString(R.string.account_identity_not_linked)
+        }
+        binding.identityEncryptionValue.text = if (identityPasswordStore.isConfigured(accountId, deviceId)) {
+            getString(R.string.account_identity_encryption_ready)
+        } else {
+            getString(R.string.account_identity_encryption_missing)
+        }
+        binding.identityCreatedValue.text = if (hasLinkedIdentity) {
+            getString(R.string.account_identity_local_linked)
+        } else {
+            getString(R.string.account_identity_not_linked)
+        }
+        binding.identityLastSyncValue.text = getString(R.string.account_storage_not_synced)
     }
 
     private fun refreshStorage() {
@@ -94,17 +129,60 @@ class AccountIdentityActivity : AppCompatActivity() {
                 api.getStorage(sessionStore.baseUrl, accountId, deviceId)
             }.onSuccess { storage ->
                 binding.storageBackendValue.text = storage.provider.ifBlank { "local" }
-                binding.storageReadyChip.text = storage.status.ifBlank { getString(R.string.status_idle) }
+                binding.storageReadyChip.text = storage.status.ifBlank { getString(R.string.account_storage_unavailable) }
                 binding.storageCreditValue.text = storage.walletAddress?.takeIf { it.isNotBlank() }?.let(::shortId) ?: "--"
-                binding.storageUsageValue.text = "0"
-                binding.storageUsageUnit.text = " MB"
-                binding.storageUsageSubtitle.text = "No snapshot usage reported"
-                binding.storageSnapshots.text = "No snapshots"
+                binding.storageUsageValue.text = "--"
+                binding.storageUsageUnit.text = ""
+                binding.storageUsageSubtitle.text = getString(R.string.account_storage_usage_unreported)
+                binding.storageSnapshots.text = getString(R.string.account_storage_snapshots_unreported)
                 binding.storageRunwayIcon.text = "--"
-                binding.storageRunwayValue.text = "--"
+                binding.storageRunwayValue.text = getString(R.string.account_storage_runway_unreported)
                 binding.identityLastSyncValue.text = OffsetDateTime.now().format(timestampFormatter)
+            }.onFailure {
+                binding.storageReadyChip.text = getString(R.string.account_storage_unavailable)
+                binding.storageUsageValue.text = "--"
+                binding.storageUsageUnit.text = ""
+                binding.storageUsageSubtitle.text = getString(R.string.account_storage_sync_failed)
+                binding.storageSnapshots.text = getString(R.string.account_storage_snapshots_unreported)
+                binding.storageRunwayValue.text = getString(R.string.account_storage_runway_unreported)
             }
         }
+    }
+
+    private fun confirmLocalDataWipe() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.account_wipe_local_title))
+            .setMessage(getString(R.string.account_wipe_local_body))
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.privacy_force_clear_cache)) { _, _ ->
+                activeSessionStore.clear()
+                identityPasswordStore.clearUnlocked()
+                val result = appSettings.clearSafeLocalCache()
+                appLogs.warn("Local user data cache wipe completed: ${result.deletedItems} items", "privacy")
+                toast(getString(R.string.account_wipe_local_done, result.deletedItems))
+            }
+            .show()
+    }
+
+    private fun confirmLocalIdentityReset() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.account_delete_local_identity_title))
+            .setMessage(getString(R.string.account_delete_local_identity_body))
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.account_delete_local_identity_confirm)) { _, _ ->
+                activeSessionStore.clear()
+                identityPasswordStore.clearConfigured()
+                appLockStore.clearCredential()
+                appSettings.clearSafeLocalCache()
+                deviceIdentityStore.deleteDeviceKey()
+                sessionStore.clearLinkedIdentity()
+                appLogs.critical("Local identity was reset from Account Identity", "auth")
+                startActivity(
+                    Intent(this, OnboardingActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                )
+            }
+            .show()
     }
 
     private fun copy(label: String, value: String, message: String) {
@@ -121,6 +199,15 @@ class AccountIdentityActivity : AppCompatActivity() {
             value
         } else {
             value.take(8) + "..." + value.takeLast(6)
+        }
+    }
+
+    private fun linkedDeviceFingerprint(): String {
+        val accountId = sessionStore.accountId.orEmpty()
+        return if (accountId.isBlank()) {
+            sessionStore.deviceId.orEmpty()
+        } else {
+            deviceIdentityStore.deviceFingerprint(this, accountId)
         }
     }
 

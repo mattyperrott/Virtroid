@@ -47,27 +47,20 @@
 
                 <TextView
                     android:id="@+id/text_title"
+                    style="@style/VirtdroidText.ScreenTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:text="@string/onboarding_title"
-                    android:textColor="@color/v_text_primary"
-                    android:textSize="30sp"
-                    android:textStyle="bold" />
+                    android:text="@string/onboarding_title" />
 
                 <TextView
                     android:id="@+id/text_description"
+                    style="@style/VirtdroidText.Body"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="30dp"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
                     android:lineSpacingExtra="4dp"
-                    android:text="@string/onboarding_subtitle"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="14sp" />
+                    android:text="@string/onboarding_subtitle" />
 
                 <LinearLayout
                     android:id="@+id/account_id_card"
@@ -88,26 +81,15 @@
 
                         <TextView
                             android:id="@+id/account_id_label"
+                            style="@style/VirtdroidText.Label"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:letterSpacing="0.08"
-                            android:text="@string/onboarding_account_id"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
+                            android:text="@string/onboarding_account_id" />
 
                         <FrameLayout
                             android:id="@+id/accountStatusIndicator"
-                            android:layout_width="30dp"
-                            android:layout_height="22dp"
-                            android:background="@drawable/bg_status_pill_muted"
-                            android:paddingStart="5dp"
-                            android:paddingTop="1dp"
-                            android:paddingEnd="5dp"
-                            android:paddingBottom="1dp">
+                            style="@style/VirtdroidStatusCheck">
 
                             <ImageView
                                 android:id="@+id/accountStatusCheck"
@@ -151,26 +133,15 @@
 
                         <TextView
                             android:id="@+id/device_fingerprint_label"
+                            style="@style/VirtdroidText.Label"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:letterSpacing="0.08"
-                            android:text="@string/onboarding_device_fingerprint"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
+                            android:text="@string/onboarding_device_fingerprint" />
 
                         <FrameLayout
                             android:id="@+id/deviceFingerprintStatusIndicator"
-                            android:layout_width="30dp"
-                            android:layout_height="22dp"
-                            android:background="@drawable/bg_status_pill_muted"
-                            android:paddingStart="5dp"
-                            android:paddingTop="1dp"
-                            android:paddingEnd="5dp"
-                            android:paddingBottom="1dp">
+                            style="@style/VirtdroidStatusCheck">
 
                             <ImageView
                                 android:id="@+id/deviceFingerprintStatusCheck"
@@ -197,27 +168,19 @@
 
                 <TextView
                     android:id="@+id/text_local_encryption_title"
+                    style="@style/VirtdroidText.ContentHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:text="@string/onboarding_local_encryption"
-                    android:textColor="@color/v_text_primary"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    android:text="@string/onboarding_local_encryption" />
 
                 <TextView
                     android:id="@+id/text_local_encryption_subtitle"
+                    style="@style/VirtdroidText.Body"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="22dp"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:lineSpacingExtra="2dp"
-                    android:text="@string/onboarding_local_encryption_body"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="16sp" />
+                    android:text="@string/onboarding_local_encryption_body" />
 
                 <LinearLayout
                     android:id="@+id/passphraseOptionCard"
@@ -250,26 +213,19 @@
 
                         <TextView
                             android:id="@+id/text_passphrase_title"
+                            style="@style/VirtdroidText.CardTitle.Large"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
-                            android:text="@string/onboarding_passphrase_title"
-                            android:textColor="@color/v_text_primary"
-                            android:textSize="17sp"
-                            android:textStyle="bold" />
+                            android:text="@string/onboarding_passphrase_title" />
 
                         <TextView
                             android:id="@+id/text_passphrase_subtitle"
+                            style="@style/VirtdroidText.Body"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:lineSpacingExtra="3dp"
-                            android:text="@string/onboarding_passphrase_body"
-                            android:textColor="@color/v_text_muted"
-                            android:textSize="15sp" />
+                            android:text="@string/onboarding_passphrase_body" />
                     </LinearLayout>
 
                     <View
@@ -316,8 +272,8 @@
 
                 <FrameLayout
                     android:id="@+id/previousMilestoneDot"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="@dimen/timeline_dot_size"
+                    android:layout_height="@dimen/timeline_dot_size"
                     android:layout_gravity="top|center_horizontal"
                     android:layout_marginTop="2dp"
                     android:background="@drawable/bg_status_pill_success"
@@ -332,8 +288,8 @@
 
                 <View
                     android:id="@+id/activeMilestoneDot"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="@dimen/timeline_dot_size"
+                    android:layout_height="@dimen/timeline_dot_size"
                     android:layout_gravity="bottom|center_horizontal"
                     android:layout_marginBottom="38dp"
                     android:background="@drawable/bg_dot_accent_outline" />
@@ -462,21 +418,11 @@
             </LinearLayout>
         </LinearLayout>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/continueSetupButton"
+            style="@style/VirtdroidButton.Primary"
             android:layout_width="match_parent"
             android:layout_height="58dp"
-            android:background="@drawable/bg_accent_round"
-            android:fontFamily="sans"
-            android:gravity="center"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:text="@string/onboarding_create_identity"
-            android:textAllCaps="false"
-            android:textColor="@color/v_bg"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+            android:text="@string/onboarding_create_identity" />
     </LinearLayout>
 </FrameLayout>

@@ -51,14 +51,10 @@
                 android:paddingBottom="180dp">
                 <TextView
                     android:id="@+id/text_title"
+                    style="@style/VirtdroidText.ScreenTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Send USDT"
-                    android:textColor="@color/v_text_primary"
-                    android:textSize="30sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
                     android:layout_marginBottom="20dp" />
                 <LinearLayout
                     android:id="@+id/payment_status_card"
@@ -82,21 +78,18 @@
                             android:layout_marginEnd="12dp" />
                         <TextView
                             android:id="@+id/payment_status_title"
+                            style="@style/VirtdroidText.CardTitle"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="Waiting for Payment"
+                            android:text="@string/payment_quote_unavailable"
                             android:textColor="@color/v_amber"
-                            android:textSize="14sp"
-                            android:textStyle="bold"
-                            android:fontFamily="sans"
-                            android:includeFontPadding="false"
                             android:letterSpacing="0.06" />
                         <TextView
                             android:id="@+id/payment_timer"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="14:32"
+                            android:text="--:--"
                             android:textColor="@color/v_text_primary"
                             android:textSize="12sp"
                             android:fontFamily="monospace"
@@ -218,7 +211,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="10.000000 USDT"
+                            android:text="--"
                             android:textColor="@color/v_text_primary"
                             android:textSize="21sp"
                             android:textStyle="bold"
@@ -299,7 +292,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="TNP12w3zKVm1M38f2vA8X4m1z6UaN6cQ22"
+                            android:text="@string/payment_quote_unavailable"
                             android:textColor="@color/v_text_primary"
                             android:textSize="13sp"
                             android:fontFamily="monospace"
@@ -386,7 +379,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:gravity="end"
-                            android:text="sia: 7b8c...9a2f"
+                            android:text="--"
                             android:textColor="@color/v_text_primary"
                             android:textSize="13sp"
                             android:fontFamily="monospace"
@@ -413,7 +406,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:gravity="end"
-                            android:text="~14,500 SC"
+                            android:text="--"
                             android:textColor="@color/v_accent"
                             android:textSize="13sp"
                             android:fontFamily="sans"
@@ -440,7 +433,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:gravity="end"
-                            android:text="Not formed yet"
+                            android:text="@string/payment_quote_unavailable"
                             android:textColor="@color/v_text_dim"
                             android:textSize="13sp"
                             android:fontFamily="sans"
@@ -449,15 +442,10 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/transaction_progress_title"
+                    style="@style/VirtdroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="TRANSACTION PROGRESS"
-                    android:textColor="@color/v_text_muted"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.12"
                     android:layout_marginStart="8dp"
                     android:layout_marginBottom="20dp" />
                 <FrameLayout
@@ -492,7 +480,7 @@
                                 android:id="@+id/step_quote_created_label"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Quote created"
+                                android:text="Quote unavailable"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="14sp"
                                 android:fontFamily="sans"
@@ -633,21 +621,12 @@
         android:paddingEnd="24dp"
         android:paddingTop="20dp"
         android:paddingBottom="24dp">
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/button_payment_sent"
+            style="@style/VirtdroidButton.Secondary"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:background="@drawable/bg_surface_stroke_24"
-            android:text="I've Sent Payment"
-            android:textAllCaps="false"
-            android:textColor="@color/v_text_primary"
-            android:textSize="14sp"
-            android:fontFamily="sans"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:gravity="center" />
+            android:text="I've Sent Payment" />
         <Button
             android:id="@+id/button_cancel_quote"
             android:layout_width="wrap_content"

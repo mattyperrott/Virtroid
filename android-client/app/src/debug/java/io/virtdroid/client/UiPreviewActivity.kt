@@ -23,6 +23,18 @@ class UiPreviewActivity : AppCompatActivity() {
         }
 
         val screen = intent.getStringExtra(EXTRA_SCREEN)
+        when (screen) {
+            "privacy_security" -> {
+                startActivity(PrivacySecurityActivity.createIntent(this))
+                finish()
+                return
+            }
+            "system_logs" -> {
+                startActivity(SystemLogsActivity.createIntent(this))
+                finish()
+                return
+            }
+        }
         val layout = when (screen) {
             "identity_provisioning" -> R.layout.screen_identity_provisioning
             "pin_authentication" -> R.layout.screen_pin_authentication
@@ -33,18 +45,13 @@ class UiPreviewActivity : AppCompatActivity() {
             "send_usdt" -> R.layout.screen_send_usdt
             "session_controls" -> R.layout.screen_session_controls
             "session_viewer" -> R.layout.screen_session_viewer
+            "privacy_security" -> R.layout.screen_privacy_security
+            "system_logs" -> R.layout.screen_system_logs
             else -> R.layout.screen_my_runtimes
         }
         setContentView(layout)
         when (screen) {
-            "pin_authentication" -> previewPinState()
             "my_runtimes" -> previewRuntimes()
-        }
-    }
-
-    private fun previewPinState() {
-        listOf(R.id.pinDot1, R.id.pinDot2, R.id.pinDot3).forEach { id ->
-            findViewById<android.view.View>(id)?.setBackgroundResource(R.drawable.bg_pin_dot_active)
         }
     }
 
@@ -55,20 +62,20 @@ class UiPreviewActivity : AppCompatActivity() {
         val inflater = LayoutInflater.from(this)
         container.addView(
             RuntimeCardBinding.inflate(inflater, container, false).apply {
-                runtimeTitleText.text = "Primary Nexus"
-                runtimeSubtitleText.text = "Session Active"
+                runtimeTitleText.text = getString(R.string.session_title_fallback)
+                runtimeSubtitleText.text = "Online"
                 runtimeStatusDot.setBackgroundResource(R.drawable.bg_dot_accent)
-                runtimeStatOneValue.text = "12h 45m"
-                runtimeStatTwoValue.text = "US-East"
-                runtimeStatThreeValue.text = "24ms"
+                runtimeStatOneValue.text = getString(R.string.runtime_stat_load_unknown)
+                runtimeStatTwoValue.text = getString(R.string.runtime_stat_load_unknown)
+                runtimeStatThreeValue.text = getString(R.string.runtime_stat_load_unknown)
                 connectRuntimeButton.isVisible = true
                 runtimeActionRow.isVisible = false
             }.root,
         )
         container.addView(
             RuntimeCardBinding.inflate(inflater, container, false).apply {
-                runtimeTitleText.text = "Ephemeral Burner"
-                runtimeSubtitleText.text = "Offline • Standby"
+                runtimeTitleText.text = getString(R.string.session_title_fallback)
+                runtimeSubtitleText.text = "Offline"
                 runtimeStatusDot.setBackgroundResource(R.drawable.bg_dot_muted)
                 runtimeIcon.setImageResource(R.drawable.ic_fingerprint)
                 runtimeIcon.setColorFilter(getColor(R.color.v_text_muted))

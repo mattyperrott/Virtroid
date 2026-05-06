@@ -4,6 +4,22 @@
         name="screen_padding">
         24dp
     </dimen>
+    <dimen name="space_2">2dp</dimen>
+    <dimen name="space_4">4dp</dimen>
+    <dimen name="space_6">6dp</dimen>
+    <dimen name="space_8">8dp</dimen>
+    <dimen name="space_10">10dp</dimen>
+    <dimen name="space_12">12dp</dimen>
+    <dimen name="space_14">14dp</dimen>
+    <dimen name="space_16">16dp</dimen>
+    <dimen name="space_18">18dp</dimen>
+    <dimen name="space_20">20dp</dimen>
+    <dimen name="space_24">24dp</dimen>
+    <dimen name="space_28">28dp</dimen>
+    <dimen name="space_32">32dp</dimen>
+    <dimen name="space_36">36dp</dimen>
+    <dimen name="space_40">40dp</dimen>
+    <dimen name="space_48">48dp</dimen>
     <dimen
         name="card_radius">
         24dp
@@ -16,6 +32,15 @@
         name="touch_round">
         44dp
     </dimen>
+    <dimen name="button_height">56dp</dimen>
+    <dimen name="button_height_large">60dp</dimen>
+    <dimen name="icon_button_size">44dp</dimen>
+    <dimen name="icon_tile_size">48dp</dimen>
+    <dimen name="icon_tile_large">56dp</dimen>
+    <dimen name="status_dot_size">8dp</dimen>
+    <dimen name="status_check_size">26dp</dimen>
+    <dimen name="timeline_dot_size">24dp</dimen>
+    <dimen name="timeline_line_width">2dp</dimen>
     <dimen
         name="status_bar_height">
         54dp

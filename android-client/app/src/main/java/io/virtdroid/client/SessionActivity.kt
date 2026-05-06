@@ -6,6 +6,7 @@ import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.WindowManager
@@ -21,12 +22,17 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtdroid.client.api.VirtdroidApi
+import io.virtdroid.client.data.ActiveSessionStore
+import io.virtdroid.client.data.AppLogStore
+import io.virtdroid.client.data.AppSettingsStore
 import io.virtdroid.client.databinding.ScreenSessionViewerBinding
 import io.virtdroid.client.security.IdentityPasswordStore
 import io.virtdroid.client.security.enableSecureWindow
 import io.virtdroid.client.security.promptIdentityPassword
 import io.virtdroid.client.viewer.ScrcpySessionHost
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
 
@@ -49,10 +55,17 @@ class SessionActivity : AppCompatActivity() {
     private var endingSession = false
     private var viewerSurface: Surface? = null
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var activeSessionStore: ActiveSessionStore
+    private lateinit var appSettings: AppSettingsStore
+    private lateinit var appLogs: AppLogStore
+    private var lastInteractionAtMs = System.currentTimeMillis()
+    private var inactivityJob: Job? = null
+    private var heartbeatJob: Job? = null
 
     private val sessionCallback = object : ScrcpySessionHost.Callback {
         override fun onConnected(remoteWidth: Int, remoteHeight: Int) {
             runOnUiThread {
+                appLogs.info("Session stream connected for $runtimeName", "session")
                 binding.sessionSubtitleText.text = getString(
                     R.string.session_secure_online_with_resolution,
                     remoteWidth,
@@ -64,6 +77,12 @@ class SessionActivity : AppCompatActivity() {
             }
         }
 
+        override fun onFirstVideoFrame() {
+            runOnUiThread {
+                binding.sessionStreamStatusOverlay.isVisible = false
+            }
+        }
+
         override fun onDisconnected(message: String) {
             runOnUiThread {
                 binding.sessionSubtitleText.text = if (endingSession) {
@@ -72,6 +91,7 @@ class SessionActivity : AppCompatActivity() {
                     getString(R.string.session_failed_message_inline, message)
                 }
                 if (!endingSession) {
+                    appLogs.error("Session stream disconnected: $message", "session")
                     binding.sessionStreamStatusText.text = message
                     binding.sessionStreamProgress.isVisible = false
                     binding.sessionStreamStatusOverlay.isVisible = true
@@ -102,6 +122,10 @@ class SessionActivity : AppCompatActivity() {
         deviceId = intent.getStringExtra(EXTRA_DEVICE_ID).orEmpty()
         baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty()
         identityPasswordStore = IdentityPasswordStore(this)
+        activeSessionStore = ActiveSessionStore(this)
+        appSettings = AppSettingsStore(this)
+        appLogs = AppLogStore.get(this)
+        persistActiveSession()
 
         if (relayHost.isBlank() || relayPort <= 0 || relayPath.isBlank() || relayToken.isBlank()) {
             toast(getString(R.string.session_missing_endpoint))
@@ -112,6 +136,7 @@ class SessionActivity : AppCompatActivity() {
         val title = runtimeName.ifBlank { getString(R.string.session_title_fallback) }
         binding.sessionTitleText.text = title
         binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
+        binding.sessionBackToAppButton.setOnClickListener { navigateBackToApp() }
         binding.sessionDisconnectButton.setOnClickListener { endSessionAndFinish() }
         binding.sessionControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtimeId))
@@ -156,9 +181,7 @@ class SessionActivity : AppCompatActivity() {
                 return true
             }
 
-            override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {
-                binding.sessionStreamStatusOverlay.isVisible = false
-            }
+            override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) = Unit
         }
         if (binding.sessionSurfaceView.isAvailable) {
             val surface = Surface(binding.sessionSurfaceView.surfaceTexture)
@@ -166,11 +189,14 @@ class SessionActivity : AppCompatActivity() {
             connectViewer(surface)
         }
         onBackPressedDispatcher.addCallback(this) {
-            endSessionAndFinish()
+            navigateBackToApp()
         }
+        startSessionHeartbeat()
+        startInactivityWatch()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        markInteraction()
         if (event.action == KeyEvent.ACTION_DOWN &&
             event.keyCode != KeyEvent.KEYCODE_BACK &&
             event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN &&
@@ -182,7 +208,14 @@ class SessionActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        markInteraction()
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun onDestroy() {
+        inactivityJob?.cancel()
+        heartbeatJob?.cancel()
         disconnectViewer()
         super.onDestroy()
     }
@@ -201,6 +234,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
         binding.sessionStreamProgress.isVisible = true
         binding.sessionStreamStatusOverlay.isVisible = true
+        appLogs.info("Opening viewer transport for $runtimeName", "session")
         sessionHost = ScrcpySessionHost(
             context = this,
             relayHost = relayHost,
@@ -223,17 +257,24 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun endSessionAndFinish() {
+        endSessionAndFinish(AppSettingsStore.SESSION_END_USER)
+    }
+
+    private fun endSessionAndFinish(reason: String) {
         if (endingSession) {
             return
         }
 
         endingSession = true
         disconnectViewer()
+        appLogs.info("Session shutdown requested: $reason", "session")
 
         binding.sessionSubtitleText.text = getString(R.string.session_secure_saving)
         setSessionActionsEnabled(false)
 
         if (runtimeId.isBlank() || accountId.isBlank() || deviceId.isBlank() || baseUrl.isBlank()) {
+            appSettings.lastSessionEndReason = reason
+            activeSessionStore.clear()
             finish()
             return
         }
@@ -250,10 +291,20 @@ class SessionActivity : AppCompatActivity() {
                 api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
                 waitForRuntimeStopped()
             }.onSuccess {
+                appSettings.lastSessionEndReason = reason
+                activeSessionStore.clear()
+                if (appSettings.autoClearClipboard) {
+                    appSettings.clearClipboard()
+                    appLogs.info("Clipboard cleared after session end", "privacy")
+                }
+                appLogs.info("Session ended: $reason", "session")
                 toast(getString(R.string.session_ended))
                 finish()
             }.onFailure { error ->
                 if (error is StopTimeoutException) {
+                    appSettings.lastSessionEndReason = reason
+                    activeSessionStore.clear()
+                    appLogs.warn("Session shutdown still pending after timeout", "session")
                     toast(getString(R.string.session_stop_pending))
                     finish()
                 } else {
@@ -263,6 +314,15 @@ class SessionActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun navigateBackToApp() {
+        persistActiveSession()
+        appLogs.info("Session moved to background without shutdown", "session")
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+        )
     }
 
     private fun sendSystemKey(keyCode: Int) {
@@ -345,10 +405,73 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun setSessionActionsEnabled(isEnabled: Boolean) {
+        binding.sessionBackToAppButton.isEnabled = isEnabled
         binding.sessionDisconnectButton.isEnabled = isEnabled
         binding.sessionControlsButton.isEnabled = isEnabled
         binding.sessionUploadButton.isEnabled = isEnabled
         binding.sessionCameraButton.isEnabled = isEnabled
+    }
+
+    private fun persistActiveSession() {
+        if (runtimeId.isBlank() || relayToken.isBlank()) {
+            return
+        }
+        activeSessionStore.save(
+            ActiveSessionStore.ActiveSession(
+                accountId = accountId,
+                deviceId = deviceId,
+                baseUrl = baseUrl,
+                runtimeId = runtimeId,
+                runtimeName = runtimeName,
+                viewerAddress = viewerAddress,
+                relayHost = relayHost,
+                relayPort = relayPort,
+                relayTls = relayTls,
+                relayPath = relayPath,
+                relayToken = relayToken,
+                sessionId = sessionId,
+            ),
+        )
+    }
+
+    private fun startSessionHeartbeat() {
+        heartbeatJob?.cancel()
+        if (baseUrl.isBlank() || accountId.isBlank() || deviceId.isBlank() || sessionId.isBlank()) {
+            return
+        }
+        heartbeatJob = lifecycleScope.launch {
+            while (isActive && !endingSession) {
+                runCatching {
+                    api.heartbeatSession(baseUrl, accountId, deviceId, sessionId)
+                }.onSuccess {
+                    activeSessionStore.touch(sessionId)
+                }.onFailure { error ->
+                    appLogs.warn("Active session heartbeat failed: ${error.message}", "session")
+                    activeSessionStore.clear()
+                    return@launch
+                }
+                delay(SESSION_HEARTBEAT_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun markInteraction() {
+        lastInteractionAtMs = System.currentTimeMillis()
+    }
+
+    private fun startInactivityWatch() {
+        inactivityJob?.cancel()
+        inactivityJob = lifecycleScope.launch {
+            while (!endingSession) {
+                delay(5_000L)
+                val timeoutMs = appSettings.uiInactivityTimeoutMs
+                if (System.currentTimeMillis() - lastInteractionAtMs >= timeoutMs) {
+                    appLogs.warn("UI inactivity timeout reached", "session")
+                    endSessionAndFinish(AppSettingsStore.SESSION_END_INACTIVITY)
+                    return@launch
+                }
+            }
+        }
     }
 
     private suspend fun requireBlobAccessKey(accountId: String, deviceId: String): String {
@@ -386,6 +509,7 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_BASE_URL = "base_url"
         private const val STOP_WAIT_ATTEMPTS = 30
         private const val STOP_WAIT_DELAY_MS = 1_000L
+        private const val SESSION_HEARTBEAT_INTERVAL_MS = 20_000L
 
         fun createIntent(
             context: Context,
@@ -415,6 +539,27 @@ class SessionActivity : AppCompatActivity() {
                 .putExtra(EXTRA_RELAY_PATH, relayPath)
                 .putExtra(EXTRA_RELAY_TOKEN, relayToken)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
+        }
+
+        fun createIntent(
+            context: Context,
+            session: ActiveSessionStore.ActiveSession,
+        ): Intent {
+            return createIntent(
+                context = context,
+                accountId = session.accountId,
+                deviceId = session.deviceId,
+                baseUrl = session.baseUrl,
+                runtimeId = session.runtimeId,
+                runtimeName = session.runtimeName,
+                relayHost = session.relayHost,
+                relayPort = session.relayPort,
+                relayTls = session.relayTls,
+                relayPath = session.relayPath,
+                relayToken = session.relayToken,
+                sessionId = session.sessionId,
+                viewerAddress = session.viewerAddress,
+            )
         }
     }
 }

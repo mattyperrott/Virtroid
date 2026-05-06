@@ -28,20 +28,18 @@
 
             <TextView
                 android:id="@+id/dialogTitleText"
+                style="@style/VirtdroidText.NavTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="@color/virtdroid_on_surface"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+                android:textColor="@color/v_text_primary" />
 
             <TextView
                 android:id="@+id/dialogBodyText"
+                style="@style/VirtdroidText.Body"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:lineSpacingExtra="3dp"
-                android:textColor="@color/virtdroid_on_surface_variant"
-                android:textSize="14sp" />
+                android:lineSpacingExtra="3dp" />
 
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/dialogInputLayout"

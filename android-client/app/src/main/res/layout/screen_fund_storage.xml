@@ -60,14 +60,10 @@
                 android:paddingBottom="164dp">
                 <TextView
                     android:id="@+id/text_title"
+                    style="@style/VirtdroidText.ScreenTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Fund Storage"
-                    android:textColor="@color/v_text_primary"
-                    android:textSize="30sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="28dp" />
                 <LinearLayout
@@ -100,13 +96,10 @@
                             android:layout_marginStart="12dp">
                             <TextView
                                 android:id="@+id/wallet_title"
+                                style="@style/VirtdroidText.CardTitle"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Storage Wallet"
-                                android:textColor="@color/v_text_primary"
-                                android:textSize="14sp"
-                                android:fontFamily="sans"
-                                android:includeFontPadding="false" />
+                                android:text="Storage Wallet" />
                             <TextView
                                 android:id="@+id/wallet_subtitle"
                                 android:layout_width="wrap_content"
@@ -162,7 +155,7 @@
                                 android:id="@+id/sia_address_value"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="c3b91...8f2a1b4c7d9e0f"
+                                android:text="@string/fund_storage_loading"
                                 android:textColor="@color/v_accent"
                                 android:textSize="14sp"
                                 android:fontFamily="monospace"
@@ -191,13 +184,10 @@
                     android:layout_marginBottom="16dp">
                     <TextView
                         android:id="@+id/amount_title"
+                        style="@style/VirtdroidText.CardTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Select Amount"
-                        android:textColor="@color/v_text_primary"
-                        android:textSize="14sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
                         android:layout_marginBottom="16dp" />
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -205,74 +195,36 @@
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:layout_marginBottom="20dp">
-                        <Button
+                        <TextView
                             android:id="@+id/button_amount_5"
+                            style="@style/VirtdroidAmountChip"
                             android:layout_width="0dp"
-                            android:layout_height="46dp"
                             android:layout_weight="1"
                             android:layout_marginEnd="8dp"
-                            android:background="@drawable/bg_amount_unselected"
-                            android:text="$5"
-                            android:textAllCaps="false"
-                            android:textColor="@color/v_text_secondary"
-                            android:textSize="14sp"
-                            android:fontFamily="sans"
-                            android:minWidth="0dp"
-                            android:minHeight="0dp"
-                            android:paddingStart="12dp"
-                            android:paddingEnd="12dp"
-                            android:gravity="center" />
-                        <Button
+                            android:text="$5" />
+                        <TextView
                             android:id="@+id/button_amount_10"
+                            style="@style/VirtdroidAmountChip"
                             android:layout_width="0dp"
-                            android:layout_height="46dp"
                             android:layout_weight="1"
                             android:layout_marginEnd="8dp"
                             android:background="@drawable/bg_amount_selected"
                             android:text="$10"
-                            android:textAllCaps="false"
                             android:textColor="@color/v_bg"
-                            android:textSize="14sp"
-                            android:textStyle="bold"
-                            android:fontFamily="sans"
-                            android:minWidth="0dp"
-                            android:minHeight="0dp"
-                            android:paddingStart="12dp"
-                            android:paddingEnd="12dp"
-                            android:gravity="center" />
-                        <Button
+                            android:textStyle="bold" />
+                        <TextView
                             android:id="@+id/button_amount_25"
+                            style="@style/VirtdroidAmountChip"
                             android:layout_width="0dp"
-                            android:layout_height="46dp"
                             android:layout_weight="1"
                             android:layout_marginEnd="8dp"
-                            android:background="@drawable/bg_amount_unselected"
-                            android:text="$25"
-                            android:textAllCaps="false"
-                            android:textColor="@color/v_text_secondary"
-                            android:textSize="14sp"
-                            android:fontFamily="sans"
-                            android:minWidth="0dp"
-                            android:minHeight="0dp"
-                            android:paddingStart="12dp"
-                            android:paddingEnd="12dp"
-                            android:gravity="center" />
-                        <Button
+                            android:text="$25" />
+                        <TextView
                             android:id="@+id/button_amount_custom"
+                            style="@style/VirtdroidAmountChip"
                             android:layout_width="0dp"
-                            android:layout_height="46dp"
                             android:layout_weight="1"
-                            android:background="@drawable/bg_amount_unselected"
-                            android:text="Edit"
-                            android:textAllCaps="false"
-                            android:textColor="@color/v_text_secondary"
-                            android:textSize="14sp"
-                            android:fontFamily="sans"
-                            android:minWidth="0dp"
-                            android:minHeight="0dp"
-                            android:paddingStart="12dp"
-                            android:paddingEnd="12dp"
-                            android:gravity="center" />
+                            android:text="Edit" />
                     </LinearLayout>
                     <LinearLayout
                         android:id="@+id/amount_estimates"
@@ -301,7 +253,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:gravity="end"
-                                android:text="~1,180 SC"
+                                android:text="--"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="13sp"
                                 android:fontFamily="monospace"
@@ -328,7 +280,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:gravity="end"
-                                android:text="~$0.45"
+                                android:text="--"
                                 android:textColor="@color/v_text_muted"
                                 android:textSize="12sp"
                                 android:fontFamily="monospace"
@@ -350,7 +302,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="Contract Minimum Needed"
+                                android:text="@string/fund_storage_contract_minimum"
                                 android:textColor="@color/v_text_muted"
                                 android:textSize="12sp"
                                 android:fontFamily="sans"
@@ -360,7 +312,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:gravity="end"
-                                android:text="$3.00"
+                                android:text="--"
                                 android:textColor="@color/v_text_muted"
                                 android:textSize="12sp"
                                 android:fontFamily="monospace"
@@ -481,15 +433,10 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/deployment_status_title"
+                    style="@style/VirtdroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="DEPLOYMENT STATUS"
-                    android:textColor="@color/v_text_dim"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.08"
                     android:layout_marginStart="8dp"
                     android:layout_marginBottom="20dp" />
                 <FrameLayout
@@ -525,7 +472,7 @@
                                 android:id="@+id/step_create_quote_label"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Create swap quote"
+                                android:text="@string/fund_storage_step_quote_unavailable"
                                 android:textColor="@color/v_amber"
                                 android:textSize="14sp"
                                 android:fontFamily="sans"
@@ -548,7 +495,7 @@
                                 android:id="@+id/step_send_usdt_label"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Send USDT"
+                                android:text="@string/fund_storage_step_payment_blocked"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="14sp"
                                 android:fontFamily="sans"
@@ -572,7 +519,7 @@
                                 android:id="@+id/step_receive_siacoin_label"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Receive Siacoin"
+                                android:text="@string/fund_storage_step_receipt_blocked"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="14sp"
                                 android:fontFamily="sans"
@@ -596,7 +543,7 @@
                                 android:id="@+id/step_form_contracts_label"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Form storage contracts"
+                                android:text="@string/fund_storage_step_contracts_unreported"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="14sp"
                                 android:fontFamily="sans"
@@ -620,7 +567,7 @@
                                 android:id="@+id/step_storage_ready_label"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Storage Ready"
+                                android:text="@string/fund_storage_step_ready_unreported"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="14sp"
                                 android:fontFamily="sans"
@@ -643,21 +590,11 @@
         android:paddingEnd="24dp"
         android:paddingTop="20dp"
         android:paddingBottom="32dp">
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/button_create_usdt_payment"
+            style="@style/VirtdroidButton.Primary"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:background="@drawable/bg_accent_round"
-            android:text="Create USDT Payment &gt;"
-            android:textAllCaps="false"
-            android:textColor="@color/v_bg"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            android:fontFamily="sans"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:gravity="center" />
+            android:text="@string/fund_storage_payment_unavailable" />
     </LinearLayout>
 </FrameLayout>

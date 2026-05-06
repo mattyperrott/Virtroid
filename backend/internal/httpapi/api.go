@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
@@ -161,6 +160,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/wipe", api.wipeMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/session", api.createMyRuntimeSession)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/logs", api.runtimeLogs)
+	mux.HandleFunc("POST /api/v1/me/sessions/{id}/heartbeat", api.heartbeatMySession)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/close", api.closeMySession)
 
 	mux.HandleFunc("POST /api/v1/internal/hosts/heartbeat", api.hostHeartbeat)
@@ -217,23 +217,11 @@ func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
-	productionBootstrap := a.cfg.AppEnv != "development"
-	if productionBootstrap && strings.TrimSpace(a.cfg.BootstrapToken) == "" {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "bootstrap is not configured"})
-		return
-	}
 	if ok, retryAfter := a.bootstrapLimiter.allow(bootstrapClientKey(r)); !ok {
 		if retryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
 		}
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "bootstrap rate limit exceeded"})
-		return
-	}
-	if productionBootstrap && subtle.ConstantTimeCompare(
-		[]byte(r.Header.Get("X-Virtdroid-Bootstrap-Token")),
-		[]byte(a.cfg.BootstrapToken),
-	) != 1 {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "invalid bootstrap token"})
 		return
 	}
 
@@ -882,6 +870,28 @@ func (a *API) closeMySession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (a *API) heartbeatMySession(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	session, err := a.store.HeartbeatSession(r.Context(), accountID, deviceID, r.PathValue("id"))
+	if err != nil {
+		if err == store.ErrSessionNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok":      true,
+		"session": session,
+	})
 }
 
 type publicRelayEndpoint struct {

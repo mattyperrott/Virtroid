@@ -9,14 +9,18 @@ import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
 import io.virtdroid.client.api.RuntimeSummary
 import io.virtdroid.client.api.VirtdroidApi
+import io.virtdroid.client.data.ActiveSessionStore
+import io.virtdroid.client.data.AppLogStore
 import io.virtdroid.client.data.SessionStore
 import io.virtdroid.client.databinding.RuntimeCardBinding
 import io.virtdroid.client.databinding.ScreenMyRuntimesBinding
@@ -38,10 +42,15 @@ class MainActivity : AppCompatActivity() {
 
     private val api = VirtdroidApi()
     private lateinit var sessionStore: SessionStore
+    private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var appLogs: AppLogStore
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.US)
     private var runtimePollJob: Job? = null
     private var refreshJob: Job? = null
+    private val runtimeProvisioningStartedAtMs = mutableMapOf<String, Long>()
+    private val runtimeProvisioningLastMessage = mutableMapOf<String, String>()
+    private val reportedRuntimeErrors = mutableMapOf<String, String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +60,9 @@ class MainActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
+        activeSessionStore = ActiveSessionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        appLogs = AppLogStore.get(this)
         if (sessionStore.baseUrl.isBlank()) {
             sessionStore.baseUrl = DEFAULT_CONTROL_PLANE_URL
         }
@@ -67,7 +78,9 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        binding.refreshButton.setOnClickListener { refreshRuntimes() }
+        binding.notificationButton.setOnClickListener {
+            startActivity(SystemLogsActivity.createIntent(this, errorsOnly = true))
+        }
         binding.accessToggleButton.setOnClickListener {
             startActivity(AccountIdentityActivity.createIntent(this))
         }
@@ -79,7 +92,17 @@ class MainActivity : AppCompatActivity() {
             startActivity(AccountIdentityActivity.createIntent(this))
         }
         binding.logsNavButton.setOnClickListener {
-            toast(getString(R.string.bottom_logs_runtime_hint))
+            startActivity(SystemLogsActivity.createIntent(this))
+        }
+        binding.settingsNavButton.setOnClickListener {
+            startActivity(PrivacySecurityActivity.createIntent(this))
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                appLogs.entries.collect {
+                    updateNotificationBadge()
+                }
+            }
         }
 
         refreshRuntimes()
@@ -87,7 +110,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        refreshRuntimes()
+        refreshRuntimes(showBusy = false)
     }
 
     override fun onPause() {
@@ -121,19 +144,59 @@ class MainActivity : AppCompatActivity() {
 
         refreshJob = lifecycleScope.launch {
             runCatching {
-                api.listRuntimes(baseUrl, accountId, deviceId)
+                appLogs.info("Refreshing runtime list", "runtime")
+                val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
+                reconcileStoredActiveSession(baseUrl, accountId, deviceId, runtimes)
+                updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes)
+                runtimes
             }.onSuccess { runtimes ->
                 renderRuntimes(runtimes)
                 if (showBusy) {
                     setBusy(false)
                 }
             }.onFailure { error ->
+                appLogs.error(error.message ?: getString(R.string.status_error), "runtime")
                 if (showBusy) {
                     setBusy(false)
                     showError(error)
                 }
             }
             refreshJob = null
+        }
+    }
+
+    private suspend fun reconcileStoredActiveSession(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimes: List<RuntimeSummary>,
+    ) {
+        val activeSession = activeSessionStore.load() ?: return
+        if (
+            activeSession.accountId != accountId ||
+            activeSession.deviceId != deviceId ||
+            activeSession.baseUrl.trimEnd('/') != baseUrl.trimEnd('/') ||
+            activeSession.sessionId.isBlank()
+        ) {
+            activeSessionStore.clear()
+            appLogs.warn("Cleared active session because it no longer matches this device", "session")
+            return
+        }
+
+        val runtime = runtimes.firstOrNull { it.id == activeSession.runtimeId }
+        if (runtime == null || !runtime.isReadyForSession()) {
+            activeSessionStore.clear()
+            appLogs.warn("Cleared stale active session for unavailable runtime", "session")
+            return
+        }
+
+        runCatching {
+            api.heartbeatSession(baseUrl, accountId, deviceId, activeSession.sessionId)
+        }.onSuccess {
+            activeSessionStore.touch(activeSession.sessionId)
+        }.onFailure { error ->
+            activeSessionStore.clear()
+            appLogs.warn("Cleared stale active session after heartbeat failure: ${error.message}", "session")
         }
     }
 
@@ -156,14 +219,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary) {
         val isLive = runtime.isReadyForSession()
-        val hasData = runtime.blobLastSnapshotAt != null
+        if (runtime.isTransitioning()) {
+            runtimeProvisioningStartedAtMs.putIfAbsent(runtime.id, System.currentTimeMillis())
+        } else {
+            runtimeProvisioningStartedAtMs.remove(runtime.id)
+            runtimeProvisioningLastMessage.remove(runtime.id)
+        }
 
         cardBinding.runtimeTitleText.text = runtime.name
-        cardBinding.runtimeSubtitleText.text = when {
-            isLive -> getString(R.string.runtime_state_active)
-            runtime.status.equals("starting", ignoreCase = true) -> getString(R.string.runtime_state_provisioning)
-            hasData -> getString(R.string.runtime_state_offline_saved)
-            else -> getString(R.string.runtime_state_offline_wiped)
+        cardBinding.runtimeSubtitleText.text = if (isLive) {
+            getString(R.string.runtime_connectivity_online)
+        } else {
+            getString(R.string.runtime_connectivity_offline)
         }
         cardBinding.runtimeStatusDot.setBackgroundResource(
             if (isLive) R.drawable.bg_dot_accent else R.drawable.bg_dot_muted,
@@ -173,22 +240,18 @@ class MainActivity : AppCompatActivity() {
         )
         cardBinding.root.strokeColor = getColor(if (isLive) R.color.v_border else R.color.v_border)
 
-        cardBinding.runtimeStatOneValue.text = if (isLive) {
-            getString(R.string.runtime_stat_live)
-        } else if (hasData) {
-            getString(R.string.runtime_stat_saved)
-        } else {
-            formatTimestamp(runtime.blobLastSnapshotAt)
-        }
+        cardBinding.runtimeStatOneValue.text = getString(R.string.runtime_stat_load_unknown)
         cardBinding.runtimeStatTwoValue.text = runtime.hardwareLabel()
-        cardBinding.runtimeStatThreeValue.text = if (isLive) {
-            getString(R.string.runtime_stat_ping_live)
-        } else {
-            getString(R.string.runtime_stat_ping_offline)
-        }
+        cardBinding.runtimeStatThreeValue.text = getString(R.string.runtime_stat_load_unknown)
 
         cardBinding.runtimeErrorText.isVisible = !runtime.lastError.isNullOrBlank()
         cardBinding.runtimeErrorText.text = runtime.lastError.orEmpty()
+        runtime.lastError?.takeIf { it.isNotBlank() }?.let { error ->
+            if (reportedRuntimeErrors[runtime.id] != error) {
+                reportedRuntimeErrors[runtime.id] = error
+                appLogs.critical("Runtime ${runtime.name}: $error", "runtime")
+            }
+        }
         cardBinding.connectRuntimeButton.isVisible = isLive
         cardBinding.runtimeActionRow.isVisible = !isLive
         val provisioningMilestone = runtime.provisioningMilestone()
@@ -233,9 +296,13 @@ class MainActivity : AppCompatActivity() {
                 title = getString(R.string.runtime_provisioning_title_request),
                 command = getString(R.string.runtime_provisioning_command_request),
                 detail = getString(R.string.runtime_provisioning_detail_request),
+                events = provisioningEvents(0L),
             ),
             animate = true,
         )
+        runtimeProvisioningStartedAtMs[runtime.id] = System.currentTimeMillis()
+        runtimeProvisioningLastMessage[runtime.id] = getString(R.string.runtime_provisioning_detail_request)
+        appLogs.info("Runtime provisioning requested for ${runtime.name}", "runtime")
         cardBinding.startRuntimeButton.isEnabled = false
         cardBinding.actionControlsButton.isEnabled = false
         cardBinding.deleteRuntimeButton.isEnabled = false
@@ -247,14 +314,17 @@ class MainActivity : AppCompatActivity() {
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 api.startRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
             }.onSuccess {
+                appLogs.info("Runtime start accepted for ${runtime.name}", "runtime")
                 refreshRuntimes(showBusy = false)
             }.onFailure { error ->
+                appLogs.error(error.message ?: getString(R.string.status_error), "runtime")
                 showRuntimeProvisioning(
                     cardBinding,
                     RuntimeProvisioningMilestone(
                         title = getString(R.string.runtime_provisioning_title_error),
                         command = getString(R.string.runtime_provisioning_command_error),
                         detail = "... ${error.message ?: getString(R.string.status_error)}",
+                        events = listOf(getString(R.string.runtime_provisioning_event_error)),
                     ),
                     animate = false,
                 )
@@ -267,10 +337,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {
+        activeSessionStore.loadForRuntime(runtime.id)?.let { session ->
+            lifecycleScope.launch {
+                runCatching {
+                    api.heartbeatSession(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
+                }.onSuccess {
+                    activeSessionStore.touch(session.sessionId)
+                    appLogs.info("Returning to active session for ${runtime.name}", "session")
+                    startActivity(SessionActivity.createIntent(this@MainActivity, session).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                }.onFailure { error ->
+                    activeSessionStore.clear()
+                    appLogs.warn("Stored active session was stale: ${error.message}", "session")
+                    connectRuntime(runtime)
+                }
+            }
+            return
+        }
+
         val accountId = requireAccountId() ?: return
         val deviceId = requireDeviceId() ?: return
         val baseUrl = currentBaseUrl()
         setBusy(true, getString(R.string.status_preparing_session))
+        appLogs.info("Preparing session for ${runtime.name}", "session")
 
         lifecycleScope.launch {
             runCatching {
@@ -288,25 +376,28 @@ class MainActivity : AppCompatActivity() {
                 Pair(session, readyRuntime)
             }.onSuccess { (session, readyRuntime) ->
                 setBusy(false)
+                val activeSession = ActiveSessionStore.ActiveSession(
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    baseUrl = baseUrl,
+                    runtimeId = readyRuntime.id,
+                    runtimeName = readyRuntime.name,
+                    viewerAddress = session.viewerAddress,
+                    relayHost = session.relayHost,
+                    relayPort = session.relayPort,
+                    relayTls = session.relayTls,
+                    relayPath = session.relayPath,
+                    relayToken = session.relayToken,
+                    sessionId = session.sessionId,
+                )
+                activeSessionStore.save(activeSession)
+                appLogs.info("Session created for ${readyRuntime.name}", "session")
                 startActivity(
-                    SessionActivity.createIntent(
-                        context = this@MainActivity,
-                        accountId = accountId,
-                        deviceId = deviceId,
-                        baseUrl = baseUrl,
-                        runtimeId = readyRuntime.id,
-                        runtimeName = readyRuntime.name,
-                        relayHost = session.relayHost,
-                        relayPort = session.relayPort,
-                        relayTls = session.relayTls,
-                        relayPath = session.relayPath,
-                        relayToken = session.relayToken,
-                        sessionId = session.sessionId,
-                        viewerAddress = session.viewerAddress,
-                    ),
+                    SessionActivity.createIntent(this@MainActivity, activeSession),
                 )
             }.onFailure { error ->
                 setBusy(false)
+                appLogs.error(error.message ?: getString(R.string.status_error), "session")
                 showError(error)
             }
         }
@@ -336,6 +427,7 @@ class MainActivity : AppCompatActivity() {
     ): RuntimeSummary {
         repeat(CONNECT_WAIT_ATTEMPTS) { attempt ->
             val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
+            updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes)
             renderRuntimes(runtimes)
             val runtime = runtimes.firstOrNull { it.id == runtimeId }
                 ?: throw IOException(getString(R.string.runtime_missing_for_session))
@@ -438,10 +530,43 @@ class MainActivity : AppCompatActivity() {
 
     private fun setBusy(isBusy: Boolean, message: String? = null) {
         binding.progressIndicator.isVisible = isBusy
-        binding.statusText.text = message ?: getString(R.string.home_secure_client)
-        binding.refreshButton.isEnabled = !isBusy
+        binding.statusText.text = getString(R.string.home_secure_client)
+        binding.notificationButton.isEnabled = !isBusy
         binding.createRuntimeButton.isEnabled = !isBusy
         binding.accessToggleButton.isEnabled = !isBusy
+    }
+
+    private fun updateNotificationBadge() {
+        val count = appLogs.unresolvedCriticalCount()
+        binding.notificationBadgeText.isVisible = count > 0
+        binding.notificationBadgeText.text = count.coerceAtMost(99).toString()
+    }
+
+    private suspend fun updateProvisioningMetadata(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimes: List<RuntimeSummary>,
+    ) {
+        val transitioningIds = runtimes
+            .filter { it.isTransitioning() }
+            .map { it.id }
+            .toSet()
+        runtimeProvisioningStartedAtMs.keys.removeAll { it !in transitioningIds }
+        runtimeProvisioningLastMessage.keys.removeAll { it !in transitioningIds }
+        transitioningIds.forEach { runtimeId ->
+            runtimeProvisioningStartedAtMs.putIfAbsent(runtimeId, System.currentTimeMillis())
+            runCatching {
+                api.listRuntimeLogs(baseUrl, accountId, deviceId, runtimeId, limit = 1)
+                    .firstOrNull()
+                    ?.message
+                    ?.takeIf { it.isNotBlank() }
+            }.onSuccess { message ->
+                if (!message.isNullOrBlank()) {
+                    runtimeProvisioningLastMessage[runtimeId] = message
+                }
+            }
+        }
     }
 
     private fun showRuntimeProvisioning(
@@ -452,6 +577,7 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeProvisioningTitleText.text = milestone.title
         cardBinding.runtimeProvisioningCommandText.text = milestone.command
         cardBinding.runtimeProvisioningDetailText.text = milestone.detail
+        cardBinding.runtimeProvisioningEventTrailText.text = milestone.events.joinToString("\n")
         cardBinding.runtimeInteractiveContent.alpha = 0.08f
         cardBinding.runtimeProvisioningLogContainer.isVisible = true
         startRuntimeProvisioningPulse(cardBinding.runtimeProvisioningDot)
@@ -530,9 +656,7 @@ class MainActivity : AppCompatActivity() {
     private fun RuntimeSummary.isTransitioning(): Boolean {
         return desiredState.equals("running", ignoreCase = true) && !isReadyForSession() ||
             status.equals("starting", ignoreCase = true) ||
-            status.equals("stopping", ignoreCase = true) ||
-            connectionStatus.equals("connecting", ignoreCase = true) ||
-            connectionStatus.equals("disconnecting", ignoreCase = true)
+            connectionStatus.equals("connecting", ignoreCase = true)
     }
 
     private fun RuntimeSummary.provisioningMilestone(): RuntimeProvisioningMilestone? {
@@ -544,33 +668,112 @@ class MainActivity : AppCompatActivity() {
                 title = getString(R.string.runtime_provisioning_title_error),
                 command = getString(R.string.runtime_provisioning_command_error),
                 detail = "... ${lastError.orEmpty()}",
+                events = listOf(getString(R.string.runtime_provisioning_event_error)),
             )
+        }
+
+        val startedAt = runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
+        val elapsedMs = System.currentTimeMillis() - startedAt
+        fun detail(defaultValue: String): String {
+            val latest = runtimeProvisioningLastMessage[id]?.trim().orEmpty()
+            return if (latest.isNotBlank()) {
+                if (latest.startsWith("...")) latest else "... $latest"
+            } else {
+                defaultValue
+            }
         }
 
         return when {
             connectionStatus.equals("connecting", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_connect),
                 command = getString(R.string.runtime_provisioning_command_connect),
-                detail = getString(R.string.runtime_provisioning_detail_connect),
+                detail = detail(getString(R.string.runtime_provisioning_detail_connect)),
+                events = provisioningEvents(elapsedMs),
             )
-            else -> RuntimeProvisioningMilestone(
+            elapsedMs < 2_000L -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_container),
+                command = getString(R.string.runtime_provisioning_command_container),
+                detail = detail(getString(R.string.runtime_provisioning_detail_container)),
+                events = provisioningEvents(elapsedMs),
+            )
+            elapsedMs < 3_000L -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_request),
+                command = getString(R.string.runtime_provisioning_command_request),
+                detail = detail(getString(R.string.runtime_provisioning_detail_request)),
+                events = provisioningEvents(elapsedMs),
+            )
+            elapsedMs < 6_000L -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_storage),
+                command = getString(R.string.runtime_provisioning_command_storage),
+                detail = detail(getString(R.string.runtime_provisioning_detail_storage)),
+                events = provisioningEvents(elapsedMs),
+            )
+            elapsedMs < 9_000L -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_restore),
+                command = getString(R.string.runtime_provisioning_command_restore),
+                detail = detail(getString(R.string.runtime_provisioning_detail_restore)),
+                events = provisioningEvents(elapsedMs),
+            )
+            elapsedMs < 13_000L -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_network),
+                command = getString(R.string.runtime_provisioning_command_network),
+                detail = detail(getString(R.string.runtime_provisioning_detail_network)),
+                events = provisioningEvents(elapsedMs),
+            )
+            elapsedMs < 18_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_boot),
                 command = getString(R.string.runtime_provisioning_command_boot),
-                detail = getString(R.string.runtime_provisioning_detail_boot),
+                detail = detail(getString(R.string.runtime_provisioning_detail_boot)),
+                events = provisioningEvents(elapsedMs),
+            )
+            elapsedMs < 28_000L -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_android),
+                command = getString(R.string.runtime_provisioning_command_android),
+                detail = detail(getString(R.string.runtime_provisioning_detail_android)),
+                events = provisioningEvents(elapsedMs),
+            )
+            elapsedMs < 40_000L -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_viewer),
+                command = getString(R.string.runtime_provisioning_command_viewer),
+                detail = detail(getString(R.string.runtime_provisioning_detail_viewer)),
+                events = provisioningEvents(elapsedMs),
+            )
+            else -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_provisioning_title_connect),
+                command = getString(R.string.runtime_provisioning_command_connect),
+                detail = detail(getString(R.string.runtime_provisioning_detail_connect)),
+                events = provisioningEvents(elapsedMs),
             )
         }
+    }
+
+    private fun provisioningEvents(elapsedMs: Long): List<String> {
+        val allEvents = listOf(
+            getString(R.string.runtime_provisioning_event_container),
+            getString(R.string.runtime_provisioning_event_storage),
+            getString(R.string.runtime_provisioning_event_network),
+            getString(R.string.runtime_provisioning_event_filesystem),
+            getString(R.string.runtime_provisioning_event_image),
+            getString(R.string.runtime_provisioning_event_services),
+            getString(R.string.runtime_provisioning_event_channel),
+            getString(R.string.runtime_provisioning_event_handoff),
+            getString(R.string.runtime_provisioning_event_ready),
+        )
+        val visibleCount = ((elapsedMs / 3_000L).toInt() + 2).coerceIn(2, allEvents.size)
+        return allEvents.take(visibleCount).takeLast(4)
     }
 
     private data class RuntimeProvisioningMilestone(
         val title: String,
         val command: String,
         val detail: String,
+        val events: List<String>,
     )
 
-	private companion object {
-		val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
-		const val DEFAULT_SESSION_BIT_RATE = 4_000_000
-		const val CONNECT_WAIT_ATTEMPTS = 45
+    private companion object {
+        val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
+        const val DEFAULT_SESSION_BIT_RATE = 4_000_000
+        const val CONNECT_WAIT_ATTEMPTS = 45
         const val CONNECT_WAIT_DELAY_MS = 1_000L
         const val RUNTIME_POLL_DELAY_MS = 2_000L
     }

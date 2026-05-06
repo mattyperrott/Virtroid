@@ -111,8 +111,13 @@ class ScrcpySessionHost(
         callback.onDisconnected("runtime stream disconnected")
     }
 
+    override fun firstVideoFrame() {
+        callback.onFirstVideoFrame()
+    }
+
     interface Callback {
         fun onConnected(remoteWidth: Int, remoteHeight: Int)
+        fun onFirstVideoFrame()
         fun onDisconnected(message: String)
     }
 }

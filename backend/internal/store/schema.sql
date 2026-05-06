@@ -126,8 +126,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     relay_token TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_client_heartbeat_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    end_reason TEXT,
     expires_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_client_heartbeat_at TIMESTAMPTZ;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS end_reason TEXT;
 
 CREATE TABLE IF NOT EXISTS device_request_nonces (
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -155,4 +162,6 @@ CREATE INDEX IF NOT EXISTS idx_runtimes_host_id ON runtimes (host_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runtimes_viewer_port_unique ON runtimes (viewer_port) WHERE viewer_port IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_device_request_nonces_expires_at ON device_request_nonces (expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_runtime_id ON sessions (runtime_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_status_expires_at ON sessions (status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_last_client_heartbeat_at ON sessions (last_client_heartbeat_at);
 CREATE INDEX IF NOT EXISTS idx_runtime_logs_runtime_created_at ON runtime_logs (runtime_id, created_at DESC);

@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import io.virtdroid.client.databinding.ScreenSendUsdtBinding
 import io.virtdroid.client.security.enableSecureWindow
@@ -59,18 +60,26 @@ class UsdtPaymentActivity : AppCompatActivity() {
         binding.buttonBack.setOnClickListener { finish() }
         binding.networkValue.text = network
         binding.amountValue.text = String.format(Locale.US, "%.6f USDT", amountUsdt)
-        binding.depositAddressValue.text = depositAddress
+        binding.depositAddressValue.text = depositAddress.ifBlank { getString(R.string.payment_quote_unavailable) }
         binding.destinationWalletValue.text = siaAddress.ifBlank { "--" }
         binding.estimatedReceiptValue.text = "~${scFormatter.format(estimatedSc)} SC"
+        val hasLiveQuote = depositAddress.isNotBlank()
+        binding.paymentStatusTitle.text = if (hasLiveQuote) {
+            getString(R.string.payment_waiting)
+        } else {
+            getString(R.string.payment_quote_unavailable)
+        }
+        binding.paymentWaitingDot.isVisible = hasLiveQuote
+        binding.buttonPaymentSent.isEnabled = hasLiveQuote
+        binding.buttonCopyDepositAddress.isEnabled = hasLiveQuote
+        binding.buttonShowQr.isEnabled = false
+        binding.buttonShowQr.alpha = 0.45f
 
         binding.buttonCopyAmount.setOnClickListener {
             copyToClipboard("USDT amount", String.format(Locale.US, "%.6f", amountUsdt))
         }
         binding.buttonCopyDepositAddress.setOnClickListener {
             copyToClipboard("USDT deposit address", depositAddress)
-        }
-        binding.buttonShowQr.setOnClickListener {
-            toast("QR display will be available when live swap orders are wired.")
         }
         binding.buttonPaymentSent.setOnClickListener {
             toast(getString(R.string.payment_listening))
@@ -80,7 +89,11 @@ class UsdtPaymentActivity : AppCompatActivity() {
             finish()
         }
 
-        startTimer()
+        if (hasLiveQuote) {
+            startTimer()
+        } else {
+            binding.paymentTimer.text = "--:--"
+        }
     }
 
     override fun onDestroy() {
@@ -107,6 +120,10 @@ class UsdtPaymentActivity : AppCompatActivity() {
     }
 
     private fun copyToClipboard(label: String, value: String) {
+        if (value.isBlank()) {
+            toast(getString(R.string.payment_quote_unavailable))
+            return
+        }
         val clipboard = getSystemService(ClipboardManager::class.java)
         clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
         toast(getString(R.string.fund_storage_copied))

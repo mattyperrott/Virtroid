@@ -10,7 +10,7 @@ import (
 	"virtdroid/backend/internal/config"
 )
 
-func TestBootstrapProductionRequiresConfiguredToken(t *testing.T) {
+func TestBootstrapProductionAllowsPublicSignupWhenInviteGateDisabled(t *testing.T) {
 	handler := New(config.ServerConfig{
 		AppEnv: "production",
 	}, nil)
@@ -20,49 +20,19 @@ func TestBootstrapProductionRequiresConfiguredToken(t *testing.T) {
 
 	handler.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusServiceUnavailable {
-		t.Fatalf("bootstrap status = %d, want %d", resp.Code, http.StatusServiceUnavailable)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("bootstrap status = %d, want %d from nil-store-safe invalid input", resp.Code, http.StatusBadRequest)
 	}
 }
 
-func TestBootstrapProductionRateLimitsInvalidTokenBeforeStore(t *testing.T) {
+func TestBootstrapRateLimitsBeforeStore(t *testing.T) {
 	handler := New(config.ServerConfig{
 		AppEnv:                      "production",
-		BootstrapToken:              "expected-token",
-		BootstrapRateLimitPerMinute: 1,
-	}, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(`{}`))
-	req.Header.Set("X-Virtdroid-Bootstrap-Token", "wrong-token")
-	resp := httptest.NewRecorder()
-
-	handler.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusForbidden {
-		t.Fatalf("bootstrap status = %d, want %d", resp.Code, http.StatusForbidden)
-	}
-
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(`{`))
-	req.Header.Set("X-Virtdroid-Bootstrap-Token", "wrong-token")
-	resp = httptest.NewRecorder()
-
-	handler.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusTooManyRequests {
-		t.Fatalf("second invalid-token bootstrap status = %d, want %d", resp.Code, http.StatusTooManyRequests)
-	}
-}
-
-func TestBootstrapProductionRateLimitsValidTokenBeforeStore(t *testing.T) {
-	handler := New(config.ServerConfig{
-		AppEnv:                      "production",
-		BootstrapToken:              "expected-token",
 		BootstrapRateLimitPerMinute: 1,
 	}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(`{`))
 	req.RemoteAddr = "203.0.113.7:42312"
-	req.Header.Set("X-Virtdroid-Bootstrap-Token", "expected-token")
 	resp := httptest.NewRecorder()
 
 	handler.ServeHTTP(resp, req)
@@ -73,7 +43,6 @@ func TestBootstrapProductionRateLimitsValidTokenBeforeStore(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(`{`))
 	req.RemoteAddr = "203.0.113.7:42313"
-	req.Header.Set("X-Virtdroid-Bootstrap-Token", "expected-token")
 	resp = httptest.NewRecorder()
 
 	handler.ServeHTTP(resp, req)
@@ -89,13 +58,11 @@ func TestBootstrapProductionRateLimitsValidTokenBeforeStore(t *testing.T) {
 func TestBootstrapRejectsOversizedBodyBeforeStore(t *testing.T) {
 	handler := New(config.ServerConfig{
 		AppEnv:                      "production",
-		BootstrapToken:              "expected-token",
 		BootstrapRateLimitPerMinute: 10,
 		BootstrapMaxBodyBytes:       8,
 	}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(`{"device_name":"too-large"}`))
-	req.Header.Set("X-Virtdroid-Bootstrap-Token", "expected-token")
 	resp := httptest.NewRecorder()
 
 	handler.ServeHTTP(resp, req)

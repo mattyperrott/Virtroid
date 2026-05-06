@@ -119,7 +119,6 @@ class VirtdroidApi(
         deviceName: String,
         publicKey: String,
         runtimeProfile: DeviceRuntimeProfile,
-        bootstrapToken: String = "",
     ): BootstrapResult =
         withContext(Dispatchers.IO) {
             val requestBody = JSONObject()
@@ -137,16 +136,13 @@ class VirtdroidApi(
             val requestBuilder = Request.Builder()
                 .url(normalizeBaseUrl(baseUrl) + "/api/v1/bootstrap")
                 .post(requestBody)
-            if (bootstrapToken.isNotBlank()) {
-                requestBuilder.header("X-Virtdroid-Bootstrap-Token", bootstrapToken)
-            }
 
             val payload = executeJson(requestBuilder.build())
 
             BootstrapResult(
                 accountId = payload.getJSONObject("account").getString("id"),
                 deviceId = payload.getJSONObject("device").getString("id"),
-                runtimeId = payload.getJSONObject("runtime").getString("id"),
+                runtimeId = payload.optJSONObject("runtime")?.optString("id").orEmpty(),
             )
         }
 
@@ -411,6 +407,23 @@ class VirtdroidApi(
             signedJsonRequest(
                 baseUrl = baseUrl,
                 pathAndQuery = "/api/v1/me/sessions/$sessionId/close",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+            ),
+        )
+    }
+
+    suspend fun heartbeatSession(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        sessionId: String,
+    ) = withContext(Dispatchers.IO) {
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/sessions/$sessionId/heartbeat",
                 method = "POST",
                 accountId = accountId,
                 deviceId = deviceId,

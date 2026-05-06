@@ -1,10 +1,13 @@
 package io.virtdroid.client
 
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.text.InputType
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -15,21 +18,20 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtdroid.client.api.AccountStorage
 import io.virtdroid.client.api.VirtdroidApi
+import io.virtdroid.client.data.AppLogStore
 import io.virtdroid.client.data.SessionStore
 import io.virtdroid.client.databinding.ScreenFundStorageBinding
 import io.virtdroid.client.security.enableSecureWindow
 import kotlinx.coroutines.launch
-import java.text.NumberFormat
 import java.util.Locale
-import kotlin.math.roundToInt
 
 class FundStorageActivity : AppCompatActivity() {
     private lateinit var binding: ScreenFundStorageBinding
     private lateinit var sessionStore: SessionStore
+    private lateinit var appLogs: AppLogStore
     private val api = VirtdroidApi()
     private var selectedAmountUsd = 10
-    private var walletAddress: String = FALLBACK_SIA_ADDRESS
-    private val scFormatter = NumberFormat.getIntegerInstance(Locale.US)
+    private var walletAddress: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +41,7 @@ class FundStorageActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
+        appLogs = AppLogStore.get(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.topNav) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -62,17 +65,16 @@ class FundStorageActivity : AppCompatActivity() {
         }
 
         binding.buttonBack.setOnClickListener { finish() }
-        binding.buttonHelp.setOnClickListener {
-            toast("USDT is swapped externally into SC and sent to your Sia wallet.")
-        }
+        binding.buttonHelp.setOnClickListener { showFundingUnavailableDialog() }
         binding.buttonCopySiaAddress.setOnClickListener { copyToClipboard("Sia address", walletAddress) }
         binding.buttonAmount5.setOnClickListener { selectAmount(5) }
         binding.buttonAmount10.setOnClickListener { selectAmount(10) }
         binding.buttonAmount25.setOnClickListener { selectAmount(25) }
-        binding.buttonAmountCustom.setOnClickListener { toast(getString(R.string.fund_storage_custom)) }
+        binding.buttonAmountCustom.setOnClickListener { chooseCustomAmount() }
         binding.buttonCreateUsdtPayment.setOnClickListener { openPayment() }
 
         selectAmount(selectedAmountUsd)
+        setQuoteActionEnabled(false)
         loadStorage()
     }
 
@@ -91,20 +93,25 @@ class FundStorageActivity : AppCompatActivity() {
             }.onSuccess { storage ->
                 bindStorage(storage)
             }.onFailure {
-                binding.walletStatusChip.text = getString(R.string.fund_storage_required)
-                binding.siaAddressValue.text = shortenAddress(walletAddress)
+                walletAddress = ""
+                binding.walletStatusChip.text = getString(R.string.account_storage_unavailable)
+                binding.siaAddressValue.text = getString(R.string.account_storage_unavailable)
+                setQuoteActionEnabled(false)
+                appLogs.warn("Storage wallet could not be loaded: ${it.message}", "storage")
             }
         }
     }
 
     private fun bindStorage(storage: AccountStorage) {
-        walletAddress = storage.walletAddress?.takeIf { it.isNotBlank() } ?: FALLBACK_SIA_ADDRESS
-        binding.siaAddressValue.text = shortenAddress(walletAddress)
+        walletAddress = storage.walletAddress?.takeIf { it.isNotBlank() }.orEmpty()
+        binding.siaAddressValue.text = walletAddress.takeIf { it.isNotBlank() }?.let(::shortenAddress)
+            ?: getString(R.string.fund_storage_wallet_not_configured)
         binding.walletStatusChip.text = when (storage.status) {
             "ready" -> "READY"
             "funding_required", "not_configured" -> getString(R.string.fund_storage_required)
             else -> storage.status.replace('_', ' ').uppercase(Locale.US)
         }
+        setQuoteActionEnabled(false)
     }
 
     private fun selectAmount(amountUsd: Int) {
@@ -112,8 +119,8 @@ class FundStorageActivity : AppCompatActivity() {
         setAmountButton(binding.buttonAmount5, amountUsd == 5)
         setAmountButton(binding.buttonAmount10, amountUsd == 10)
         setAmountButton(binding.buttonAmount25, amountUsd == 25)
-        binding.estimatedReceivedValue.text = "~${scFormatter.format(estimateSc(amountUsd))} SC"
-        binding.networkFeeValue.text = "~$${"%.2f".format(Locale.US, estimateFee(amountUsd))}"
+        binding.estimatedReceivedValue.text = "--"
+        binding.networkFeeValue.text = "--"
     }
 
     private fun setAmountButton(view: TextView, selected: Boolean) {
@@ -122,24 +129,47 @@ class FundStorageActivity : AppCompatActivity() {
     }
 
     private fun openPayment() {
-        startActivity(
-            UsdtPaymentActivity.createIntent(
-                context = this,
-                amountUsdt = selectedAmountUsd.toDouble(),
-                network = "USDT TRC20",
-                depositAddress = SAMPLE_USDT_TRC20_ADDRESS,
-                siaAddress = walletAddress,
-                estimatedSc = estimateSc(selectedAmountUsd),
-            ),
-        )
+        showFundingUnavailableDialog()
     }
 
-    private fun estimateSc(amountUsd: Int): Int {
-        return (amountUsd * 118.0).roundToInt()
+    private fun chooseCustomAmount() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(selectedAmountUsd.toString())
+            selectAll()
+        }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.fund_storage_custom_amount_title))
+            .setView(input)
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.controls_confirm)) { _, _ ->
+                val amount = input.text.toString().toIntOrNull()?.coerceIn(1, 10_000)
+                if (amount == null) {
+                    toast(getString(R.string.fund_storage_custom_amount_invalid))
+                } else {
+                    selectAmount(amount)
+                }
+            }
+            .show()
     }
 
-    private fun estimateFee(amountUsd: Int): Double {
-        return maxOf(0.45, amountUsd * 0.045)
+    private fun setQuoteActionEnabled(enabled: Boolean) {
+        binding.buttonCreateUsdtPayment.isEnabled = enabled
+        binding.buttonCreateUsdtPayment.alpha = if (enabled) 1f else 0.55f
+        binding.buttonCreateUsdtPayment.text = if (enabled) {
+            getString(R.string.fund_storage_create_payment)
+        } else {
+            getString(R.string.fund_storage_payment_unavailable)
+        }
+    }
+
+    private fun showFundingUnavailableDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.fund_storage_payment_unavailable_title))
+            .setMessage(getString(R.string.fund_storage_payment_unavailable_body))
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+        appLogs.warn("USDT payment flow blocked because live quote backend is unavailable", "payment")
     }
 
     private fun shortenAddress(value: String): String {
@@ -149,6 +179,10 @@ class FundStorageActivity : AppCompatActivity() {
 
     private fun copyToClipboard(label: String, value: String) {
         val clipboard = getSystemService(ClipboardManager::class.java)
+        if (value.isBlank()) {
+            toast(getString(R.string.fund_storage_wallet_not_configured))
+            return
+        }
         clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
         toast(getString(R.string.fund_storage_copied))
     }
@@ -158,9 +192,6 @@ class FundStorageActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val FALLBACK_SIA_ADDRESS = "c3b91d50cf58b0b5a312dd2d8f2a1b4c7d9e0f"
-        private const val SAMPLE_USDT_TRC20_ADDRESS = "TNP12w3zKVm1M38f2vA8X4m1z6UaN6cQ22"
-
         fun createIntent(context: Context): Intent = Intent(context, FundStorageActivity::class.java)
     }
 }

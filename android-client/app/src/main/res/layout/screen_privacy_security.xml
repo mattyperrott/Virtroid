@@ -1,0 +1,548 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/privacyRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/v_bg"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/privacyHeader"
+        android:layout_width="match_parent"
+        android:layout_height="112dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="24dp"
+        android:paddingTop="48dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="16dp">
+
+        <ImageButton
+            android:id="@+id/privacyBackButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_surface_circle"
+            android:contentDescription="@string/controls_back"
+            android:padding="12dp"
+            android:src="@drawable/ic_arrow_back"
+            android:tint="@color/v_text_primary" />
+
+        <TextView
+            style="@style/VirtdroidText.NavTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/privacy_title" />
+
+        <Space
+            android:layout_width="44dp"
+            android:layout_height="44dp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/v_border" />
+
+    <ScrollView
+        android:id="@+id/privacyScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:fillViewport="false"
+        android:overScrollMode="never"
+        android:paddingStart="24dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="32dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/VirtdroidSectionLabel"
+                android:text="@string/privacy_security_telemetry" />
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_privacy_telemetry_card">
+
+                <View
+                    android:layout_width="4dp"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="start"
+                    android:background="@color/v_accent" />
+
+                <LinearLayout
+                    android:id="@+id/telemetryCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="20dp"
+                    android:paddingTop="18dp"
+                    android:paddingEnd="18dp"
+                    android:paddingBottom="18dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            style="@style/VirtdroidTelemetryIcon"
+                            android:src="@drawable/ic_shield" />
+
+                        <TextView
+                            style="@style/VirtdroidTelemetryLabel"
+                            android:text="@string/privacy_app_lock_status" />
+
+                        <TextView
+                            android:id="@+id/appLockStatusValue"
+                            style="@style/VirtdroidTelemetryValueChip"
+                            android:text="Secured" />
+                    </LinearLayout>
+
+                    <View style="@style/VirtdroidSettingsDivider" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            style="@style/VirtdroidTelemetryIcon"
+                            android:src="@drawable/ic_eye_off" />
+
+                        <TextView
+                            style="@style/VirtdroidTelemetryLabel"
+                            android:text="@string/privacy_screenshot_protection" />
+
+                        <TextView
+                            android:id="@+id/screenshotProtectionValue"
+                            style="@style/VirtdroidTelemetryValueMono"
+                            android:text="ACTIVE" />
+                    </LinearLayout>
+
+                    <View style="@style/VirtdroidSettingsDivider" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            style="@style/VirtdroidTelemetryIcon"
+                            android:src="@drawable/ic_mobile" />
+
+                        <TextView
+                            style="@style/VirtdroidTelemetryLabel"
+                            android:text="@string/privacy_trusted_device" />
+
+                        <TextView
+                            android:id="@+id/trustedDeviceValue"
+                            style="@style/VirtdroidTelemetryValueMono"
+                            android:text="VERIFIED" />
+                    </LinearLayout>
+
+                    <View style="@style/VirtdroidSettingsDivider" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            style="@style/VirtdroidTelemetryIcon"
+                            android:src="@drawable/ic_lock" />
+
+                        <TextView
+                            style="@style/VirtdroidTelemetryLabel"
+                            android:text="@string/privacy_last_unlock" />
+
+                        <TextView
+                            android:id="@+id/lastUnlockValue"
+                            style="@style/VirtdroidTelemetryValueMono"
+                            android:text="Never" />
+                    </LinearLayout>
+
+                    <View style="@style/VirtdroidSettingsDivider" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            style="@style/VirtdroidTelemetryIcon"
+                            android:src="@drawable/ic_terminal" />
+
+                        <TextView
+                            style="@style/VirtdroidTelemetryLabel"
+                            android:text="@string/privacy_last_session_end" />
+
+                        <TextView
+                            android:id="@+id/lastSessionEndValue"
+                            style="@style/VirtdroidTelemetryValueMono"
+                            android:text="Never" />
+                    </LinearLayout>
+                </LinearLayout>
+            </FrameLayout>
+
+            <TextView
+                style="@style/VirtdroidSectionLabel"
+                android:layout_marginTop="32dp"
+                android:text="@string/privacy_app_lock_auth" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_settings_section"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="72dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtdroidSettingsTitle"
+                            android:text="@string/privacy_require_pin_biometric" />
+
+                        <TextView
+                            style="@style/VirtdroidSettingsSubtitle"
+                            android:layout_marginTop="8dp"
+                            android:text="@string/privacy_require_pin_biometric_body" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/requirePinSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
+                </LinearLayout>
+
+                <View style="@style/VirtdroidSettingsDivider" />
+
+                <LinearLayout
+                    android:id="@+id/autoLockTimerRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="64dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtdroidSettingsTitle"
+                            android:text="@string/privacy_auto_lock_timer" />
+
+                        <TextView
+                            android:id="@+id/autoLockTimerValue"
+                            style="@style/VirtdroidSettingsSubtitle"
+                            android:layout_marginTop="6dp"
+                            android:text="Immediately" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_chevron_right"
+                        android:tint="@color/v_text_muted" />
+                </LinearLayout>
+
+                <View style="@style/VirtdroidSettingsDivider" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="64dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <TextView
+                        style="@style/VirtdroidSettingsTitle"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:text="@string/privacy_require_unlock_resume" />
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/requireUnlockResumeSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
+                </LinearLayout>
+
+                <View style="@style/VirtdroidSettingsDivider" />
+
+                <LinearLayout
+                    android:id="@+id/failedAttemptsRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="64dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <TextView
+                        style="@style/VirtdroidSettingsTitle"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:text="@string/privacy_failed_attempts_backoff" />
+
+                    <TextView
+                        android:id="@+id/failedAttemptsValue"
+                        style="@style/VirtdroidValueChip"
+                        android:text="5 attempts" />
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:src="@drawable/ic_chevron_right"
+                        android:tint="@color/v_text_muted" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                style="@style/VirtdroidSectionLabel"
+                android:layout_marginTop="32dp"
+                android:text="@string/privacy_screen_privacy" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_settings_section"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="76dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtdroidSettingsTitle"
+                            android:text="@string/privacy_block_screen_capture" />
+
+                        <TextView
+                            style="@style/VirtdroidSettingsSubtitle"
+                            android:layout_marginTop="8dp"
+                            android:text="@string/privacy_block_screen_capture_body" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/blockScreenCaptureSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                style="@style/VirtdroidSectionLabel"
+                android:layout_marginTop="32dp"
+                android:text="@string/privacy_session_safety" />
+
+            <LinearLayout
+                android:id="@+id/uiInactivityTimeoutRow"
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_settings_section"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp">
+
+                <TextView
+                    style="@style/VirtdroidSettingsTitle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="@string/privacy_ui_inactivity_timeout" />
+
+                <TextView
+                    android:id="@+id/uiInactivityTimeoutValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:text="15 minutes"
+                    android:textColor="@color/v_text_primary"
+                    android:textSize="14sp" />
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_marginStart="8dp"
+                    android:src="@drawable/ic_chevron_right"
+                    android:tint="@color/v_text_muted" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/VirtdroidSectionLabel"
+                android:layout_marginTop="32dp"
+                android:text="@string/privacy_data_cache_hygiene" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_settings_section"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtdroidSettingsTitle"
+                            android:text="@string/privacy_auto_delete_metadata" />
+
+                        <TextView
+                            style="@style/VirtdroidSettingsSubtitle"
+                            android:layout_marginTop="6dp"
+                            android:text="@string/privacy_auto_delete_metadata_body" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/autoDeleteMetadataSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
+                </LinearLayout>
+
+                <View style="@style/VirtdroidSettingsDivider" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtdroidSettingsTitle"
+                            android:text="@string/privacy_clear_post_transfer" />
+
+                        <TextView
+                            style="@style/VirtdroidSettingsSubtitle"
+                            android:layout_marginTop="6dp"
+                            android:text="@string/privacy_clear_post_transfer_body" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/clearPostTransferSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
+                </LinearLayout>
+
+                <View style="@style/VirtdroidSettingsDivider" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtdroidSettingsTitle"
+                            android:text="@string/privacy_auto_clear_clipboard" />
+
+                        <TextView
+                            style="@style/VirtdroidSettingsSubtitle"
+                            android:layout_marginTop="6dp"
+                            android:text="@string/privacy_auto_clear_clipboard_body" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/autoClearClipboardSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/forceClearCacheButton"
+                style="@style/VirtdroidButton.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="58dp"
+                android:layout_marginTop="14dp"
+                android:text="@string/privacy_force_clear_cache"
+                app:icon="@drawable/ic_broom"
+                app:iconTint="@color/v_text_muted"
+                app:rippleColor="@color/v_accent_soft" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

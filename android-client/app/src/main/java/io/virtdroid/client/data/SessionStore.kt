@@ -39,6 +39,12 @@ class SessionStore(context: Context) {
         )
     }
 
+    fun clearLinkedIdentity() {
+        securePrefs.putString(KEY_ACCOUNT_ID, null)
+        securePrefs.putString(KEY_DEVICE_ID, null)
+        securePrefs.putString(KEY_BASE_URL, null)
+    }
+
     private class SecureSessionPrefs(private val prefs: SharedPreferences) {
         fun getString(key: String, defaultValue: String?): String? {
             val encrypted = prefs.getString(encryptedKey(key), null)

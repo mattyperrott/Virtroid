@@ -14,6 +14,8 @@ public class VideoDecoder {
     private MediaCodec mCodec;
     private Worker mWorker;
     private AtomicBoolean mIsConfigured = new AtomicBoolean(false);
+    private final AtomicBoolean mFirstFrameRendered = new AtomicBoolean(false);
+    private Runnable firstFrameRenderedListener;
 
     public void decodeSample(byte[] data, int offset, int size, long presentationTimeUs, int flags) {
         if (mWorker != null) {
@@ -25,6 +27,10 @@ public class VideoDecoder {
         if (mWorker != null) {
             mWorker.configure(surface, width, height, csd0, csd1);
         }
+    }
+
+    public void setFirstFrameRenderedListener(Runnable listener) {
+        firstFrameRenderedListener = listener;
     }
 
 
@@ -66,6 +72,7 @@ public class VideoDecoder {
                 }
 
             }
+            mFirstFrameRendered.set(false);
             MediaFormat format = MediaFormat.createVideoFormat("video/avc", width, height);
             format.setByteBuffer("csd-0", csd0);
             format.setByteBuffer("csd-1", csd1);
@@ -111,6 +118,10 @@ public class VideoDecoder {
                         if (index >= 0) {
                             // setting true is telling system to render frame onto Surface
                             mCodec.releaseOutputBuffer(index, true);
+                            Runnable listener = firstFrameRenderedListener;
+                            if (listener != null && mFirstFrameRendered.compareAndSet(false, true)) {
+                                listener.run();
+                            }
                             if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
                                 break;
                             }

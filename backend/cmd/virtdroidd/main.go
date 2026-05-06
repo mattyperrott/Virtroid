@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -17,7 +16,8 @@ import (
 func main() {
 	cfg := config.LoadServer()
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	pg, err := store.New(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -28,6 +28,8 @@ func main() {
 	if err := pg.EnsureSchema(ctx); err != nil {
 		log.Fatalf("ensure schema: %v", err)
 	}
+
+	go sessionReaperLoop(ctx, pg, cfg)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
@@ -42,14 +44,47 @@ func main() {
 		}
 	}()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	<-ctx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown error: %v", err)
+	}
+}
+
+func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerConfig) {
+	interval := cfg.SessionReaperInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+
+	runReaper := func() {
+		result, err := pg.ReapStaleSessions(ctx, cfg.ActiveSessionTimeout, cfg.RuntimeIdleTimeout)
+		if err != nil {
+			log.Printf("session reaper failed: %v", err)
+			return
+		}
+		if result.ExpiredPendingSessions > 0 || result.StaleActiveSessions > 0 || len(result.StoppedRuntimeIDs) > 0 {
+			log.Printf(
+				"session reaper: expired_pending=%d stale_active=%d runtimes_queued_to_stop=%d",
+				result.ExpiredPendingSessions,
+				result.StaleActiveSessions,
+				len(result.StoppedRuntimeIDs),
+			)
+		}
+	}
+
+	runReaper()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runReaper()
+		}
 	}
 }

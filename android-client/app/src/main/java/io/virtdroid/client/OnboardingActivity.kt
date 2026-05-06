@@ -30,6 +30,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.UUID
 import kotlin.random.Random
 
@@ -115,7 +116,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Registering Account ID ...",
                 command = "> POST /api/v1/bootstrap",
-                detail = "... requesting account and primary runtime allocation_",
+                detail = "... requesting account and trusted-device registration_",
             )
             val result = api.bootstrap(
                 baseUrl = sessionStore.baseUrl,
@@ -124,7 +125,6 @@ class OnboardingActivity : AppCompatActivity() {
                 deviceName = deviceIdentityStore.defaultDeviceName(),
                 publicKey = publicKey,
                 runtimeProfile = DeviceRuntimeProfile.from(this@OnboardingActivity),
-                bootstrapToken = BuildConfig.DEFAULT_BOOTSTRAP_INVITE_TOKEN,
             )
             sessionStore.saveBootstrap(result.accountId, result.deviceId)
             pendingAccountId = result.accountId
@@ -411,7 +411,7 @@ class OnboardingActivity : AppCompatActivity() {
                 .withEndAction { binding.iconIdentityShield.isVisible = false }
                 .start()
             binding.identityScrollContent.animate()
-                .translationY(-dp(10).toFloat())
+                .translationY(-dp(2).toFloat())
                 .setDuration(260L)
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
@@ -424,9 +424,6 @@ class OnboardingActivity : AppCompatActivity() {
                 .setDuration(260L)
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
-        }
-        binding.identityScroll.post {
-            binding.identityScroll.smoothScrollTo(0, dp(24))
         }
         startActiveDotPulse()
     }

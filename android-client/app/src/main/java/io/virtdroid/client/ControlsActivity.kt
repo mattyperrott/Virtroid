@@ -20,6 +20,8 @@ import io.virtdroid.client.api.RuntimeLogEntry
 import io.virtdroid.client.api.RuntimeSummary
 import io.virtdroid.client.api.RuntimeUpdate
 import io.virtdroid.client.api.VirtdroidApi
+import io.virtdroid.client.data.ActiveSessionStore
+import io.virtdroid.client.data.AppLogStore
 import io.virtdroid.client.data.SessionStore
 import io.virtdroid.client.databinding.ScreenSessionControlsBinding
 import io.virtdroid.client.security.IdentityPasswordStore
@@ -34,7 +36,9 @@ class ControlsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionControlsBinding
     private val api = VirtdroidApi()
     private lateinit var sessionStore: SessionStore
+    private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var appLogs: AppLogStore
     private var runtimeId: String = ""
     private var runtime: RuntimeSummary? = null
     private var logsExpanded = false
@@ -49,7 +53,9 @@ class ControlsActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
+        activeSessionStore = ActiveSessionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        appLogs = AppLogStore.get(this)
         runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID).orEmpty()
         if (runtimeId.isBlank()) {
             finish()
@@ -108,12 +114,13 @@ class ControlsActivity : AppCompatActivity() {
         } else {
             getString(R.string.controls_state_stopped)
         }
-        binding.controlsTunnelValue.text = getString(R.string.controls_tunnel_direct)
-        binding.controlsStorageValue.text = if (runtime.blobLastSnapshotAt != null) {
-            getString(R.string.controls_loaded)
-        } else {
-            getString(R.string.controls_storage_volatile)
+        binding.controlsTunnelValue.text = getString(R.string.controls_tunnel_encrypted)
+        binding.controlsStorageValue.text = when {
+            runtime.blobLastSnapshotAt != null -> getString(R.string.controls_loaded)
+            runtime.blobAutoSnapshot -> getString(R.string.controls_storage_persistent)
+            else -> getString(R.string.controls_storage_volatile)
         }
+        binding.cameraPassthroughRow.isVisible = !runtime.cameraMode.equals("disabled", ignoreCase = true)
         buildBodyText.text = getString(
             R.string.controls_build_info_body,
             runtime.personaModel ?: runtime.name,
@@ -308,6 +315,28 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {
+        activeSessionStore.loadForRuntime(runtime.id)?.let { storedSession ->
+            lifecycleScope.launch {
+                runCatching {
+                    api.heartbeatSession(
+                        baseUrl = storedSession.baseUrl,
+                        accountId = storedSession.accountId,
+                        deviceId = storedSession.deviceId,
+                        sessionId = storedSession.sessionId,
+                    )
+                }.onSuccess {
+                    activeSessionStore.touch(storedSession.sessionId)
+                    appLogs.info("Returning to active session from controls for ${runtime.name}", "session")
+                    startActivity(SessionActivity.createIntent(this@ControlsActivity, storedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                }.onFailure { error ->
+                    activeSessionStore.clear()
+                    appLogs.warn("Stored active session from controls was stale: ${error.message}", "session")
+                    connectRuntime(runtime)
+                }
+            }
+            return
+        }
+
         val accountId = sessionStore.accountId ?: return
         val deviceId = sessionStore.deviceId ?: return
         lifecycleScope.launch {
@@ -323,24 +352,27 @@ class ControlsActivity : AppCompatActivity() {
                     blobAccessKey = blobAccessKey,
                 )
             }.onSuccess { session ->
+                val activeSession = ActiveSessionStore.ActiveSession(
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    baseUrl = sessionStore.baseUrl,
+                    runtimeId = runtime.id,
+                    runtimeName = runtime.name,
+                    viewerAddress = session.viewerAddress,
+                    relayHost = session.relayHost,
+                    relayPort = session.relayPort,
+                    relayTls = session.relayTls,
+                    relayPath = session.relayPath,
+                    relayToken = session.relayToken,
+                    sessionId = session.sessionId,
+                )
+                activeSessionStore.save(activeSession)
+                appLogs.info("Session created from controls for ${runtime.name}", "session")
                 startActivity(
-                    SessionActivity.createIntent(
-                        context = this@ControlsActivity,
-                        accountId = accountId,
-                        baseUrl = sessionStore.baseUrl,
-                        runtimeId = runtime.id,
-                        runtimeName = runtime.name,
-                        relayHost = session.relayHost,
-                        relayPort = session.relayPort,
-                        relayTls = session.relayTls,
-                        relayPath = session.relayPath,
-                        relayToken = session.relayToken,
-                        sessionId = session.sessionId,
-                        viewerAddress = session.viewerAddress,
-                        deviceId = deviceId,
-                    ),
+                    SessionActivity.createIntent(this@ControlsActivity, activeSession),
                 )
             }.onFailure {
+                appLogs.error(it.message ?: getString(R.string.status_error), "session")
                 toast(it.message ?: getString(R.string.status_error))
             }
         }

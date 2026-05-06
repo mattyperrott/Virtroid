@@ -57,6 +57,7 @@ public class Scrcpy extends Service {
     private VideoDecoder videoDecoder;
     private AudioDecoder audioDecoder;
     private final AtomicBoolean updateAvailable = new AtomicBoolean(false);
+    private final AtomicBoolean firstVideoFrameDelivered = new AtomicBoolean(false);
     private final IBinder mBinder = new MyServiceBinder();
     private boolean first_time = true;
 
@@ -67,6 +68,7 @@ public class Scrcpy extends Service {
 
     private DataInputStream socketInputStream = null;
     private DataOutputStream socketOutputStream = null;
+    private Socket activeSocket = null;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -90,8 +92,21 @@ public class Scrcpy extends Service {
 
     }
 
+    private VideoDecoder createVideoDecoder() {
+        VideoDecoder decoder = new VideoDecoder();
+        decoder.setFirstFrameRenderedListener(this::notifyFirstVideoFrame);
+        return decoder;
+    }
+
     public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, int screenHeight, int screenWidth, int delay) {
-        this.videoDecoder = new VideoDecoder();
+        LetServceRunning.set(true);
+        socket_status = false;
+        first_time = true;
+        remote_dev_resolution[0] = 0;
+        remote_dev_resolution[1] = 0;
+        firstVideoFrameDelivered.set(false);
+
+        this.videoDecoder = createVideoDecoder();
         videoDecoder.start();
 
         this.audioDecoder = new AudioDecoder();
@@ -143,6 +158,12 @@ public class Scrcpy extends Service {
 
     public void StopService() {
         LetServceRunning.set(false);
+        if (activeSocket != null) {
+            try {
+                activeSocket.close();
+            } catch (IOException ignore) {
+            }
+        }
         if (videoDecoder != null) {
             videoDecoder.stop();
         }
@@ -252,7 +273,7 @@ public class Scrcpy extends Service {
 
     private void startConnection(String ip, int port, int delay) {
 
-        videoDecoder = new VideoDecoder();
+        videoDecoder = createVideoDecoder();
         videoDecoder.start();
         audioDecoder = new AudioDecoder();
         audioDecoder.start();
@@ -266,6 +287,7 @@ public class Scrcpy extends Service {
             try {
                 Log.e("Scrcpy", "Connecting to " + LOCAL_IP);
                 socket = connectRelaySocket(ip, port);
+                activeSocket = socket;
                 if (!LetServceRunning.get()) {
                     return;
                 }
@@ -351,6 +373,7 @@ public class Scrcpy extends Service {
                 }
                 socketInputStream = null;
                 socketOutputStream = null;
+                activeSocket = null;
                 // 清除事件队列
                 event.clear();
 
@@ -467,7 +490,7 @@ public class Scrcpy extends Service {
                     }
                 }
 
-                if (dataInputStream.available() > 0) {
+                {
                     waitEvent = false;
                     dataInputStream.readFully(packetSize, 0, 4);
                     int size = ByteUtils.bytesToInt(packetSize);
@@ -575,10 +598,18 @@ public class Scrcpy extends Service {
         }
     }
 
+    private void notifyFirstVideoFrame() {
+        if (firstVideoFrameDelivered.compareAndSet(false, true) && serviceCallbacks != null) {
+            serviceCallbacks.firstVideoFrame();
+        }
+    }
+
     public interface ServiceCallbacks {
         void loadNewRotation();
 
         void errorDisconnect();
+
+        void firstVideoFrame();
     }
 
     public class MyServiceBinder extends Binder {
