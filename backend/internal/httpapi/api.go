@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"virtdroid/backend/internal/config"
+	"virtdroid/backend/internal/nodeauth"
 	"virtdroid/backend/internal/store"
 )
 
@@ -37,8 +38,20 @@ type activeBlobKeyVault struct {
 }
 
 type activeBlobKeyEntry struct {
+	accountID string
+	runtimeID string
+	hostID    string
+	operation string
 	key       string
 	expiresAt time.Time
+}
+
+type activeBlobKeyHandoff struct {
+	AccountID string
+	RuntimeID string
+	HostID    string
+	Operation string
+	Key       string
 }
 
 const activeBlobKeyHandoffTTL = 10 * time.Minute
@@ -98,16 +111,26 @@ func newActiveBlobKeyVault() *activeBlobKeyVault {
 	return &activeBlobKeyVault{keys: map[string]activeBlobKeyEntry{}}
 }
 
-func (v *activeBlobKeyVault) put(runtimeID string, key string) time.Time {
+func (v *activeBlobKeyVault) put(handoff activeBlobKeyHandoff) time.Time {
 	expiresAt := time.Now().UTC().Add(activeBlobKeyHandoffTTL)
+	runtimeID := strings.TrimSpace(handoff.RuntimeID)
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.keys[runtimeID] = activeBlobKeyEntry{key: key, expiresAt: expiresAt}
+	v.keys[runtimeID] = activeBlobKeyEntry{
+		accountID: strings.TrimSpace(handoff.AccountID),
+		runtimeID: runtimeID,
+		hostID:    strings.TrimSpace(handoff.HostID),
+		operation: strings.TrimSpace(handoff.Operation),
+		key:       handoff.Key,
+		expiresAt: expiresAt,
+	}
 	return expiresAt
 }
 
-func (v *activeBlobKeyVault) get(runtimeID string) (string, time.Time, bool) {
+func (v *activeBlobKeyVault) get(runtimeID string, hostID string) (string, time.Time, bool) {
 	now := time.Now().UTC()
+	runtimeID = strings.TrimSpace(runtimeID)
+	hostID = strings.TrimSpace(hostID)
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	entry, ok := v.keys[runtimeID]
@@ -116,6 +139,9 @@ func (v *activeBlobKeyVault) get(runtimeID string) (string, time.Time, bool) {
 	}
 	if !entry.expiresAt.After(now) {
 		delete(v.keys, runtimeID)
+		return "", time.Time{}, false
+	}
+	if entry.runtimeID != runtimeID || entry.hostID != hostID || entry.accountID == "" || entry.operation == "" {
 		return "", time.Time{}, false
 	}
 	return entry.key, entry.expiresAt, true
@@ -203,7 +229,7 @@ func (a *API) meta(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
-	if !a.internalAuthorized(w, r) {
+	if _, ok := a.requireNodeRequest(w, r, false); !ok {
 		return
 	}
 
@@ -482,7 +508,7 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		BlobRetainDays:   req.BlobRetainDays,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeRuntimeMutationError(w, err)
 		return
 	}
 
@@ -537,7 +563,7 @@ func (a *API) updateMyRuntime(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeRuntimeMutationError(w, err)
 		return
 	}
 
@@ -601,20 +627,23 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtimeID := r.PathValue("id")
-	a.activeBlobKeys.put(runtimeID, blobAccessKey)
 	runtime, err := a.store.StartRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
-		a.activeBlobKeys.clear(runtimeID)
 		switch err {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		case store.ErrNoReadyHost:
+		case store.ErrNoReadyHost, store.ErrRuntimeActiveQuota:
 			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		case store.ErrRuntimeEntitlement:
+			writeJSON(w, http.StatusPaymentRequired, map[string]any{"error": err.Error()})
+		case store.ErrRuntimeStartQuota:
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
 		default:
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
 		return
 	}
+	a.publishActiveBlobKey(accountID, runtime, "start", blobAccessKey)
 
 	writeJSON(w, http.StatusAccepted, runtime)
 }
@@ -657,10 +686,8 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtimeID := r.PathValue("id")
-	a.activeBlobKeys.put(runtimeID, blobAccessKey)
 	runtime, err := a.store.StopRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
-		a.activeBlobKeys.clear(runtimeID)
 		switch err {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -669,6 +696,7 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	a.publishActiveBlobKey(accountID, runtime, "stop", blobAccessKey)
 
 	writeJSON(w, http.StatusAccepted, runtime)
 }
@@ -711,10 +739,8 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtimeID := r.PathValue("id")
-	a.activeBlobKeys.put(runtimeID, blobAccessKey)
 	runtime, err := a.store.WipeRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
-		a.activeBlobKeys.clear(runtimeID)
 		switch err {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -723,6 +749,7 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	a.publishActiveBlobKey(accountID, runtime, "wipe", blobAccessKey)
 
 	writeJSON(w, http.StatusAccepted, runtime)
 }
@@ -800,7 +827,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": store.ErrRuntimeNotReady.Error()})
 		return
 	}
-	a.activeBlobKeys.put(runtime.ID, blobAccessKey)
+	a.publishActiveBlobKey(accountID, runtime, "session", blobAccessKey)
 
 	host, err := a.store.GetHost(r.Context(), *runtime.HostID)
 	if err != nil {
@@ -957,7 +984,8 @@ func (a *API) publicRelayEndpoint() (publicRelayEndpoint, error) {
 }
 
 func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if !a.internalAuthorized(w, r) {
+	node, ok := a.requireNodeRequest(w, r, true)
+	if !ok {
 		return
 	}
 
@@ -974,19 +1002,24 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
+	if strings.TrimSpace(req.ID) != "" && strings.TrimSpace(req.ID) != node.id {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed node does not match heartbeat body"})
+		return
+	}
 
-	if strings.TrimSpace(req.ID) == "" || strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.AdvertiseAddr) == "" {
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.AdvertiseAddr) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "id, name, and advertise_addr are required"})
 		return
 	}
 
 	host, err := a.store.UpsertHostHeartbeat(r.Context(), store.HostHeartbeat{
-		ID:            req.ID,
+		ID:            node.id,
 		Name:          req.Name,
 		AdvertiseAddr: req.AdvertiseAddr,
 		RelayPort:     req.RelayPort,
 		DockerSocket:  req.DockerSocket,
 		Binder:        req.Binder,
+		PublicKey:     node.publicKey,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -997,11 +1030,16 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) hostAssignments(w http.ResponseWriter, r *http.Request) {
-	if !a.internalAuthorized(w, r) {
+	node, ok := a.requireNodeRequest(w, r, false)
+	if !ok {
+		return
+	}
+	if pathHostID := strings.TrimSpace(r.PathValue("id")); pathHostID != "" && pathHostID != node.id {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed node does not match host assignment request"})
 		return
 	}
 
-	items, err := a.store.ListAssignedRuntimes(r.Context(), r.PathValue("id"))
+	items, err := a.store.ListAssignedRuntimes(r.Context(), node.id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1011,16 +1049,18 @@ func (a *API) hostAssignments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) runtimeBlobKey(w http.ResponseWriter, r *http.Request) {
-	if !a.internalAuthorized(w, r) {
+	node, ok := a.requireNodeRequest(w, r, false)
+	if !ok {
 		return
 	}
 
 	runtimeID := r.PathValue("id")
 	hostID := strings.TrimSpace(r.URL.Query().Get("host_id"))
-	if hostID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "host_id is required"})
+	if hostID != "" && hostID != node.id {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed node does not match blob-key host"})
 		return
 	}
+	hostID = node.id
 	if err := a.store.RequireRuntimeAssignedToHost(r.Context(), runtimeID, hostID); err != nil {
 		if err == store.ErrRuntimeNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -1030,7 +1070,7 @@ func (a *API) runtimeBlobKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key, expiresAt, ok := a.activeBlobKeys.get(runtimeID)
+	key, expiresAt, ok := a.activeBlobKeys.get(runtimeID, hostID)
 	if !ok {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime active blob key is not available"})
 		return
@@ -1042,8 +1082,22 @@ func (a *API) runtimeBlobKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *API) publishActiveBlobKey(accountID string, runtime store.Runtime, operation string, blobAccessKey string) {
+	if runtime.HostID == nil || strings.TrimSpace(*runtime.HostID) == "" {
+		return
+	}
+	a.activeBlobKeys.put(activeBlobKeyHandoff{
+		AccountID: accountID,
+		RuntimeID: runtime.ID,
+		HostID:    *runtime.HostID,
+		Operation: operation,
+		Key:       blobAccessKey,
+	})
+}
+
 func (a *API) sessionRelayTarget(w http.ResponseWriter, r *http.Request) {
-	if !a.internalAuthorized(w, r) {
+	node, ok := a.requireNodeRequest(w, r, false)
+	if !ok {
 		return
 	}
 
@@ -1062,12 +1116,17 @@ func (a *API) sessionRelayTarget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	if target.HostID != node.id {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed node does not match relay target host"})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, target)
 }
 
 func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
-	if !a.internalAuthorized(w, r) {
+	node, ok := a.requireNodeRequest(w, r, false)
+	if !ok {
 		return
 	}
 
@@ -1092,9 +1151,13 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
+	if strings.TrimSpace(req.HostID) != "" && strings.TrimSpace(req.HostID) != node.id {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed node does not match runtime status host"})
+		return
+	}
 
 	if err := a.store.UpdateRuntimeObservation(r.Context(), r.PathValue("id"), store.RuntimeObservation{
-		HostID:             strings.TrimSpace(req.HostID),
+		HostID:             node.id,
 		Status:             strings.TrimSpace(req.Status),
 		ConnectionStatus:   strings.TrimSpace(req.ConnectionStatus),
 		ContainerName:      req.ContainerName,
@@ -1117,7 +1180,8 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) runtimeLogAppend(w http.ResponseWriter, r *http.Request) {
-	if !a.internalAuthorized(w, r) {
+	node, ok := a.requireNodeRequest(w, r, false)
+	if !ok {
 		return
 	}
 
@@ -1133,6 +1197,14 @@ func (a *API) runtimeLogAppend(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.Message) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "message is required"})
+		return
+	}
+	if err := a.store.RequireRuntimeAssignedToHost(r.Context(), r.PathValue("id"), node.id); err != nil {
+		if err == store.ErrRuntimeNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 
@@ -1242,16 +1314,88 @@ func signedRequestCanonical(method, requestURI, accountID, deviceID, timestamp, 
 	}, "\n")
 }
 
-func (a *API) internalAuthorized(w http.ResponseWriter, r *http.Request) bool {
-	if a.cfg.NodeSharedSecret == "" && a.cfg.AppEnv != "development" {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "node shared secret is not configured"})
-		return false
+type nodeRequestIdentity struct {
+	id        string
+	publicKey string
+}
+
+func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRegistration bool) (nodeRequestIdentity, bool) {
+	nodeID := strings.TrimSpace(r.Header.Get(nodeauth.HeaderNodeID))
+	timestampRaw := strings.TrimSpace(r.Header.Get(nodeauth.HeaderTimestamp))
+	nonce := strings.TrimSpace(r.Header.Get(nodeauth.HeaderNonce))
+	bodyHash := strings.TrimSpace(r.Header.Get(nodeauth.HeaderBodySHA256))
+	signatureRaw := strings.TrimSpace(r.Header.Get(nodeauth.HeaderSignature))
+	if nodeID == "" || timestampRaw == "" || nonce == "" || bodyHash == "" || signatureRaw == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "signed node request headers are required"})
+		return nodeRequestIdentity{}, false
 	}
-	if a.cfg.NodeSharedSecret != "" && r.Header.Get("X-Virtdroid-Node-Secret") != a.cfg.NodeSharedSecret {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node secret"})
-		return false
+
+	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node signature timestamp"})
+		return nodeRequestIdentity{}, false
 	}
-	return true
+	if skew := time.Since(time.Unix(timestamp, 0)); skew > 5*time.Minute || skew < -5*time.Minute {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node signature timestamp is outside the allowed window"})
+		return nodeRequestIdentity{}, false
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
+		return nodeRequestIdentity{}, false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	if actualBodyHash := nodeauth.BodyHash(body); bodyHash != actualBodyHash {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node signature body hash mismatch"})
+		return nodeRequestIdentity{}, false
+	}
+	if a.store == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "store is not configured"})
+		return nodeRequestIdentity{}, false
+	}
+
+	publicKey, err := a.store.HostPublicKey(r.Context(), nodeID)
+	if err != nil && !errors.Is(err, store.ErrHostNotFound) {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return nodeRequestIdentity{}, false
+	}
+	if strings.TrimSpace(publicKey) == "" {
+		if !allowRegistration {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node is not registered"})
+			return nodeRequestIdentity{}, false
+		}
+		if a.cfg.NodeRegistrationSecret == "" && a.cfg.AppEnv != "development" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "node registration secret is not configured"})
+			return nodeRequestIdentity{}, false
+		}
+		if a.cfg.NodeRegistrationSecret != "" && r.Header.Get(nodeauth.HeaderRegistrationSecret) != a.cfg.NodeRegistrationSecret {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node registration secret"})
+			return nodeRequestIdentity{}, false
+		}
+		publicKey = strings.TrimSpace(r.Header.Get(nodeauth.HeaderPublicKey))
+		if publicKey == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node public key is required for registration"})
+			return nodeRequestIdentity{}, false
+		}
+	}
+
+	if err := nodeauth.Verify(publicKey, r.Method, r.URL.RequestURI(), nodeID, timestampRaw, nonce, bodyHash, signatureRaw); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node signature verification failed"})
+		return nodeRequestIdentity{}, false
+	}
+
+	if err := a.store.RememberNodeRequestNonce(r.Context(), nodeID, nonce, time.Unix(timestamp, 0).Add(5*time.Minute)); err != nil {
+		if err == store.ErrNodeRequestReplay {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
+			return nodeRequestIdentity{}, false
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return nodeRequestIdentity{}, false
+	}
+
+	return nodeRequestIdentity{id: nodeID, publicKey: publicKey}, true
 }
 
 func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort int, runtimeID string, maxSize, bitRate int) error {
@@ -1299,6 +1443,21 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeRuntimeMutationError(w http.ResponseWriter, err error) {
+	switch err {
+	case store.ErrRuntimeEntitlement:
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{"error": err.Error()})
+	case store.ErrRuntimeQuota, store.ErrRuntimeActiveQuota:
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+	case store.ErrRuntimeStartQuota:
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
+	case store.ErrRuntimeProfile:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
 }
 
 func withJSON(next http.Handler) http.Handler {

@@ -263,16 +263,16 @@ func pruneEphemeralAndroidState(dataDir string) error {
 
 func (n *nodeAgent) persistSessionData(runtime runtimeAssignment) (*persistedBlob, error) {
 	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
-	masterKey, err := n.runtimeBlobKey(runtime)
-	if err != nil {
-		return nil, err
-	}
-
 	if !directoryHasEntries(dataDir) {
 		if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
 		return &persistedBlob{ClearExisting: true}, nil
+	}
+
+	masterKey, err := n.runtimeBlobKey(runtime)
+	if err != nil {
+		return nil, err
 	}
 
 	if !runtime.BlobAutoSnapshot {
@@ -398,14 +398,14 @@ func (n *nodeAgent) fetchActiveBlobKey(ctx context.Context, runtimeID string) (s
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
-		n.cfg.ControlPlaneURL+"/api/v1/internal/runtimes/"+url.PathEscape(runtimeID)+"/blob-key?host_id="+url.QueryEscape(n.cfg.NodeID),
+		n.cfg.ControlPlaneURL+"/api/v1/internal/runtimes/"+url.PathEscape(runtimeID)+"/blob-key",
 		nil,
 	)
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if n.cfg.SharedSecret != "" {
-		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	if err := n.signControlPlaneRequest(req, nil, false); err != nil {
+		return "", time.Time{}, err
 	}
 
 	resp, err := n.controlPlane.Do(req)

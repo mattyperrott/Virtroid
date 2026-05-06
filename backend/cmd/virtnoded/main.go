@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"virtdroid/backend/internal/config"
+	"virtdroid/backend/internal/nodeauth"
 )
 
 var errContainerNotFound = errors.New("container not found")
@@ -155,15 +157,26 @@ const (
 )
 
 type nodeAgent struct {
-	cfg          config.NodeConfig
-	controlPlane *http.Client
-	docker       *http.Client
+	cfg            config.NodeConfig
+	controlPlane   *http.Client
+	docker         *http.Client
+	nodePrivateKey *ecdsa.PrivateKey
+	nodePublicKey  string
 }
 
 func main() {
 	cfg := config.LoadNode()
+	nodePrivateKey, nodePublicKey, err := nodeauth.LoadPrivateKey(cfg.PrivateKey)
+	if err != nil {
+		log.Fatalf("load node private key: %v", err)
+	}
+	if nodePrivateKey == nil {
+		log.Printf("node private key is not configured; production control planes will reject unsigned node requests")
+	}
 	node := &nodeAgent{
-		cfg: cfg,
+		cfg:            cfg,
+		nodePrivateKey: nodePrivateKey,
+		nodePublicKey:  nodePublicKey,
 		controlPlane: &http.Client{
 			Timeout: 20 * time.Second,
 		},
@@ -245,6 +258,34 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (n *nodeAgent) signControlPlaneRequest(req *http.Request, body []byte, includeRegistration bool) error {
+	if n.cfg.SharedSecret != "" {
+		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	}
+	if n.nodePrivateKey == nil {
+		return nil
+	}
+
+	nonceBytes := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, nonceBytes); err != nil {
+		return err
+	}
+	registrationSecret := ""
+	if includeRegistration {
+		registrationSecret = n.cfg.RegistrationSecret
+	}
+	return nodeauth.ApplySignedHeaders(
+		req,
+		n.nodePrivateKey,
+		n.cfg.NodeID,
+		body,
+		n.nodePublicKey,
+		registrationSecret,
+		strconv.FormatInt(time.Now().Unix(), 10),
+		hex.EncodeToString(nonceBytes),
+	)
 }
 
 func (n *nodeAgent) assetDir() string {
@@ -411,6 +452,7 @@ func (n *nodeAgent) capabilities() map[string]any {
 	return map[string]any{
 		"id":                  n.cfg.NodeID,
 		"name":                n.cfg.NodeName,
+		"public_key":          n.nodePublicKey,
 		"advertise_addr":      n.cfg.AdvertiseAddr,
 		"relay_port":          n.cfg.RelayPort,
 		"docker_socket":       dockerSocketAvailable(),
@@ -606,8 +648,9 @@ func (n *nodeAgent) sendHeartbeat(ctx context.Context) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if n.cfg.SharedSecret != "" {
-		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	if err := n.signControlPlaneRequest(req, body, true); err != nil {
+		log.Printf("sign heartbeat request: %v", err)
+		return
 	}
 
 	resp, err := n.controlPlane.Do(req)
@@ -754,7 +797,8 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 	}
 
 	persisted := &persistedBlob{}
-	shouldPersistOrClearBlob := hadContainer
+	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
+	shouldPersistOrClearBlob := hadContainer || directoryHasEntries(dataDir)
 	if shouldPersistOrClearBlob {
 		var err error
 		persisted, err = n.persistSessionData(runtime)
@@ -866,8 +910,8 @@ func (n *nodeAgent) fetchAssignments(ctx context.Context) ([]runtimeAssignment, 
 	if err != nil {
 		return nil, err
 	}
-	if n.cfg.SharedSecret != "" {
-		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	if err := n.signControlPlaneRequest(req, nil, false); err != nil {
+		return nil, err
 	}
 
 	resp, err := n.controlPlane.Do(req)
@@ -900,8 +944,8 @@ func (n *nodeAgent) fetchRelayTarget(ctx context.Context, sessionID, relayToken 
 	if err != nil {
 		return relayTarget{}, err
 	}
-	if n.cfg.SharedSecret != "" {
-		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	if err := n.signControlPlaneRequest(req, nil, false); err != nil {
+		return relayTarget{}, err
 	}
 	req.Header.Set("X-Virtdroid-Relay-Token", relayToken)
 
@@ -997,8 +1041,8 @@ func (n *nodeAgent) postControlPlane(ctx context.Context, path string, body any)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if n.cfg.SharedSecret != "" {
-		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+	if err := n.signControlPlaneRequest(req, payload, false); err != nil {
+		return err
 	}
 
 	resp, err := n.controlPlane.Do(req)

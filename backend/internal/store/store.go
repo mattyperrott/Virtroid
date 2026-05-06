@@ -46,6 +46,13 @@ var (
 	ErrIdentityAuthFailed  = errors.New("identity authentication failed")
 	ErrIdentityKeyRequired = errors.New("blob access key is required")
 	ErrDeviceRequestReplay = errors.New("device request nonce has already been used")
+	ErrNodeRequestReplay   = errors.New("node request nonce has already been used")
+	ErrHostNotFound        = errors.New("host not found")
+	ErrRuntimeEntitlement  = errors.New("runtime entitlement is required")
+	ErrRuntimeQuota        = errors.New("runtime quota exceeded")
+	ErrRuntimeActiveQuota  = errors.New("active runtime quota exceeded")
+	ErrRuntimeStartQuota   = errors.New("runtime start quota exceeded")
+	ErrRuntimeProfile      = errors.New("runtime profile is not allowed")
 )
 
 type BootstrapResult struct {
@@ -73,6 +80,20 @@ type AccountStorage struct {
 	EncryptedSeedBackedUp bool       `json:"encrypted_seed_backed_up"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
+}
+
+type AccountEntitlement struct {
+	AccountID           string     `json:"account_id"`
+	Source              string     `json:"source"`
+	Status              string     `json:"status"`
+	RuntimeLimit        int        `json:"runtime_limit"`
+	ActiveRuntimeLimit  int        `json:"active_runtime_limit"`
+	RuntimeStartsPerDay int        `json:"runtime_starts_per_day"`
+	StorageBytesLimit   int64      `json:"storage_bytes_limit"`
+	TrialRuntimeSeconds int        `json:"trial_runtime_seconds"`
+	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type Device struct {
@@ -171,6 +192,7 @@ type Host struct {
 	RelayPort       int       `json:"relay_port"`
 	DockerSocket    bool      `json:"docker_socket"`
 	Binder          bool      `json:"binder"`
+	PublicKey       string    `json:"public_key,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	LastHeartbeatAt time.Time `json:"last_heartbeat_at"`
@@ -183,6 +205,7 @@ type HostHeartbeat struct {
 	RelayPort     int
 	DockerSocket  bool
 	Binder        bool
+	PublicKey     string
 }
 
 type RuntimeObservation struct {
@@ -302,6 +325,15 @@ func (s *Store) BootstrapAccountWithIdentity(
 		return BootstrapResult{}, err
 	}
 
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO account_entitlements (account_id)
+			 VALUES ($1)
+			 ON CONFLICT (account_id) DO NOTHING`,
+		accountID,
+	); err != nil {
+		return BootstrapResult{}, err
+	}
+
 	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO devices (id, account_id, name, public_key) VALUES ($1, $2, $3, $4)
 		 RETURNING id, account_id, name, public_key, blob_key_verifier, created_at, last_seen_at`,
@@ -343,7 +375,10 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		return Runtime{}, errors.New("account id is required")
 	}
 
-	input = normalizedCreateInput(input)
+	input, err := normalizedCreateInput(input)
+	if err != nil {
+		return Runtime{}, err
+	}
 	runtimeID := uuid.NewString()
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -353,6 +388,9 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM accounts WHERE id = $1`, accountID); err != nil {
+		return Runtime{}, err
+	}
+	if err := ensureRuntimeCreateEntitlementTX(ctx, tx, accountID); err != nil {
 		return Runtime{}, err
 	}
 
@@ -447,7 +485,11 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		current.Name = defaultString(*input.Name, current.Name)
 	}
 	if input.AndroidImage != nil {
-		current.AndroidImage = normalizeAndroidImage(defaultString(*input.AndroidImage, current.AndroidImage))
+		androidImage, err := normalizeAndroidImage(defaultString(*input.AndroidImage, current.AndroidImage))
+		if err != nil {
+			return Runtime{}, err
+		}
+		current.AndroidImage = androidImage
 	}
 	if input.AndroidVersion != nil {
 		current.AndroidVersion = defaultString(*input.AndroidVersion, current.AndroidVersion)
@@ -475,6 +517,21 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 	}
 	if input.BlobRetainDays != nil && *input.BlobRetainDays > 0 {
 		current.BlobRetainDays = *input.BlobRetainDays
+	}
+	if err := validateRuntimeProfile(CreateRuntimeInput{
+		Name:             current.Name,
+		AndroidImage:     current.AndroidImage,
+		AndroidVersion:   current.AndroidVersion,
+		WidthPx:          current.WidthPx,
+		HeightPx:         current.HeightPx,
+		DensityDpi:       current.DensityDpi,
+		AudioEnabled:     current.AudioEnabled,
+		CameraMode:       current.CameraMode,
+		FileMode:         current.FileMode,
+		BlobAutoSnapshot: current.BlobAutoSnapshot,
+		BlobRetainDays:   current.BlobRetainDays,
+	}); err != nil {
+		return Runtime{}, err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -766,6 +823,45 @@ func (s *Store) RememberDeviceRequestNonce(ctx context.Context, accountID, devic
 	return tx.Commit()
 }
 
+func (s *Store) RememberNodeRequestNonce(ctx context.Context, nodeID, nonce string, expiresAt time.Time) error {
+	nodeID = strings.TrimSpace(nodeID)
+	nonce = strings.TrimSpace(nonce)
+	if nodeID == "" || nonce == "" {
+		return ErrNodeRequestReplay
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM node_request_nonces WHERE expires_at < NOW()`); err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO node_request_nonces (node_id, nonce, expires_at)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT DO NOTHING`,
+		nodeID,
+		nonce,
+		expiresAt.UTC(),
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrNodeRequestReplay
+	}
+
+	return tx.Commit()
+}
+
 func (s *Store) VerifyDeviceBlobAccessKey(ctx context.Context, accountID, deviceID, blobAccessKeyB64 string) (string, error) {
 	canonicalKey, rawKey, err := normalizeBlobAccessKey(blobAccessKeyB64)
 	if err != nil {
@@ -857,6 +953,9 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 		}
 		return Runtime{}, err
 	}
+	if err := ensureRuntimeStartEntitlementTX(ctx, tx, accountID, runtimeID); err != nil {
+		return Runtime{}, err
+	}
 
 	hostID, err := pickReadyHostTX(ctx, tx, currentHost.String)
 	if err != nil {
@@ -908,6 +1007,9 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 		logMessage = fmt.Sprintf("New session requested on host %s. persona_version=%d.", hostID, runtime.PersonaVersion)
 	}
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", logMessage); err != nil {
+		return Runtime{}, err
+	}
+	if err := appendRuntimeStartEventTX(ctx, tx, accountID, runtime.ID); err != nil {
 		return Runtime{}, err
 	}
 
@@ -1063,7 +1165,7 @@ func (s *Store) AppendRuntimeLog(ctx context.Context, runtimeID, source, level, 
 
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, created_at, updated_at, last_heartbeat_at
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at
 		 FROM hosts ORDER BY last_heartbeat_at DESC`,
 	)
 	if err != nil {
@@ -1081,6 +1183,7 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 			&host.RelayPort,
 			&host.DockerSocket,
 			&host.Binder,
+			&host.PublicKey,
 			&host.CreatedAt,
 			&host.UpdatedAt,
 			&host.LastHeartbeatAt,
@@ -1096,7 +1199,7 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 	var host Host
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, created_at, updated_at, last_heartbeat_at
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at
 		 FROM hosts WHERE id = $1`,
 		hostID,
 	).Scan(
@@ -1106,6 +1209,7 @@ func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 		&host.RelayPort,
 		&host.DockerSocket,
 		&host.Binder,
+		&host.PublicKey,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -1113,26 +1217,51 @@ func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 	return host, err
 }
 
+func (s *Store) HostPublicKey(ctx context.Context, hostID string) (string, error) {
+	hostID = strings.TrimSpace(hostID)
+	if hostID == "" {
+		return "", ErrHostNotFound
+	}
+
+	var publicKey string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT public_key FROM hosts WHERE id = $1`,
+		hostID,
+	).Scan(&publicKey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrHostNotFound
+		}
+		return "", err
+	}
+	return strings.TrimSpace(publicKey), nil
+}
+
 func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat) (Host, error) {
 	var host Host
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO hosts (id, name, advertise_addr, relay_port, docker_socket, binder)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO hosts (id, name, advertise_addr, relay_port, docker_socket, binder, public_key)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 ON CONFLICT (id) DO UPDATE
 		 SET name = EXCLUDED.name,
 		     advertise_addr = EXCLUDED.advertise_addr,
 		     relay_port = EXCLUDED.relay_port,
 		     docker_socket = EXCLUDED.docker_socket,
 		     binder = EXCLUDED.binder,
+		     public_key = CASE
+		         WHEN COALESCE(hosts.public_key, '') = '' THEN EXCLUDED.public_key
+		         ELSE hosts.public_key
+		     END,
 		     updated_at = NOW(),
 		     last_heartbeat_at = NOW()
-		 RETURNING id, name, advertise_addr, relay_port, docker_socket, binder, created_at, updated_at, last_heartbeat_at`,
+		 RETURNING id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at`,
 		heartbeat.ID,
 		heartbeat.Name,
 		heartbeat.AdvertiseAddr,
 		heartbeat.RelayPort,
 		heartbeat.DockerSocket,
 		heartbeat.Binder,
+		strings.TrimSpace(heartbeat.PublicKey),
 	).Scan(
 		&host.ID,
 		&host.Name,
@@ -1140,6 +1269,7 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		&host.RelayPort,
 		&host.DockerSocket,
 		&host.Binder,
+		&host.PublicKey,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -1673,6 +1803,128 @@ func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (s
 	return hostID, nil
 }
 
+func ensureRuntimeCreateEntitlementTX(ctx context.Context, tx *sql.Tx, accountID string) error {
+	entitlement, err := accountEntitlementTX(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	if !entitlementActive(entitlement) {
+		return ErrRuntimeEntitlement
+	}
+	if entitlement.RuntimeLimit <= 0 {
+		return ErrRuntimeQuota
+	}
+
+	var runtimeCount int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runtimes
+		 WHERE account_id = $1
+		   AND deleted_at IS NULL
+		   AND desired_state <> 'deleted'`,
+		accountID,
+	).Scan(&runtimeCount); err != nil {
+		return err
+	}
+	if runtimeCount >= entitlement.RuntimeLimit {
+		return ErrRuntimeQuota
+	}
+	return nil
+}
+
+func ensureRuntimeStartEntitlementTX(ctx context.Context, tx *sql.Tx, accountID, runtimeID string) error {
+	entitlement, err := accountEntitlementTX(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	if !entitlementActive(entitlement) {
+		return ErrRuntimeEntitlement
+	}
+	if entitlement.ActiveRuntimeLimit <= 0 {
+		return ErrRuntimeActiveQuota
+	}
+
+	var activeRuntimeCount int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runtimes
+		 WHERE account_id = $1
+		   AND id <> $2
+		   AND deleted_at IS NULL
+		   AND desired_state = 'running'`,
+		accountID,
+		runtimeID,
+	).Scan(&activeRuntimeCount); err != nil {
+		return err
+	}
+	if activeRuntimeCount >= entitlement.ActiveRuntimeLimit {
+		return ErrRuntimeActiveQuota
+	}
+
+	if entitlement.RuntimeStartsPerDay <= 0 {
+		return ErrRuntimeStartQuota
+	}
+	var startsToday int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runtime_start_events
+		 WHERE account_id = $1
+		   AND created_at >= NOW() - INTERVAL '24 hours'`,
+		accountID,
+	).Scan(&startsToday); err != nil {
+		return err
+	}
+	if startsToday >= entitlement.RuntimeStartsPerDay {
+		return ErrRuntimeStartQuota
+	}
+	return nil
+}
+
+func accountEntitlementTX(ctx context.Context, tx *sql.Tx, accountID string) (AccountEntitlement, error) {
+	var entitlement AccountEntitlement
+	if err := tx.QueryRowContext(ctx,
+		`SELECT account_id, source, status, runtime_limit, active_runtime_limit,
+		        runtime_starts_per_day, storage_bytes_limit, trial_runtime_seconds,
+		        expires_at, created_at, updated_at
+		 FROM account_entitlements
+		 WHERE account_id = $1
+		 FOR UPDATE`,
+		accountID,
+	).Scan(
+		&entitlement.AccountID,
+		&entitlement.Source,
+		&entitlement.Status,
+		&entitlement.RuntimeLimit,
+		&entitlement.ActiveRuntimeLimit,
+		&entitlement.RuntimeStartsPerDay,
+		&entitlement.StorageBytesLimit,
+		&entitlement.TrialRuntimeSeconds,
+		&entitlement.ExpiresAt,
+		&entitlement.CreatedAt,
+		&entitlement.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AccountEntitlement{}, ErrRuntimeEntitlement
+		}
+		return AccountEntitlement{}, err
+	}
+	return entitlement, nil
+}
+
+func entitlementActive(entitlement AccountEntitlement) bool {
+	if strings.TrimSpace(entitlement.Status) != "active" {
+		return false
+	}
+	return entitlement.ExpiresAt == nil || entitlement.ExpiresAt.After(time.Now().UTC())
+}
+
+func appendRuntimeStartEventTX(ctx context.Context, tx *sql.Tx, accountID, runtimeID string) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO runtime_start_events (account_id, runtime_id)
+		 VALUES ($1, $2)`,
+		accountID,
+		runtimeID,
+	)
+	return err
+}
+
 func appendRuntimeLogTX(ctx context.Context, tx *sql.Tx, runtimeID, source, level, message string) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO runtime_logs (runtime_id, source, level, message)
@@ -1769,11 +2021,15 @@ func scanAccountStorageDest(storage *AccountStorage) []any {
 	}
 }
 
-func normalizedCreateInput(input CreateRuntimeInput) CreateRuntimeInput {
+func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		input.Name = "My runtime"
 	}
-	input.AndroidImage = normalizeAndroidImage(input.AndroidImage)
+	androidImage, err := normalizeAndroidImage(input.AndroidImage)
+	if err != nil {
+		return CreateRuntimeInput{}, err
+	}
+	input.AndroidImage = androidImage
 	if strings.TrimSpace(input.AndroidVersion) == "" {
 		input.AndroidVersion = "android-12"
 	}
@@ -1797,7 +2053,10 @@ func normalizedCreateInput(input CreateRuntimeInput) CreateRuntimeInput {
 	if input.BlobRetainDays <= 0 {
 		input.BlobRetainDays = 7
 	}
-	return input
+	if err := validateRuntimeProfile(input); err != nil {
+		return CreateRuntimeInput{}, err
+	}
+	return input, nil
 }
 
 func normalizeAccountStorageInput(input UpdateAccountStorageInput) (UpdateAccountStorageInput, error) {
@@ -1826,15 +2085,40 @@ func normalizeAccountStorageInput(input UpdateAccountStorageInput) (UpdateAccoun
 	return input, nil
 }
 
-func normalizeAndroidImage(image string) string {
+func normalizeAndroidImage(image string) (string, error) {
 	image = strings.TrimSpace(image)
 	if image == "" {
-		return defaultAndroidImage
+		return defaultAndroidImage, nil
 	}
 	if _, ok := allowedAndroidImages[image]; ok {
-		return image
+		return image, nil
 	}
-	return defaultAndroidImage
+	return "", ErrRuntimeProfile
+}
+
+func validateRuntimeProfile(input CreateRuntimeInput) error {
+	if input.AndroidVersion != "android-12" {
+		return ErrRuntimeProfile
+	}
+	if input.WidthPx < 480 || input.WidthPx > 1600 {
+		return ErrRuntimeProfile
+	}
+	if input.HeightPx < 480 || input.HeightPx > 1600 {
+		return ErrRuntimeProfile
+	}
+	if input.WidthPx%8 != 0 || input.HeightPx%8 != 0 {
+		return ErrRuntimeProfile
+	}
+	if input.DensityDpi < 240 || input.DensityDpi > 640 || input.DensityDpi%20 != 0 {
+		return ErrRuntimeProfile
+	}
+	if input.CameraMode != "disabled" {
+		return ErrRuntimeProfile
+	}
+	if input.FileMode != "upload-only" {
+		return ErrRuntimeProfile
+	}
+	return nil
 }
 
 func allocateViewerPortTX(ctx context.Context, tx *sql.Tx) (int, error) {

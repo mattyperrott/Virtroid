@@ -72,23 +72,56 @@ func TestBootstrapRejectsOversizedBodyBeforeStore(t *testing.T) {
 	}
 }
 
+func TestInternalRoutesRejectLegacySharedSecretWithoutNodeSignature(t *testing.T) {
+	handler := New(config.ServerConfig{
+		AppEnv:           "production",
+		NodeSharedSecret: "legacy-shared-secret",
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/hosts/victim-host/assignments", nil)
+	req.Header.Set("X-Virtdroid-Node-Secret", "legacy-shared-secret")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("internal route status = %d, want %d", resp.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestActiveBlobKeyVaultExpires(t *testing.T) {
 	vault := newActiveBlobKeyVault()
-	expiresAt := vault.put("runtime-1", "key-1")
+	expiresAt := vault.put(activeBlobKeyHandoff{
+		AccountID: "account-1",
+		RuntimeID: "runtime-1",
+		HostID:    "host-1",
+		Operation: "start",
+		Key:       "key-1",
+	})
 	if !expiresAt.After(time.Now().UTC()) {
 		t.Fatal("vault returned non-future expiry")
 	}
 
-	key, _, ok := vault.get("runtime-1")
+	key, _, ok := vault.get("runtime-1", "host-1")
 	if !ok || key != "key-1" {
 		t.Fatalf("vault get = %q, %v; want key-1, true", key, ok)
 	}
+	if _, _, ok := vault.get("runtime-1", "host-2"); ok {
+		t.Fatal("vault returned key for the wrong host")
+	}
 
 	vault.mu.Lock()
-	vault.keys["runtime-1"] = activeBlobKeyEntry{key: "key-1", expiresAt: time.Now().UTC().Add(-time.Second)}
+	vault.keys["runtime-1"] = activeBlobKeyEntry{
+		accountID: "account-1",
+		runtimeID: "runtime-1",
+		hostID:    "host-1",
+		operation: "start",
+		key:       "key-1",
+		expiresAt: time.Now().UTC().Add(-time.Second),
+	}
 	vault.mu.Unlock()
 
-	if _, _, ok := vault.get("runtime-1"); ok {
+	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
 		t.Fatal("vault returned expired active blob key")
 	}
 }

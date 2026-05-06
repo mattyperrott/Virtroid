@@ -13,6 +13,7 @@ type ServerConfig struct {
 	PublicBaseURL               string
 	PublicRelayURL              string
 	NodeSharedSecret            string
+	NodeRegistrationSecret      string
 	BootstrapRateLimitPerMinute int
 	BootstrapMaxBodyBytes       int64
 	SessionReaperInterval       time.Duration
@@ -38,6 +39,8 @@ type NodeConfig struct {
 	RenterdContractSet string
 	DockerNetworkName  string
 	SharedSecret       string
+	RegistrationSecret string
+	PrivateKey         string
 	ViewerCryptPath    string
 	HeartbeatInterval  time.Duration
 	ReconcileInterval  time.Duration
@@ -64,6 +67,7 @@ func LoadServer() ServerConfig {
 		PublicBaseURL:               envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
 		PublicRelayURL:              os.Getenv("PUBLIC_RELAY_URL"),
 		NodeSharedSecret:            os.Getenv("NODE_SHARED_SECRET"),
+		NodeRegistrationSecret:      envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
 		BootstrapRateLimitPerMinute: bootstrapRateLimit,
 		BootstrapMaxBodyBytes:       int64(bootstrapMaxBodyBytes),
 		SessionReaperInterval:       sessionReaperInterval,
@@ -118,6 +122,8 @@ func LoadNode() NodeConfig {
 		RenterdContractSet: envOrDefault("NODE_SIA_RENTERD_CONTRACT_SET", ""),
 		DockerNetworkName:  envOrDefault("NODE_DOCKER_NETWORK", ""),
 		SharedSecret:       os.Getenv("NODE_SHARED_SECRET"),
+		RegistrationSecret: envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
+		PrivateKey:         os.Getenv("NODE_PRIVATE_KEY_B64"),
 		ViewerCryptPath:    envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtdroid-viewercrypt"),
 		HeartbeatInterval:  heartbeatInterval,
 		ReconcileInterval:  reconcileInterval,
