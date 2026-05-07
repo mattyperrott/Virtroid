@@ -152,7 +152,6 @@ type dockerInspectResponse struct {
 }
 
 const (
-	androidStartupGrace  = 30 * time.Second
 	viewerPrepareTimeout = 60 * time.Second
 )
 
@@ -726,9 +725,66 @@ func (n *nodeAgent) reconcileRuntime(ctx context.Context, runtime runtimeAssignm
 		return n.wipeRuntime(ctx, runtime)
 	case runtime.DesiredState == "running":
 		return n.ensureRuntimeRunning(ctx, runtime)
+	case runtime.DesiredState == "stopped" && (runtime.Status == "provisioning" || runtime.Status == "provisioned"):
+		return n.ensureRuntimeProvisioned(ctx, runtime)
 	default:
 		return n.ensureRuntimeStopped(ctx, runtime, false)
 	}
+}
+
+func (n *nodeAgent) ensureRuntimeProvisioned(ctx context.Context, runtime runtimeAssignment) error {
+	containerName := containerNameForRuntime(runtime.ID)
+	adbPort := adbPortForRuntime(runtime.ID)
+	inspect, err := n.inspectContainer(ctx, containerName)
+	if err != nil && !errors.Is(err, errContainerNotFound) {
+		return err
+	}
+	if err == nil {
+		if inspect.State.Running {
+			return n.ensureRuntimeStopped(ctx, runtime, false)
+		}
+		persona := buildSessionPersona(runtime)
+		personaJSON := marshalSessionPersona(persona)
+		return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+			Status:            "provisioned",
+			ConnectionStatus:  "offline",
+			ContainerName:     stringPtr(containerName),
+			ADBPort:           &adbPort,
+			LastError:         stringPtr(""),
+			ActivePersonaJSON: stringPtr(personaJSON),
+		})
+	}
+
+	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
+	if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("clear offline runtime data dir: %w", err)
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return fmt.Errorf("create offline runtime data dir: %w", err)
+	}
+	if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
+		return fmt.Errorf("pull runtime image: %w", err)
+	}
+	persona := buildSessionPersona(runtime)
+	personaJSON := marshalSessionPersona(persona)
+	if err := n.createContainer(ctx, containerName, runtime, dataDir, adbPort, persona); err != nil {
+		return fmt.Errorf("create offline container: %w", err)
+	}
+	_ = n.appendRuntimeLog(
+		ctx,
+		runtime.ID,
+		"node",
+		"info",
+		fmt.Sprintf("Runtime container %s provisioned offline with persona %s.", containerName, personaSummary(persona)),
+	)
+	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+		Status:            "provisioned",
+		ConnectionStatus:  "offline",
+		ContainerName:     stringPtr(containerName),
+		ADBPort:           &adbPort,
+		LastError:         stringPtr(""),
+		ActivePersonaJSON: stringPtr(personaJSON),
+	})
 }
 
 func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAssignment) error {
@@ -741,9 +797,14 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	if err != nil && !errors.Is(err, errContainerNotFound) {
 		return err
 	}
+	hadContainer := err == nil
 
 	if err == nil && inspect.State.Running {
-		if !androidRuntimeReady(inspect) {
+		ready, readyErr := n.androidBootCompleted(ctx, containerName)
+		if readyErr != nil {
+			return readyErr
+		}
+		if !ready {
 			return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
 				Status:           "starting",
 				ConnectionStatus: "connecting",
@@ -761,25 +822,21 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 		})
 	}
 
-	if err == nil {
-		if stopErr := n.stopAndRemoveContainer(ctx, containerName); stopErr != nil {
-			return stopErr
-		}
-	}
-
 	restoredSnapshot, err := n.prepareSessionData(runtime)
 	if err != nil {
 		return fmt.Errorf("prepare session data: %w", err)
 	}
 	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
 
-	if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
-		return fmt.Errorf("pull runtime image: %w", err)
-	}
 	persona := buildSessionPersona(runtime)
 	personaJSON := marshalSessionPersona(persona)
-	if err := n.createContainer(ctx, containerName, runtime, dataDir, adbPort, persona); err != nil {
-		return fmt.Errorf("create container: %w", err)
+	if !hadContainer {
+		if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
+			return fmt.Errorf("pull runtime image: %w", err)
+		}
+		if err := n.createContainer(ctx, containerName, runtime, dataDir, adbPort, persona); err != nil {
+			return fmt.Errorf("create container: %w", err)
+		}
 	}
 	if err := n.startContainer(ctx, containerName); err != nil {
 		return fmt.Errorf("start container: %w", err)
@@ -851,6 +908,29 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 			),
 		)
 	}
+	provisionedOffline := false
+	adbPort := adbPortForRuntime(runtime.ID)
+	persona := buildSessionPersona(runtime)
+	personaJSON := marshalSessionPersona(persona)
+	if !runtime.WipeRequested && runtime.DesiredState == "stopped" {
+		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+			return fmt.Errorf("create offline runtime data dir: %w", err)
+		}
+		if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
+			return fmt.Errorf("pull runtime image for offline reprovision: %w", err)
+		}
+		if err := n.createContainer(ctx, containerName, runtime, dataDir, adbPort, persona); err != nil {
+			return fmt.Errorf("recreate offline container: %w", err)
+		}
+		provisionedOffline = true
+		_ = n.appendRuntimeLog(
+			ctx,
+			runtime.ID,
+			"node",
+			"info",
+			fmt.Sprintf("Runtime container %s reprovisioned offline with persona %s.", containerName, personaSummary(persona)),
+		)
+	}
 
 	status := runtimeStatusUpdate{
 		Status:             "stopped",
@@ -860,7 +940,12 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 		LastError:          stringPtr(""),
 		BlobLastSnapshotAt: persisted.SnapshotAt,
 		ClearWipeRequested: clearWipe,
-		ClearActivePersona: true,
+	}
+	if provisionedOffline {
+		status.Status = "provisioned"
+		status.ContainerName = stringPtr(containerName)
+		status.ADBPort = &adbPort
+		status.ActivePersonaJSON = stringPtr(personaJSON)
 	}
 	if persisted != nil && persisted.Manifest != nil {
 		status.BlobStoreKind = stringPtr(persisted.Manifest.Store)
@@ -1169,10 +1254,17 @@ func (n *nodeAgent) inspectContainer(ctx context.Context, containerName string) 
 }
 
 func (n *nodeAgent) createContainer(ctx context.Context, containerName string, runtime runtimeAssignment, dataDir string, adbPort int, persona sessionPersona) error {
+	targetFPS := 15
+	gpuMode := "guest"
+	if gpuAccelerationAvailable() {
+		gpuMode = "auto"
+		targetFPS = 30
+	}
 	cmd := []string{
 		"androidboot.use_memfd=1",
-		"androidboot.redroid_gpu_mode=guest",
-		"androidboot.redroid_fps=15",
+		"androidboot.redroid_gpu_mode=" + gpuMode,
+		"androidboot.redroid_gpu_node=auto",
+		fmt.Sprintf("androidboot.redroid_fps=%d", targetFPS),
 		fmt.Sprintf("androidboot.redroid_width=%d", runtime.WidthPx),
 		fmt.Sprintf("androidboot.redroid_height=%d", runtime.HeightPx),
 		fmt.Sprintf("androidboot.redroid_dpi=%d", runtime.DensityDpi),
@@ -1272,7 +1364,11 @@ func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment
 	if !inspect.State.Running {
 		return errors.New("runtime container is not running")
 	}
-	if !androidRuntimeReady(inspect) {
+	ready, readyErr := n.androidBootCompleted(ctx, containerName)
+	if readyErr != nil {
+		return readyErr
+	}
+	if !ready {
 		return errors.New("android runtime is still booting")
 	}
 
@@ -2001,13 +2097,8 @@ func (n *nodeAgent) androidBootCompleted(ctx context.Context, containerName stri
 		return true, nil
 	}
 
-	bootAnimState, animErr := n.getProp(ctx, containerName, "init.svc.bootanim")
-	if strings.TrimSpace(bootAnimState) == "stopped" {
-		return true, nil
-	}
-
-	if sysErr != nil && devErr != nil && animErr != nil {
-		return false, fmt.Errorf("read Android boot properties: %v | %v | %v", sysErr, devErr, animErr)
+	if sysErr != nil && devErr != nil {
+		return false, fmt.Errorf("read Android boot properties: %v | %v", sysErr, devErr)
 	}
 
 	return false, nil
@@ -2094,24 +2185,6 @@ func defaultGatewayIP() string {
 	return ""
 }
 
-func androidRuntimeReady(inspect dockerInspectResponse) bool {
-	if !inspect.State.Running {
-		return false
-	}
-
-	startedAt := strings.TrimSpace(inspect.State.StartedAt)
-	if startedAt == "" {
-		return false
-	}
-
-	startedAtTime, err := time.Parse(time.RFC3339Nano, startedAt)
-	if err != nil {
-		return false
-	}
-
-	return time.Since(startedAtTime) >= androidStartupGrace
-}
-
 func dockerHTTPClient() *http.Client {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -2136,6 +2209,14 @@ func adbPortForRuntime(runtimeID string) int {
 	hasher := fnv.New32a()
 	_, _ = hasher.Write([]byte(runtimeID))
 	return 20000 + int(hasher.Sum32()%20000)
+}
+
+func gpuAccelerationAvailable() bool {
+	if fileExists("/dev/nvidia0") {
+		return true
+	}
+	matches, err := filepath.Glob("/dev/dri/renderD*")
+	return err == nil && len(matches) > 0
 }
 
 func dockerSocketAvailable() bool {

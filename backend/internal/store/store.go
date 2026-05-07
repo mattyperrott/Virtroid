@@ -23,7 +23,7 @@ var schemaSQL string
 const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_last_snapshot_at, container_name, adb_port, viewer_port, wipe_requested, last_error, deleted_at, created_at, updated_at`
 
 const (
-	defaultAndroidImage = "redroid/redroid:12.0.0_64only-latest"
+	defaultAndroidImage = "redroid/redroid:14.0.0_64only-latest"
 	viewerPortStart     = 46000
 	viewerPortEnd       = 46099
 )
@@ -426,17 +426,22 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 	if err := ensureRuntimeCreateEntitlementTX(ctx, tx, accountID); err != nil {
 		return Runtime{}, err
 	}
+	hostID, err := pickReadyHostTX(ctx, tx, "")
+	if err != nil {
+		return Runtime{}, err
+	}
 
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`INSERT INTO runtimes (
-			id, account_id, name, status, desired_state, connection_status, android_image, android_version,
+			id, account_id, name, status, desired_state, connection_status, host_id, android_image, android_version,
 			width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days
-		) VALUES ($1, $2, $3, 'stopped', 'stopped', 'offline', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		) VALUES ($1, $2, $3, 'provisioning', 'stopped', 'preparing', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING %s`, runtimeColumns),
 		runtimeID,
 		accountID,
 		input.Name,
+		hostID,
 		input.AndroidImage,
 		input.AndroidVersion,
 		input.WidthPx,
@@ -451,7 +456,7 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		return Runtime{}, err
 	}
 
-	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Runtime created."); err != nil {
+	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", fmt.Sprintf("Runtime provisioning requested on host %s.", hostID)); err != nil {
 		return Runtime{}, err
 	}
 
@@ -1064,13 +1069,12 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 
 	var currentHost sql.NullString
 	var currentViewerPort sql.NullInt32
-	var currentDesiredState string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT host_id, viewer_port, desired_state FROM runtimes
+		`SELECT host_id, viewer_port FROM runtimes
 		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'`,
 		accountID,
 		runtimeID,
-	).Scan(&currentHost, &currentViewerPort, &currentDesiredState); err != nil {
+	).Scan(&currentHost, &currentViewerPort); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
 		}
@@ -1093,31 +1097,24 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 		}
 		viewerPort = sql.NullInt32{Int32: int32(allocatedViewerPort), Valid: true}
 	}
-	bumpPersona := currentDesiredState != "running"
-
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
 			 SET host_id = $3,
-			     status = 'starting',
-			     desired_state = 'running',
-			     connection_status = 'connecting',
-			     viewer_port = $4,
-			     persona_version = CASE WHEN $5 THEN persona_version + 1 ELSE persona_version END,
-			     wipe_requested = FALSE,
-			     active_persona_json = NULL,
-			     container_name = NULL,
-			     adb_port = NULL,
-			     last_error = NULL,
-			     deleted_at = NULL,
-			     updated_at = NOW()
+				     status = 'starting',
+				     desired_state = 'running',
+				     connection_status = 'connecting',
+				     viewer_port = $4,
+				     wipe_requested = FALSE,
+				     last_error = NULL,
+				     deleted_at = NULL,
+				     updated_at = NOW()
 			 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
 			 RETURNING %s`, runtimeColumns),
 		accountID,
 		runtimeID,
 		hostID,
 		viewerPort,
-		bumpPersona,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
@@ -1125,10 +1122,7 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 		return Runtime{}, err
 	}
 
-	logMessage := fmt.Sprintf("Runtime start requested on host %s.", hostID)
-	if bumpPersona {
-		logMessage = fmt.Sprintf("New session requested on host %s. persona_version=%d.", hostID, runtime.PersonaVersion)
-	}
+	logMessage := fmt.Sprintf("Runtime start requested on host %s. persona_version=%d.", hostID, runtime.PersonaVersion)
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", logMessage); err != nil {
 		return Runtime{}, err
 	}
@@ -1805,7 +1799,7 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		     container_name = $5,
 		     adb_port = $6,
 			     viewer_port = CASE
-			         WHEN $3 = 'stopped' OR ($3 = 'error' AND desired_state <> 'running') THEN NULL
+			         WHEN $3 IN ('stopped', 'provisioned') OR ($3 = 'error' AND desired_state <> 'running') THEN NULL
 			         ELSE viewer_port
 			     END,
 			     last_error = $7,
@@ -2189,7 +2183,7 @@ func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error)
 	}
 	input.AndroidImage = androidImage
 	if strings.TrimSpace(input.AndroidVersion) == "" {
-		input.AndroidVersion = "android-12"
+		input.AndroidVersion = "android-14"
 	}
 	if input.WidthPx <= 0 {
 		input.WidthPx = 720
@@ -2255,7 +2249,7 @@ func normalizeAndroidImage(image string) (string, error) {
 }
 
 func validateRuntimeProfile(input CreateRuntimeInput) error {
-	if input.AndroidVersion != "android-12" {
+	if input.AndroidVersion != "android-14" {
 		return ErrRuntimeProfile
 	}
 	if input.WidthPx < 480 || input.WidthPx > 1600 {

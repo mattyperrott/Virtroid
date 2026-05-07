@@ -14,7 +14,7 @@ data class DeviceRuntimeProfile(
 ) {
     companion object {
         private const val MAX_SAFE_LONG_EDGE = 1600
-        private const val MIN_SAFE_SHORT_EDGE = 720
+        private const val MIN_SAFE_SHORT_EDGE = 480
         private const val DIMENSION_GRANULARITY = 8
 
         fun from(context: Context): DeviceRuntimeProfile {
@@ -24,9 +24,10 @@ data class DeviceRuntimeProfile(
             val shortEdge = min(rawWidth, rawHeight)
             val longEdge = max(rawWidth, rawHeight)
 
-            val scale = minOf(1f, MAX_SAFE_LONG_EDGE / longEdge.toFloat())
+            val targetLong = min(longEdge, MAX_SAFE_LONG_EDGE)
+            val scale = targetLong / longEdge.toFloat()
+            val scaledLong = roundToAligned(targetLong)
             val scaledShort = roundToAligned((shortEdge * scale).toInt()).coerceAtLeast(MIN_SAFE_SHORT_EDGE)
-            val scaledLong = roundToAligned((longEdge * scale).toInt()).coerceAtLeast(MIN_SAFE_SHORT_EDGE)
 
             val widthPx: Int
             val heightPx: Int

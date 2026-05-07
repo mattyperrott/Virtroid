@@ -423,7 +423,7 @@ func runtimeRows(now time.Time, viewerPort any) *sqlmock.Rows {
 		1,
 		nil,
 		defaultAndroidImage,
-		"android-12",
+		"android-14",
 		720,
 		1600,
 		320,
