@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "VirtdroidClient"
+rootProject.name = "VirtroidClient"
 include(":app")

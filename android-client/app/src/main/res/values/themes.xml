@@ -1,74 +1,74 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.Virtdroid" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/virtdroid_primary</item>
-        <item name="colorOnPrimary">@color/virtdroid_on_primary</item>
-        <item name="colorSecondary">@color/virtdroid_secondary</item>
-        <item name="colorSurface">@color/virtdroid_surface</item>
-        <item name="colorOnSurface">@color/virtdroid_on_surface</item>
-        <item name="colorError">@color/virtdroid_error</item>
-        <item name="android:windowBackground">@color/virtdroid_surface</item>
+    <style name="Theme.Virtroid" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/virtroid_primary</item>
+        <item name="colorOnPrimary">@color/virtroid_on_primary</item>
+        <item name="colorSecondary">@color/virtroid_secondary</item>
+        <item name="colorSurface">@color/virtroid_surface</item>
+        <item name="colorOnSurface">@color/virtroid_on_surface</item>
+        <item name="colorError">@color/virtroid_error</item>
+        <item name="android:windowBackground">@color/virtroid_surface</item>
         <item name="android:statusBarColor" tools:targetApi="l">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@color/virtdroid_surface</item>
+        <item name="android:navigationBarColor">@color/virtroid_surface</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
-        <item name="android:buttonStyle">@style/Widget.Virtdroid.PlatformButton</item>
-        <item name="materialCardViewFilledStyle">@style/Widget.Virtdroid.Card</item>
-        <item name="materialButtonStyle">@style/VirtdroidButton.Primary</item>
-        <item name="materialButtonOutlinedStyle">@style/VirtdroidButton.Secondary</item>
-        <item name="textInputStyle">@style/Widget.Virtdroid.TextInputLayout</item>
+        <item name="android:buttonStyle">@style/Widget.Virtroid.PlatformButton</item>
+        <item name="materialCardViewFilledStyle">@style/Widget.Virtroid.Card</item>
+        <item name="materialButtonStyle">@style/VirtroidButton.Primary</item>
+        <item name="materialButtonOutlinedStyle">@style/VirtroidButton.Secondary</item>
+        <item name="textInputStyle">@style/Widget.Virtroid.TextInputLayout</item>
     </style>
 
-    <style name="Widget.Virtdroid.Card" parent="Widget.Material3.CardView.Filled">
-        <item name="cardBackgroundColor">@color/virtdroid_card_surface</item>
-        <item name="strokeColor">@color/virtdroid_card_stroke</item>
+    <style name="Widget.Virtroid.Card" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">@color/virtroid_card_surface</item>
+        <item name="strokeColor">@color/virtroid_card_stroke</item>
         <item name="strokeWidth">1dp</item>
         <item name="cardCornerRadius">@dimen/card_radius</item>
         <item name="cardElevation">0dp</item>
     </style>
 
-    <style name="Widget.Virtdroid.Button" parent="Widget.Material3.Button">
+    <style name="Widget.Virtroid.Button" parent="Widget.Material3.Button">
         <item name="android:stateListAnimator">@animator/v_button_press_scale</item>
         <item name="android:textAllCaps">false</item>
         <item name="android:minHeight">60dp</item>
-        <item name="android:textColor">@color/virtdroid_on_primary</item>
-        <item name="backgroundTint">@color/virtdroid_primary</item>
+        <item name="android:textColor">@color/virtroid_on_primary</item>
+        <item name="backgroundTint">@color/virtroid_primary</item>
         <item name="elevation">0dp</item>
-        <item name="shapeAppearance">@style/ShapeAppearance.Virtdroid.Pill</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Virtroid.Pill</item>
     </style>
 
-    <style name="Widget.Virtdroid.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+    <style name="Widget.Virtroid.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
         <item name="android:stateListAnimator">@animator/v_button_press_scale</item>
         <item name="android:textAllCaps">false</item>
         <item name="android:minHeight">56dp</item>
-        <item name="android:textColor">@color/virtdroid_on_surface</item>
-        <item name="strokeColor">@color/virtdroid_card_stroke_soft</item>
-        <item name="backgroundTint">@color/virtdroid_card_surface</item>
+        <item name="android:textColor">@color/virtroid_on_surface</item>
+        <item name="strokeColor">@color/virtroid_card_stroke_soft</item>
+        <item name="backgroundTint">@color/virtroid_card_surface</item>
         <item name="strokeWidth">1dp</item>
-        <item name="shapeAppearance">@style/ShapeAppearance.Virtdroid.Pill</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Virtroid.Pill</item>
     </style>
 
-    <style name="Widget.Virtdroid.PlatformButton" parent="@android:style/Widget.Material.Button">
+    <style name="Widget.Virtroid.PlatformButton" parent="@android:style/Widget.Material.Button">
         <item name="android:backgroundTint">@null</item>
         <item name="android:stateListAnimator">@animator/v_button_press_scale</item>
         <item name="android:textAllCaps">false</item>
     </style>
 
-    <style name="Widget.Virtdroid.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
-        <item name="boxBackgroundColor">@color/virtdroid_surface_alt</item>
-        <item name="boxStrokeColor">@color/virtdroid_card_stroke_soft</item>
+    <style name="Widget.Virtroid.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">@color/virtroid_surface_alt</item>
+        <item name="boxStrokeColor">@color/virtroid_card_stroke_soft</item>
         <item name="boxStrokeWidth">0dp</item>
         <item name="boxStrokeWidthFocused">0dp</item>
-        <item name="android:textColorHint">@color/virtdroid_on_surface_muted</item>
-        <item name="hintTextColor">@color/virtdroid_on_surface_muted</item>
-        <item name="shapeAppearance">@style/ShapeAppearance.Virtdroid.Input</item>
+        <item name="android:textColorHint">@color/virtroid_on_surface_muted</item>
+        <item name="hintTextColor">@color/virtroid_on_surface_muted</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Virtroid.Input</item>
     </style>
 
-    <style name="ShapeAppearance.Virtdroid.Pill" parent="ShapeAppearance.Material3.MediumComponent">
+    <style name="ShapeAppearance.Virtroid.Pill" parent="ShapeAppearance.Material3.MediumComponent">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSize">999dp</item>
     </style>
 
-    <style name="ShapeAppearance.Virtdroid.Input" parent="ShapeAppearance.Material3.LargeComponent">
+    <style name="ShapeAppearance.Virtroid.Input" parent="ShapeAppearance.Material3.LargeComponent">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSize">28dp</item>
     </style>

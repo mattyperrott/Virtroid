@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"virtdroid/backend/internal/config"
+	"virtroid/backend/internal/config"
 )
 
 func TestSnapshotRoundTrip(t *testing.T) {
@@ -160,7 +160,7 @@ func TestRenterdBlobStoreRoundTripAndDelete(t *testing.T) {
 	store := &renterdBlobStore{
 		workerURL:  server.URL,
 		password:   "secret",
-		bucket:     "virtdroid-test",
+		bucket:     "virtroid-test",
 		chunkSize:  32,
 		httpClient: server.Client(),
 	}
@@ -173,8 +173,8 @@ func TestRenterdBlobStoreRoundTripAndDelete(t *testing.T) {
 	if manifest.Store != blobStoreRenterd {
 		t.Fatalf("manifest.Store = %q, want %q", manifest.Store, blobStoreRenterd)
 	}
-	if manifest.Bucket != "virtdroid-test" {
-		t.Fatalf("manifest.Bucket = %q, want virtdroid-test", manifest.Bucket)
+	if manifest.Bucket != "virtroid-test" {
+		t.Fatalf("manifest.Bucket = %q, want virtroid-test", manifest.Bucket)
 	}
 	if len(manifest.Chunks) < 2 {
 		t.Fatalf("expected multiple renterd chunks, got %d", len(manifest.Chunks))
@@ -200,7 +200,7 @@ func TestRenterdBlobStoreRequiresAuth(t *testing.T) {
 	store := &renterdBlobStore{
 		workerURL:  server.URL,
 		password:   "wrong",
-		bucket:     "virtdroid-test",
+		bucket:     "virtroid-test",
 		chunkSize:  32,
 		httpClient: server.Client(),
 	}
@@ -345,8 +345,8 @@ func configForRenterdTest(serverURL, password string) config.NodeConfig {
 		BlobStoreKind:    blobStoreRenterd,
 		RenterdWorkerURL: serverURL,
 		RenterdPassword:  password,
-		RenterdBucket:    "virtdroid-test",
-		RuntimeRoot:      filepath.Join(os.TempDir(), "virtdroid-test"),
+		RenterdBucket:    "virtroid-test",
+		RuntimeRoot:      filepath.Join(os.TempDir(), "virtroid-test"),
 	}
 }
 

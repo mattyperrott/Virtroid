@@ -7,10 +7,10 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:name=".VirtdroidApplication"
+        android:name=".VirtroidApplication"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Virtdroid"
+        android:theme="@style/Theme.Virtroid"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:name=".UnlockActivity"

@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.gradle.api.GradleException
 
 plugins {
     id("com.android.application")
@@ -19,20 +20,20 @@ fun buildConfigString(value: String): String {
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
-val releaseStoreFilePath = signingValue("VIRTDROID_RELEASE_STORE_FILE")
-val releaseStorePassword = signingValue("VIRTDROID_RELEASE_STORE_PASSWORD")
-val releaseKeyAlias = signingValue("VIRTDROID_RELEASE_KEY_ALIAS")
-val releaseKeyPassword = signingValue("VIRTDROID_RELEASE_KEY_PASSWORD")
-val defaultControlPlaneUrl = signingValue("VIRTDROID_DEFAULT_CONTROL_PLANE_URL")
-    ?: "http://176.126.70.76:8080"
+val releaseStoreFilePath = signingValue("VIRTROID_RELEASE_STORE_FILE")
+val releaseStorePassword = signingValue("VIRTROID_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = signingValue("VIRTROID_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = signingValue("VIRTROID_RELEASE_KEY_PASSWORD")
+val defaultControlPlaneUrl = signingValue("VIRTROID_DEFAULT_CONTROL_PLANE_URL")
+    ?: "https://virtroid.network"
 val defaultControlPlaneUsesCleartext = defaultControlPlaneUrl.startsWith("http://", ignoreCase = true)
 
 android {
-    namespace = "io.virtdroid.client"
+    namespace = "io.virtroid.client"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "io.virtdroid.client"
+        applicationId = "io.virtroid.client"
         minSdk = 28
         targetSdk = 36
         versionCode = 1
@@ -79,6 +80,14 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+    }
+}
+
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) {
+        if (defaultControlPlaneUsesCleartext) {
+            throw GradleException("Release builds require an HTTPS VIRTROID_DEFAULT_CONTROL_PLANE_URL.")
+        }
     }
 }
 

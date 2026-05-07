@@ -63,7 +63,7 @@ func LoadServer() ServerConfig {
 	return ServerConfig{
 		AppEnv:                      envOrDefault("APP_ENV", "development"),
 		BindAddr:                    envOrDefault("BIND_ADDR", ":8080"),
-		DatabaseURL:                 envOrDefault("DATABASE_URL", "postgres://virtdroid:virtdroid@127.0.0.1:5432/virtdroid?sslmode=disable"),
+		DatabaseURL:                 envOrDefault("DATABASE_URL", "postgres://virtroid:virtroid@127.0.0.1:5432/virtroid?sslmode=disable"),
 		PublicBaseURL:               envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
 		PublicRelayURL:              os.Getenv("PUBLIC_RELAY_URL"),
 		NodeSharedSecret:            os.Getenv("NODE_SHARED_SECRET"),
@@ -116,7 +116,7 @@ func LoadNode() NodeConfig {
 		BlobStoreKind:      envOrDefault("NODE_BLOB_STORE_KIND", "local-disk"),
 		RenterdWorkerURL:   envOrDefault("NODE_SIA_RENTERD_WORKER_URL", ""),
 		RenterdPassword:    os.Getenv("NODE_SIA_RENTERD_PASSWORD"),
-		RenterdBucket:      envOrDefault("NODE_SIA_RENTERD_BUCKET", "virtdroid"),
+		RenterdBucket:      envOrDefault("NODE_SIA_RENTERD_BUCKET", "virtroid"),
 		RenterdMinShards:   renterdMinShards,
 		RenterdTotalShards: renterdTotalShards,
 		RenterdContractSet: envOrDefault("NODE_SIA_RENTERD_CONTRACT_SET", ""),
@@ -124,10 +124,10 @@ func LoadNode() NodeConfig {
 		SharedSecret:       os.Getenv("NODE_SHARED_SECRET"),
 		RegistrationSecret: envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
 		PrivateKey:         os.Getenv("NODE_PRIVATE_KEY_B64"),
-		ViewerCryptPath:    envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtdroid-viewercrypt"),
+		ViewerCryptPath:    envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtroid-viewercrypt"),
 		HeartbeatInterval:  heartbeatInterval,
 		ReconcileInterval:  reconcileInterval,
-		RuntimeRoot:        envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtdroid/runtimes"),
+		RuntimeRoot:        envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtroid/runtimes"),
 	}
 }
 

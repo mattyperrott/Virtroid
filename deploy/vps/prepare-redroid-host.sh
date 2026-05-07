@@ -23,7 +23,7 @@ if [ -n "${next_kernel}" ] && [ "${next_kernel}" != "${current_kernel}" ]; then
   fi
 fi
 
-install -m 0755 /mnt/stash/virtroid/deploy/vps/virtdroid-binderfs-setup.sh /usr/local/sbin/virtdroid-binderfs-setup.sh
+install -m 0755 /mnt/stash/virtroid/deploy/vps/virtroid-binderfs-setup.sh /usr/local/sbin/virtroid-binderfs-setup.sh
 install -m 0644 /mnt/stash/virtroid/deploy/vps/redroid-binderfs.service /etc/systemd/system/redroid-binderfs.service
 
 systemctl daemon-reload
@@ -34,8 +34,8 @@ if ! mountpoint -q /dev/binderfs; then
   exit 1
 fi
 
-install -d -m 0750 -o 1000 -g 1000 /srv/virtdroid /srv/virtdroid/assets /srv/virtdroid/runtimes
-chown -R 1000:1000 /srv/virtdroid
+install -d -m 0750 -o 1000 -g 1000 /srv/virtroid /srv/virtroid/assets /srv/virtroid/runtimes
+chown -R 1000:1000 /srv/virtroid
 
 ls -la /dev/binderfs
 printf 'docker group id: '

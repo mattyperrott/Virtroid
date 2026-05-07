@@ -7,7 +7,7 @@ Before=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/virtdroid-binderfs-setup.sh
+ExecStart=/usr/local/sbin/virtroid-binderfs-setup.sh
 
 [Install]
 WantedBy=multi-user.target

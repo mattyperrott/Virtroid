@@ -47,7 +47,7 @@
 
                 <TextView
                     android:id="@+id/text_title"
-                    style="@style/VirtdroidText.ScreenTitle"
+                    style="@style/VirtroidText.ScreenTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"
@@ -55,7 +55,7 @@
 
                 <TextView
                     android:id="@+id/text_description"
-                    style="@style/VirtdroidText.Body"
+                    style="@style/VirtroidText.Body"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="30dp"
@@ -81,7 +81,7 @@
 
                         <TextView
                             android:id="@+id/account_id_label"
-                            style="@style/VirtdroidText.Label"
+                            style="@style/VirtroidText.Label"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
@@ -89,7 +89,7 @@
 
                         <FrameLayout
                             android:id="@+id/accountStatusIndicator"
-                            style="@style/VirtdroidStatusCheck">
+                            style="@style/VirtroidStatusCheck">
 
                             <ImageView
                                 android:id="@+id/accountStatusCheck"
@@ -133,7 +133,7 @@
 
                         <TextView
                             android:id="@+id/device_fingerprint_label"
-                            style="@style/VirtdroidText.Label"
+                            style="@style/VirtroidText.Label"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
@@ -141,7 +141,7 @@
 
                         <FrameLayout
                             android:id="@+id/deviceFingerprintStatusIndicator"
-                            style="@style/VirtdroidStatusCheck">
+                            style="@style/VirtroidStatusCheck">
 
                             <ImageView
                                 android:id="@+id/deviceFingerprintStatusCheck"
@@ -168,7 +168,7 @@
 
                 <TextView
                     android:id="@+id/text_local_encryption_title"
-                    style="@style/VirtdroidText.ContentHeading"
+                    style="@style/VirtroidText.ContentHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"
@@ -176,7 +176,7 @@
 
                 <TextView
                     android:id="@+id/text_local_encryption_subtitle"
-                    style="@style/VirtdroidText.Body"
+                    style="@style/VirtroidText.Body"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="22dp"
@@ -213,14 +213,14 @@
 
                         <TextView
                             android:id="@+id/text_passphrase_title"
-                            style="@style/VirtdroidText.CardTitle.Large"
+                            style="@style/VirtroidText.CardTitle.Large"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/onboarding_passphrase_title" />
 
                         <TextView
                             android:id="@+id/text_passphrase_subtitle"
-                            style="@style/VirtdroidText.Body"
+                            style="@style/VirtroidText.Body"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
@@ -420,7 +420,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/continueSetupButton"
-            style="@style/VirtdroidButton.Primary"
+            style="@style/VirtroidButton.Primary"
             android:layout_width="match_parent"
             android:layout_height="58dp"
             android:text="@string/onboarding_create_identity" />

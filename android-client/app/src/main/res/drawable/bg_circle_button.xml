@@ -3,9 +3,9 @@
     android:shape="oval">
     <gradient
         android:angle="315"
-        android:endColor="@color/virtdroid_surface_alt"
-        android:startColor="@color/virtdroid_card_surface_soft" />
+        android:endColor="@color/virtroid_surface_alt"
+        android:startColor="@color/virtroid_card_surface_soft" />
     <stroke
         android:width="1dp"
-        android:color="@color/virtdroid_card_stroke_soft" />
+        android:color="@color/virtroid_card_stroke_soft" />
 </shape>

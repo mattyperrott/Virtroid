@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This brief defines the target architecture for moving Virtdroid from a single-VPS control-plane/runtime deployment toward independently operated runtime nodes with user-authorized leases, client-side key release, encrypted portable state, and optional confidential-computing attestation.
+This brief defines the target architecture for moving Virtroid from a single-VPS control-plane/runtime deployment toward independently operated runtime nodes with user-authorized leases, client-side key release, encrypted portable state, and optional confidential-computing attestation.
 
 The design goal is not to make the control plane "decentralized" for its own sake. The control plane should become boring, weak infrastructure: it can coordinate, suggest, meter, and record, but it must not be able to unilaterally choose a malicious runtime node or obtain long-lived user secrets.
 
@@ -17,20 +17,20 @@ The security-critical authority should move to:
 
 ## Current Baseline
 
-The current deployed Virtdroid shape is a single VPS containing:
+The current deployed Virtroid shape is a single VPS containing:
 
-- `virtdroidd` control plane
+- `virtroidd` control plane
 - `virtnoded` node/relay
 - Postgres metadata
 - privileged ReDroid runtime containers
-- local runtime data under `/srv/virtdroid/runtimes`
-- local blob chunks under `/srv/virtdroid/runtimes/_blobstore/local`
+- local runtime data under `/srv/virtroid/runtimes`
+- local blob chunks under `/srv/virtroid/runtimes/_blobstore/local`
 
 The existing code already has the beginning of a node model: nodes heartbeat to the control plane, advertise capabilities, and fetch runtime assignments. The target architecture keeps that shape but changes the trust model.
 
 ## Target Product Model
 
-Virtdroid should be modeled as:
+Virtroid should be modeled as:
 
 > Portable encrypted user state plus user-authorized runtime execution.
 
@@ -83,7 +83,7 @@ The first implementation should not attempt:
 
 - User device local key store and policy engine
 - User-approved recovery flow
-- Signed Virtdroid client releases
+- Signed Virtroid client releases
 
 ### Partially Trusted
 
@@ -436,7 +436,7 @@ Initial independent-node mode should use curated operators.
 
 Requirements:
 
-- operator identity is approved by Virtdroid maintainers or governance policy
+- operator identity is approved by Virtroid maintainers or governance policy
 - operator publishes support, retention, jurisdiction, and abuse policies
 - node keys are linked to the operator identity
 - client can show operator name and trust tier
@@ -549,7 +549,7 @@ Requirements:
 
 Target:
 
-- OpenMetal TDX-capable bare metal or another full TDX/SEV-SNP VM where Virtdroid controls the guest kernel
+- OpenMetal TDX-capable bare metal or another full TDX/SEV-SNP VM where Virtroid controls the guest kernel
 
 Goal:
 
@@ -562,7 +562,7 @@ Pass criteria:
 - can run Docker privileged enough for ReDroid
 - can boot Android
 - can attach ADB only privately
-- can stream display through Virtdroid viewer
+- can stream display through Virtroid viewer
 - can handle input latency acceptably
 - can persist encrypted runtime snapshot
 - can restart from snapshot
@@ -644,7 +644,7 @@ Pass criteria:
 - can run Docker
 - can run ReDroid
 - can expose required kernel modules/devices
-- can verify attestation from a Virtdroid client
+- can verify attestation from a Virtroid client
 - can release runtime key only after verification
 - can expose viewer traffic with acceptable latency
 

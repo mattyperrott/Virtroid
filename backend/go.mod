@@ -1,4 +1,4 @@
-module virtdroid/backend
+module virtroid/backend
 
 go 1.25.0
 

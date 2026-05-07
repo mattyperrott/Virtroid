@@ -29,8 +29,8 @@ import (
 	"syscall"
 	"time"
 
-	"virtdroid/backend/internal/config"
-	"virtdroid/backend/internal/nodeauth"
+	"virtroid/backend/internal/config"
+	"virtroid/backend/internal/nodeauth"
 )
 
 var errContainerNotFound = errors.New("container not found")
@@ -38,10 +38,10 @@ var errContainerNotFound = errors.New("container not found")
 //go:embed assets/scrcpy-server.jar
 var scrcpyServerJar []byte
 
-const scrcpyServerMountPath = "/opt/virtdroid/scrcpy-server.jar"
-const viewerCryptMountPath = "/opt/virtdroid/virtdroid-viewercrypt"
-const viewerScriptMountPath = "/vendor/bin/virtdroid-viewer.sh"
-const viewerInitMountPath = "/vendor/etc/init/virtdroid-viewer.rc"
+const scrcpyServerMountPath = "/opt/virtroid/scrcpy-server.jar"
+const viewerCryptMountPath = "/opt/virtroid/virtroid-viewercrypt"
+const viewerScriptMountPath = "/vendor/bin/virtroid-viewer.sh"
+const viewerInitMountPath = "/vendor/etc/init/virtroid-viewer.rc"
 
 const (
 	scrcpyPlainPort     = 7007
@@ -52,13 +52,13 @@ const viewerScriptContent = `#!/system/bin/sh
 set -eu
 
 PATH=/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin
-SRC=/opt/virtdroid/scrcpy-server.jar
+SRC=/opt/virtroid/scrcpy-server.jar
 DST=/data/local/tmp/scrcpy-server.jar
-LOG=/data/local/tmp/virtdroid-viewer.log
-VIEWERCRYPT=/opt/virtdroid/virtdroid-viewercrypt
-IP=$(getprop virtdroid.viewer.client_ip)
-SIZE=$(getprop virtdroid.viewer.max_size)
-BITRATE=$(getprop virtdroid.viewer.bit_rate)
+LOG=/data/local/tmp/virtroid-viewer.log
+VIEWERCRYPT=/opt/virtroid/virtroid-viewercrypt
+IP=$(getprop virtroid.viewer.client_ip)
+SIZE=$(getprop virtroid.viewer.max_size)
+BITRATE=$(getprop virtroid.viewer.bit_rate)
 
 if [ -z "$IP" ]; then
   IP=127.0.0.1
@@ -96,7 +96,7 @@ kill "$SERVER_PID" >/dev/null 2>&1 || true
 exit "$STATUS"
 `
 
-const viewerInitContent = `service virtdroid_viewer /system/bin/sh /vendor/bin/virtdroid-viewer.sh
+const viewerInitContent = `service virtroid_viewer /system/bin/sh /vendor/bin/virtroid-viewer.sh
     class late_start
     user shell
     group shell log graphics input audio video inet
@@ -222,6 +222,7 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/v1/internal/viewer/prepare", node.handlePrepareViewer)
 	mux.HandleFunc("CONNECT /api/v1/relay/{id}", node.handleRelaySession)
+	mux.HandleFunc("GET /api/v1/relay/{id}", node.handleRelaySession)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
@@ -262,7 +263,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func (n *nodeAgent) signControlPlaneRequest(req *http.Request, body []byte, includeRegistration bool) error {
 	if n.cfg.SharedSecret != "" {
-		req.Header.Set("X-Virtdroid-Node-Secret", n.cfg.SharedSecret)
+		req.Header.Set("X-Virtroid-Node-Secret", n.cfg.SharedSecret)
 	}
 	if n.nodePrivateKey == nil {
 		return nil
@@ -297,15 +298,15 @@ func (n *nodeAgent) scrcpyServerPath() string {
 }
 
 func (n *nodeAgent) viewerCryptPath() string {
-	return filepath.Join(n.assetDir(), "virtdroid-viewercrypt")
+	return filepath.Join(n.assetDir(), "virtroid-viewercrypt")
 }
 
 func (n *nodeAgent) viewerScriptPath() string {
-	return filepath.Join(n.assetDir(), "virtdroid-viewer.sh")
+	return filepath.Join(n.assetDir(), "virtroid-viewer.sh")
 }
 
 func (n *nodeAgent) viewerInitPath() string {
-	return filepath.Join(n.assetDir(), "virtdroid-viewer.rc")
+	return filepath.Join(n.assetDir(), "virtroid-viewer.rc")
 }
 
 func (n *nodeAgent) runBlobSmokeTest(ctx context.Context) error {
@@ -314,7 +315,7 @@ func (n *nodeAgent) runBlobSmokeTest(ctx context.Context) error {
 		return err
 	}
 
-	root, err := os.MkdirTemp("", "virtdroid-blob-smoke-*")
+	root, err := os.MkdirTemp("", "virtroid-blob-smoke-*")
 	if err != nil {
 		return err
 	}
@@ -328,7 +329,7 @@ func (n *nodeAgent) runBlobSmokeTest(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(sourceDir, "settings.json"), []byte(`{"ok":true,"purpose":"blob-smoke"}`), 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "misc", "profile", "state.txt"), []byte("virtdroid blob smoke\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(sourceDir, "misc", "profile", "state.txt"), []byte("virtroid blob smoke\n"), 0o600); err != nil {
 		return err
 	}
 
@@ -425,23 +426,45 @@ func (n *nodeAgent) ensureAssets() error {
 	if err := os.MkdirAll(n.assetDir(), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(n.scrcpyServerPath(), scrcpyServerJar, 0o644); err != nil {
+	if err := writeAssetFile(n.scrcpyServerPath(), scrcpyServerJar, 0o644); err != nil {
 		return err
 	}
 	viewerCryptPayload, err := os.ReadFile(n.cfg.ViewerCryptPath)
 	if err != nil {
 		return fmt.Errorf("read viewer encryption proxy %s: %w", n.cfg.ViewerCryptPath, err)
 	}
-	if err := os.WriteFile(n.viewerCryptPath(), viewerCryptPayload, 0o755); err != nil {
+	if err := writeAssetFile(n.viewerCryptPath(), viewerCryptPayload, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(n.viewerScriptPath(), []byte(viewerScriptContent), 0o755); err != nil {
+	if err := writeAssetFile(n.viewerScriptPath(), []byte(viewerScriptContent), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(n.viewerInitPath(), []byte(viewerInitContent), 0o644); err != nil {
+	if err := writeAssetFile(n.viewerInitPath(), []byte(viewerInitContent), 0o644); err != nil {
 		return err
 	}
 	return nil
+}
+
+func writeAssetFile(path string, payload []byte, mode fs.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".asset-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.Write(payload); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func (n *nodeAgent) capabilities() map[string]any {
@@ -465,7 +488,7 @@ func (n *nodeAgent) capabilities() map[string]any {
 }
 
 func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) {
-	if n.cfg.SharedSecret != "" && r.Header.Get("X-Virtdroid-Node-Secret") != n.cfg.SharedSecret {
+	if n.cfg.SharedSecret != "" && r.Header.Get("X-Virtroid-Node-Secret") != n.cfg.SharedSecret {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node secret"})
 		return
 	}
@@ -530,7 +553,7 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 
 func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 	sessionID := strings.TrimSpace(r.PathValue("id"))
-	relayToken := strings.TrimSpace(r.Header.Get("X-Virtdroid-Relay-Token"))
+	relayToken := strings.TrimSpace(r.Header.Get("X-Virtroid-Relay-Token"))
 	if sessionID == "" || relayToken == "" {
 		http.Error(w, "missing relay session details", http.StatusBadRequest)
 		return
@@ -578,7 +601,11 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+	statusLine := "HTTP/1.1 200 Connection Established\r\n\r\n"
+	if r.Method != http.MethodConnect {
+		statusLine = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: virtroid-relay\r\n\r\n"
+	}
+	if _, err := rw.WriteString(statusLine); err != nil {
 		clientConn.Close()
 		upstream.Close()
 		return
@@ -947,7 +974,7 @@ func (n *nodeAgent) fetchRelayTarget(ctx context.Context, sessionID, relayToken 
 	if err := n.signControlPlaneRequest(req, nil, false); err != nil {
 		return relayTarget{}, err
 	}
-	req.Header.Set("X-Virtdroid-Relay-Token", relayToken)
+	req.Header.Set("X-Virtroid-Relay-Token", relayToken)
 
 	resp, err := n.controlPlane.Do(req)
 	if err != nil {
@@ -1382,27 +1409,27 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 		clientIP = "127.0.0.1"
 	}
 	shellCmd := fmt.Sprintf(
-		"rm -f /data/local/tmp/virtdroid-viewer.log; "+
-			"setprop virtdroid.viewer.client_ip %s; "+
-			"setprop virtdroid.viewer.max_size %d; "+
-			"setprop virtdroid.viewer.bit_rate %d; "+
-			"if [ \"$(getprop init.svc.virtdroid_viewer)\" = \"running\" ]; then "+
-			"setprop ctl.stop virtdroid_viewer >/dev/null 2>&1 || true; "+
+		"rm -f /data/local/tmp/virtroid-viewer.log; "+
+			"setprop virtroid.viewer.client_ip %s; "+
+			"setprop virtroid.viewer.max_size %d; "+
+			"setprop virtroid.viewer.bit_rate %d; "+
+			"if [ \"$(getprop init.svc.virtroid_viewer)\" = \"running\" ]; then "+
+			"setprop ctl.stop virtroid_viewer >/dev/null 2>&1 || true; "+
 			"for i in 1 2 3 4 5 6 7 8 9 10; do "+
-			"svc=$(getprop init.svc.virtdroid_viewer); "+
+			"svc=$(getprop init.svc.virtroid_viewer); "+
 			"[ \"$svc\" = \"stopped\" ] && break; "+
 			"sleep 1; "+
 			"done; "+
 			"fi; "+
-			"setprop ctl.start virtdroid_viewer; "+
+			"setprop ctl.start virtroid_viewer; "+
 			"for i in 1 2 3 4 5 6 7 8 9 10; do "+
-			"svc=$(getprop init.svc.virtdroid_viewer); "+
+			"svc=$(getprop init.svc.virtroid_viewer); "+
 			"if [ \"$svc\" = \"running\" ] && ss -ltn 2>/dev/null | grep -q ':%d'; then exit 0; fi; "+
 			"sleep 1; "+
 			"done; "+
 			"echo \"service=$svc\"; "+
 			"ss -ltn 2>/dev/null || true; "+
-			"cat /data/local/tmp/virtdroid-viewer.log 2>/dev/null || true; "+
+			"cat /data/local/tmp/virtroid-viewer.log 2>/dev/null || true; "+
 			"exit 1",
 		shellEscape(clientIP),
 		maxSize,
@@ -1424,12 +1451,12 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 
 func (n *nodeAgent) startViewerProcessInContainer(ctx context.Context, containerName string, maxSize, bitRate int) error {
 	shellCmd := fmt.Sprintf(
-		"setprop ctl.stop virtdroid_viewer >/dev/null 2>&1 || true; "+
-			"if [ -f /data/local/tmp/virtdroid-viewer.pid ]; then kill $(cat /data/local/tmp/virtdroid-viewer.pid) >/dev/null 2>&1 || true; rm -f /data/local/tmp/virtdroid-viewer.pid; fi; "+
-			"setprop virtdroid.viewer.client_ip 127.0.0.1; "+
-			"setprop virtdroid.viewer.max_size %d; "+
-			"setprop virtdroid.viewer.bit_rate %d; "+
-			"echo $$ > /data/local/tmp/virtdroid-viewer.pid; "+
+		"setprop ctl.stop virtroid_viewer >/dev/null 2>&1 || true; "+
+			"if [ -f /data/local/tmp/virtroid-viewer.pid ]; then kill $(cat /data/local/tmp/virtroid-viewer.pid) >/dev/null 2>&1 || true; rm -f /data/local/tmp/virtroid-viewer.pid; fi; "+
+			"setprop virtroid.viewer.client_ip 127.0.0.1; "+
+			"setprop virtroid.viewer.max_size %d; "+
+			"setprop virtroid.viewer.bit_rate %d; "+
+			"echo $$ > /data/local/tmp/virtroid-viewer.pid; "+
 			"exec /system/bin/sh %s",
 		maxSize,
 		bitRate,
@@ -1939,10 +1966,10 @@ func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssign
 		}
 	}
 	if guestLog, guestErr := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
-		{"cat", "/data/local/tmp/virtdroid-viewer.log"},
-		{"/system/bin/cat", "/data/local/tmp/virtdroid-viewer.log"},
-		{"toybox", "cat", "/data/local/tmp/virtdroid-viewer.log"},
-		{"/system/bin/toybox", "cat", "/data/local/tmp/virtdroid-viewer.log"},
+		{"cat", "/data/local/tmp/virtroid-viewer.log"},
+		{"/system/bin/cat", "/data/local/tmp/virtroid-viewer.log"},
+		{"toybox", "cat", "/data/local/tmp/virtroid-viewer.log"},
+		{"/system/bin/toybox", "cat", "/data/local/tmp/virtroid-viewer.log"},
 	}); guestErr == nil && strings.TrimSpace(guestLog) != "" {
 		diagnostics = append(diagnostics, "guest viewer log: "+summarizeLogOutput(guestLog))
 	}
@@ -2102,7 +2129,7 @@ func containerNameForRuntime(runtimeID string) string {
 	if len(sanitized) > 16 {
 		sanitized = sanitized[:16]
 	}
-	return "virtdroid-" + sanitized
+	return "virtroid-" + sanitized
 }
 
 func adbPortForRuntime(runtimeID string) int {

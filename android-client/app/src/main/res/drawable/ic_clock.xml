@@ -6,13 +6,13 @@
     <path
         android:fillColor="@android:color/transparent"
         android:pathData="M12,22a10,10 0,1 0,0 -20a10,10 0,0 0,0 20z"
-        android:strokeColor="@color/virtdroid_primary"
+        android:strokeColor="@color/virtroid_primary"
         android:strokeLineCap="round"
         android:strokeWidth="2" />
     <path
         android:fillColor="@android:color/transparent"
         android:pathData="M12,6v6l4,2"
-        android:strokeColor="@color/virtdroid_primary"
+        android:strokeColor="@color/virtroid_primary"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:strokeWidth="2" />

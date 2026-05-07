@@ -60,7 +60,7 @@
                 android:paddingBottom="164dp">
                 <TextView
                     android:id="@+id/text_title"
-                    style="@style/VirtdroidText.ScreenTitle"
+                    style="@style/VirtroidText.ScreenTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Fund Storage"
@@ -96,7 +96,7 @@
                             android:layout_marginStart="12dp">
                             <TextView
                                 android:id="@+id/wallet_title"
-                                style="@style/VirtdroidText.CardTitle"
+                                style="@style/VirtroidText.CardTitle"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="Storage Wallet" />
@@ -184,7 +184,7 @@
                     android:layout_marginBottom="16dp">
                     <TextView
                         android:id="@+id/amount_title"
-                        style="@style/VirtdroidText.CardTitle"
+                        style="@style/VirtroidText.CardTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Select Amount"
@@ -197,14 +197,14 @@
                         android:layout_marginBottom="20dp">
                         <TextView
                             android:id="@+id/button_amount_5"
-                            style="@style/VirtdroidAmountChip"
+                            style="@style/VirtroidAmountChip"
                             android:layout_width="0dp"
                             android:layout_weight="1"
                             android:layout_marginEnd="8dp"
                             android:text="$5" />
                         <TextView
                             android:id="@+id/button_amount_10"
-                            style="@style/VirtdroidAmountChip"
+                            style="@style/VirtroidAmountChip"
                             android:layout_width="0dp"
                             android:layout_weight="1"
                             android:layout_marginEnd="8dp"
@@ -214,14 +214,14 @@
                             android:textStyle="bold" />
                         <TextView
                             android:id="@+id/button_amount_25"
-                            style="@style/VirtdroidAmountChip"
+                            style="@style/VirtroidAmountChip"
                             android:layout_width="0dp"
                             android:layout_weight="1"
                             android:layout_marginEnd="8dp"
                             android:text="$25" />
                         <TextView
                             android:id="@+id/button_amount_custom"
-                            style="@style/VirtdroidAmountChip"
+                            style="@style/VirtroidAmountChip"
                             android:layout_width="0dp"
                             android:layout_weight="1"
                             android:text="Edit" />
@@ -433,7 +433,7 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/deployment_status_title"
-                    style="@style/VirtdroidText.SectionHeading"
+                    style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="DEPLOYMENT STATUS"
@@ -592,7 +592,7 @@
         android:paddingBottom="32dp">
         <com.google.android.material.button.MaterialButton
             android:id="@+id/button_create_usdt_payment"
-            style="@style/VirtdroidButton.Primary"
+            style="@style/VirtroidButton.Primary"
             android:layout_width="match_parent"
             android:layout_height="56dp"
             android:text="@string/fund_storage_payment_unavailable" />

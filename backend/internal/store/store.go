@@ -55,6 +55,15 @@ var (
 	ErrRuntimeProfile      = errors.New("runtime profile is not allowed")
 )
 
+const (
+	RuntimeEntitlementRequiredCode = "runtime_entitlement_required"
+	RuntimeQuotaExceededCode       = "runtime_quota_exceeded"
+	ActiveRuntimeQuotaExceededCode = "active_runtime_quota_exceeded"
+	RuntimeStartQuotaExceededCode  = "runtime_start_quota_exceeded"
+	RuntimeProfileNotAllowedCode   = "runtime_profile_not_allowed"
+	NoReadyHostCode                = "no_ready_host"
+)
+
 type BootstrapResult struct {
 	Account Account  `json:"account"`
 	Device  Device   `json:"device"`
@@ -94,6 +103,30 @@ type AccountEntitlement struct {
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
+type AccountEntitlementSummary struct {
+	AccountID                   string     `json:"account_id"`
+	Source                      string     `json:"source"`
+	Status                      string     `json:"status"`
+	RuntimeLimit                int        `json:"runtime_limit"`
+	RuntimeCount                int        `json:"runtime_count"`
+	RuntimeRemaining            int        `json:"runtime_remaining"`
+	ActiveRuntimeLimit          int        `json:"active_runtime_limit"`
+	ActiveRuntimeCount          int        `json:"active_runtime_count"`
+	ActiveRuntimeRemaining      int        `json:"active_runtime_remaining"`
+	RuntimeStartsPerDay         int        `json:"runtime_starts_per_day"`
+	RuntimeStartsUsedToday      int        `json:"runtime_starts_used_today"`
+	RuntimeStartsRemainingToday int        `json:"runtime_starts_remaining_today"`
+	StorageBytesLimit           int64      `json:"storage_bytes_limit"`
+	TrialRuntimeSeconds         int        `json:"trial_runtime_seconds"`
+	ExpiresAt                   *time.Time `json:"expires_at,omitempty"`
+	CanCreateRuntime            bool       `json:"can_create_runtime"`
+	CanStartRuntime             bool       `json:"can_start_runtime"`
+	CreateRuntimeBlockedCode    string     `json:"create_runtime_blocked_code,omitempty"`
+	CreateRuntimeBlockedReason  string     `json:"create_runtime_blocked_reason,omitempty"`
+	StartRuntimeBlockedCode     string     `json:"start_runtime_blocked_code,omitempty"`
+	StartRuntimeBlockedReason   string     `json:"start_runtime_blocked_reason,omitempty"`
 }
 
 type Device struct {
@@ -718,6 +751,96 @@ func (s *Store) GetAccountStorage(ctx context.Context, accountID string) (Accoun
 		UpdatedAt:       now,
 		LastPreflightAt: nil,
 	}, nil
+}
+
+func (s *Store) GetAccountEntitlementSummary(ctx context.Context, accountID string) (AccountEntitlementSummary, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return AccountEntitlementSummary{}, errors.New("account id is required")
+	}
+
+	var entitlement AccountEntitlement
+	err := s.db.QueryRowContext(ctx,
+		`SELECT account_id, source, status, runtime_limit, active_runtime_limit,
+		        runtime_starts_per_day, storage_bytes_limit, trial_runtime_seconds,
+		        expires_at, created_at, updated_at
+		 FROM account_entitlements
+		 WHERE account_id = $1`,
+		accountID,
+	).Scan(
+		&entitlement.AccountID,
+		&entitlement.Source,
+		&entitlement.Status,
+		&entitlement.RuntimeLimit,
+		&entitlement.ActiveRuntimeLimit,
+		&entitlement.RuntimeStartsPerDay,
+		&entitlement.StorageBytesLimit,
+		&entitlement.TrialRuntimeSeconds,
+		&entitlement.ExpiresAt,
+		&entitlement.CreatedAt,
+		&entitlement.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return missingEntitlementSummary(accountID), nil
+		}
+		return AccountEntitlementSummary{}, err
+	}
+
+	summary := AccountEntitlementSummary{
+		AccountID:           entitlement.AccountID,
+		Source:              entitlement.Source,
+		Status:              entitlement.Status,
+		RuntimeLimit:        entitlement.RuntimeLimit,
+		ActiveRuntimeLimit:  entitlement.ActiveRuntimeLimit,
+		RuntimeStartsPerDay: entitlement.RuntimeStartsPerDay,
+		StorageBytesLimit:   entitlement.StorageBytesLimit,
+		TrialRuntimeSeconds: entitlement.TrialRuntimeSeconds,
+		ExpiresAt:           entitlement.ExpiresAt,
+		CanCreateRuntime:    true,
+		CanStartRuntime:     true,
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT
+		    COUNT(*) FILTER (WHERE deleted_at IS NULL AND desired_state <> 'deleted') AS runtime_count,
+		    COUNT(*) FILTER (WHERE deleted_at IS NULL AND desired_state = 'running') AS active_runtime_count
+		 FROM runtimes
+		 WHERE account_id = $1`,
+		accountID,
+	).Scan(&summary.RuntimeCount, &summary.ActiveRuntimeCount); err != nil {
+		return AccountEntitlementSummary{}, err
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runtime_start_events
+		 WHERE account_id = $1
+		   AND created_at >= NOW() - INTERVAL '24 hours'`,
+		accountID,
+	).Scan(&summary.RuntimeStartsUsedToday); err != nil {
+		return AccountEntitlementSummary{}, err
+	}
+
+	summary.RuntimeRemaining = remaining(summary.RuntimeLimit, summary.RuntimeCount)
+	summary.ActiveRuntimeRemaining = remaining(summary.ActiveRuntimeLimit, summary.ActiveRuntimeCount)
+	summary.RuntimeStartsRemainingToday = remaining(summary.RuntimeStartsPerDay, summary.RuntimeStartsUsedToday)
+
+	if !entitlementActive(entitlement) {
+		summary.blockCreate(RuntimeEntitlementRequiredCode, ErrRuntimeEntitlement.Error())
+		summary.blockStart(RuntimeEntitlementRequiredCode, ErrRuntimeEntitlement.Error())
+		return summary, nil
+	}
+	if summary.RuntimeLimit <= 0 || summary.RuntimeCount >= summary.RuntimeLimit {
+		summary.blockCreate(RuntimeQuotaExceededCode, ErrRuntimeQuota.Error())
+	}
+	if summary.ActiveRuntimeLimit <= 0 || summary.ActiveRuntimeCount >= summary.ActiveRuntimeLimit {
+		summary.blockStart(ActiveRuntimeQuotaExceededCode, ErrRuntimeActiveQuota.Error())
+	}
+	if summary.RuntimeStartsPerDay <= 0 || summary.RuntimeStartsUsedToday >= summary.RuntimeStartsPerDay {
+		summary.blockStart(RuntimeStartQuotaExceededCode, ErrRuntimeStartQuota.Error())
+	}
+
+	return summary, nil
 }
 
 func (s *Store) UpdateAccountStorage(ctx context.Context, accountID string, input UpdateAccountStorageInput) (AccountStorage, error) {
@@ -1915,6 +2038,41 @@ func entitlementActive(entitlement AccountEntitlement) bool {
 	return entitlement.ExpiresAt == nil || entitlement.ExpiresAt.After(time.Now().UTC())
 }
 
+func missingEntitlementSummary(accountID string) AccountEntitlementSummary {
+	summary := AccountEntitlementSummary{
+		AccountID: accountID,
+		Source:    "none",
+		Status:    "missing",
+	}
+	summary.blockCreate(RuntimeEntitlementRequiredCode, ErrRuntimeEntitlement.Error())
+	summary.blockStart(RuntimeEntitlementRequiredCode, ErrRuntimeEntitlement.Error())
+	return summary
+}
+
+func (s *AccountEntitlementSummary) blockCreate(code, reason string) {
+	s.CanCreateRuntime = false
+	if s.CreateRuntimeBlockedCode == "" {
+		s.CreateRuntimeBlockedCode = code
+		s.CreateRuntimeBlockedReason = reason
+	}
+}
+
+func (s *AccountEntitlementSummary) blockStart(code, reason string) {
+	s.CanStartRuntime = false
+	if s.StartRuntimeBlockedCode == "" {
+		s.StartRuntimeBlockedCode = code
+		s.StartRuntimeBlockedReason = reason
+	}
+}
+
+func remaining(limit, used int) int {
+	value := limit - used
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
 func appendRuntimeStartEventTX(ctx context.Context, tx *sql.Tx, accountID, runtimeID string) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO runtime_start_events (account_id, runtime_id)
@@ -2205,7 +2363,7 @@ func generateRelayToken() (string, error) {
 }
 
 func hashRelayToken(relayToken string) string {
-	digest := sha256.Sum256([]byte("virtdroid-relay-token-v1:" + strings.TrimSpace(relayToken)))
+	digest := sha256.Sum256([]byte("virtroid-relay-token-v1:" + strings.TrimSpace(relayToken)))
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
@@ -2225,6 +2383,6 @@ func normalizeBlobAccessKey(blobAccessKeyB64 string) (string, []byte, error) {
 }
 
 func blobKeyVerifier(rawKey []byte) string {
-	sum := sha256.Sum256(append([]byte("virtdroid-blob-verifier-v1:"), rawKey...))
+	sum := sha256.Sum256(append([]byte("virtroid-blob-verifier-v1:"), rawKey...))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }

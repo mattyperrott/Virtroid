@@ -4,18 +4,18 @@
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="@color/virtdroid_destructive"
+        android:fillColor="@color/virtroid_destructive"
         android:pathData="M12,3l10,18H2z" />
     <path
         android:fillColor="@android:color/transparent"
         android:pathData="M12,9v5"
-        android:strokeColor="@color/virtdroid_surface"
+        android:strokeColor="@color/virtroid_surface"
         android:strokeLineCap="round"
         android:strokeWidth="2" />
     <path
         android:fillColor="@android:color/transparent"
         android:pathData="M12,17h0.01"
-        android:strokeColor="@color/virtdroid_surface"
+        android:strokeColor="@color/virtroid_surface"
         android:strokeLineCap="round"
         android:strokeWidth="2.5" />
 </vector>

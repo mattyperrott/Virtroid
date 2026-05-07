@@ -30,7 +30,7 @@
                 android:tint="@color/v_text_primary" />
             <TextView
                 android:id="@+id/text_nav_title"
-                style="@style/VirtdroidText.NavTitle"
+                style="@style/VirtroidText.NavTitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -86,14 +86,14 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/controlsRuntimeNameText"
-                            style="@style/VirtdroidText.ContentHeading"
+                            style="@style/VirtroidText.ContentHeading"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/session_title_fallback"
                             android:textColor="@color/v_text_secondary" />
                         <TextView
                             android:id="@+id/controlsRuntimeSubtitleText"
-                            style="@style/VirtdroidText.Status"
+                            style="@style/VirtroidText.Status"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/runtime_missing_for_session"
@@ -244,7 +244,7 @@
                 </HorizontalScrollView>
                 <TextView
                     android:id="@+id/label_session_parameters"
-                    style="@style/VirtdroidText.SectionHeading"
+                    style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="SESSION PARAMETERS"
@@ -277,13 +277,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_build_info_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Build &amp; Runtime" />
                         <TextView
                             android:id="@+id/controlsBuildBodyText"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Runtime details"
@@ -316,13 +316,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_display_output_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Display &amp; Output" />
                         <TextView
                             android:id="@+id/controlsDisplayBodyText"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Native resolution, 60fps"
@@ -364,13 +364,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_camera_passthrough_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Camera Passthrough" />
                         <TextView
                             android:id="@+id/item_camera_passthrough_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Inject local camera to cloud"
@@ -417,13 +417,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_console_logs_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Console Logs" />
                         <TextView
                             android:id="@+id/item_console_logs_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Boot &amp; network events"
@@ -477,14 +477,14 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_wipe_destroy_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Wipe &amp; Destroy"
                             android:textColor="@color/v_danger" />
                         <TextView
                             android:id="@+id/item_wipe_destroy_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Irreversibly delete instance"
@@ -528,14 +528,14 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_destroy_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Destroy Runtime"
                             android:textColor="@color/v_danger" />
                         <TextView
                             android:id="@+id/item_destroy_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Irreversibly delete this instance"

@@ -493,7 +493,7 @@ func (s *localBlobStore) preflight(ctx context.Context, report *blobPreflightRep
 func defaultBlobBucket(bucket string) string {
 	bucket = strings.TrimSpace(bucket)
 	if bucket == "" {
-		return "virtdroid"
+		return "virtroid"
 	}
 	return bucket
 }
@@ -503,7 +503,7 @@ func (s *localBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDir 
 		return nil, err
 	}
 
-	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtdroid-%s-%d.enc", runtimeID, time.Now().UnixNano()))
+	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtroid-%s-%d.enc", runtimeID, time.Now().UnixNano()))
 	defer os.Remove(tempPath)
 
 	totalBytes, err := writeSnapshot(tempPath, dataDir, masterKey)
@@ -590,7 +590,7 @@ func (s *localBlobStore) restoreToDir(ctx context.Context, runtimeID string, man
 		return err
 	}
 
-	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtdroid-restore-%s-%d.enc", runtimeID, time.Now().UnixNano()))
+	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtroid-restore-%s-%d.enc", runtimeID, time.Now().UnixNano()))
 	defer os.Remove(tempPath)
 
 	tempFile, err := os.Create(tempPath)
@@ -727,7 +727,7 @@ func (s *renterdBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDi
 		return nil, errors.New("renterd worker url is required")
 	}
 
-	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtdroid-%s-%d.enc", runtimeID, time.Now().UnixNano()))
+	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtroid-%s-%d.enc", runtimeID, time.Now().UnixNano()))
 	defer os.Remove(tempPath)
 
 	totalBytes, err := writeSnapshot(tempPath, dataDir, masterKey)
@@ -810,7 +810,7 @@ func (s *renterdBlobStore) restoreToDir(ctx context.Context, runtimeID string, m
 		return err
 	}
 
-	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtdroid-restore-%s-%d.enc", runtimeID, time.Now().UnixNano()))
+	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("virtroid-restore-%s-%d.enc", runtimeID, time.Now().UnixNano()))
 	defer os.Remove(tempPath)
 
 	tempFile, err := os.Create(tempPath)

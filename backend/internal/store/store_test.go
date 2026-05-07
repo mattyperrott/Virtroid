@@ -143,6 +143,70 @@ func TestCreateRuntimeRequiresEntitlement(t *testing.T) {
 	}
 }
 
+func TestGetAccountEntitlementSummaryReportsRemainingTrialUse(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+
+	mock.ExpectQuery("SELECT account_id, source, status").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"account_id",
+			"source",
+			"status",
+			"runtime_limit",
+			"active_runtime_limit",
+			"runtime_starts_per_day",
+			"storage_bytes_limit",
+			"trial_runtime_seconds",
+			"expires_at",
+			"created_at",
+			"updated_at",
+		}).AddRow(
+			accountID,
+			"trial",
+			"active",
+			3,
+			1,
+			10,
+			int64(1073741824),
+			3600,
+			nil,
+			now,
+			now,
+		))
+	mock.ExpectQuery("SELECT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"runtime_count", "active_runtime_count"}).
+			AddRow(2, 0))
+	mock.ExpectQuery("runtime_start_events").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
+
+	summary, err := st.GetAccountEntitlementSummary(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccountEntitlementSummary returned error: %v", err)
+	}
+	if summary.RuntimeLimit != 3 || summary.RuntimeCount != 2 || summary.RuntimeRemaining != 1 {
+		t.Fatalf("runtime quota summary = limit %d count %d remaining %d; want 3, 2, 1", summary.RuntimeLimit, summary.RuntimeCount, summary.RuntimeRemaining)
+	}
+	if summary.RuntimeStartsPerDay != 10 || summary.RuntimeStartsUsedToday != 4 || summary.RuntimeStartsRemainingToday != 6 {
+		t.Fatalf("start quota summary = limit %d used %d remaining %d; want 10, 4, 6", summary.RuntimeStartsPerDay, summary.RuntimeStartsUsedToday, summary.RuntimeStartsRemainingToday)
+	}
+	if !summary.CanCreateRuntime || !summary.CanStartRuntime {
+		t.Fatalf("trial summary blocked create=%v start=%v; want both allowed", summary.CanCreateRuntime, summary.CanStartRuntime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestNormalizedCreateInputRejectsUnsafeProfile(t *testing.T) {
 	if _, err := normalizedCreateInput(CreateRuntimeInput{AndroidImage: "attacker/image:latest"}); !errors.Is(err, ErrRuntimeProfile) {
 		t.Fatalf("custom android image error = %v, want %v", err, ErrRuntimeProfile)

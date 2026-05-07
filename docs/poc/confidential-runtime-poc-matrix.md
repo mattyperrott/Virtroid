@@ -4,7 +4,7 @@
 
 This matrix turns the attested runtime operator architecture into concrete proof-of-concept work. The goal is to answer two separate questions before combining them:
 
-1. Can Virtdroid's actual ReDroid runtime stack run inside a confidential/full-VM environment with acceptable performance?
+1. Can Virtroid's actual ReDroid runtime stack run inside a confidential/full-VM environment with acceptable performance?
 2. Can a user device verify attestation and release only lease-scoped runtime material to the selected node?
 
 The POCs should be evaluated independently first. Do not make ReDroid, attestation, key release, decentralized operators, and viewer streaming all one first milestone.
@@ -15,7 +15,7 @@ Related architecture brief:
 
 ## Current Runtime Constraints
 
-Virtdroid currently depends on host-level behavior that many confidential container platforms may not expose.
+Virtroid currently depends on host-level behavior that many confidential container platforms may not expose.
 
 Required runtime capabilities:
 
@@ -24,7 +24,7 @@ Required runtime capabilities:
 - support ashmem or memfd path required by ReDroid
 - run Docker or container runtime with enough privilege for ReDroid
 - keep ADB private
-- expose viewer traffic through Virtdroid relay/viewer stack
+- expose viewer traffic through Virtroid relay/viewer stack
 - persist encrypted runtime data
 - restart from encrypted snapshot
 
@@ -48,7 +48,7 @@ Every runtime-host candidate should answer:
 | Question | Required Evidence |
 |---|---|
 | Can it run a full VM or only a container? | Platform docs, instance type, kernel access, operator access model |
-| Can Virtdroid run Docker/ReDroid? | ReDroid container boots; `adb devices` sees private target |
+| Can Virtroid run Docker/ReDroid? | ReDroid container boots; `adb devices` sees private target |
 | Can it expose binder/hwbinder/vndbinder or equivalent? | Device nodes present; ReDroid services boot |
 | Can it use ashmem or memfd? | ReDroid boot logs and kernel feature checks |
 | Can the client verify attestation? | Quote or attestation document verified outside the platform dashboard |
@@ -61,7 +61,7 @@ Every runtime-host candidate should answer:
 
 ### Target
 
-OpenMetal TDX-capable bare metal with a self-managed TDX guest, or another full TDX/SEV-SNP VM where Virtdroid controls the guest kernel.
+OpenMetal TDX-capable bare metal with a self-managed TDX guest, or another full TDX/SEV-SNP VM where Virtroid controls the guest kernel.
 
 ### Purpose
 
@@ -77,7 +77,7 @@ This POC does not need decentralized operators, client-side quote verification, 
 - Install supported Linux guest image.
 - Confirm confidential VM status from inside guest.
 - Install Docker or compatible container runtime.
-- Run Virtdroid host preparation.
+- Run Virtroid host preparation.
 - Install/load binder support.
 - Start `virtnoded` against a test control plane.
 - Start a single ReDroid runtime.
@@ -90,7 +90,7 @@ This POC does not need decentralized operators, client-side quote verification, 
 - Docker can run ReDroid with required privileges.
 - Android boots to completed state.
 - ADB is reachable only privately.
-- Virtdroid viewer can stream display.
+- Virtroid viewer can stream display.
 - Input latency is acceptable for basic navigation.
 - Encrypted runtime snapshot can be created.
 - Snapshot can restore into a fresh runtime.
@@ -234,7 +234,7 @@ OpenMetal plus Edgeless Contrast.
 
 ### Purpose
 
-Determine whether confidential Kubernetes can host Virtdroid runtimes.
+Determine whether confidential Kubernetes can host Virtroid runtimes.
 
 ### Entry Condition
 
@@ -275,7 +275,7 @@ Aleph confidential VM.
 
 ### Purpose
 
-Evaluate whether decentralized CVMs can host Virtdroid runtimes and support client-verifiable attestation/key release.
+Evaluate whether decentralized CVMs can host Virtroid runtimes and support client-verifiable attestation/key release.
 
 ### Pass Criteria
 
@@ -283,7 +283,7 @@ Evaluate whether decentralized CVMs can host Virtdroid runtimes and support clie
 - Can run Docker.
 - Can run ReDroid.
 - Can expose required kernel modules/devices.
-- Can verify attestation from a Virtdroid client.
+- Can verify attestation from a Virtroid client.
 - Can bind key release to measured runtime image and user lease.
 - Can expose viewer traffic with acceptable latency.
 - Can persist and restore encrypted snapshots.
@@ -330,11 +330,11 @@ Evaluate Oyster as a confidential service substrate, not as the first Android ru
 - Service can expose attestation evidence.
 - Service can hold scoped signing or policy material.
 - Service can publish auditable outputs.
-- Service can be operated independently from the Virtdroid control plane.
+- Service can be operated independently from the Virtroid control plane.
 
 ### Failure Criteria
 
-- Service cannot expose useful attestation to Virtdroid clients.
+- Service cannot expose useful attestation to Virtroid clients.
 - Key material must be trusted to a single operator without attestation.
 - Networking model does not support the service use case.
 
@@ -431,7 +431,7 @@ Recommended report path:
 Build POC A and POC B in parallel:
 
 - POC A proves whether the real Android runtime can work in a confidential/full-VM host.
-- POC B proves whether Virtdroid can enforce client-side attestation and lease-scoped key release.
+- POC B proves whether Virtroid can enforce client-side attestation and lease-scoped key release.
 
 Do not make the control plane the core decentralization target. Keep it weak. Runtime authority should come from user-device signatures, node/operator policy, attested leases, and lease-scoped key release.
 
