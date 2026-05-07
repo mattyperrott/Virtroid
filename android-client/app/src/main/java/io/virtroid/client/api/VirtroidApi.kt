@@ -264,6 +264,11 @@ class VirtroidApi(
         deviceId: String,
         name: String,
         runtimeProfile: DeviceRuntimeProfile,
+        audioEnabled: Boolean,
+        cameraMode: String,
+        fileMode: String,
+        blobAutoSnapshot: Boolean,
+        blobRetainDays: Int,
     ): RuntimeSummary =
         withContext(Dispatchers.IO) {
             val requestBody = JSONObject()
@@ -273,6 +278,11 @@ class VirtroidApi(
                 .put("width_px", runtimeProfile.widthPx)
                 .put("height_px", runtimeProfile.heightPx)
                 .put("density_dpi", runtimeProfile.densityDpi)
+                .put("audio_enabled", audioEnabled)
+                .put("camera_mode", cameraMode)
+                .put("file_mode", fileMode)
+                .put("blob_auto_snapshot", blobAutoSnapshot)
+                .put("blob_retain_days", blobRetainDays)
                 .toString()
 
             val payload = executeJson(

@@ -325,7 +325,7 @@
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Native resolution, 60fps"
+                            android:text="Native aspect, adaptive 15-30fps"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView

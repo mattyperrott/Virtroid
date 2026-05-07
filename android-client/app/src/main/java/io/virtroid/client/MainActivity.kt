@@ -715,7 +715,9 @@ class MainActivity : AppCompatActivity() {
     private fun RuntimeSummary.isTransitioning(): Boolean {
         return desiredState.equals("running", ignoreCase = true) && !isReadyForSession() ||
             status.equals("starting", ignoreCase = true) ||
-            connectionStatus.equals("connecting", ignoreCase = true)
+            status.equals("provisioning", ignoreCase = true) ||
+            connectionStatus.equals("connecting", ignoreCase = true) ||
+            connectionStatus.equals("preparing", ignoreCase = true)
     }
 
     private fun RuntimeSummary.provisioningMilestone(): RuntimeProvisioningMilestone? {
@@ -743,6 +745,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         return when {
+            status.equals("provisioning", ignoreCase = true) || connectionStatus.equals("preparing", ignoreCase = true) -> RuntimeProvisioningMilestone(
+                title = getString(R.string.new_runtime_provision_title_container),
+                command = getString(R.string.new_runtime_provision_command_container),
+                detail = detail(getString(R.string.new_runtime_provision_detail_container)),
+                events = provisioningEvents(elapsedMs),
+            )
             connectionStatus.equals("connecting", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_connect),
                 command = getString(R.string.runtime_provisioning_command_connect),

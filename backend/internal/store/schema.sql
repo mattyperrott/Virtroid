@@ -103,8 +103,8 @@ CREATE TABLE IF NOT EXISTS runtimes (
     host_id TEXT,
     persona_version INTEGER NOT NULL DEFAULT 1,
     active_persona_json TEXT,
-    android_image TEXT NOT NULL DEFAULT 'redroid/redroid:12.0.0_64only-latest',
-    android_version TEXT NOT NULL DEFAULT 'android-12',
+    android_image TEXT NOT NULL DEFAULT 'redroid/redroid:14.0.0_64only-latest',
+    android_version TEXT NOT NULL DEFAULT 'android-14',
     width_px INTEGER NOT NULL DEFAULT 720,
     height_px INTEGER NOT NULL DEFAULT 1600,
     density_dpi INTEGER NOT NULL DEFAULT 320,
@@ -129,8 +129,8 @@ CREATE TABLE IF NOT EXISTS runtimes (
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Primary runtime';
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS desired_state TEXT NOT NULL DEFAULT 'stopped';
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS connection_status TEXT NOT NULL DEFAULT 'offline';
-ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS android_image TEXT NOT NULL DEFAULT 'redroid/redroid:12.0.0_64only-latest';
-ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS android_version TEXT NOT NULL DEFAULT 'android-12';
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS android_image TEXT NOT NULL DEFAULT 'redroid/redroid:14.0.0_64only-latest';
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS android_version TEXT NOT NULL DEFAULT 'android-14';
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS active_persona_json TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS width_px INTEGER NOT NULL DEFAULT 720;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS height_px INTEGER NOT NULL DEFAULT 1600;
@@ -151,8 +151,8 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS viewer_port INTEGER;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS wipe_requested BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
-ALTER TABLE runtimes ALTER COLUMN android_image SET DEFAULT 'redroid/redroid:12.0.0_64only-latest';
-ALTER TABLE runtimes ALTER COLUMN android_version SET DEFAULT 'android-12';
+ALTER TABLE runtimes ALTER COLUMN android_image SET DEFAULT 'redroid/redroid:14.0.0_64only-latest';
+ALTER TABLE runtimes ALTER COLUMN android_version SET DEFAULT 'android-14';
 ALTER TABLE runtimes ALTER COLUMN width_px SET DEFAULT 720;
 ALTER TABLE runtimes ALTER COLUMN height_px SET DEFAULT 1600;
 ALTER TABLE runtimes ALTER COLUMN density_dpi SET DEFAULT 320;
