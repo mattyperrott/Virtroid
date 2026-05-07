@@ -29,7 +29,7 @@
             android:tint="@color/v_text_primary" />
 
         <TextView
-            style="@style/VirtdroidText.NavTitle"
+            style="@style/VirtroidText.NavTitle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -66,7 +66,7 @@
             android:orientation="vertical">
 
             <TextView
-                style="@style/VirtdroidSectionLabel"
+                style="@style/VirtroidSectionLabel"
                 android:text="@string/privacy_security_telemetry" />
 
             <FrameLayout
@@ -98,20 +98,20 @@
                         android:orientation="horizontal">
 
                         <ImageView
-                            style="@style/VirtdroidTelemetryIcon"
+                            style="@style/VirtroidTelemetryIcon"
                             android:src="@drawable/ic_shield" />
 
                         <TextView
-                            style="@style/VirtdroidTelemetryLabel"
+                            style="@style/VirtroidTelemetryLabel"
                             android:text="@string/privacy_app_lock_status" />
 
                         <TextView
                             android:id="@+id/appLockStatusValue"
-                            style="@style/VirtdroidTelemetryValueChip"
+                            style="@style/VirtroidTelemetryValueChip"
                             android:text="Secured" />
                     </LinearLayout>
 
-                    <View style="@style/VirtdroidSettingsDivider" />
+                    <View style="@style/VirtroidSettingsDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -120,20 +120,20 @@
                         android:orientation="horizontal">
 
                         <ImageView
-                            style="@style/VirtdroidTelemetryIcon"
+                            style="@style/VirtroidTelemetryIcon"
                             android:src="@drawable/ic_eye_off" />
 
                         <TextView
-                            style="@style/VirtdroidTelemetryLabel"
+                            style="@style/VirtroidTelemetryLabel"
                             android:text="@string/privacy_screenshot_protection" />
 
                         <TextView
                             android:id="@+id/screenshotProtectionValue"
-                            style="@style/VirtdroidTelemetryValueMono"
+                            style="@style/VirtroidTelemetryValueMono"
                             android:text="ACTIVE" />
                     </LinearLayout>
 
-                    <View style="@style/VirtdroidSettingsDivider" />
+                    <View style="@style/VirtroidSettingsDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -142,20 +142,20 @@
                         android:orientation="horizontal">
 
                         <ImageView
-                            style="@style/VirtdroidTelemetryIcon"
+                            style="@style/VirtroidTelemetryIcon"
                             android:src="@drawable/ic_mobile" />
 
                         <TextView
-                            style="@style/VirtdroidTelemetryLabel"
+                            style="@style/VirtroidTelemetryLabel"
                             android:text="@string/privacy_trusted_device" />
 
                         <TextView
                             android:id="@+id/trustedDeviceValue"
-                            style="@style/VirtdroidTelemetryValueMono"
+                            style="@style/VirtroidTelemetryValueMono"
                             android:text="VERIFIED" />
                     </LinearLayout>
 
-                    <View style="@style/VirtdroidSettingsDivider" />
+                    <View style="@style/VirtroidSettingsDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -164,20 +164,20 @@
                         android:orientation="horizontal">
 
                         <ImageView
-                            style="@style/VirtdroidTelemetryIcon"
+                            style="@style/VirtroidTelemetryIcon"
                             android:src="@drawable/ic_lock" />
 
                         <TextView
-                            style="@style/VirtdroidTelemetryLabel"
+                            style="@style/VirtroidTelemetryLabel"
                             android:text="@string/privacy_last_unlock" />
 
                         <TextView
                             android:id="@+id/lastUnlockValue"
-                            style="@style/VirtdroidTelemetryValueMono"
+                            style="@style/VirtroidTelemetryValueMono"
                             android:text="Never" />
                     </LinearLayout>
 
-                    <View style="@style/VirtdroidSettingsDivider" />
+                    <View style="@style/VirtroidSettingsDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -186,23 +186,23 @@
                         android:orientation="horizontal">
 
                         <ImageView
-                            style="@style/VirtdroidTelemetryIcon"
+                            style="@style/VirtroidTelemetryIcon"
                             android:src="@drawable/ic_terminal" />
 
                         <TextView
-                            style="@style/VirtdroidTelemetryLabel"
+                            style="@style/VirtroidTelemetryLabel"
                             android:text="@string/privacy_last_session_end" />
 
                         <TextView
                             android:id="@+id/lastSessionEndValue"
-                            style="@style/VirtdroidTelemetryValueMono"
+                            style="@style/VirtroidTelemetryValueMono"
                             android:text="Never" />
                     </LinearLayout>
                 </LinearLayout>
             </FrameLayout>
 
             <TextView
-                style="@style/VirtdroidSectionLabel"
+                style="@style/VirtroidSectionLabel"
                 android:layout_marginTop="32dp"
                 android:text="@string/privacy_app_lock_auth" />
 
@@ -228,11 +228,11 @@
                         android:orientation="vertical">
 
                         <TextView
-                            style="@style/VirtdroidSettingsTitle"
+                            style="@style/VirtroidSettingsTitle"
                             android:text="@string/privacy_require_pin_biometric" />
 
                         <TextView
-                            style="@style/VirtdroidSettingsSubtitle"
+                            style="@style/VirtroidSettingsSubtitle"
                             android:layout_marginTop="8dp"
                             android:text="@string/privacy_require_pin_biometric_body" />
                     </LinearLayout>
@@ -245,7 +245,7 @@
                         app:trackTint="@color/switch_track_tint" />
                 </LinearLayout>
 
-                <View style="@style/VirtdroidSettingsDivider" />
+                <View style="@style/VirtroidSettingsDivider" />
 
                 <LinearLayout
                     android:id="@+id/autoLockTimerRow"
@@ -263,12 +263,12 @@
                         android:orientation="vertical">
 
                         <TextView
-                            style="@style/VirtdroidSettingsTitle"
+                            style="@style/VirtroidSettingsTitle"
                             android:text="@string/privacy_auto_lock_timer" />
 
                         <TextView
                             android:id="@+id/autoLockTimerValue"
-                            style="@style/VirtdroidSettingsSubtitle"
+                            style="@style/VirtroidSettingsSubtitle"
                             android:layout_marginTop="6dp"
                             android:text="Immediately" />
                     </LinearLayout>
@@ -280,7 +280,7 @@
                         android:tint="@color/v_text_muted" />
                 </LinearLayout>
 
-                <View style="@style/VirtdroidSettingsDivider" />
+                <View style="@style/VirtroidSettingsDivider" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -291,7 +291,7 @@
                     android:paddingEnd="16dp">
 
                     <TextView
-                        style="@style/VirtdroidSettingsTitle"
+                        style="@style/VirtroidSettingsTitle"
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:text="@string/privacy_require_unlock_resume" />
@@ -304,7 +304,7 @@
                         app:trackTint="@color/switch_track_tint" />
                 </LinearLayout>
 
-                <View style="@style/VirtdroidSettingsDivider" />
+                <View style="@style/VirtroidSettingsDivider" />
 
                 <LinearLayout
                     android:id="@+id/failedAttemptsRow"
@@ -316,14 +316,14 @@
                     android:paddingEnd="16dp">
 
                     <TextView
-                        style="@style/VirtdroidSettingsTitle"
+                        style="@style/VirtroidSettingsTitle"
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:text="@string/privacy_failed_attempts_backoff" />
 
                     <TextView
                         android:id="@+id/failedAttemptsValue"
-                        style="@style/VirtdroidValueChip"
+                        style="@style/VirtroidValueChip"
                         android:text="5 attempts" />
 
                     <ImageView
@@ -336,7 +336,7 @@
             </LinearLayout>
 
             <TextView
-                style="@style/VirtdroidSectionLabel"
+                style="@style/VirtroidSectionLabel"
                 android:layout_marginTop="32dp"
                 android:text="@string/privacy_screen_privacy" />
 
@@ -362,11 +362,11 @@
                         android:orientation="vertical">
 
                         <TextView
-                            style="@style/VirtdroidSettingsTitle"
+                            style="@style/VirtroidSettingsTitle"
                             android:text="@string/privacy_block_screen_capture" />
 
                         <TextView
-                            style="@style/VirtdroidSettingsSubtitle"
+                            style="@style/VirtroidSettingsSubtitle"
                             android:layout_marginTop="8dp"
                             android:text="@string/privacy_block_screen_capture_body" />
                     </LinearLayout>
@@ -381,7 +381,7 @@
             </LinearLayout>
 
             <TextView
-                style="@style/VirtdroidSectionLabel"
+                style="@style/VirtroidSectionLabel"
                 android:layout_marginTop="32dp"
                 android:text="@string/privacy_session_safety" />
 
@@ -397,7 +397,7 @@
                 android:paddingEnd="16dp">
 
                 <TextView
-                    style="@style/VirtdroidSettingsTitle"
+                    style="@style/VirtroidSettingsTitle"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:text="@string/privacy_ui_inactivity_timeout" />
@@ -421,7 +421,7 @@
             </LinearLayout>
 
             <TextView
-                style="@style/VirtdroidSectionLabel"
+                style="@style/VirtroidSectionLabel"
                 android:layout_marginTop="32dp"
                 android:text="@string/privacy_data_cache_hygiene" />
 
@@ -447,11 +447,11 @@
                         android:orientation="vertical">
 
                         <TextView
-                            style="@style/VirtdroidSettingsTitle"
+                            style="@style/VirtroidSettingsTitle"
                             android:text="@string/privacy_auto_delete_metadata" />
 
                         <TextView
-                            style="@style/VirtdroidSettingsSubtitle"
+                            style="@style/VirtroidSettingsSubtitle"
                             android:layout_marginTop="6dp"
                             android:text="@string/privacy_auto_delete_metadata_body" />
                     </LinearLayout>
@@ -464,7 +464,7 @@
                         app:trackTint="@color/switch_track_tint" />
                 </LinearLayout>
 
-                <View style="@style/VirtdroidSettingsDivider" />
+                <View style="@style/VirtroidSettingsDivider" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -481,11 +481,11 @@
                         android:orientation="vertical">
 
                         <TextView
-                            style="@style/VirtdroidSettingsTitle"
+                            style="@style/VirtroidSettingsTitle"
                             android:text="@string/privacy_clear_post_transfer" />
 
                         <TextView
-                            style="@style/VirtdroidSettingsSubtitle"
+                            style="@style/VirtroidSettingsSubtitle"
                             android:layout_marginTop="6dp"
                             android:text="@string/privacy_clear_post_transfer_body" />
                     </LinearLayout>
@@ -498,7 +498,7 @@
                         app:trackTint="@color/switch_track_tint" />
                 </LinearLayout>
 
-                <View style="@style/VirtdroidSettingsDivider" />
+                <View style="@style/VirtroidSettingsDivider" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -515,11 +515,11 @@
                         android:orientation="vertical">
 
                         <TextView
-                            style="@style/VirtdroidSettingsTitle"
+                            style="@style/VirtroidSettingsTitle"
                             android:text="@string/privacy_auto_clear_clipboard" />
 
                         <TextView
-                            style="@style/VirtdroidSettingsSubtitle"
+                            style="@style/VirtroidSettingsSubtitle"
                             android:layout_marginTop="6dp"
                             android:text="@string/privacy_auto_clear_clipboard_body" />
                     </LinearLayout>
@@ -535,7 +535,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/forceClearCacheButton"
-                style="@style/VirtdroidButton.Secondary"
+                style="@style/VirtroidButton.Secondary"
                 android:layout_width="match_parent"
                 android:layout_height="58dp"
                 android:layout_marginTop="14dp"

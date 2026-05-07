@@ -45,7 +45,7 @@
 
                 <TextView
                     android:id="@+id/runtimeTitleText"
-                    style="@style/VirtdroidText.CardTitle.Large"
+                    style="@style/VirtroidText.CardTitle.Large"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
@@ -61,13 +61,13 @@
 
                     <View
                         android:id="@+id/runtimeStatusDot"
-                        style="@style/VirtdroidStatusDot"
+                        style="@style/VirtroidStatusDot"
                         android:layout_marginEnd="7dp"
                         android:background="@drawable/bg_dot_muted" />
 
                     <TextView
                         android:id="@+id/runtimeSubtitleText"
-                        style="@style/VirtdroidText.Status"
+                        style="@style/VirtroidText.Status"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -116,14 +116,14 @@
 
                 <TextView
                     android:id="@+id/runtimeStatOneLabel"
-                    style="@style/VirtdroidText.Label"
+                    style="@style/VirtroidText.Label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/runtime_stat_one_label" />
 
                 <TextView
                     android:id="@+id/runtimeStatOneValue"
-                    style="@style/VirtdroidText.Value"
+                    style="@style/VirtroidText.Value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="7dp"
@@ -145,14 +145,14 @@
 
                 <TextView
                     android:id="@+id/runtimeStatTwoLabel"
-                    style="@style/VirtdroidText.Label"
+                    style="@style/VirtroidText.Label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/runtime_stat_two_label" />
 
                 <TextView
                     android:id="@+id/runtimeStatTwoValue"
-                    style="@style/VirtdroidText.Value"
+                    style="@style/VirtroidText.Value"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="7dp"
@@ -176,14 +176,14 @@
 
                 <TextView
                     android:id="@+id/runtimeStatThreeLabel"
-                    style="@style/VirtdroidText.Label"
+                    style="@style/VirtroidText.Label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/runtime_stat_three_label" />
 
                 <TextView
                     android:id="@+id/runtimeStatThreeValue"
-                    style="@style/VirtdroidText.Value"
+                    style="@style/VirtroidText.Value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="7dp"
@@ -193,7 +193,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/connectRuntimeButton"
-            style="@style/VirtdroidButton.Primary"
+            style="@style/VirtroidButton.Primary"
             android:layout_width="match_parent"
             android:layout_height="56dp"
             android:layout_marginTop="26dp"
@@ -214,7 +214,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/startRuntimeButton"
-                style="@style/VirtdroidButton.Secondary"
+                style="@style/VirtroidButton.Secondary"
                 android:layout_width="0dp"
                 android:layout_height="56dp"
                 android:layout_weight="1"

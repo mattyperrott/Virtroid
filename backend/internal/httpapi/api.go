@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"virtdroid/backend/internal/config"
-	"virtdroid/backend/internal/nodeauth"
-	"virtdroid/backend/internal/store"
+	"virtroid/backend/internal/config"
+	"virtroid/backend/internal/nodeauth"
+	"virtroid/backend/internal/store"
 )
 
 type API struct {
@@ -174,6 +174,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/bootstrap", api.bootstrap)
 
 	mux.HandleFunc("GET /api/v1/me/runtimes", api.listMyRuntimes)
+	mux.HandleFunc("GET /api/v1/me/entitlement", api.getMyEntitlement)
 	mux.HandleFunc("GET /api/v1/me/storage", api.getMyStorage)
 	mux.HandleFunc("PUT /api/v1/me/storage", api.updateMyStorage)
 	mux.HandleFunc("POST /api/v1/me/identity/register", api.registerMyIdentity)
@@ -220,7 +221,7 @@ func (a *API) meta(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":              "virtdroidd",
+		"service":              "virtroidd",
 		"environment":          a.cfg.AppEnv,
 		"public_base_url":      a.cfg.PublicBaseURL,
 		"public_relay_url":     relayURL,
@@ -343,6 +344,21 @@ func (a *API) listMyRuntimes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": runtimes})
+}
+
+func (a *API) getMyEntitlement(w http.ResponseWriter, r *http.Request) {
+	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	entitlement, err := a.store.GetAccountEntitlementSummary(r.Context(), accountID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, entitlement)
 }
 
 func (a *API) getMyStorage(w http.ResponseWriter, r *http.Request) {
@@ -629,18 +645,7 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := r.PathValue("id")
 	runtime, err := a.store.StartRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
-		switch err {
-		case store.ErrRuntimeNotFound:
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		case store.ErrNoReadyHost, store.ErrRuntimeActiveQuota:
-			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
-		case store.ErrRuntimeEntitlement:
-			writeJSON(w, http.StatusPaymentRequired, map[string]any{"error": err.Error()})
-		case store.ErrRuntimeStartQuota:
-			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
-		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
+		writeRuntimeMutationError(w, err)
 		return
 	}
 	a.publishActiveBlobKey(accountID, runtime, "start", blobAccessKey)
@@ -1101,7 +1106,7 @@ func (a *API) sessionRelayTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	relayToken := strings.TrimSpace(r.Header.Get("X-Virtdroid-Relay-Token"))
+	relayToken := strings.TrimSpace(r.Header.Get("X-Virtroid-Relay-Token"))
 	if relayToken == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "relay token is required"})
 		return
@@ -1217,12 +1222,12 @@ func (a *API) runtimeLogAppend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	accountID := strings.TrimSpace(r.Header.Get("X-Virtdroid-Account-ID"))
-	deviceID := strings.TrimSpace(r.Header.Get("X-Virtdroid-Device-ID"))
-	timestampRaw := strings.TrimSpace(r.Header.Get("X-Virtdroid-Timestamp"))
-	nonce := strings.TrimSpace(r.Header.Get("X-Virtdroid-Nonce"))
-	bodyHash := strings.TrimSpace(r.Header.Get("X-Virtdroid-Body-SHA256"))
-	signatureRaw := strings.TrimSpace(r.Header.Get("X-Virtdroid-Signature"))
+	accountID := strings.TrimSpace(r.Header.Get("X-Virtroid-Account-ID"))
+	deviceID := strings.TrimSpace(r.Header.Get("X-Virtroid-Device-ID"))
+	timestampRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Timestamp"))
+	nonce := strings.TrimSpace(r.Header.Get("X-Virtroid-Nonce"))
+	bodyHash := strings.TrimSpace(r.Header.Get("X-Virtroid-Body-SHA256"))
+	signatureRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Signature"))
 	if accountID == "" || deviceID == "" || timestampRaw == "" || nonce == "" || bodyHash == "" || signatureRaw == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "signed device request headers are required"})
 		return "", "", false
@@ -1303,7 +1308,7 @@ func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request)
 
 func signedRequestCanonical(method, requestURI, accountID, deviceID, timestamp, nonce, bodyHash string) string {
 	return strings.Join([]string{
-		"VIRTDROID-DEVICE-SIGNATURE-V1",
+		"VIRTROID-DEVICE-SIGNATURE-V1",
 		strings.ToUpper(method),
 		requestURI,
 		accountID,
@@ -1422,7 +1427,7 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if a.cfg.NodeSharedSecret != "" {
-		req.Header.Set("X-Virtdroid-Node-Secret", a.cfg.NodeSharedSecret)
+		req.Header.Set("X-Virtroid-Node-Secret", a.cfg.NodeSharedSecret)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -1445,18 +1450,32 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func writeAPIError(w http.ResponseWriter, status int, code, message string) {
+	payload := map[string]any{"error": message}
+	if strings.TrimSpace(code) != "" {
+		payload["code"] = code
+	}
+	writeJSON(w, status, payload)
+}
+
 func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 	switch err {
+	case store.ErrRuntimeNotFound:
+		writeAPIError(w, http.StatusNotFound, "runtime_not_found", err.Error())
+	case store.ErrNoReadyHost:
+		writeAPIError(w, http.StatusConflict, store.NoReadyHostCode, err.Error())
 	case store.ErrRuntimeEntitlement:
-		writeJSON(w, http.StatusPaymentRequired, map[string]any{"error": err.Error()})
-	case store.ErrRuntimeQuota, store.ErrRuntimeActiveQuota:
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeEntitlementRequiredCode, err.Error())
+	case store.ErrRuntimeQuota:
+		writeAPIError(w, http.StatusConflict, store.RuntimeQuotaExceededCode, err.Error())
+	case store.ErrRuntimeActiveQuota:
+		writeAPIError(w, http.StatusConflict, store.ActiveRuntimeQuotaExceededCode, err.Error())
 	case store.ErrRuntimeStartQuota:
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
+		writeAPIError(w, http.StatusTooManyRequests, store.RuntimeStartQuotaExceededCode, err.Error())
 	case store.ErrRuntimeProfile:
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, store.RuntimeProfileNotAllowedCode, err.Error())
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, "runtime_mutation_failed", err.Error())
 	}
 }
 

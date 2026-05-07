@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style
-        name="VirtdroidText">
+        name="VirtroidText">
         <item
             name="android:fontFamily">
             sans
@@ -16,7 +16,7 @@
         </item>
     </style>
     <style
-        name="VirtdroidText.Mono">
+        name="VirtroidText.Mono">
         <item
             name="android:fontFamily">
             monospace
@@ -31,7 +31,7 @@
         </item>
     </style>
 
-    <style name="VirtdroidText.ScreenTitle" parent="VirtdroidText">
+    <style name="VirtroidText.ScreenTitle" parent="VirtroidText">
         <item name="android:textColor">@color/v_text_primary</item>
         <item name="android:textSize">30sp</item>
         <item name="android:textStyle">bold</item>
@@ -39,22 +39,22 @@
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidText.ScreenTitle.Compact" parent="VirtdroidText.ScreenTitle">
+    <style name="VirtroidText.ScreenTitle.Compact" parent="VirtroidText.ScreenTitle">
         <item name="android:textSize">24sp</item>
     </style>
 
-    <style name="VirtdroidText.ContentHeading" parent="VirtdroidText.ScreenTitle.Compact">
+    <style name="VirtroidText.ContentHeading" parent="VirtroidText.ScreenTitle.Compact">
         <item name="android:textColor">@color/v_text_primary</item>
     </style>
 
-    <style name="VirtdroidText.NavTitle" parent="VirtdroidText">
+    <style name="VirtroidText.NavTitle" parent="VirtroidText">
         <item name="android:textColor">@color/v_text_primary</item>
         <item name="android:textSize">17sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidText.SectionHeading" parent="VirtdroidText">
+    <style name="VirtroidText.SectionHeading" parent="VirtroidText">
         <item name="android:letterSpacing">0.10</item>
         <item name="android:textAllCaps">true</item>
         <item name="android:textColor">@color/v_text_muted</item>
@@ -62,30 +62,30 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidText.CardTitle" parent="VirtdroidText">
+    <style name="VirtroidText.CardTitle" parent="VirtroidText">
         <item name="android:textColor">@color/v_text_primary</item>
         <item name="android:textSize">15sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidText.CardTitle.Large" parent="VirtdroidText.CardTitle">
+    <style name="VirtroidText.CardTitle.Large" parent="VirtroidText.CardTitle">
         <item name="android:textSize">17sp</item>
     </style>
 
-    <style name="VirtdroidText.Body" parent="VirtdroidText">
+    <style name="VirtroidText.Body" parent="VirtroidText">
         <item name="android:textColor">@color/v_text_muted</item>
         <item name="android:textSize">14sp</item>
         <item name="android:lineSpacingExtra">3dp</item>
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidText.Body.Compact" parent="VirtdroidText.Body">
+    <style name="VirtroidText.Body.Compact" parent="VirtroidText.Body">
         <item name="android:textSize">12sp</item>
         <item name="android:lineSpacingExtra">2dp</item>
     </style>
 
-    <style name="VirtdroidText.Label" parent="VirtdroidText">
+    <style name="VirtroidText.Label" parent="VirtroidText">
         <item name="android:letterSpacing">0.08</item>
         <item name="android:textAllCaps">true</item>
         <item name="android:textColor">@color/v_text_muted</item>
@@ -93,32 +93,32 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidText.Value" parent="VirtdroidText">
+    <style name="VirtroidText.Value" parent="VirtroidText">
         <item name="android:textColor">@color/v_text_primary</item>
         <item name="android:textSize">14sp</item>
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidText.Status" parent="VirtdroidText">
+    <style name="VirtroidText.Status" parent="VirtroidText">
         <item name="android:textColor">@color/v_text_muted</item>
         <item name="android:textSize">13sp</item>
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidText.Mono.Small" parent="VirtdroidText.Mono">
+    <style name="VirtroidText.Mono.Small" parent="VirtroidText.Mono">
         <item name="android:textColor">@color/v_text_muted</item>
         <item name="android:textSize">11sp</item>
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidText.Mono.Log" parent="VirtdroidText.Mono">
+    <style name="VirtroidText.Mono.Log" parent="VirtroidText.Mono">
         <item name="android:textColor">@color/v_text_primary</item>
         <item name="android:textSize">11sp</item>
         <item name="android:lineSpacingExtra">3dp</item>
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidText.Button" parent="VirtdroidText">
+    <style name="VirtroidText.Button" parent="VirtroidText">
         <item name="android:gravity">center</item>
         <item name="android:textColor">@color/v_bg</item>
         <item name="android:textSize">14sp</item>
@@ -127,7 +127,7 @@
         <item name="android:letterSpacing">0</item>
     </style>
 
-    <style name="VirtdroidButton.Primary" parent="Widget.Material3.Button">
+    <style name="VirtroidButton.Primary" parent="Widget.Material3.Button">
         <item name="android:fontFamily">sans</item>
         <item name="android:gravity">center</item>
         <item name="android:includeFontPadding">false</item>
@@ -145,7 +145,7 @@
         <item name="rippleColor">@color/v_accent_soft</item>
     </style>
 
-    <style name="VirtdroidButton.Secondary" parent="Widget.Material3.Button.OutlinedButton">
+    <style name="VirtroidButton.Secondary" parent="Widget.Material3.Button.OutlinedButton">
         <item name="android:fontFamily">sans</item>
         <item name="android:gravity">center</item>
         <item name="android:includeFontPadding">false</item>
@@ -165,13 +165,13 @@
         <item name="strokeWidth">1dp</item>
     </style>
 
-    <style name="VirtdroidButton.Danger" parent="VirtdroidButton.Secondary">
+    <style name="VirtroidButton.Danger" parent="VirtroidButton.Secondary">
         <item name="android:textColor">@color/v_danger</item>
         <item name="backgroundTint">@color/v_danger_soft</item>
         <item name="strokeColor">#33EF4444</item>
     </style>
 
-    <style name="VirtdroidButton.PlatformPrimary" parent="@android:style/Widget.Material.Button">
+    <style name="VirtroidButton.PlatformPrimary" parent="@android:style/Widget.Material.Button">
         <item name="android:background">@drawable/bg_accent_round</item>
         <item name="android:backgroundTint">@null</item>
         <item name="android:fontFamily">sans</item>
@@ -188,7 +188,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidButton.PlatformSecondary" parent="@android:style/Widget.Material.Button">
+    <style name="VirtroidButton.PlatformSecondary" parent="@android:style/Widget.Material.Button">
         <item name="android:background">@drawable/bg_surface_stroke_24</item>
         <item name="android:backgroundTint">@null</item>
         <item name="android:fontFamily">sans</item>
@@ -205,7 +205,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidIconButton">
+    <style name="VirtroidIconButton">
         <item name="android:layout_width">@dimen/icon_button_size</item>
         <item name="android:layout_height">@dimen/icon_button_size</item>
         <item name="android:background">@drawable/bg_surface_circle</item>
@@ -213,7 +213,7 @@
         <item name="android:tint">@color/v_text_primary</item>
     </style>
 
-    <style name="VirtdroidIconTile">
+    <style name="VirtroidIconTile">
         <item name="android:layout_width">@dimen/icon_tile_size</item>
         <item name="android:layout_height">@dimen/icon_tile_size</item>
         <item name="android:background">@drawable/bg_surface_light_circle</item>
@@ -221,32 +221,32 @@
         <item name="android:tint">@color/v_text_primary</item>
     </style>
 
-    <style name="VirtdroidIconTile.Accent" parent="VirtdroidIconTile">
+    <style name="VirtroidIconTile.Accent" parent="VirtroidIconTile">
         <item name="android:background">@drawable/bg_accent_soft_circle</item>
         <item name="android:tint">@color/v_accent</item>
     </style>
 
-    <style name="VirtdroidStatusCheck">
+    <style name="VirtroidStatusCheck">
         <item name="android:layout_width">@dimen/status_check_size</item>
         <item name="android:layout_height">@dimen/status_check_size</item>
         <item name="android:background">@drawable/bg_status_pill_muted</item>
         <item name="android:padding">3dp</item>
     </style>
 
-    <style name="VirtdroidStatusDot">
+    <style name="VirtroidStatusDot">
         <item name="android:layout_width">@dimen/status_dot_size</item>
         <item name="android:layout_height">@dimen/status_dot_size</item>
         <item name="android:background">@drawable/bg_dot_muted</item>
     </style>
 
-    <style name="VirtdroidCard">
+    <style name="VirtroidCard">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:background">@drawable/bg_surface_stroke_24</item>
         <item name="android:padding">18dp</item>
     </style>
 
-    <style name="VirtdroidInfoRow">
+    <style name="VirtroidInfoRow">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:background">@drawable/bg_surface_24</item>
@@ -255,7 +255,7 @@
         <item name="android:padding">16dp</item>
     </style>
     <style
-        name="VirtdroidPinKey">
+        name="VirtroidPinKey">
         <item
             name="android:layout_width">
             80dp
@@ -278,7 +278,7 @@
         </item>
     </style>
     <style
-        name="VirtdroidPinDigit">
+        name="VirtroidPinDigit">
         <item
             name="android:layout_width">
             match_parent
@@ -309,7 +309,7 @@
         </item>
     </style>
     <style
-        name="VirtdroidPinLetters">
+        name="VirtroidPinLetters">
         <item
             name="android:layout_width">
             match_parent
@@ -348,7 +348,7 @@
         </item>
     </style>
 
-    <style name="VirtdroidSectionLabel">
+    <style name="VirtroidSectionLabel">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">sans</item>
@@ -360,7 +360,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidTelemetryIcon">
+    <style name="VirtroidTelemetryIcon">
         <item name="android:layout_width">32dp</item>
         <item name="android:layout_height">32dp</item>
         <item name="android:layout_marginEnd">14dp</item>
@@ -369,7 +369,7 @@
         <item name="android:tint">@color/v_text_primary</item>
     </style>
 
-    <style name="VirtdroidTelemetryLabel">
+    <style name="VirtroidTelemetryLabel">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_weight">1</item>
@@ -380,7 +380,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidTelemetryValueMono">
+    <style name="VirtroidTelemetryValueMono">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">monospace</item>
@@ -390,7 +390,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidTelemetryValueChip" parent="VirtdroidTelemetryValueMono">
+    <style name="VirtroidTelemetryValueChip" parent="VirtroidTelemetryValueMono">
         <item name="android:background">@drawable/bg_accent_soft_12</item>
         <item name="android:paddingStart">10dp</item>
         <item name="android:paddingTop">5dp</item>
@@ -399,7 +399,7 @@
         <item name="android:textColor">@color/v_accent</item>
     </style>
 
-    <style name="VirtdroidSettingsTitle">
+    <style name="VirtroidSettingsTitle">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">sans</item>
@@ -409,7 +409,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtdroidSettingsSubtitle">
+    <style name="VirtroidSettingsSubtitle">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">sans</item>
@@ -418,7 +418,7 @@
         <item name="android:textSize">12sp</item>
     </style>
 
-    <style name="VirtdroidSettingsDivider">
+    <style name="VirtroidSettingsDivider">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">1dp</item>
         <item name="android:layout_marginStart">16dp</item>
@@ -426,7 +426,7 @@
         <item name="android:background">@color/v_border_soft</item>
     </style>
 
-    <style name="VirtdroidValueChip">
+    <style name="VirtroidValueChip">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">32dp</item>
         <item name="android:background">@drawable/bg_value_chip</item>
@@ -439,14 +439,14 @@
         <item name="android:textSize">14sp</item>
     </style>
 
-    <style name="VirtdroidFilterChip" parent="VirtdroidText.Button">
+    <style name="VirtroidFilterChip" parent="VirtroidText.Button">
         <item name="android:layout_height">40dp</item>
         <item name="android:background">@drawable/bg_status_pill_muted</item>
         <item name="android:textColor">@color/v_text_primary</item>
         <item name="android:textSize">12sp</item>
     </style>
 
-    <style name="VirtdroidAmountChip" parent="VirtdroidText.Button">
+    <style name="VirtroidAmountChip" parent="VirtroidText.Button">
         <item name="android:layout_height">46dp</item>
         <item name="android:background">@drawable/bg_amount_unselected</item>
         <item name="android:clickable">true</item>

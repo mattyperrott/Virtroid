@@ -1,4 +1,4 @@
-# Virtdroid Android Resources
+# Virtroid Android Resources
 
 This folder contains Android resource XML converted from the HTML design exports.
 

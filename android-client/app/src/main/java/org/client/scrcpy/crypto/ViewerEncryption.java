@@ -88,8 +88,8 @@ public final class ViewerEncryption {
         byte[] salt = sha256(transcript);
         byte[] prk = hmacSha256(salt, sharedSecret);
         return new TrafficKeys(
-            hkdfExpand(prk, "virtdroid-viewer-e2ee-v1 client-to-runtime".getBytes(StandardCharsets.UTF_8), 32),
-            hkdfExpand(prk, "virtdroid-viewer-e2ee-v1 runtime-to-client".getBytes(StandardCharsets.UTF_8), 32)
+            hkdfExpand(prk, "virtroid-viewer-e2ee-v1 client-to-runtime".getBytes(StandardCharsets.UTF_8), 32),
+            hkdfExpand(prk, "virtroid-viewer-e2ee-v1 runtime-to-client".getBytes(StandardCharsets.UTF_8), 32)
         );
     }
 

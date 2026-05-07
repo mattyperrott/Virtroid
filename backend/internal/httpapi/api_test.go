@@ -1,13 +1,15 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"virtdroid/backend/internal/config"
+	"virtroid/backend/internal/config"
+	"virtroid/backend/internal/store"
 )
 
 func TestBootstrapProductionAllowsPublicSignupWhenInviteGateDisabled(t *testing.T) {
@@ -79,7 +81,7 @@ func TestInternalRoutesRejectLegacySharedSecretWithoutNodeSignature(t *testing.T
 	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/hosts/victim-host/assignments", nil)
-	req.Header.Set("X-Virtdroid-Node-Secret", "legacy-shared-secret")
+	req.Header.Set("X-Virtroid-Node-Secret", "legacy-shared-secret")
 	resp := httptest.NewRecorder()
 
 	handler.ServeHTTP(resp, req)
@@ -123,5 +125,22 @@ func TestActiveBlobKeyVaultExpires(t *testing.T) {
 
 	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
 		t.Fatal("vault returned expired active blob key")
+	}
+}
+
+func TestRuntimeMutationErrorsIncludeStableCodes(t *testing.T) {
+	resp := httptest.NewRecorder()
+
+	writeRuntimeMutationError(resp, store.ErrRuntimeStartQuota)
+
+	if resp.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", resp.Code, http.StatusTooManyRequests)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["code"] != store.RuntimeStartQuotaExceededCode {
+		t.Fatalf("code = %q, want %q", payload["code"], store.RuntimeStartQuotaExceededCode)
 	}
 }

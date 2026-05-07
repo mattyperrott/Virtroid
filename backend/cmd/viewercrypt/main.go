@@ -159,8 +159,8 @@ func deriveKeys(sharedSecret, transcript []byte) trafficKeys {
 	salt := sha256.Sum256(transcript)
 	prk := hmacSHA256(salt[:], sharedSecret)
 	return trafficKeys{
-		clientToServer: hkdfExpand(prk, []byte("virtdroid-viewer-e2ee-v1 client-to-runtime"), 32),
-		serverToClient: hkdfExpand(prk, []byte("virtdroid-viewer-e2ee-v1 runtime-to-client"), 32),
+		clientToServer: hkdfExpand(prk, []byte("virtroid-viewer-e2ee-v1 client-to-runtime"), 32),
+		serverToClient: hkdfExpand(prk, []byte("virtroid-viewer-e2ee-v1 runtime-to-client"), 32),
 	}
 }
 

@@ -6,20 +6,20 @@
     <path
         android:fillColor="@android:color/transparent"
         android:pathData="M12,22a10,10 0,1 0,0 -20a10,10 0,0 0,0 20z"
-        android:strokeColor="@color/virtdroid_on_surface"
+        android:strokeColor="@color/virtroid_on_surface"
         android:strokeLineCap="round"
         android:strokeWidth="2" />
     <path
         android:fillColor="@android:color/transparent"
         android:pathData="M9.5,9a2.6,2.6 0,1 1,4.2 2.1c-1,0.7 -1.7,1.2 -1.7,2.4"
-        android:strokeColor="@color/virtdroid_on_surface"
+        android:strokeColor="@color/virtroid_on_surface"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:strokeWidth="2" />
     <path
         android:fillColor="@android:color/transparent"
         android:pathData="M12,17h0.01"
-        android:strokeColor="@color/virtdroid_on_surface"
+        android:strokeColor="@color/virtroid_on_surface"
         android:strokeLineCap="round"
         android:strokeWidth="3" />
 </vector>

@@ -31,7 +31,7 @@
                 android:tint="@color/v_text_primary" />
             <TextView
                 android:id="@+id/text_nav_title"
-                style="@style/VirtdroidText.NavTitle"
+                style="@style/VirtroidText.NavTitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -60,7 +60,7 @@
                 android:paddingBottom="160dp">
                 <TextView
                     android:id="@+id/label_identity"
-                    style="@style/VirtdroidText.SectionHeading"
+                    style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="IDENTITY"
@@ -90,7 +90,7 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_threat_model"
-                    style="@style/VirtdroidText.SectionHeading"
+                    style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="THREAT MODEL"
@@ -119,13 +119,13 @@
                         android:layout_marginStart="8dp">
                         <TextView
                             android:id="@+id/text_standard_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Standard Persistent" />
                         <TextView
                             android:id="@+id/text_standard_subtitle"
-                            style="@style/VirtdroidText.Body"
+                            style="@style/VirtroidText.Body"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Data is saved between sessions. Acts like a normal second phone."
@@ -161,7 +161,7 @@
                             android:orientation="horizontal">
                             <TextView
                                 android:id="@+id/text_ephemeral_title"
-                                style="@style/VirtdroidText.CardTitle"
+                                style="@style/VirtroidText.CardTitle"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
@@ -185,7 +185,7 @@
                         </LinearLayout>
                         <TextView
                             android:id="@+id/text_ephemeral_subtitle"
-                            style="@style/VirtdroidText.Body"
+                            style="@style/VirtroidText.Body"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="RAM-only partition. Local session state is cleared on disconnect."
@@ -208,7 +208,7 @@
                         android:padding="16dp">
                         <TextView
                             android:id="@+id/switch_audio_passthrough_label"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
@@ -235,7 +235,7 @@
                         android:padding="16dp">
                         <TextView
                             android:id="@+id/switch_camera_passthrough_label"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
@@ -262,9 +262,18 @@
         android:paddingEnd="24dp"
         android:paddingTop="20dp"
         android:paddingBottom="32dp">
+        <TextView
+            android:id="@+id/newRuntimeEntitlementText"
+            style="@style/VirtroidText.Body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:gravity="center"
+            android:text="@string/entitlement_unavailable" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/provisionRuntimeButton"
-            style="@style/VirtdroidButton.Primary"
+            style="@style/VirtroidButton.Primary"
             android:layout_width="match_parent"
             android:layout_height="60dp"
             android:text="Provision Runtime" />

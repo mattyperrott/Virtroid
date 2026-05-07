@@ -60,9 +60,9 @@ CREATE TABLE IF NOT EXISTS account_entitlements (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     source TEXT NOT NULL DEFAULT 'trial',
     status TEXT NOT NULL DEFAULT 'active',
-    runtime_limit INTEGER NOT NULL DEFAULT 1,
+    runtime_limit INTEGER NOT NULL DEFAULT 3,
     active_runtime_limit INTEGER NOT NULL DEFAULT 1,
-    runtime_starts_per_day INTEGER NOT NULL DEFAULT 5,
+    runtime_starts_per_day INTEGER NOT NULL DEFAULT 10,
     storage_bytes_limit BIGINT NOT NULL DEFAULT 1073741824,
     trial_runtime_seconds INTEGER NOT NULL DEFAULT 3600,
     expires_at TIMESTAMPTZ,
@@ -72,12 +72,26 @@ CREATE TABLE IF NOT EXISTS account_entitlements (
 
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'trial';
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
-ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_limit INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_limit INTEGER NOT NULL DEFAULT 3;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS active_runtime_limit INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_starts_per_day INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_starts_per_day INTEGER NOT NULL DEFAULT 10;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS storage_bytes_limit BIGINT NOT NULL DEFAULT 1073741824;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS trial_runtime_seconds INTEGER NOT NULL DEFAULT 3600;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE account_entitlements ALTER COLUMN runtime_limit SET DEFAULT 3;
+ALTER TABLE account_entitlements ALTER COLUMN runtime_starts_per_day SET DEFAULT 10;
+
+UPDATE account_entitlements
+SET runtime_limit = 3,
+    updated_at = NOW()
+WHERE source = 'trial'
+  AND runtime_limit = 1;
+
+UPDATE account_entitlements
+SET runtime_starts_per_day = 10,
+    updated_at = NOW()
+WHERE source = 'trial'
+  AND runtime_starts_per_day = 5;
 
 CREATE TABLE IF NOT EXISTS runtimes (
     id UUID PRIMARY KEY,

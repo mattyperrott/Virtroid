@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Virtdroid</string>
+    <string name="app_name">Virtroid</string>
 
     <string name="server_url_hint">Control plane URL</string>
     <string name="account_id_hint">Existing account ID</string>
@@ -84,6 +84,18 @@
     <string name="home_access">Access</string>
     <string name="home_empty_title">No runtimes yet</string>
     <string name="home_empty_subtitle">Provision your first cloud phone to get started.</string>
+    <string name="entitlement_trial_title">Trial: %1$d runtimes, %2$d starts/day</string>
+    <string name="entitlement_plan_title">%1$s: %2$d runtimes, %3$d starts/day</string>
+    <string name="entitlement_trial_title_fallback">Trial runtime allowance</string>
+    <string name="entitlement_detail">%1$d of %2$d runtimes used • %3$d starts left today</string>
+    <string name="entitlement_detail_fallback">Runtime allowance loading…</string>
+    <string name="entitlement_unavailable">Runtime allowance is unavailable.</string>
+    <string name="entitlement_required">Storage or plan setup is required before provisioning runtimes.</string>
+    <string name="entitlement_runtime_quota_reached">Runtime limit reached for this account.</string>
+    <string name="entitlement_active_runtime_limit">Stop the active runtime before starting another one.</string>
+    <string name="entitlement_start_quota_reached">Daily runtime start limit reached.</string>
+    <string name="entitlement_profile_not_allowed">This runtime profile is not available yet.</string>
+    <string name="entitlement_no_ready_host">No runtime node is ready right now.</string>
 
     <string name="bottom_runtimes">Runtimes</string>
     <string name="bottom_security">Security</string>
@@ -171,6 +183,7 @@
     <string name="new_runtime_rotation_title">Identity Rotation</string>
     <string name="new_runtime_rotation_body">Automatic per session</string>
     <string name="new_runtime_audio_passthrough">Audio Passthrough</string>
+    <string name="new_runtime_camera_passthrough_unavailable">Camera Passthrough (not available)</string>
     <string name="new_runtime_close">Close</string>
     <string name="new_runtime_missing_access">Link this device to an account before creating runtimes.</string>
 
@@ -272,7 +285,7 @@
     <string name="unlock_use_passphrase">USE PASSPHRASE INSTEAD</string>
     <string name="unlock_enter_passphrase">Enter passphrase</string>
     <string name="unlock_continue">Unlock</string>
-    <string name="biometric_unlock_title">Unlock Virtdroid</string>
+    <string name="biometric_unlock_title">Unlock Virtroid</string>
     <string name="biometric_unlock_subtitle">Use biometrics or continue with PIN.</string>
     <string name="biometric_unlock_use_pin">Use PIN</string>
 
@@ -281,7 +294,7 @@
     <string name="system_logs_filter_all">All</string>
     <string name="system_logs_filter_errors">Errors</string>
     <string name="system_logs_filter_warn">Warn</string>
-    <string name="system_logs_path">/var/log/virtdroid.log</string>
+    <string name="system_logs_path">/var/log/virtroid.log</string>
     <string name="system_logs_copy">Copy logs</string>
     <string name="system_logs_copied">Logs copied</string>
     <string name="system_logs_empty">No matching app logs yet.</string>

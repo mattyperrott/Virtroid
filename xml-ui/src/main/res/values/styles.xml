@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style
-        name="VirtdroidText">
+        name="VirtroidText">
         <item
             name="android:fontFamily">
             sans
@@ -16,7 +16,7 @@
         </item>
     </style>
     <style
-        name="VirtdroidText.Mono">
+        name="VirtroidText.Mono">
         <item
             name="android:fontFamily">
             monospace

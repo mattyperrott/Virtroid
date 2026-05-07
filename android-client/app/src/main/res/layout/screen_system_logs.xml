@@ -35,7 +35,7 @@
             android:orientation="vertical">
 
             <TextView
-                style="@style/VirtdroidText.NavTitle"
+                style="@style/VirtroidText.NavTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/system_logs_title" />
@@ -93,7 +93,7 @@
 
         <TextView
             android:id="@+id/filterAllButton"
-            style="@style/VirtdroidFilterChip"
+            style="@style/VirtroidFilterChip"
             android:layout_width="0dp"
             android:layout_height="40dp"
             android:layout_marginEnd="10dp"
@@ -103,7 +103,7 @@
 
         <TextView
             android:id="@+id/filterErrorsButton"
-            style="@style/VirtdroidFilterChip"
+            style="@style/VirtroidFilterChip"
             android:layout_width="0dp"
             android:layout_height="40dp"
             android:layout_marginEnd="10dp"
@@ -114,7 +114,7 @@
 
         <TextView
             android:id="@+id/filterWarnButton"
-            style="@style/VirtdroidFilterChip"
+            style="@style/VirtroidFilterChip"
             android:layout_width="0dp"
             android:layout_height="40dp"
             android:layout_weight="1"

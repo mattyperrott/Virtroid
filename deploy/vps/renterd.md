@@ -1,4 +1,4 @@
-# Virtdroid renterd blob storage
+# Virtroid renterd blob storage
 
 This deployment keeps `NODE_BLOB_STORE_KIND=local-disk` until renterd is fully
 configured, funded, synced, and has active contracts. Do not switch live runtime
@@ -47,7 +47,7 @@ RENTERD_SEED=<user-owned Sia wallet seed>
 
 NODE_SIA_RENTERD_WORKER_URL=http://renterd:9980
 NODE_SIA_RENTERD_PASSWORD=<same API password>
-NODE_SIA_RENTERD_BUCKET=virtdroid
+NODE_SIA_RENTERD_BUCKET=virtroid
 ```
 
 The renterd seed controls the wallet used for storage contracts. Generate and
@@ -58,7 +58,7 @@ back it up outside this repository before funding it.
 ```bash
 cd /mnt/stash/virtroid/deploy/vps
 sudo docker compose --env-file .env --profile renterd up -d renterd
-sudo docker logs -f virtdroid-renterd
+sudo docker logs -f virtroid-renterd
 ```
 
 Keep the core services on `local-disk` while confirming renterd is reachable and
@@ -84,7 +84,7 @@ cd /mnt/stash/virtroid/deploy/vps
 sudo docker compose --env-file .env --profile renterd run --rm --no-deps \
   -e NODE_BLOB_PREFLIGHT=1 \
   -e NODE_BLOB_STORE_KIND=sia-renterd \
-  -e NODE_RUNTIME_ROOT=/tmp/virtdroid-blob-smoke \
+  -e NODE_RUNTIME_ROOT=/tmp/virtroid-blob-smoke \
   virtnoded
 ```
 
@@ -102,7 +102,7 @@ cd /mnt/stash/virtroid/deploy/vps
 sudo docker compose --env-file .env --profile renterd run --rm \
   -e NODE_BLOB_SMOKE_TEST=1 \
   -e NODE_BLOB_STORE_KIND=sia-renterd \
-  -e NODE_RUNTIME_ROOT=/tmp/virtdroid-blob-smoke \
+  -e NODE_RUNTIME_ROOT=/tmp/virtroid-blob-smoke \
   virtnoded
 ```
 

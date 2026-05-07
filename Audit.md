@@ -20,29 +20,29 @@ Assumption:
 | ID | Severity | Finding | Primary Owner | Evidence |
 |---|---|---|---|---|
 | SR-01 | Critical | Public auth/authz is mostly identifier-based (`account_id`, `device_id`) rather than real authenticated user/device sessions | Backend | `backend/internal/httpapi/api.go:32-52,159-208,340-375,471-560,594-626`; `backend/internal/store/store.go:578-635,1284-1326` |
-| SR-02 | Critical | Cleartext transport is enabled for API, relay, node-control traffic, and default app base URLs | Platform, Backend, Android | `android-client/app/src/main/AndroidManifest.xml:6-13`; `android-client/app/src/main/java/io/virtdroid/client/data/SessionStore.kt:10-12,40`; `backend/internal/config/config.go:34-40,64-79`; `backend/internal/httpapi/api.go:830-895`; `deploy/vps/docker-compose.yml:28-31,45-51` |
+| SR-02 | Critical | Cleartext transport is enabled for API, relay, node-control traffic, and default app base URLs | Platform, Backend, Android | `android-client/app/src/main/AndroidManifest.xml:6-13`; `android-client/app/src/main/java/io/virtroid/client/data/SessionStore.kt:10-12,40`; `backend/internal/config/config.go:34-40,64-79`; `backend/internal/httpapi/api.go:830-895`; `deploy/vps/docker-compose.yml:28-31,45-51` |
 | SR-03 | Critical | `virtnoded` is effectively host-root infrastructure: root user, Docker socket, `/dev` mount, privileged runtime containers | Platform | `deploy/vps/docker-compose.yml:39-40,58-61`; `backend/cmd/virtnoded/main.go:945-967`; `backend/Dockerfile:21-26` |
 | SR-04 | Critical | User-controlled `android_image` can be pulled and run as a privileged container | Backend, Platform | `backend/internal/httpapi/api.go:229-308`; `backend/internal/store/store.go:1413-1444`; `backend/cmd/virtnoded/main.go:844-897,938-940` |
 | SR-05 | High | Internal trust boundary is one shared secret, hard-coded in deploy, with public listeners and self-asserted host identity/capabilities | Backend, Platform | `backend/internal/httpapi/api.go:629-693,798-803`; `backend/internal/config/config.go:40,75`; `deploy/vps/docker-compose.yml:30-31,46-51`; `backend/cmd/virtnoded/main.go:250-253,416-447` |
 | SR-06 | High | Blob encryption is not end-to-end: control plane stores active blob key, node receives raw key, storage is local-disk on same VPS | Backend, Security, Android | `backend/internal/store/schema.sql:52-55`; `backend/internal/store/store.go:687-709,755,804,1259`; `backend/cmd/virtnoded/blobstore.go:75-80,269-280,317-355,530-650`; `Markdown-Specification.txt:150-191` |
 | SR-07 | High | Session relay model uses plaintext replayable tokens and weak ownership binding | Backend | `backend/internal/store/schema.sql:96-104`; `backend/internal/store/store.go:1141-1185,1284-1326`; `backend/internal/httpapi/api.go:520-560` |
-| SR-08 | High | Android local secret handling is weak: salted SHA-256 app lock, in-process unlock cache, plaintext prefs for identifiers, no screen privacy | Android | `android-client/app/src/main/java/io/virtdroid/client/security/AppLockStore.kt:12-33,55-58,74-75`; `android-client/app/src/main/java/io/virtdroid/client/security/IdentityPasswordStore.kt:32-68`; `android-client/app/src/main/java/io/virtdroid/client/data/SessionStore.kt:6-20`; `android-client/app/src/main/java/io/virtdroid/client/UnlockActivity.kt:64-85`; `android-client/app/src/main/java/io/virtdroid/client/SessionActivity.kt:76-81` |
-| SR-09 | Medium | Security/UI claims exceed implementation: “Verified”, “Encrypted”, “Direct”, upload/camera, trusted-device UX are incomplete or misleading | Android, Product | `android-client/app/src/main/res/values/strings.xml:102-109,122-149,175-186`; `android-client/app/src/main/java/io/virtdroid/client/OnboardingActivity.kt:165-177,246-250`; `android-client/app/src/main/java/io/virtdroid/client/SessionActivity.kt:104-113`; `android-client/app/src/main/java/io/virtdroid/client/NewRuntimeActivity.kt:68-85` |
+| SR-08 | High | Android local secret handling is weak: salted SHA-256 app lock, in-process unlock cache, plaintext prefs for identifiers, no screen privacy | Android | `android-client/app/src/main/java/io/virtroid/client/security/AppLockStore.kt:12-33,55-58,74-75`; `android-client/app/src/main/java/io/virtroid/client/security/IdentityPasswordStore.kt:32-68`; `android-client/app/src/main/java/io/virtroid/client/data/SessionStore.kt:6-20`; `android-client/app/src/main/java/io/virtroid/client/UnlockActivity.kt:64-85`; `android-client/app/src/main/java/io/virtroid/client/SessionActivity.kt:76-81` |
+| SR-09 | Medium | Security/UI claims exceed implementation: “Verified”, “Encrypted”, “Direct”, upload/camera, trusted-device UX are incomplete or misleading | Android, Product | `android-client/app/src/main/res/values/strings.xml:102-109,122-149,175-186`; `android-client/app/src/main/java/io/virtroid/client/OnboardingActivity.kt:165-177,246-250`; `android-client/app/src/main/java/io/virtroid/client/SessionActivity.kt:104-113`; `android-client/app/src/main/java/io/virtroid/client/NewRuntimeActivity.kt:68-85` |
 | SR-10 | Medium | Runtime viewer ports are still published on `0.0.0.0` even though relay mediation exists | Platform, Backend | `backend/cmd/virtnoded/main.go:941-944,960-964`; `backend/internal/store/store.go:26-27,1446-1475` |
-| SR-11 | High | Secrets are embedded in deploy files and sensitive signing material appears to live in the repo tree | Platform, Android | `deploy/vps/docker-compose.yml:7-9,29-31,45-51`; `android-client/app/build.gradle.kts:35-58`; `android-client/release.keystore`; `android-client/signing/virtdroid-release.jks` |
+| SR-11 | High | Secrets are embedded in deploy files and sensitive signing material appears to live in the repo tree | Platform, Android | `deploy/vps/docker-compose.yml:7-9,29-31,45-51`; `android-client/app/build.gradle.kts:35-58`; `android-client/release.keystore`; `android-client/signing/virtroid-release.jks` |
 | SR-12 | Medium | No automated tests or security regression coverage | Backend, Android | No `_test.go`, `src/test`, or `src/androidTest` files found |
 
 ### **Deep-Dive by Area**
 
 #### **1. Architecture**
 - Current deployed model is single VPS:
-  - `virtdroidd` control plane on `:8080`
+  - `virtroidd` control plane on `:8080`
   - `virtnoded` node/relay on `:8090`
   - `postgres`
   - privileged ReDroid runtime containers launched by node
 - Runtime state lives in:
   - Postgres metadata
-  - `/srv/virtdroid/runtimes/...`
+  - `/srv/virtroid/runtimes/...`
   - `_blobstore/local` chunk storage on the same VPS
 - The project is architecturally a control plane + node + relay + Android client, but operationally it is still a one-box system with a very broad trust boundary.
 
@@ -75,7 +75,7 @@ Assumption:
 - Relay protocol:
   - TCP socket to node relay
   - HTTP `CONNECT /api/v1/relay/{id}`
-  - `X-Virtdroid-Relay-Token` header
+  - `X-Virtroid-Relay-Token` header
   - node resolves target from control plane
   - node opens a tunnel into the guest’s `127.0.0.1:7007`
 - Weaknesses:

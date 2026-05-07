@@ -13,15 +13,15 @@ import (
 )
 
 const (
-	SignatureContext = "VIRTDROID-NODE-SIGNATURE-V1"
+	SignatureContext = "VIRTROID-NODE-SIGNATURE-V1"
 
-	HeaderNodeID             = "X-Virtdroid-Node-ID"
-	HeaderTimestamp          = "X-Virtdroid-Node-Timestamp"
-	HeaderNonce              = "X-Virtdroid-Node-Nonce"
-	HeaderBodySHA256         = "X-Virtdroid-Node-Body-SHA256"
-	HeaderSignature          = "X-Virtdroid-Node-Signature"
-	HeaderPublicKey          = "X-Virtdroid-Node-Public-Key"
-	HeaderRegistrationSecret = "X-Virtdroid-Node-Registration-Secret"
+	HeaderNodeID             = "X-Virtroid-Node-ID"
+	HeaderTimestamp          = "X-Virtroid-Node-Timestamp"
+	HeaderNonce              = "X-Virtroid-Node-Nonce"
+	HeaderBodySHA256         = "X-Virtroid-Node-Body-SHA256"
+	HeaderSignature          = "X-Virtroid-Node-Signature"
+	HeaderPublicKey          = "X-Virtroid-Node-Public-Key"
+	HeaderRegistrationSecret = "X-Virtroid-Node-Registration-Secret"
 )
 
 var (

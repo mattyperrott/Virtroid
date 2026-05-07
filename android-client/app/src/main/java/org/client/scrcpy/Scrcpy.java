@@ -406,16 +406,18 @@ public class Scrcpy extends Service {
 
         OutputStream outputStream = socket.getOutputStream();
         String request =
-                "CONNECT " + relayPath + " HTTP/1.1\r\n" +
+                "GET " + relayPath + " HTTP/1.1\r\n" +
                 "Host: " + host + ":" + port + "\r\n" +
-                "X-Virtdroid-Relay-Token: " + relayToken + "\r\n" +
+                "Connection: Upgrade\r\n" +
+                "Upgrade: virtroid-relay\r\n" +
+                "X-Virtroid-Relay-Token: " + relayToken + "\r\n" +
                 "\r\n";
         outputStream.write(request.getBytes("UTF-8"));
         outputStream.flush();
 
         InputStream inputStream = socket.getInputStream();
         String statusLine = readHttpLine(inputStream);
-        if (TextUtils.isEmpty(statusLine) || !statusLine.contains(" 200 ")) {
+        if (TextUtils.isEmpty(statusLine) || (!statusLine.contains(" 101 ") && !statusLine.contains(" 200 "))) {
             throw new IOException("relay connect failed: " + statusLine);
         }
         while (true) {

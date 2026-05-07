@@ -81,7 +81,7 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/text_title"
-                            style="@style/VirtdroidText.ScreenTitle"
+                            style="@style/VirtroidText.ScreenTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Account Identity"
@@ -99,7 +99,7 @@
                                 android:layout_marginEnd="6dp" />
                             <TextView
                                 android:id="@+id/text_active_session"
-                                style="@style/VirtdroidText.Status"
+                                style="@style/VirtroidText.Status"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="Active Local Session" />
@@ -131,13 +131,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_account_id_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Account ID" />
                         <TextView
                             android:id="@+id/item_account_id_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_missing"
@@ -179,13 +179,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_device_fingerprint_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Device Fingerprint" />
                         <TextView
                             android:id="@+id/item_device_fingerprint_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/device_missing"
@@ -293,7 +293,7 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_decentralized_storage"
-                    style="@style/VirtdroidText.SectionHeading"
+                    style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="DECENTRALIZED STORAGE"
@@ -548,7 +548,7 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_security"
-                    style="@style/VirtdroidText.SectionHeading"
+                    style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="SECURITY"
@@ -580,13 +580,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_identity_password_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Identity Password" />
                         <TextView
                             android:id="@+id/item_identity_password_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_identity_encryption_missing"
@@ -628,13 +628,13 @@
                         android:layout_marginStart="16dp">
                         <TextView
                             android:id="@+id/item_device_signing_key_title"
-                            style="@style/VirtdroidText.CardTitle"
+                            style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Device Signing Key" />
                         <TextView
                             android:id="@+id/item_device_signing_key_subtitle"
-                            style="@style/VirtdroidText.Body.Compact"
+                            style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_identity_verified"
@@ -654,7 +654,7 @@
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_danger_zone"
-                    style="@style/VirtdroidText.SectionHeading"
+                    style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="DANGER ZONE"
