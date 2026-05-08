@@ -46,7 +46,6 @@ class OnboardingActivity : AppCompatActivity() {
     private var accountScrambleJob: Job? = null
     private var deviceScrambleJob: Job? = null
     private var identityPreviewJob: Job? = null
-    private var activeDotPulseJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,7 +93,6 @@ class OnboardingActivity : AppCompatActivity() {
         accountScrambleJob?.cancel()
         deviceScrambleJob?.cancel()
         identityPreviewJob?.cancel()
-        activeDotPulseJob?.cancel()
         super.onDestroy()
     }
 
@@ -277,6 +275,21 @@ class OnboardingActivity : AppCompatActivity() {
         )
     }
 
+    private suspend fun ensurePreviewIdentity(): PendingIdentity {
+        identityPreviewJob?.cancel()
+        val accountId = pendingAccountId ?: newAccountId().also {
+            pendingAccountId = it
+            renderProvisionedAccount(it)
+        }
+        val deviceId = pendingDeviceId ?: deriveDeviceId(accountId).also {
+            pendingDeviceId = it
+            renderProvisionedDevice(it)
+        }
+        return PendingIdentity(accountId, deviceId)
+    }
+
+    private fun newAccountId(): String = UUID.randomUUID().toString()
+
     private fun startIdentityPreviewSequence() {
         if (identityPreviewJob?.isActive == true || sessionStore.hasAccess()) {
             return
@@ -302,21 +315,6 @@ class OnboardingActivity : AppCompatActivity() {
             }
         }
     }
-
-    private suspend fun ensurePreviewIdentity(): PendingIdentity {
-        identityPreviewJob?.cancel()
-        val accountId = pendingAccountId ?: newAccountId().also {
-            pendingAccountId = it
-            renderProvisionedAccount(it)
-        }
-        val deviceId = pendingDeviceId ?: deriveDeviceId(accountId).also {
-            pendingDeviceId = it
-            renderProvisionedDevice(it)
-        }
-        return PendingIdentity(accountId, deviceId)
-    }
-
-    private fun newAccountId(): String = UUID.randomUUID().toString()
 
     private suspend fun deriveDeviceId(accountId: String): String =
         withContext(Dispatchers.IO) {
@@ -376,14 +374,9 @@ class OnboardingActivity : AppCompatActivity() {
         }
 
         val job = lifecycleScope.launch {
-            val stable = getString(R.string.onboarding_not_provisioned)
             while (isActive) {
-                repeat(4) {
-                    target.text = scrambled(stable)
-                    delay(SCRAMBLE_FRAME_MS)
-                }
-                target.text = stable
-                delay(SCRAMBLE_STABLE_MS)
+                target.text = randomPlaceholder()
+                delay(SCRAMBLE_FRAME_MS)
             }
         }
         if (isAccount) {
@@ -393,13 +386,14 @@ class OnboardingActivity : AppCompatActivity() {
         }
     }
 
-    private fun scrambled(template: String): String {
-        return template.map { char ->
-            when {
-                char.isWhitespace() -> char
-                else -> SCRAMBLE_CHARS[Random.nextInt(SCRAMBLE_CHARS.length)]
+    private fun randomPlaceholder(): String {
+        return List(4) {
+            buildString {
+                repeat(4) {
+                    append(SCRAMBLE_CHARS[Random.nextInt(SCRAMBLE_CHARS.length)])
+                }
             }
-        }.joinToString("")
+        }.joinToString("-")
     }
 
     private fun showProvisioningLog() {
@@ -425,27 +419,10 @@ class OnboardingActivity : AppCompatActivity() {
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
         }
-        startActiveDotPulse()
-    }
-
-    private fun startActiveDotPulse() {
-        if (activeDotPulseJob?.isActive == true) {
-            return
-        }
-        activeDotPulseJob = lifecycleScope.launch {
-            while (isActive) {
-                binding.activeMilestoneDot.animate().alpha(0.35f).setDuration(420L).start()
-                delay(420L)
-                binding.activeMilestoneDot.animate().alpha(1f).setDuration(420L).start()
-                delay(420L)
-            }
-        }
     }
 
     private fun markPreviousMilestone(title: String, descriptor: String) {
-        binding.previousMilestoneTitleText.text = title
-        binding.previousMilestoneSubtitleText.text = descriptor
-        binding.previousMilestoneStatusText.text = getString(R.string.provisioning_done)
+        binding.activeMilestoneEventTrailText.text = "[ok] $title - $descriptor"
     }
 
     private fun updateActiveMilestone(title: String, command: String, detail: String) {
@@ -480,9 +457,8 @@ class OnboardingActivity : AppCompatActivity() {
     )
 
     private companion object {
-        const val SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%+=?"
-        const val SCRAMBLE_FRAME_MS = 70L
-        const val SCRAMBLE_STABLE_MS = 320L
+        const val SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        const val SCRAMBLE_FRAME_MS = 90L
         const val PREVIEW_ACCOUNT_DELAY_MS = 2_000L
         const val PREVIEW_DEVICE_DELAY_MS = 1_500L
         const val STEP_VISUAL_DELAY_MS = 420L

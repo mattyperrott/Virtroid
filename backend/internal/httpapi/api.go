@@ -1143,6 +1143,7 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 		ADBPort            *int       `json:"adb_port"`
 		LastError          *string    `json:"last_error"`
 		BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at"`
+		LoadAverage        *float64   `json:"load_average"`
 		ClearWipeRequested bool       `json:"clear_wipe_requested"`
 		ActivePersonaJSON  *string    `json:"active_persona_json"`
 		ClearActivePersona bool       `json:"clear_active_persona"`
@@ -1169,6 +1170,7 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 		ADBPort:            req.ADBPort,
 		LastError:          req.LastError,
 		BlobLastSnapshotAt: req.BlobLastSnapshotAt,
+		LoadAverage:        req.LoadAverage,
 		ClearWipeRequested: req.ClearWipeRequested,
 		ActivePersonaJSON:  req.ActivePersonaJSON,
 		ClearActivePersona: req.ClearActivePersona,
