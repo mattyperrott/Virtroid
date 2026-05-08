@@ -207,6 +207,68 @@ func TestGetAccountEntitlementSummaryReportsRemainingTrialUse(t *testing.T) {
 	}
 }
 
+func TestStartRuntimeRotatesPersonaForStoppedRuntime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	hostID := "host-1"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT host_id, viewer_port, desired_state FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(sqlmock.NewRows([]string{"host_id", "viewer_port", "desired_state"}).
+			AddRow(hostID, 46000, "stopped"))
+	mock.ExpectQuery("SELECT account_id, source, status").
+		WithArgs(accountID).
+		WillReturnRows(entitlementRows(accountID, now))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtime_start_events").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT id FROM hosts").
+		WithArgs(hostID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(hostID))
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(accountID, runtimeID, hostID, sql.NullInt32{Int32: 46000, Valid: true}, true).
+		WillReturnRows(runtimeStartRows(now, runtimeID, accountID, hostID, 2, 46000))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(runtimeID, "user", "info", "Runtime start requested on host host-1. persona_version=2.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO runtime_start_events").
+		WithArgs(accountID, runtimeID).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	runtime, err := st.StartRuntime(context.Background(), accountID, runtimeID)
+	if err != nil {
+		t.Fatalf("StartRuntime returned error: %v", err)
+	}
+	if runtime.PersonaVersion != 2 {
+		t.Fatalf("persona_version = %d, want 2", runtime.PersonaVersion)
+	}
+	if runtime.ActivePersonaJSON != nil {
+		t.Fatalf("active_persona_json = %q, want nil", *runtime.ActivePersonaJSON)
+	}
+	if runtime.ContainerName != nil {
+		t.Fatalf("container_name = %q, want nil", *runtime.ContainerName)
+	}
+	if runtime.ADBPort != nil {
+		t.Fatalf("adb_port = %d, want nil", *runtime.ADBPort)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestNormalizedCreateInputRejectsUnsafeProfile(t *testing.T) {
 	if _, err := normalizedCreateInput(CreateRuntimeInput{AndroidImage: "attacker/image:latest"}); !errors.Is(err, ErrRuntimeProfile) {
 		t.Fatalf("custom android image error = %v, want %v", err, ErrRuntimeProfile)
@@ -444,4 +506,102 @@ func runtimeRows(now time.Time, viewerPort any) *sqlmock.Rows {
 		now,
 		now,
 	)
+}
+
+func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, personaVersion int, viewerPort int) *sqlmock.Rows {
+	return sqlmock.NewRows(runtimeColumnNames()).AddRow(
+		runtimeID,
+		accountID,
+		"Primary runtime",
+		"starting",
+		"running",
+		"connecting",
+		hostID,
+		personaVersion,
+		nil,
+		defaultAndroidImage,
+		"android-14",
+		720,
+		1600,
+		320,
+		true,
+		"disabled",
+		"upload-only",
+		true,
+		7,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		viewerPort,
+		false,
+		nil,
+		nil,
+		now,
+		now,
+	)
+}
+
+func entitlementRows(accountID string, now time.Time) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"account_id",
+		"source",
+		"status",
+		"runtime_limit",
+		"active_runtime_limit",
+		"runtime_starts_per_day",
+		"storage_bytes_limit",
+		"trial_runtime_seconds",
+		"expires_at",
+		"created_at",
+		"updated_at",
+	}).AddRow(
+		accountID,
+		"trial",
+		"active",
+		3,
+		1,
+		10,
+		int64(1073741824),
+		3600,
+		nil,
+		now,
+		now,
+	)
+}
+
+func runtimeColumnNames() []string {
+	return []string{
+		"id",
+		"account_id",
+		"name",
+		"status",
+		"desired_state",
+		"connection_status",
+		"host_id",
+		"persona_version",
+		"active_persona_json",
+		"android_image",
+		"android_version",
+		"width_px",
+		"height_px",
+		"density_dpi",
+		"audio_enabled",
+		"camera_mode",
+		"file_mode",
+		"blob_auto_snapshot",
+		"blob_retain_days",
+		"blob_store_kind",
+		"blob_manifest_json",
+		"blob_last_snapshot_at",
+		"container_name",
+		"adb_port",
+		"viewer_port",
+		"wipe_requested",
+		"last_error",
+		"deleted_at",
+		"created_at",
+		"updated_at",
+	}
 }

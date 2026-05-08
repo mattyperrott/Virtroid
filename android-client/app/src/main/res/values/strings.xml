@@ -169,6 +169,8 @@
     <string name="runtime_provisioning_event_channel">[ok] Establishing secure channel</string>
     <string name="runtime_provisioning_event_handoff">[ok] Finalizing session handoff</string>
     <string name="runtime_provisioning_event_ready">[ok] Runtime ready</string>
+    <string name="runtime_provisioning_event_wait_ready">[wait] Waiting for runtime ready</string>
+    <string name="runtime_provisioning_event_runtime_log">[node] %1$s</string>
     <string name="runtime_provisioning_event_error">[error] Provisioning halted</string>
 
     <string name="new_runtime_title">New Runtime</string>

@@ -813,13 +813,19 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				LastError:        stringPtr(""),
 			})
 		}
-
 		return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
 			Status:           "running",
 			ConnectionStatus: "online",
 			ContainerName:    stringPtr(containerName),
 			ADBPort:          &adbPort,
 		})
+	}
+	if hadContainer {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Removing stale offline container before persona rotation.")
+		if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+			return fmt.Errorf("remove stale offline container: %w", err)
+		}
+		hadContainer = false
 	}
 
 	restoredSnapshot, err := n.prepareSessionData(runtime)

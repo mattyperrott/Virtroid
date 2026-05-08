@@ -336,7 +336,9 @@
                     android:layout_marginTop="8dp"
                     android:fontFamily="monospace"
                     android:includeFontPadding="false"
+                    android:ellipsize="end"
                     android:lineSpacingExtra="3dp"
+                    android:maxLines="1"
                     android:textColor="@color/v_text_muted"
                     android:textSize="10sp" />
             </LinearLayout>
