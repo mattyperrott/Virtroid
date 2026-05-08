@@ -21,17 +21,22 @@ class AppLockStore(context: Context) {
     fun saveCredential(mode: LockMode, secret: String) {
         val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val salt = Base64.encodeToString(saltBytes, B64_FLAGS)
+        val vaultSalt = newVaultSalt()
         val hash = deriveCredentialHash(saltBytes, secret)
         prefs.edit()
             .putString(KEY_MODE, mode.value)
             .putString(KEY_SALT, salt)
+            .putString(KEY_VAULT_SALT, vaultSalt)
             .putString(KEY_HASH, hash)
             .putString(KEY_KDF, KDF_VERSION)
             .putBoolean(KEY_ENABLED, true)
             .remove(KEY_FAILED_ATTEMPTS)
             .remove(KEY_LOCKED_UNTIL)
             .apply()
-        unlockedInProcess = true
+        if (!SecureLocalVault.get(appContext).unlockOrCreate(secret, vaultSalt)) {
+            throw IllegalStateException("could not initialize secure local vault")
+        }
+        LocalVaultMigration.migrateUnlocked(appContext)
         markUnlocked()
         appLogs.info("App lock credential configured", "auth")
     }
@@ -54,10 +59,16 @@ class AppLockStore(context: Context) {
 
         if (matches) {
             clearFailures()
-            markUnlocked()
             if (kdfVersion != KDF_VERSION) {
                 saveCredential(mode, secret)
+                return true
             }
+            if (!unlockVault(secret)) {
+                appLogs.error("Secure local vault could not be decrypted", "auth")
+                return false
+            }
+            markUnlocked()
+            LocalVaultMigration.migrateUnlocked(appContext)
         } else {
             recordFailure()
         }
@@ -66,14 +77,21 @@ class AppLockStore(context: Context) {
 
     fun isUnlocked(): Boolean = unlockedInProcess
 
-    fun markUnlocked() {
+    fun markUnlocked(): Boolean {
+        val vault = SecureLocalVault.get(appContext)
+        if (vault.exists && !vault.isUnlocked) {
+            appLogs.warn("Unlock rejected because secure local vault is still locked", "auth")
+            return false
+        }
         unlockedInProcess = true
         prefs.edit().putLong(KEY_LAST_UNLOCK_AT, System.currentTimeMillis()).apply()
         appLogs.info("App unlock succeeded", "auth")
+        return true
     }
 
     fun clearUnlocked() {
         unlockedInProcess = false
+        SecureLocalVault.get(appContext).lock()
     }
 
     fun isEnabled(): Boolean {
@@ -81,6 +99,10 @@ class AppLockStore(context: Context) {
     }
 
     fun setEnabled(enabled: Boolean) {
+        if (!enabled && SecureLocalVault.get(appContext).isUnlocked) {
+            LocalVaultMigration.exportUnlockedToLegacy(appContext)
+            SecureLocalVault.get(appContext).destroy()
+        }
         prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
         if (!enabled) {
             clearUnlocked()
@@ -88,6 +110,7 @@ class AppLockStore(context: Context) {
     }
 
     fun clearCredential() {
+        SecureLocalVault.get(appContext).destroy()
         prefs.edit().clear().apply()
         clearUnlocked()
         appLogs.warn("App lock credential cleared with local identity reset", "auth")
@@ -128,6 +151,8 @@ class AppLockStore(context: Context) {
         get() = prefs.getString(KEY_MODE, null)?.let(LockMode::fromValue)
         set(value) = prefs.edit().putString(KEY_MODE, value?.value).apply()
 
+    fun canUseBiometricUnlock(): Boolean = false
+
     private val credentialHash: String?
         get() = prefs.getString(KEY_HASH, null)
 
@@ -136,6 +161,24 @@ class AppLockStore(context: Context) {
 
     private val kdfVersion: String?
         get() = prefs.getString(KEY_KDF, null)
+
+    private fun unlockVault(secret: String): Boolean {
+        val vaultSalt = existingOrNewVaultSalt()
+        val vault = SecureLocalVault.get(appContext)
+        return vault.unlockOrCreate(secret, vaultSalt)
+    }
+
+    private fun existingOrNewVaultSalt(): String {
+        prefs.getString(KEY_VAULT_SALT, null)?.takeIf { it.isNotBlank() }?.let { return it }
+        val salt = newVaultSalt()
+        prefs.edit().putString(KEY_VAULT_SALT, salt).apply()
+        return salt
+    }
+
+    private fun newVaultSalt(): String {
+        val bytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        return Base64.encodeToString(bytes, B64_FLAGS)
+    }
 
     private fun deriveCredentialHash(salt: ByteArray, secret: String): String {
         val spec = PBEKeySpec(secret.toCharArray(), salt, PBKDF2_ITERATIONS, KEY_BYTES * 8)
@@ -196,6 +239,7 @@ class AppLockStore(context: Context) {
         const val KEY_MODE = "lock_mode"
         const val KEY_ENABLED = "lock_enabled"
         const val KEY_SALT = "lock_salt"
+        const val KEY_VAULT_SALT = "lock_vault_salt"
         const val KEY_HASH = "lock_hash"
         const val KEY_KDF = "lock_kdf"
         const val KEY_FAILED_ATTEMPTS = "lock_failed_attempts"

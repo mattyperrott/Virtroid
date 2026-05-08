@@ -167,7 +167,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
             appLockStore.saveCredential(AppLockStore.LockMode.PIN, pin)
         }
         appLockStore.setEnabled(true)
-        appSettings.biometricUnlockEnabled = true
+        appSettings.biometricUnlockEnabled = false
         appLogs.info("App lock enabled", "auth")
         renderSettings()
     }

@@ -3,11 +3,14 @@ package io.virtroid.client.data
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import io.virtroid.client.security.SecureLocalVault
 import java.io.File
 
 class AppSettingsStore(private val context: Context) {
-    private val prefs = context.applicationContext
+    private val appContext = context.applicationContext
+    private val prefs = appContext
         .getSharedPreferences("virtroid-app-settings", Context.MODE_PRIVATE)
+    private val vault = SecureLocalVault.get(appContext)
 
     var biometricUnlockEnabled: Boolean
         get() = prefs.getBoolean(KEY_BIOMETRIC_UNLOCK_ENABLED, true)
@@ -34,20 +37,20 @@ class AppSettingsStore(private val context: Context) {
         set(value) = prefs.edit().putLong(KEY_UI_INACTIVITY_TIMEOUT_MS, value.coerceAtLeast(30_000L)).apply()
 
     var autoDeleteMetadata: Boolean
-        get() = prefs.getBoolean(KEY_AUTO_DELETE_METADATA, true)
-        set(value) = prefs.edit().putBoolean(KEY_AUTO_DELETE_METADATA, value).apply()
+        get() = protectedBoolean(KEY_AUTO_DELETE_METADATA, true)
+        set(value) = putProtectedBoolean(KEY_AUTO_DELETE_METADATA, value)
 
     var clearPostTransferArtifacts: Boolean
-        get() = prefs.getBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, true)
-        set(value) = prefs.edit().putBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, value).apply()
+        get() = protectedBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, true)
+        set(value) = putProtectedBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, value)
 
     var autoClearClipboard: Boolean
-        get() = prefs.getBoolean(KEY_AUTO_CLEAR_CLIPBOARD, true)
-        set(value) = prefs.edit().putBoolean(KEY_AUTO_CLEAR_CLIPBOARD, value).apply()
+        get() = protectedBoolean(KEY_AUTO_CLEAR_CLIPBOARD, true)
+        set(value) = putProtectedBoolean(KEY_AUTO_CLEAR_CLIPBOARD, value)
 
     var lastSessionEndReason: String
-        get() = prefs.getString(KEY_LAST_SESSION_END_REASON, SESSION_END_NEVER).orEmpty()
-        set(value) = prefs.edit().putString(KEY_LAST_SESSION_END_REASON, value.ifBlank { SESSION_END_NEVER }).apply()
+        get() = protectedString(KEY_LAST_SESSION_END_REASON, SESSION_END_NEVER).orEmpty()
+        set(value) = putProtectedString(KEY_LAST_SESSION_END_REASON, value.ifBlank { SESSION_END_NEVER })
 
     fun autoLockLabel(): String = when (autoLockTimeoutMs) {
         AUTO_LOCK_IMMEDIATE_MS -> "Immediately"
@@ -93,6 +96,85 @@ class AppSettingsStore(private val context: Context) {
     fun clearClipboard() {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboard?.setPrimaryClip(ClipData.newPlainText("", ""))
+    }
+
+    fun migrateToVaultIfUnlocked() {
+        if (!vault.isUnlocked) {
+            return
+        }
+        if (prefs.contains(KEY_AUTO_DELETE_METADATA)) {
+            vault.putBoolean(NAMESPACE, KEY_AUTO_DELETE_METADATA, prefs.getBoolean(KEY_AUTO_DELETE_METADATA, true))
+        }
+        if (prefs.contains(KEY_CLEAR_POST_TRANSFER_ARTIFACTS)) {
+            vault.putBoolean(
+                NAMESPACE,
+                KEY_CLEAR_POST_TRANSFER_ARTIFACTS,
+                prefs.getBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, true),
+            )
+        }
+        if (prefs.contains(KEY_AUTO_CLEAR_CLIPBOARD)) {
+            vault.putBoolean(NAMESPACE, KEY_AUTO_CLEAR_CLIPBOARD, prefs.getBoolean(KEY_AUTO_CLEAR_CLIPBOARD, true))
+        }
+        if (prefs.contains(KEY_LAST_SESSION_END_REASON)) {
+            vault.putString(NAMESPACE, KEY_LAST_SESSION_END_REASON, prefs.getString(KEY_LAST_SESSION_END_REASON, null))
+        }
+        prefs.edit()
+            .remove(KEY_AUTO_DELETE_METADATA)
+            .remove(KEY_CLEAR_POST_TRANSFER_ARTIFACTS)
+            .remove(KEY_AUTO_CLEAR_CLIPBOARD)
+            .remove(KEY_LAST_SESSION_END_REASON)
+            .apply()
+    }
+
+    fun exportVaultToLegacyIfUnlocked() {
+        if (!vault.isUnlocked) {
+            return
+        }
+        prefs.edit()
+            .putBoolean(KEY_AUTO_DELETE_METADATA, vault.getBoolean(NAMESPACE, KEY_AUTO_DELETE_METADATA, true))
+            .putBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, vault.getBoolean(NAMESPACE, KEY_CLEAR_POST_TRANSFER_ARTIFACTS, true))
+            .putBoolean(KEY_AUTO_CLEAR_CLIPBOARD, vault.getBoolean(NAMESPACE, KEY_AUTO_CLEAR_CLIPBOARD, true))
+            .putString(
+                KEY_LAST_SESSION_END_REASON,
+                vault.getString(NAMESPACE, KEY_LAST_SESSION_END_REASON, SESSION_END_NEVER),
+            )
+            .apply()
+    }
+
+    private fun protectedBoolean(key: String, defaultValue: Boolean): Boolean {
+        if (vault.isUnlocked) {
+            migrateToVaultIfUnlocked()
+            return vault.getBoolean(NAMESPACE, key, defaultValue)
+        }
+        return if (vault.exists) defaultValue else prefs.getBoolean(key, defaultValue)
+    }
+
+    private fun putProtectedBoolean(key: String, value: Boolean) {
+        if (vault.isUnlocked) {
+            migrateToVaultIfUnlocked()
+            vault.putBoolean(NAMESPACE, key, value)
+            prefs.edit().remove(key).apply()
+        } else {
+            prefs.edit().putBoolean(key, value).apply()
+        }
+    }
+
+    private fun protectedString(key: String, defaultValue: String): String? {
+        if (vault.isUnlocked) {
+            migrateToVaultIfUnlocked()
+            return vault.getString(NAMESPACE, key, defaultValue)
+        }
+        return if (vault.exists) defaultValue else prefs.getString(key, defaultValue)
+    }
+
+    private fun putProtectedString(key: String, value: String) {
+        if (vault.isUnlocked) {
+            migrateToVaultIfUnlocked()
+            vault.putString(NAMESPACE, key, value)
+            prefs.edit().remove(key).apply()
+        } else {
+            prefs.edit().putString(key, value).apply()
+        }
     }
 
     private fun deleteContents(target: File): Int {
@@ -156,5 +238,6 @@ class AppSettingsStore(private val context: Context) {
         private const val KEY_CLEAR_POST_TRANSFER_ARTIFACTS = "clear_post_transfer_artifacts"
         private const val KEY_AUTO_CLEAR_CLIPBOARD = "auto_clear_clipboard"
         private const val KEY_LAST_SESSION_END_REASON = "last_session_end_reason"
+        private const val NAMESPACE = "app_settings"
     }
 }

@@ -14,8 +14,10 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
+import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenPinAuthenticationBinding
 import io.virtroid.client.security.AppLockStore
+import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
 
 class UnlockActivity : AppCompatActivity() {
@@ -133,6 +135,7 @@ class UnlockActivity : AppCompatActivity() {
 
     private fun renderBiometric() {
         val canUseBiometric = appSettings.biometricUnlockEnabled &&
+            appLockStore.canUseBiometricUnlock() &&
             appLockStore.mode == AppLockStore.LockMode.PIN &&
             BiometricManager.from(this).canAuthenticate(BIOMETRIC_AUTHENTICATORS) ==
             BiometricManager.BIOMETRIC_SUCCESS
@@ -146,9 +149,12 @@ class UnlockActivity : AppCompatActivity() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    appLockStore.markUnlocked()
-                    appLogs.info("Biometric unlock succeeded", "auth")
-                    launchMain()
+                    if (appLockStore.markUnlocked()) {
+                        appLogs.info("Biometric unlock succeeded", "auth")
+                        launchNext()
+                    } else {
+                        toast(getString(R.string.lock_biometric_vault_unavailable))
+                    }
                 }
 
                 override fun onAuthenticationFailed() {
@@ -186,12 +192,26 @@ class UnlockActivity : AppCompatActivity() {
     }
 
     private fun launchMain() {
+        launchNext()
+    }
+
+    private fun launchNext() {
         if (returnToPrevious) {
             finish()
             return
         }
+        val sessionStore = SessionStore(this)
+        val identityPasswordStore = IdentityPasswordStore(this)
+        val destination = if (
+            sessionStore.hasAccess() &&
+            identityPasswordStore.isConfigured(sessionStore.accountId, sessionStore.deviceId)
+        ) {
+            MainActivity::class.java
+        } else {
+            OnboardingActivity::class.java
+        }
         startActivity(
-            Intent(this, MainActivity::class.java)
+            Intent(this, destination)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         )
         finish()

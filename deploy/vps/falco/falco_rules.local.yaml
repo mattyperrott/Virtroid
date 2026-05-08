@@ -1,0 +1,48 @@
+- macro: virtroid_managed_container
+  condition: >
+    (container.name in (virtroidd, virtnoded, virtroid-edge, virtroid-postgres,
+                        virtroid-renterd, virtroid-falco) or
+     container.name startswith "virtroid-")
+
+- macro: virtroid_runtime_root
+  condition: >
+    (fd.name startswith "/srv/virtroid/runtimes" or
+     fd.name startswith "/srv/virtdroid/runtimes")
+
+- list: virtroid_runtime_root_allowed_procs
+  items: [virtnoded, virtroidd, dockerd, containerd, containerd-shim, runc,
+          bash, sh, sudo, find, du, ls, stat, rm, tar, gzip]
+
+- rule: Virtroid Shell Spawned In Managed Container
+  desc: Detect interactive shells started inside Virtroid managed containers.
+  condition: >
+    spawned_process and container.id != host and virtroid_managed_container and
+    proc.name in (shell_binaries) and
+    not (container.name = "virtroid-postgres" and proc.cmdline contains "pg_isready")
+  output: >
+    shell spawned in Virtroid container
+    (user=%user.name proc=%proc.name parent=%proc.pname container=%container.name image=%container.image.repository:%container.image.tag cmd=%proc.cmdline)
+  priority: ERROR
+  tags: [virtroid, container, shell]
+
+- rule: Virtroid Runtime Root Access By Unexpected Process
+  desc: Detect unexpected host/container process reads or writes under the runtime root.
+  condition: >
+    (open_read or open_write) and virtroid_runtime_root and
+    not proc.name in (virtroid_runtime_root_allowed_procs)
+  output: >
+    unexpected access to Virtroid runtime root
+    (user=%user.name proc=%proc.name parent=%proc.pname file=%fd.name container=%container.name cmd=%proc.cmdline)
+  priority: ERROR
+  tags: [virtroid, filesystem, runtime-data]
+
+- rule: Virtroid Docker Socket Used Outside Node Agent
+  desc: Detect Docker socket access from a Virtroid container other than virtnoded.
+  condition: >
+    (open_read or open_write) and fd.name = /var/run/docker.sock and
+    container.id != host and container.name != "virtnoded"
+  output: >
+    docker socket accessed outside virtnoded
+    (user=%user.name proc=%proc.name parent=%proc.pname container=%container.name image=%container.image.repository:%container.image.tag cmd=%proc.cmdline)
+  priority: CRITICAL
+  tags: [virtroid, docker, privilege]

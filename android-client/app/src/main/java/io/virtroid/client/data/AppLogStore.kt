@@ -1,6 +1,7 @@
 package io.virtroid.client.data
 
 import android.content.Context
+import io.virtroid.client.security.SecureLocalVault
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -10,8 +11,10 @@ import java.time.Instant
 import java.util.UUID
 
 class AppLogStore private constructor(context: Context) {
-    private val prefs = context.applicationContext
+    private val appContext = context.applicationContext
+    private val prefs = appContext
         .getSharedPreferences("virtroid-app-logs", Context.MODE_PRIVATE)
+    private val vault = SecureLocalVault.get(appContext)
     private val _entries = MutableStateFlow(loadEntries())
 
     val entries: StateFlow<List<AppLogEntry>> = _entries.asStateFlow()
@@ -49,7 +52,15 @@ class AppLogStore private constructor(context: Context) {
     }
 
     fun clearAll() {
-        persist(emptyList())
+        _entries.value = emptyList()
+        when {
+            vault.isUnlocked -> {
+                vault.putString(NAMESPACE, KEY_ENTRIES, "[]")
+                prefs.edit().remove(KEY_ENTRIES).apply()
+            }
+            vault.exists -> Unit
+            else -> prefs.edit().remove(KEY_ENTRIES).apply()
+        }
     }
 
     fun exportText(filter: AppLogFilter = AppLogFilter.ALL): String {
@@ -61,9 +72,60 @@ class AppLogStore private constructor(context: Context) {
     }
 
     private fun persist(next: List<AppLogEntry>) {
-        _entries.value = next
+        val bounded = next.takeLast(MAX_ENTRIES)
+        _entries.value = bounded
+        when {
+            vault.isUnlocked -> {
+                migrateToVaultIfUnlocked()
+                val merged = (_entries.value + bounded)
+                    .distinctBy { it.id }
+                    .sortedBy { it.timestampMs }
+                    .takeLast(MAX_ENTRIES)
+                _entries.value = merged
+                vault.putString(NAMESPACE, KEY_ENTRIES, encodeEntries(merged))
+                prefs.edit().remove(KEY_ENTRIES).apply()
+            }
+            vault.exists -> Unit
+            else -> prefs.edit().putString(KEY_ENTRIES, encodeEntries(bounded)).apply()
+        }
+    }
+
+    private fun loadEntries(): List<AppLogEntry> {
+        val encoded = when {
+            vault.isUnlocked -> vault.getString(NAMESPACE, KEY_ENTRIES, null)
+            vault.exists -> null
+            else -> prefs.getString(KEY_ENTRIES, null)
+        } ?: return emptyList()
+        return decodeEntries(encoded)
+    }
+
+    fun migrateToVaultIfUnlocked() {
+        if (!vault.isUnlocked) {
+            return
+        }
+        val vaultEntries = vault.getString(NAMESPACE, KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
+        val legacyEntries = prefs.getString(KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
+        val merged = (vaultEntries + legacyEntries + _entries.value)
+            .distinctBy { it.id }
+            .sortedBy { it.timestampMs }
+            .takeLast(MAX_ENTRIES)
+        vault.putString(NAMESPACE, KEY_ENTRIES, encodeEntries(merged))
+        prefs.edit().remove(KEY_ENTRIES).apply()
+        _entries.value = merged
+    }
+
+    fun exportVaultToLegacyIfUnlocked() {
+        if (!vault.isUnlocked) {
+            return
+        }
+        val entries = vault.getString(NAMESPACE, KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
+        prefs.edit().putString(KEY_ENTRIES, encodeEntries(entries)).apply()
+        _entries.value = entries
+    }
+
+    private fun encodeEntries(entries: List<AppLogEntry>): String {
         val array = JSONArray()
-        next.forEach { entry ->
+        entries.forEach { entry ->
             array.put(
                 JSONObject()
                     .put("id", entry.id)
@@ -74,11 +136,10 @@ class AppLogStore private constructor(context: Context) {
                     .put("critical_resolved", entry.criticalResolved),
             )
         }
-        prefs.edit().putString(KEY_ENTRIES, array.toString()).apply()
+        return array.toString()
     }
 
-    private fun loadEntries(): List<AppLogEntry> {
-        val encoded = prefs.getString(KEY_ENTRIES, null) ?: return emptyList()
+    private fun decodeEntries(encoded: String): List<AppLogEntry> {
         return runCatching {
             val array = JSONArray(encoded)
             buildList {
@@ -100,6 +161,7 @@ class AppLogStore private constructor(context: Context) {
     }
 
     companion object {
+        private const val NAMESPACE = "app_logs"
         private const val KEY_ENTRIES = "entries_json"
         private const val MAX_ENTRIES = 400
 
