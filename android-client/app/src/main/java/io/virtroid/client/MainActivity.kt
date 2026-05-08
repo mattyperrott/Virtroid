@@ -3,10 +3,7 @@ package io.virtroid.client
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.content.Intent
-import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.AlphaAnimation
-import android.view.animation.Animation
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
@@ -19,11 +16,13 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeSummary
+import io.virtroid.client.api.RuntimeUpdate
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.RuntimeCardBinding
+import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
@@ -33,6 +32,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.time.Duration
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -280,9 +281,9 @@ class MainActivity : AppCompatActivity() {
         )
         cardBinding.root.strokeColor = getColor(if (isLive) R.color.v_border else R.color.v_border)
 
-        cardBinding.runtimeStatOneValue.text = getString(R.string.runtime_stat_load_unknown)
-        cardBinding.runtimeStatTwoValue.text = runtime.hardwareLabel()
-        cardBinding.runtimeStatThreeValue.text = getString(R.string.runtime_stat_load_unknown)
+        cardBinding.runtimeStatOneValue.text = runtime.hardwareLabel()
+        cardBinding.runtimeStatTwoValue.text = runtime.uptimeLabel()
+        cardBinding.runtimeStatThreeValue.text = runtime.loadLabel()
 
         cardBinding.runtimeErrorText.isVisible = !runtime.lastError.isNullOrBlank()
         cardBinding.runtimeErrorText.text = runtime.lastError.orEmpty()
@@ -368,7 +369,8 @@ class MainActivity : AppCompatActivity() {
                 val accountId = requireAccountId() ?: throw IOException(getString(R.string.account_missing))
                 val deviceId = requireDeviceId() ?: throw IOException(getString(R.string.device_missing))
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                api.startRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
+                val profiledRuntime = updateRuntimeForViewerAspect(currentBaseUrl(), accountId, deviceId, runtime)
+                api.startRuntime(currentBaseUrl(), accountId, deviceId, profiledRuntime.id, blobAccessKey)
             }.onSuccess {
                 appLogs.info("Runtime start accepted for ${runtime.name}", "runtime")
                 refreshRuntimes(showBusy = false)
@@ -474,8 +476,50 @@ class MainActivity : AppCompatActivity() {
         }
 
         setBusy(true, getString(R.string.status_starting_runtime_for_session))
-        api.startRuntime(baseUrl, accountId, deviceId, runtime.id, blobAccessKey)
-        return waitForRuntimeReady(baseUrl, accountId, deviceId, runtime.id)
+        val profiledRuntime = updateRuntimeForViewerAspect(baseUrl, accountId, deviceId, runtime)
+        api.startRuntime(baseUrl, accountId, deviceId, profiledRuntime.id, blobAccessKey)
+        return waitForRuntimeReady(baseUrl, accountId, deviceId, profiledRuntime.id)
+    }
+
+    private suspend fun updateRuntimeForViewerAspect(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtime: RuntimeSummary,
+    ): RuntimeSummary {
+        if (runtime.isReadyForSession()) {
+            return runtime
+        }
+        val profile = DeviceRuntimeProfile.from(this)
+        if (runtime.widthPx == profile.widthPx &&
+            runtime.heightPx == profile.heightPx &&
+            runtime.densityDpi == profile.densityDpi
+        ) {
+            return runtime
+        }
+        appLogs.info(
+            "Updating ${runtime.name} display profile to ${profile.widthPx}x${profile.heightPx}@${profile.densityDpi}dpi for viewer fit",
+            "runtime",
+        )
+        return api.updateRuntime(
+            baseUrl = baseUrl,
+            accountId = accountId,
+            deviceId = deviceId,
+            runtimeId = runtime.id,
+            update = RuntimeUpdate(
+                name = runtime.name,
+                androidImage = runtime.androidImage,
+                androidVersion = runtime.androidVersion,
+                widthPx = profile.widthPx,
+                heightPx = profile.heightPx,
+                densityDpi = profile.densityDpi,
+                audioEnabled = runtime.audioEnabled,
+                cameraMode = runtime.cameraMode,
+                fileMode = runtime.fileMode,
+                blobAutoSnapshot = runtime.blobAutoSnapshot,
+                blobRetainDays = runtime.blobRetainDays,
+            ),
+        )
     }
 
     private suspend fun waitForRuntimeReady(
@@ -639,7 +683,6 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeProvisioningEventTrailText.text = milestone.events.lastOrNull().orEmpty()
         cardBinding.runtimeInteractiveContent.alpha = 0.08f
         cardBinding.runtimeProvisioningLogContainer.isVisible = true
-        startRuntimeProvisioningPulse(cardBinding.runtimeProvisioningDot)
         if (animate) {
             cardBinding.runtimeProvisioningLogContainer.alpha = 0f
             cardBinding.runtimeProvisioningLogContainer.translationY = -dp(22).toFloat()
@@ -657,21 +700,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun hideRuntimeProvisioning(cardBinding: RuntimeCardBinding) {
         cardBinding.runtimeInteractiveContent.alpha = 1f
-        cardBinding.runtimeProvisioningDot.clearAnimation()
         cardBinding.runtimeProvisioningLogContainer.clearAnimation()
         cardBinding.runtimeProvisioningLogContainer.isVisible = false
-    }
-
-    private fun startRuntimeProvisioningPulse(view: View) {
-        if (view.animation != null) {
-            return
-        }
-        val animation = AlphaAnimation(0.35f, 1f).apply {
-            duration = 520L
-            repeatMode = Animation.REVERSE
-            repeatCount = Animation.INFINITE
-        }
-        view.startAnimation(animation)
     }
 
     private fun dp(value: Int): Int {
@@ -693,9 +723,46 @@ class MainActivity : AppCompatActivity() {
         val model = personaModel?.trim().orEmpty()
         return listOf(brand, model)
             .filter { it.isNotBlank() }
+            .map { it.toTitleWords() }
             .distinctBy { it.lowercase(Locale.US) }
             .joinToString(" ")
             .ifBlank { getString(R.string.runtime_stat_load_unknown) }
+    }
+
+    private fun RuntimeSummary.uptimeLabel(): String {
+        if (!isReadyForSession()) {
+            return getString(R.string.runtime_stat_load_unknown)
+        }
+        val started = startedAt?.let { value ->
+            runCatching { OffsetDateTime.parse(value).toInstant() }
+                .recoverCatching { Instant.parse(value) }
+                .getOrNull()
+        } ?: return getString(R.string.runtime_stat_load_unknown)
+        val seconds = Duration.between(started, Instant.now()).seconds.coerceAtLeast(0L)
+        val days = seconds / 86_400L
+        val hours = (seconds % 86_400L) / 3_600L
+        val minutes = (seconds % 3_600L) / 60L
+        return when {
+            days > 0L -> "${days}d ${hours}h"
+            hours > 0L -> "${hours}h ${minutes}m"
+            minutes > 0L -> "${minutes}m"
+            else -> "${seconds}s"
+        }
+    }
+
+    private fun RuntimeSummary.loadLabel(): String {
+        val value = loadAverage ?: return getString(R.string.runtime_stat_load_unknown)
+        return String.format(Locale.US, "%.2f", value)
+    }
+
+    private fun String.toTitleWords(): String {
+        return split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { word ->
+                word.replaceFirstChar { char ->
+                    if (char.isLowerCase()) char.titlecase(Locale.US) else char.toString()
+                }
+            }
     }
 
     private fun showError(error: Throwable) {

@@ -116,6 +116,8 @@ CREATE TABLE IF NOT EXISTS runtimes (
     blob_store_kind TEXT,
     blob_manifest_json TEXT,
     blob_last_snapshot_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    load_average DOUBLE PRECISION,
     container_name TEXT,
     adb_port INTEGER,
     viewer_port INTEGER,
@@ -145,6 +147,8 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_manifest_json TEXT;
 ALTER TABLE runtimes DROP COLUMN IF EXISTS active_blob_key_b64;
 ALTER TABLE runtimes DROP COLUMN IF EXISTS active_blob_key_expires_at;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_last_snapshot_at TIMESTAMPTZ;
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS load_average DOUBLE PRECISION;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS container_name TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS adb_port INTEGER;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS viewer_port INTEGER;

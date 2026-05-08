@@ -20,7 +20,7 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_last_snapshot_at, container_name, adb_port, viewer_port, wipe_requested, last_error, deleted_at, created_at, updated_at`
+const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, last_error, deleted_at, created_at, updated_at`
 
 const (
 	defaultAndroidImage = "redroid/redroid:14.0.0_64only-latest"
@@ -162,6 +162,8 @@ type Runtime struct {
 	BlobStoreKind      *string    `json:"blob_store_kind,omitempty"`
 	BlobManifestJSON   *string    `json:"blob_manifest_json,omitempty"`
 	BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at,omitempty"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	LoadAverage        *float64   `json:"load_average,omitempty"`
 	ContainerName      *string    `json:"container_name,omitempty"`
 	ADBPort            *int       `json:"adb_port,omitempty"`
 	ViewerPort         *int       `json:"viewer_port,omitempty"`
@@ -251,6 +253,7 @@ type RuntimeObservation struct {
 	BlobStoreKind      *string
 	BlobManifestJSON   *string
 	BlobLastSnapshotAt *time.Time
+	LoadAverage        *float64
 	ClearWipeRequested bool
 	ActivePersonaJSON  *string
 	ClearActivePersona bool
@@ -651,6 +654,7 @@ func (s *Store) DeleteRuntime(ctx context.Context, accountID, runtimeID string) 
 		 SET status = 'deleting',
 		     desired_state = 'deleted',
 		     connection_status = 'offline',
+		     started_at = NULL,
 		     updated_at = NOW()
 		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL
 		 RETURNING %s`, runtimeColumns),
@@ -671,6 +675,7 @@ func (s *Store) DeleteRuntime(ctx context.Context, accountID, runtimeID string) 
 			     container_name = NULL,
 			     adb_port = NULL,
 			     viewer_port = NULL,
+			     started_at = NULL,
 			     updated_at = NOW()
 			 WHERE id = $1
 			 RETURNING %s`, runtimeColumns),
@@ -1113,6 +1118,7 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 				     active_persona_json = CASE WHEN $5 THEN NULL ELSE active_persona_json END,
 				     container_name = CASE WHEN $5 THEN NULL ELSE container_name END,
 				     adb_port = CASE WHEN $5 THEN NULL ELSE adb_port END,
+				     started_at = CASE WHEN $5 THEN NULL ELSE started_at END,
 				     deleted_at = NULL,
 				     updated_at = NOW()
 			 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
@@ -1157,6 +1163,7 @@ func (s *Store) StopRuntime(ctx context.Context, accountID, runtimeID string) (R
 		 SET status = 'stopping',
 		     desired_state = 'stopped',
 		     connection_status = 'disconnecting',
+		     started_at = NULL,
 		     updated_at = NOW()
 		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
 		 RETURNING %s`, runtimeColumns),
@@ -1193,6 +1200,7 @@ func (s *Store) WipeRuntime(ctx context.Context, accountID, runtimeID string) (R
 		 SET status = 'wiping',
 		     desired_state = 'stopped',
 		     connection_status = 'offline',
+		     started_at = NULL,
 		     wipe_requested = TRUE,
 		     last_error = NULL,
 		     updated_at = NOW()
@@ -1601,6 +1609,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		     UPDATE runtimes r
 		        SET desired_state = 'stopped',
 		            connection_status = 'offline',
+		            started_at = NULL,
 		            last_error = NULL,
 		            updated_at = NOW()
 		       FROM candidates c
@@ -1787,6 +1796,7 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 			     container_name = NULL,
 			     adb_port = NULL,
 			     viewer_port = NULL,
+			     started_at = NULL,
 			     wipe_requested = FALSE,
 			     last_error = $3,
 			     deleted_at = NOW(),
@@ -1815,6 +1825,12 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		     active_persona_json = CASE WHEN $10 THEN NULL ELSE COALESCE($11, active_persona_json) END,
 		     blob_store_kind = CASE WHEN $12 THEN NULL ELSE COALESCE($13, blob_store_kind) END,
 		     blob_manifest_json = CASE WHEN $12 THEN NULL ELSE COALESCE($14, blob_manifest_json) END,
+		     started_at = CASE
+		         WHEN $3 = 'running' AND $4 = 'online' THEN COALESCE(started_at, NOW())
+		         WHEN $3 IN ('stopped', 'provisioned', 'deleted') OR ($3 = 'error' AND desired_state <> 'running') THEN NULL
+		         ELSE started_at
+		     END,
+		     load_average = COALESCE($15, load_average),
 		     updated_at = NOW()
 		 WHERE id = $1 AND host_id = $2 AND deleted_at IS NULL`,
 		runtimeID,
@@ -1831,6 +1847,7 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		observation.ClearBlobManifest,
 		nullString(observation.BlobStoreKind),
 		nullString(observation.BlobManifestJSON),
+		nullFloat64(observation.LoadAverage),
 	)
 	return err
 }
@@ -2152,6 +2169,8 @@ func scanRuntimeDest(runtime *Runtime) []any {
 		&runtime.BlobStoreKind,
 		&runtime.BlobManifestJSON,
 		&runtime.BlobLastSnapshotAt,
+		&runtime.StartedAt,
+		&runtime.LoadAverage,
 		&runtime.ContainerName,
 		&runtime.ADBPort,
 		&runtime.ViewerPort,
@@ -2353,6 +2372,13 @@ func nullTime(value *time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: value.UTC(), Valid: true}
+}
+
+func nullFloat64(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
 }
 
 func generateRelayToken() (string, error) {

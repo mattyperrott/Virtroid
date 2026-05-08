@@ -2,7 +2,9 @@ package io.virtroid.client
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.KeyEvent
@@ -73,6 +75,7 @@ class SessionActivity : AppCompatActivity() {
                 )
                 binding.sessionStreamStatusText.text = getString(R.string.session_stream_receiving)
                 applyRemoteSurfaceBounds(remoteWidth, remoteHeight)
+                updateViewerGestureExclusion()
                 hideSystemBars()
             }
         }
@@ -150,6 +153,9 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionSurfaceView.isOpaque = true
         binding.sessionSurfaceView.setOnTouchListener { view, event ->
             sessionHost?.sendTouch(event, view.width, view.height) ?: false
+        }
+        binding.sessionSurfaceContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateViewerGestureExclusion()
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.sessionRoot) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -373,11 +379,11 @@ class SessionActivity : AppCompatActivity() {
         val targetWidth: Int
         val targetHeight: Int
         if (remoteAspect > containerAspect) {
-            targetHeight = containerHeight
-            targetWidth = (containerHeight * remoteAspect).toInt()
-        } else {
             targetWidth = containerWidth
             targetHeight = (containerWidth / remoteAspect).toInt()
+        } else {
+            targetHeight = containerHeight
+            targetWidth = (containerHeight * remoteAspect).toInt()
         }
 
         val params = FrameLayout.LayoutParams(
@@ -386,6 +392,19 @@ class SessionActivity : AppCompatActivity() {
             Gravity.CENTER,
         )
         binding.sessionSurfaceView.layoutParams = params
+        updateViewerGestureExclusion()
+    }
+
+    private fun updateViewerGestureExclusion() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return
+        }
+        val container = binding.sessionSurfaceContainer
+        if (container.width <= 0 || container.height <= 0) {
+            return
+        }
+        val rect = Rect(0, 0, container.width, container.height)
+        ViewCompat.setSystemGestureExclusionRects(container, listOf(rect))
     }
 
     private fun hideSystemBars() {

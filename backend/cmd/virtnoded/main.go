@@ -1094,6 +1094,7 @@ type runtimeStatusUpdate struct {
 	BlobStoreKind      *string    `json:"blob_store_kind,omitempty"`
 	BlobManifestJSON   *string    `json:"blob_manifest_json,omitempty"`
 	BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at,omitempty"`
+	LoadAverage        *float64   `json:"load_average,omitempty"`
 	ClearWipeRequested bool       `json:"clear_wipe_requested,omitempty"`
 	ActivePersonaJSON  *string    `json:"active_persona_json,omitempty"`
 	ClearActivePersona bool       `json:"clear_active_persona,omitempty"`
@@ -1108,6 +1109,11 @@ func (n *nodeAgent) reportRuntimeStatus(ctx context.Context, runtimeID string, u
 		"container_name": update.ContainerName,
 		"adb_port":       update.ADBPort,
 		"last_error":     update.LastError,
+	}
+	if update.LoadAverage != nil {
+		body["load_average"] = update.LoadAverage
+	} else if load, ok := nodeLoadAverage(); ok {
+		body["load_average"] = load
 	}
 	if update.Status != "" {
 		body["status"] = update.Status
@@ -1138,6 +1144,22 @@ func (n *nodeAgent) reportRuntimeStatus(ctx context.Context, runtimeID string, u
 	}
 
 	return n.postControlPlane(ctx, fmt.Sprintf("/api/v1/internal/runtimes/%s/status", url.PathEscape(runtimeID)), body)
+}
+
+func nodeLoadAverage() (*float64, bool) {
+	payload, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return nil, false
+	}
+	fields := strings.Fields(string(payload))
+	if len(fields) == 0 {
+		return nil, false
+	}
+	value, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return nil, false
+	}
+	return &value, true
 }
 
 func (n *nodeAgent) appendRuntimeLog(ctx context.Context, runtimeID, source, level, message string) error {
