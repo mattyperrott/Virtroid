@@ -112,6 +112,41 @@ services:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ${HAPROXY_CERT_PATH:-/srv/virtroid/tls/virtroid.pem}:/usr/local/etc/haproxy/certs/virtroid.pem:ro
 
+  falco:
+    image: falcosecurity/falco:0.43.0
+    container_name: virtroid-falco
+    restart: unless-stopped
+    profiles:
+      - falco
+    pid: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - SYS_PTRACE
+    security_opt:
+      - apparmor:unconfined
+    command:
+      - falco
+      - -o
+      - json_output=true
+      - -o
+      - stdout_output.enabled=true
+      - -o
+      - priority=${FALCO_MIN_PRIORITY:-error}
+    volumes:
+      - /sys/kernel/tracing:/sys/kernel/tracing:ro
+      - /var/run/docker.sock:/host/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /etc:/host/etc:ro
+      - ./falco/falco_rules.local.yaml:/etc/falco/rules.d/virtroid_rules.yaml:ro
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   postgres-data:
   renterd-data:

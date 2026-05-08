@@ -14,8 +14,18 @@ class LauncherActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableSecureWindow()
 
-        val sessionStore = SessionStore(this)
         val appLockStore = AppLockStore(this)
+        if (appLockStore.shouldRequireUnlockOnLaunch()) {
+            AppLogStore.get(this).info("Launch routing resolved to local vault unlock", "lifecycle")
+            startActivity(
+                Intent(this, UnlockActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            )
+            finish()
+            return
+        }
+
+        val sessionStore = SessionStore(this)
         val identityPasswordStore = IdentityPasswordStore(this)
         val destination = when {
             !sessionStore.hasAccess() -> Intent(this, OnboardingActivity::class.java)

@@ -34,6 +34,7 @@
     <string name="app_locked">App locked</string>
     <string name="lock_invalid_pin">Incorrect PIN</string>
     <string name="lock_invalid_passphrase">Incorrect passphrase</string>
+    <string name="lock_biometric_vault_unavailable">PIN required to decrypt local vault</string>
     <string name="lock_try_again">Try again in %1$d seconds</string>
     <string name="lock_pin_prompt">Choose a 6-digit PIN</string>
     <string name="lock_pin_confirm_prompt">Confirm your 6-digit PIN</string>
@@ -292,7 +293,7 @@
     <string name="onboarding_local_encryption">Security Setup</string>
     <string name="onboarding_local_encryption_body">Set the blob encryption password used to recover encrypted runtime snapshots.</string>
     <string name="onboarding_pin_title">App Lock PIN</string>
-    <string name="onboarding_pin_body">Quick 6-digit local unlock for this app. This does not encrypt runtime blobs.</string>
+    <string name="onboarding_pin_body">Quick 6-digit unlock that encrypts local app state. Runtime blobs still use the identity password.</string>
     <string name="onboarding_pin_glyph">⌗</string>
     <string name="onboarding_passphrase_title">Blob Encryption Password</string>
     <string name="onboarding_passphrase_body">Required for encrypted runtime snapshots and blob recovery.</string>
@@ -311,7 +312,7 @@
     <string name="unlock_enter_passphrase">Enter passphrase</string>
     <string name="unlock_continue">Unlock</string>
     <string name="biometric_unlock_title">Unlock Virtroid</string>
-    <string name="biometric_unlock_subtitle">Use biometrics or continue with PIN.</string>
+    <string name="biometric_unlock_subtitle">Use your PIN to decrypt local app state.</string>
     <string name="biometric_unlock_use_pin">Use PIN</string>
 
     <string name="system_logs_title">System Logs</string>
@@ -335,8 +336,8 @@
     <string name="privacy_last_unlock">Last Unlock</string>
     <string name="privacy_last_session_end">Last Session End</string>
     <string name="privacy_app_lock_auth">App Lock &amp; Authentication</string>
-    <string name="privacy_require_pin_biometric">Require PIN / Biometric</string>
-    <string name="privacy_require_pin_biometric_body">Secures the app on launch and wake.</string>
+    <string name="privacy_require_pin_biometric">Require PIN + Local Vault</string>
+    <string name="privacy_require_pin_biometric_body">PIN encrypts logs, session state, metadata, and sensitive settings on this device.</string>
     <string name="privacy_auto_lock_timer">Auto-lock Timer</string>
     <string name="privacy_require_unlock_resume">Require unlock on app resume</string>
     <string name="privacy_failed_attempts_backoff">Failed attempts backoff</string>
@@ -357,7 +358,7 @@
     <string name="privacy_cache_cleared">Local cache cleared</string>
     <string name="privacy_cache_clear_failed">Some cache items could not be cleared</string>
     <string name="privacy_pin_setup_body">Enter a new 6-digit app lock PIN.</string>
-    <string name="privacy_telemetry_secured">Secured</string>
+    <string name="privacy_telemetry_secured">Encrypted</string>
     <string name="privacy_telemetry_disabled">Disabled</string>
     <string name="privacy_telemetry_setup_needed">Setup Needed</string>
     <string name="privacy_telemetry_active">ACTIVE</string>
