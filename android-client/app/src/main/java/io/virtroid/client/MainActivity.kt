@@ -636,7 +636,7 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeProvisioningTitleText.text = milestone.title
         cardBinding.runtimeProvisioningCommandText.text = milestone.command
         cardBinding.runtimeProvisioningDetailText.text = milestone.detail
-        cardBinding.runtimeProvisioningEventTrailText.text = milestone.events.joinToString("\n")
+        cardBinding.runtimeProvisioningEventTrailText.text = milestone.events.lastOrNull().orEmpty()
         cardBinding.runtimeInteractiveContent.alpha = 0.08f
         cardBinding.runtimeProvisioningLogContainer.isVisible = true
         startRuntimeProvisioningPulse(cardBinding.runtimeProvisioningDot)
@@ -749,72 +749,77 @@ class MainActivity : AppCompatActivity() {
                 title = getString(R.string.new_runtime_provision_title_container),
                 command = getString(R.string.new_runtime_provision_command_container),
                 detail = detail(getString(R.string.new_runtime_provision_detail_container)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             connectionStatus.equals("connecting", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_connect),
                 command = getString(R.string.runtime_provisioning_command_connect),
                 detail = detail(getString(R.string.runtime_provisioning_detail_connect)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 2_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_container),
                 command = getString(R.string.runtime_provisioning_command_container),
                 detail = detail(getString(R.string.runtime_provisioning_detail_container)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 3_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_request),
                 command = getString(R.string.runtime_provisioning_command_request),
                 detail = detail(getString(R.string.runtime_provisioning_detail_request)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 6_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_storage),
                 command = getString(R.string.runtime_provisioning_command_storage),
                 detail = detail(getString(R.string.runtime_provisioning_detail_storage)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 9_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_restore),
                 command = getString(R.string.runtime_provisioning_command_restore),
                 detail = detail(getString(R.string.runtime_provisioning_detail_restore)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 13_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_network),
                 command = getString(R.string.runtime_provisioning_command_network),
                 detail = detail(getString(R.string.runtime_provisioning_detail_network)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 18_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_boot),
                 command = getString(R.string.runtime_provisioning_command_boot),
                 detail = detail(getString(R.string.runtime_provisioning_detail_boot)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 28_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_android),
                 command = getString(R.string.runtime_provisioning_command_android),
                 detail = detail(getString(R.string.runtime_provisioning_detail_android)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             elapsedMs < 40_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_viewer),
                 command = getString(R.string.runtime_provisioning_command_viewer),
                 detail = detail(getString(R.string.runtime_provisioning_detail_viewer)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
             else -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_connect),
                 command = getString(R.string.runtime_provisioning_command_connect),
                 detail = detail(getString(R.string.runtime_provisioning_detail_connect)),
-                events = provisioningEvents(elapsedMs),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
         }
     }
 
-    private fun provisioningEvents(elapsedMs: Long): List<String> {
+    private fun provisioningEvents(elapsedMs: Long, latestRuntimeLog: String? = null): List<String> {
+        val runtimeLog = latestRuntimeLog?.trim().orEmpty()
+        if (runtimeLog.isNotBlank() && !runtimeLog.startsWith("...")) {
+            return listOf(getString(R.string.runtime_provisioning_event_runtime_log, runtimeLog))
+        }
+
         val allEvents = listOf(
             getString(R.string.runtime_provisioning_event_container),
             getString(R.string.runtime_provisioning_event_storage),
@@ -824,10 +829,14 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.runtime_provisioning_event_services),
             getString(R.string.runtime_provisioning_event_channel),
             getString(R.string.runtime_provisioning_event_handoff),
-            getString(R.string.runtime_provisioning_event_ready),
         )
         val visibleCount = ((elapsedMs / 3_000L).toInt() + 2).coerceIn(2, allEvents.size)
-        return allEvents.take(visibleCount).takeLast(4)
+        val visibleEvents = allEvents.take(visibleCount)
+        return if (visibleCount >= allEvents.size) {
+            (visibleEvents + getString(R.string.runtime_provisioning_event_wait_ready)).takeLast(4)
+        } else {
+            visibleEvents.takeLast(4)
+        }
     }
 
     private data class RuntimeProvisioningMilestone(

@@ -373,11 +373,11 @@ class SessionActivity : AppCompatActivity() {
         val targetWidth: Int
         val targetHeight: Int
         if (remoteAspect > containerAspect) {
-            targetWidth = containerWidth
-            targetHeight = (containerWidth / remoteAspect).toInt()
-        } else {
             targetHeight = containerHeight
             targetWidth = (containerHeight * remoteAspect).toInt()
+        } else {
+            targetWidth = containerWidth
+            targetHeight = (containerWidth / remoteAspect).toInt()
         }
 
         val params = FrameLayout.LayoutParams(

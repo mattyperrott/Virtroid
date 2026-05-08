@@ -1069,12 +1069,13 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 
 	var currentHost sql.NullString
 	var currentViewerPort sql.NullInt32
+	var currentDesiredState string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT host_id, viewer_port FROM runtimes
+		`SELECT host_id, viewer_port, desired_state FROM runtimes
 		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'`,
 		accountID,
 		runtimeID,
-	).Scan(&currentHost, &currentViewerPort); err != nil {
+	).Scan(&currentHost, &currentViewerPort, &currentDesiredState); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
 		}
@@ -1097,6 +1098,7 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 		}
 		viewerPort = sql.NullInt32{Int32: int32(allocatedViewerPort), Valid: true}
 	}
+	rotatePersona := !strings.EqualFold(strings.TrimSpace(currentDesiredState), "running")
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
@@ -1107,6 +1109,10 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 				     viewer_port = $4,
 				     wipe_requested = FALSE,
 				     last_error = NULL,
+				     persona_version = CASE WHEN $5 THEN persona_version + 1 ELSE persona_version END,
+				     active_persona_json = CASE WHEN $5 THEN NULL ELSE active_persona_json END,
+				     container_name = CASE WHEN $5 THEN NULL ELSE container_name END,
+				     adb_port = CASE WHEN $5 THEN NULL ELSE adb_port END,
 				     deleted_at = NULL,
 				     updated_at = NOW()
 			 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
@@ -1115,6 +1121,7 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 		runtimeID,
 		hostID,
 		viewerPort,
+		rotatePersona,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound

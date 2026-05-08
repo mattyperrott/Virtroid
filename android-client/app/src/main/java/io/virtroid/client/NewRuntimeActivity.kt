@@ -244,7 +244,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         binding.provisionRuntimeTitleText.text = milestone.title
         binding.provisionRuntimeCommandText.text = milestone.command
         binding.provisionRuntimeDetailText.text = milestone.detail
-        binding.provisionRuntimeEventTrailText.text = milestone.events.joinToString("\n")
+        binding.provisionRuntimeEventTrailText.text = milestone.events.lastOrNull().orEmpty()
     }
 
     private fun toast(message: String) {
