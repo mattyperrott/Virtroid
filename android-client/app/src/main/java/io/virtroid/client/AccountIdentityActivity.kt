@@ -1,8 +1,6 @@
 package io.virtroid.client
 
 import android.app.AlertDialog
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -22,6 +20,7 @@ import io.virtroid.client.databinding.ScreenAccountIdentityBinding
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.DeviceIdentityStore
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -68,8 +67,8 @@ class AccountIdentityActivity : AppCompatActivity() {
             copy("account_id", sessionStore.accountId.orEmpty(), getString(R.string.onboarding_account_copied))
         }
         binding.itemDeviceFingerprint.setOnClickListener {
-            val fingerprint = linkedDeviceFingerprint()
-            copy("device_fingerprint", fingerprint, getString(R.string.account_fingerprint_copied))
+            val deviceId = linkedDeviceFingerprint()
+            copy("device_id", deviceId, getString(R.string.account_fingerprint_copied))
         }
         binding.itemIdentityPassword.setOnClickListener {
             startActivity(PrivacySecurityActivity.createIntent(this))
@@ -170,27 +169,54 @@ class AccountIdentityActivity : AppCompatActivity() {
             .setMessage(getString(R.string.account_delete_local_identity_body))
             .setNegativeButton(getString(R.string.controls_cancel), null)
             .setPositiveButton(getString(R.string.account_delete_local_identity_confirm)) { _, _ ->
-                activeSessionStore.clear()
-                identityPasswordStore.clearConfigured()
-                appLockStore.clearCredential()
-                appSettings.clearSafeLocalCache()
-                deviceIdentityStore.deleteDeviceKey()
-                sessionStore.clearLinkedIdentity()
-                appLogs.critical("Local identity was reset from Account Identity", "auth")
-                startActivity(
-                    Intent(this, OnboardingActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-                )
+                deleteServerAccountAndResetLocal()
             }
             .show()
+    }
+
+    private fun deleteServerAccountAndResetLocal() {
+        val accountId = sessionStore.accountId.orEmpty()
+        val deviceId = sessionStore.deviceId.orEmpty()
+        if (accountId.isBlank() || deviceId.isBlank()) {
+            resetLocalIdentity()
+            return
+        }
+
+        binding.itemDeleteIdentity.isEnabled = false
+        lifecycleScope.launch {
+            runCatching {
+                api.deleteAccount(sessionStore.baseUrl, accountId, deviceId)
+            }.onSuccess {
+                appLogs.critical("Server-side account erasure accepted", "auth")
+                resetLocalIdentity()
+            }.onFailure { error ->
+                binding.itemDeleteIdentity.isEnabled = true
+                appLogs.error("Server-side account erasure failed: ${error.message}", "auth")
+                toast(error.message ?: getString(R.string.status_error))
+            }
+        }
+    }
+
+    private fun resetLocalIdentity() {
+        activeSessionStore.clear()
+        identityPasswordStore.clearConfigured()
+        appLockStore.clearCredential()
+        appSettings.clearSafeLocalCache()
+        deviceIdentityStore.deleteDeviceKey()
+        deviceIdentityStore.resetInstallDeviceId(this)
+        sessionStore.clearLinkedIdentity()
+        appLogs.critical("Local identity was reset from Account Identity", "auth")
+        startActivity(
+            Intent(this, OnboardingActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        )
     }
 
     private fun copy(label: String, value: String, message: String) {
         if (value.isBlank()) {
             return
         }
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+        copySensitiveToClipboard(label, value)
         toast(message)
     }
 
@@ -203,12 +229,7 @@ class AccountIdentityActivity : AppCompatActivity() {
     }
 
     private fun linkedDeviceFingerprint(): String {
-        val accountId = sessionStore.accountId.orEmpty()
-        return if (accountId.isBlank()) {
-            sessionStore.deviceId.orEmpty()
-        } else {
-            deviceIdentityStore.deviceFingerprint(this, accountId)
-        }
+        return sessionStore.deviceId.orEmpty()
     }
 
     private fun toast(message: String) {

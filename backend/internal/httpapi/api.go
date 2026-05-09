@@ -54,7 +54,7 @@ type activeBlobKeyHandoff struct {
 	Key       string
 }
 
-const activeBlobKeyHandoffTTL = 10 * time.Minute
+const activeBlobKeyHandoffTTL = 2 * time.Minute
 const bootstrapRateLimitWindow = time.Minute
 const defaultBootstrapMaxBodyBytes = 32 * 1024
 
@@ -162,6 +162,17 @@ func (v *activeBlobKeyVault) clear(runtimeID string) {
 	delete(v.keys, runtimeID)
 }
 
+func (v *activeBlobKeyVault) clearAccount(accountID string) {
+	accountID = strings.TrimSpace(accountID)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for runtimeID, entry := range v.keys {
+		if entry.accountID == accountID {
+			delete(v.keys, runtimeID)
+		}
+	}
+}
+
 func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	bootstrapMaxBodyBytes := cfg.BootstrapMaxBodyBytes
 	if bootstrapMaxBodyBytes <= 0 {
@@ -186,6 +197,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/me/entitlement", api.getMyEntitlement)
 	mux.HandleFunc("GET /api/v1/me/storage", api.getMyStorage)
 	mux.HandleFunc("PUT /api/v1/me/storage", api.updateMyStorage)
+	mux.HandleFunc("DELETE /api/v1/me", api.deleteMyAccount)
 	mux.HandleFunc("POST /api/v1/me/identity/register", api.registerMyIdentity)
 	mux.HandleFunc("POST /api/v1/me/runtimes", api.createMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}", api.getMyRuntime)
@@ -467,6 +479,25 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
+	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	if err := a.store.DeleteAccount(r.Context(), accountID); err != nil {
+		if err == store.ErrAccountNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	a.activeBlobKeys.clearAccount(accountID)
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
@@ -872,7 +903,8 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		bitRate = 8_000_000
 	}
 
-	if err := a.prepareViewer(r.Context(), host.AdvertiseAddr, host.RelayPort, runtime.ID, maxSize, bitRate); err != nil {
+	viewerPublicKey, err := a.prepareViewer(r.Context(), host.AdvertiseAddr, host.RelayPort, runtime.ID, maxSize, bitRate)
+	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
@@ -884,15 +916,16 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"session":        session,
-		"viewer_host":    relayEndpoint.Host,
-		"viewer_port":    relayEndpoint.Port,
-		"viewer_address": relayEndpoint.Address,
-		"relay_host":     relayEndpoint.Host,
-		"relay_port":     relayEndpoint.Port,
-		"relay_scheme":   relayEndpoint.Scheme,
-		"relay_tls":      relayEndpoint.TLS,
-		"relay_path":     "/api/v1/relay/" + session.ID,
+		"session":           session,
+		"viewer_host":       relayEndpoint.Host,
+		"viewer_port":       relayEndpoint.Port,
+		"viewer_address":    relayEndpoint.Address,
+		"relay_host":        relayEndpoint.Host,
+		"relay_port":        relayEndpoint.Port,
+		"relay_scheme":      relayEndpoint.Scheme,
+		"relay_tls":         relayEndpoint.TLS,
+		"relay_path":        "/api/v1/relay/" + session.ID,
+		"viewer_public_key": viewerPublicKey,
 	})
 }
 
@@ -1487,7 +1520,7 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRe
 	return nodeRequestIdentity{id: nodeID, publicKey: publicKey}, true
 }
 
-func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort int, runtimeID string, maxSize, bitRate int) error {
+func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort int, runtimeID string, maxSize, bitRate int) (string, error) {
 	if relayPort <= 0 {
 		relayPort = 8090
 	}
@@ -1497,7 +1530,7 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 		"bit_rate":   bitRate,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -1507,7 +1540,7 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if a.cfg.NodeSharedSecret != "" {
@@ -1516,16 +1549,26 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("viewer prepare failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return "", fmt.Errorf("viewer prepare failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
-	return nil
+	var payload struct {
+		ViewerPublicKey string `json:"viewer_public_key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	viewerPublicKey := strings.TrimSpace(payload.ViewerPublicKey)
+	if viewerPublicKey == "" {
+		return "", errors.New("viewer prepare did not return a public key")
+	}
+	return viewerPublicKey, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

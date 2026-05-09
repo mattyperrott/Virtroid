@@ -374,6 +374,7 @@ class ControlsActivity : AppCompatActivity() {
                     relayPath = session.relayPath,
                     relayToken = session.relayToken,
                     sessionId = session.sessionId,
+                    viewerPublicKey = session.viewerPublicKey,
                 )
                 activeSessionStore.save(activeSession)
                 appLogs.info("Session created from controls for ${runtime.name}", "session")

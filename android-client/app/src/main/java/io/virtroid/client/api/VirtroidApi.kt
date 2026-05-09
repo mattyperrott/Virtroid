@@ -1,5 +1,6 @@
 package io.virtroid.client.api
 
+import io.virtroid.client.BuildConfig
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.DeviceIdentityStore
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,7 @@ data class SessionLaunch(
     val relayTls: Boolean,
     val relayPath: String,
     val relayToken: String,
+    val viewerPublicKey: String,
     val viewerAddress: String,
 )
 
@@ -438,19 +440,44 @@ class VirtroidApi(
             ),
         )
 
+        val relayTls = payload.optBoolean(
+            "relay_tls",
+            payload.optString("relay_scheme").equals("tls", ignoreCase = true),
+        )
+        if (!relayTls && !BuildConfig.DEBUG) {
+            throw IOException("insecure relay transport rejected")
+        }
+        val viewerPublicKey = payload.optString("viewer_public_key").ifBlank {
+            throw IOException("viewer identity key is required")
+        }
+
         SessionLaunch(
             sessionId = payload.getJSONObject("session").getString("id"),
             relayHost = payload.optString("relay_host").ifBlank { payload.getString("viewer_host") },
             relayPort = payload.optInt("relay_port").takeIf { it > 0 } ?: payload.getInt("viewer_port"),
-            relayTls = payload.optBoolean(
-                "relay_tls",
-                payload.optString("relay_scheme").equals("tls", ignoreCase = true),
-            ),
+            relayTls = relayTls,
             relayPath = payload.optString("relay_path").ifBlank {
                 "/api/v1/relay/${payload.getJSONObject("session").getString("id")}"
             },
             relayToken = payload.getJSONObject("session").getString("relay_token"),
+            viewerPublicKey = viewerPublicKey,
             viewerAddress = payload.getString("viewer_address"),
+        )
+    }
+
+    suspend fun deleteAccount(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+    ) = withContext(Dispatchers.IO) {
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me?account_id=$accountId&device_id=$deviceId",
+                method = "DELETE",
+                accountId = accountId,
+                deviceId = deviceId,
+            ),
         )
     }
 

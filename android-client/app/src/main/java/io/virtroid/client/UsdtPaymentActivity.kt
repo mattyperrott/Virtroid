@@ -1,7 +1,5 @@
 package io.virtroid.client
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -14,6 +12,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import io.virtroid.client.databinding.ScreenSendUsdtBinding
+import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import java.text.NumberFormat
 import java.util.Locale
@@ -124,8 +123,7 @@ class UsdtPaymentActivity : AppCompatActivity() {
             toast(getString(R.string.payment_quote_unavailable))
             return
         }
-        val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+        copySensitiveToClipboard(label, value)
         toast(getString(R.string.fund_storage_copied))
     }
 

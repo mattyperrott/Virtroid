@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -17,6 +18,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -30,7 +33,22 @@ const (
 func main() {
 	listenAddr := flag.String("listen", "127.0.0.1:7017", "encrypted listener address")
 	upstreamAddr := flag.String("upstream", "127.0.0.1:7007", "plaintext scrcpy upstream address")
+	publicKeyFile := flag.String("public-key-file", "", "optional path to write the base64 server ECDH public key")
 	flag.Parse()
+
+	serverPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		log.Fatalf("generate server key: %v", err)
+	}
+	serverPublicDER, err := x509.MarshalPKIXPublicKey(&serverPrivate.PublicKey)
+	if err != nil {
+		log.Fatalf("marshal server public key: %v", err)
+	}
+	if *publicKeyFile != "" {
+		if err := writePublicKeyFile(*publicKeyFile, serverPublicDER); err != nil {
+			log.Fatalf("write public key file: %v", err)
+		}
+	}
 
 	listener, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
@@ -44,14 +62,14 @@ func main() {
 			log.Printf("accept: %v", err)
 			continue
 		}
-		go handleClient(client, *upstreamAddr)
+		go handleClient(client, *upstreamAddr, serverPrivate)
 	}
 }
 
-func handleClient(rawClient net.Conn, upstreamAddr string) {
+func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.PrivateKey) {
 	defer rawClient.Close()
 
-	client, err := serverHandshake(rawClient)
+	client, err := serverHandshake(rawClient, serverPrivate)
 	if err != nil {
 		log.Printf("handshake: %v", err)
 		return
@@ -78,7 +96,10 @@ func handleClient(rawClient net.Conn, upstreamAddr string) {
 	<-done
 }
 
-func serverHandshake(conn net.Conn) (*encryptedConn, error) {
+func serverHandshake(conn net.Conn, serverPrivate *ecdsa.PrivateKey) (*encryptedConn, error) {
+	if serverPrivate == nil {
+		return nil, errors.New("server private key is required")
+	}
 	clientPublicDER, err := readHandshake(conn)
 	if err != nil {
 		return nil, err
@@ -92,10 +113,6 @@ func serverHandshake(conn net.Conn) (*encryptedConn, error) {
 		return nil, errors.New("client public key must be P-256 ECDH")
 	}
 
-	serverPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
 	serverPublicDER, err := x509.MarshalPKIXPublicKey(&serverPrivate.PublicKey)
 	if err != nil {
 		return nil, err
@@ -111,6 +128,32 @@ func serverHandshake(conn net.Conn) (*encryptedConn, error) {
 	sharedSecret := leftPad(sharedX.Bytes(), 32)
 	keys := deriveKeys(sharedSecret, append(bytes.Clone(clientPublicDER), serverPublicDER...))
 	return newEncryptedConn(conn, keys.clientToServer, keys.serverToClient), nil
+}
+
+func writePublicKeyFile(path string, publicKeyDER []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".viewer-key-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	payload := base64.StdEncoding.EncodeToString(publicKeyDER) + "\n"
+	if _, err := tmp.WriteString(payload); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func readHandshake(r io.Reader) ([]byte, error) {

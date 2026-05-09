@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/v_bg_alt">
@@ -26,7 +27,7 @@
                 android:contentDescription="@string/controls_back"
                 android:padding="13dp"
                 android:src="@drawable/ic_arrow_back"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
             <View
                 android:layout_width="0dp"
                 android:layout_height="1dp"
@@ -39,7 +40,7 @@
                 android:contentDescription="@string/bottom_settings"
                 android:padding="13dp"
                 android:src="@drawable/ic_tune"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
         </LinearLayout>
         <ScrollView
             android:id="@+id/account_identity_scroll"
@@ -71,7 +72,7 @@
                         android:layout_height="72dp"
                         android:padding="18dp"
                         android:src="@drawable/ic_fingerprint"
-                        android:tint="@color/v_accent"
+                        app:tint="@color/v_accent"
                         android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -121,7 +122,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_copy"
-                        android:tint="@color/v_text_primary"
+                        app:tint="@color/v_text_primary"
                         android:background="@drawable/bg_surface_light_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -169,7 +170,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_fingerprint"
-                        android:tint="@color/v_accent"
+                        app:tint="@color/v_accent"
                         android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -182,7 +183,7 @@
                             style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Device Fingerprint" />
+                            android:text="Device ID" />
                         <TextView
                             android:id="@+id/item_device_fingerprint_subtitle"
                             style="@style/VirtroidText.Body.Compact"
@@ -570,7 +571,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_terminal"
-                        android:tint="@color/v_text_primary"
+                        app:tint="@color/v_text_primary"
                         android:background="@drawable/bg_surface_light_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -618,7 +619,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_shield"
-                        android:tint="@color/v_accent"
+                        app:tint="@color/v_accent"
                         android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"

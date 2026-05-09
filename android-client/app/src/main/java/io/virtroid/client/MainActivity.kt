@@ -447,6 +447,7 @@ class MainActivity : AppCompatActivity() {
                     relayPath = session.relayPath,
                     relayToken = session.relayToken,
                     sessionId = session.sessionId,
+                    viewerPublicKey = session.viewerPublicKey,
                 )
                 activeSessionStore.save(activeSession)
                 appLogs.info("Session created for ${readyRuntime.name}", "session")

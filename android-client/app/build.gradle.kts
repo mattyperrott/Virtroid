@@ -91,6 +91,39 @@ androidComponents {
     }
 }
 
+val verifyReleaseSecurityManifest by tasks.registering {
+    dependsOn("processReleaseMainManifest")
+    doLast {
+        val manifestRoot = layout.buildDirectory.dir("intermediates/merged_manifest/release").get().asFile
+        val manifest = manifestRoot.walkTopDown()
+            .firstOrNull { it.isFile && it.name == "AndroidManifest.xml" }
+            ?: throw GradleException("Release merged AndroidManifest.xml was not found.")
+        val text = manifest.readText()
+        fun requireManifestControl(ok: Boolean, message: String) {
+            if (!ok) throw GradleException("Release manifest security gate failed: $message")
+        }
+        requireManifestControl(!text.contains("android:debuggable=\"true\""), "debuggable=true")
+        requireManifestControl(!text.contains("android:testOnly=\"true\""), "testOnly=true")
+        requireManifestControl(
+            text.contains("android:allowBackup=\"false\"") || text.contains("android:allowBackup=\"0\""),
+            "allowBackup must be false",
+        )
+        requireManifestControl(
+            text.contains("android:usesCleartextTraffic=\"false\"") || text.contains("android:usesCleartextTraffic=\"0\""),
+            "usesCleartextTraffic must be false",
+        )
+        requireManifestControl(
+            text.contains("android:dataExtractionRules="),
+            "dataExtractionRules must be present",
+        )
+        requireManifestControl(!text.contains("UiPreviewActivity"), "debug preview activity leaked into release")
+    }
+}
+
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    dependsOn(verifyReleaseSecurityManifest)
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.appcompat:appcompat:1.7.1")

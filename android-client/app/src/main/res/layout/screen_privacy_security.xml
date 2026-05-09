@@ -26,7 +26,7 @@
             android:contentDescription="@string/controls_back"
             android:padding="12dp"
             android:src="@drawable/ic_arrow_back"
-            android:tint="@color/v_text_primary" />
+            app:tint="@color/v_text_primary" />
 
         <TextView
             style="@style/VirtroidText.NavTitle"
@@ -311,7 +311,7 @@
                         android:layout_width="20dp"
                         android:layout_height="20dp"
                         android:src="@drawable/ic_chevron_right"
-                        android:tint="@color/v_text_muted" />
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
 
                 <View style="@style/VirtroidSettingsDivider" />
@@ -365,7 +365,7 @@
                         android:layout_height="20dp"
                         android:layout_marginStart="8dp"
                         android:src="@drawable/ic_chevron_right"
-                        android:tint="@color/v_text_muted" />
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -451,7 +451,7 @@
                     android:layout_height="20dp"
                     android:layout_marginStart="8dp"
                     android:src="@drawable/ic_chevron_right"
-                    android:tint="@color/v_text_muted" />
+                    app:tint="@color/v_text_muted" />
             </LinearLayout>
 
             <TextView

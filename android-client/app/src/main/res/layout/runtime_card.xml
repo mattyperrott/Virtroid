@@ -33,7 +33,7 @@
                     android:layout_height="26dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_phone"
-                    android:tint="@color/v_accent" />
+                    app:tint="@color/v_accent" />
             </FrameLayout>
 
             <LinearLayout
@@ -85,7 +85,7 @@
                 android:contentDescription="@string/runtime_controls"
                 android:padding="13dp"
                 android:src="@drawable/ic_tune"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
         </LinearLayout>
 
         <FrameLayout
@@ -233,7 +233,7 @@
                 android:contentDescription="@string/runtime_controls"
                 android:padding="15dp"
                 android:src="@drawable/ic_tune"
-                android:tint="@color/v_text_muted" />
+                app:tint="@color/v_text_muted" />
 
             <ImageButton
                 android:id="@+id/deleteRuntimeButton"
@@ -244,7 +244,7 @@
                 android:contentDescription="@string/runtime_delete"
                 android:padding="15dp"
                 android:src="@drawable/ic_delete"
-                android:tint="@color/v_danger" />
+                app:tint="@color/v_danger" />
         </LinearLayout>
 
         <TextView

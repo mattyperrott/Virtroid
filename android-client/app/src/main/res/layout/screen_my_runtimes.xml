@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/v_bg">
@@ -65,7 +66,7 @@
                     android:contentDescription="@string/system_logs_open_errors"
                     android:padding="13dp"
                     android:src="@drawable/ic_bell"
-                    android:tint="@color/v_text_primary" />
+                    app:tint="@color/v_text_primary" />
 
                 <TextView
                     android:id="@+id/notificationBadgeText"
@@ -91,7 +92,7 @@
                 android:contentDescription="@string/home_access"
                 android:padding="13dp"
                 android:src="@drawable/ic_fingerprint"
-                android:tint="@color/v_accent" />
+                app:tint="@color/v_accent" />
         </LinearLayout>
 
         <LinearLayout
@@ -191,7 +192,7 @@
                 android:contentDescription="@string/home_title"
                 android:padding="13dp"
                 android:src="@drawable/ic_storage"
-                android:tint="@color/v_accent" />
+                app:tint="@color/v_accent" />
         </FrameLayout>
 
         <FrameLayout
@@ -208,7 +209,7 @@
                 android:contentDescription="@string/bottom_security"
                 android:padding="13dp"
                 android:src="@drawable/ic_shield"
-                android:tint="@color/v_text_muted" />
+                app:tint="@color/v_text_muted" />
         </FrameLayout>
 
         <FrameLayout
@@ -240,7 +241,7 @@
                 android:contentDescription="@string/bottom_logs"
                 android:padding="13dp"
                 android:src="@drawable/ic_terminal"
-                android:tint="@color/v_text_muted" />
+                app:tint="@color/v_text_muted" />
         </FrameLayout>
 
         <FrameLayout
@@ -257,7 +258,7 @@
                 android:contentDescription="@string/bottom_settings"
                 android:padding="13dp"
                 android:src="@drawable/ic_settings"
-                android:tint="@color/v_text_muted" />
+                app:tint="@color/v_text_muted" />
         </FrameLayout>
     </LinearLayout>
 

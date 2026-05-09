@@ -132,12 +132,12 @@ class OnboardingActivity : AppCompatActivity() {
             delay(STEP_VISUAL_DELAY_MS)
 
             updateActiveMilestone(
-                title = "Generating Device Fingerprint ...",
+                title = "Generating Device ID ...",
                 command = "> bind device public key",
-                detail = "... deriving hardware-backed device identity handle_",
+                detail = "... creating resettable device identity handle_",
             )
             renderProvisionedDevice(result.deviceId)
-            markPreviousMilestone("Device fingerprint registered", shortDescriptor(result.deviceId))
+            markPreviousMilestone("Device ID registered", shortDescriptor(result.deviceId))
             delay(STEP_VISUAL_DELAY_MS)
 
             registerBlobIdentity(result, password)

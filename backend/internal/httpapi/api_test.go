@@ -103,6 +103,9 @@ func TestActiveBlobKeyVaultExpires(t *testing.T) {
 	if !expiresAt.After(time.Now().UTC()) {
 		t.Fatal("vault returned non-future expiry")
 	}
+	if expiresAt.After(time.Now().UTC().Add(2*time.Minute + 5*time.Second)) {
+		t.Fatalf("vault expiry = %s, want roughly two minutes", expiresAt)
+	}
 
 	key, _, ok := vault.get("runtime-1", "host-1")
 	if !ok || key != "key-1" {
@@ -125,6 +128,34 @@ func TestActiveBlobKeyVaultExpires(t *testing.T) {
 
 	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
 		t.Fatal("vault returned expired active blob key")
+	}
+}
+
+func TestActiveBlobKeyVaultClearAccount(t *testing.T) {
+	vault := newActiveBlobKeyVault()
+	vault.put(activeBlobKeyHandoff{
+		AccountID: "account-1",
+		RuntimeID: "runtime-1",
+		HostID:    "host-1",
+		Operation: "session",
+		Key:       "key-1",
+	})
+	vault.put(activeBlobKeyHandoff{
+		AccountID: "account-2",
+		RuntimeID: "runtime-2",
+		HostID:    "host-1",
+		Operation: "session",
+		Key:       "key-2",
+	})
+
+	vault.clearAccount("account-1")
+
+	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
+		t.Fatal("vault returned a key for the erased account")
+	}
+	key, _, ok := vault.get("runtime-2", "host-1")
+	if !ok || key != "key-2" {
+		t.Fatalf("vault get for other account = %q, %v; want key-2, true", key, ok)
 	}
 }
 

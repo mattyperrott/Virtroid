@@ -42,6 +42,7 @@ const scrcpyServerMountPath = "/opt/virtroid/scrcpy-server.jar"
 const viewerCryptMountPath = "/opt/virtroid/virtroid-viewercrypt"
 const viewerScriptMountPath = "/vendor/bin/virtroid-viewer.sh"
 const viewerInitMountPath = "/vendor/etc/init/virtroid-viewer.rc"
+const viewerPublicKeyPath = "/data/local/tmp/virtroid-viewer-public-key"
 
 const (
 	scrcpyPlainPort     = 7007
@@ -56,6 +57,7 @@ SRC=/opt/virtroid/scrcpy-server.jar
 DST=/data/local/tmp/scrcpy-server.jar
 LOG=/data/local/tmp/virtroid-viewer.log
 VIEWERCRYPT=/opt/virtroid/virtroid-viewercrypt
+PUBLIC_KEY=/data/local/tmp/virtroid-viewer-public-key
 IP=$(getprop virtroid.viewer.client_ip)
 SIZE=$(getprop virtroid.viewer.max_size)
 BITRATE=$(getprop virtroid.viewer.bit_rate)
@@ -72,6 +74,7 @@ fi
 exec >>"$LOG" 2>&1
 echo "viewer-start $(date +%s) ip=$IP size=$SIZE bitrate=$BITRATE"
 rm -f "$DST"
+rm -f "$PUBLIC_KEY"
 cp "$SRC" "$DST"
 chown shell:shell "$DST" || true
 chmod 0644 "$DST" || true
@@ -90,7 +93,7 @@ if ! ss -ltn 2>/dev/null | grep -q ':7007'; then
   exit 1
 fi
 chmod 0755 "$VIEWERCRYPT" >/dev/null 2>&1 || true
-"$VIEWERCRYPT" -listen "127.0.0.1:7017" -upstream "127.0.0.1:7007"
+"$VIEWERCRYPT" -listen "127.0.0.1:7017" -upstream "127.0.0.1:7007" -public-key-file "$PUBLIC_KEY"
 STATUS=$?
 kill "$SERVER_PID" >/dev/null 2>&1 || true
 exit "$STATUS"
@@ -539,14 +542,16 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 		bitRate = 8_000_000
 	}
 
-	if err := n.prepareViewer(ctx, *runtime, maxSize, bitRate); err != nil {
+	viewerPublicKey, err := n.prepareViewer(ctx, *runtime, maxSize, bitRate)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"ok":          true,
-		"viewer_port": runtime.ViewerPort,
+		"ok":                true,
+		"viewer_port":       runtime.ViewerPort,
+		"viewer_public_key": viewerPublicKey,
 	})
 }
 
@@ -1383,34 +1388,54 @@ func (n *nodeAgent) startContainer(ctx context.Context, containerName string) er
 	return nil
 }
 
-func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment, maxSize, bitRate int) error {
+func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment, maxSize, bitRate int) (string, error) {
 	containerName := containerNameForRuntime(runtime.ID)
 	inspect, err := n.inspectContainer(ctx, containerName)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !inspect.State.Running {
-		return errors.New("runtime container is not running")
+		return "", errors.New("runtime container is not running")
 	}
 	ready, readyErr := n.androidBootCompleted(ctx, containerName)
 	if readyErr != nil {
-		return readyErr
+		return "", readyErr
 	}
 	if !ready {
-		return errors.New("android runtime is still booting")
+		return "", errors.New("android runtime is still booting")
 	}
 
 	clientIP := "127.0.0.1"
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Preparing viewer via in-guest init service.")
 	if err := n.startViewerService(ctx, containerName, clientIP, maxSize, bitRate); err != nil {
-		return fmt.Errorf("start viewer service: %w", err)
+		return "", fmt.Errorf("start viewer service: %w", err)
 	}
 	if err := n.waitForViewerPort(ctx, runtime, containerName); err != nil {
-		return err
+		return "", err
+	}
+	viewerPublicKey, err := n.readViewerPublicKey(ctx, containerName)
+	if err != nil {
+		return "", err
 	}
 
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", fmt.Sprintf("Encrypted viewer proxy prepared on guest port %d.", encryptedViewerPort))
-	return nil
+	return viewerPublicKey, nil
+}
+
+func (n *nodeAgent) readViewerPublicKey(ctx context.Context, containerName string) (string, error) {
+	output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+		{"/system/bin/cat", viewerPublicKeyPath},
+		{"cat", viewerPublicKeyPath},
+		{"toybox", "cat", viewerPublicKeyPath},
+	})
+	if err != nil {
+		return "", fmt.Errorf("read viewer public key: %w", err)
+	}
+	viewerPublicKey := strings.TrimSpace(output)
+	if viewerPublicKey == "" {
+		return "", errors.New("viewer public key is empty")
+	}
+	return viewerPublicKey, nil
 }
 
 func (n *nodeAgent) viewerCommandLogPath(runtimeID string) string {
