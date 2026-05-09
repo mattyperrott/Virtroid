@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/v_bg">
@@ -26,7 +27,7 @@
                 android:contentDescription="@string/controls_back"
                 android:padding="11dp"
                 android:src="@drawable/ic_arrow_back"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
             <View
                 android:layout_width="0dp"
                 android:layout_height="1dp"
@@ -39,7 +40,7 @@
                 android:contentDescription="@string/fund_storage_help"
                 android:padding="11dp"
                 android:src="@drawable/ic_help"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
         </LinearLayout>
         <ScrollView
             android:id="@+id/fund_storage_scroll"
@@ -86,7 +87,7 @@
                             android:layout_height="40dp"
                             android:padding="10dp"
                             android:src="@drawable/ic_wallet"
-                            android:tint="@color/v_text_secondary"
+                            app:tint="@color/v_text_secondary"
                             android:background="@drawable/bg_surface_light_circle" />
                         <LinearLayout
                             android:layout_width="0dp"
@@ -171,7 +172,7 @@
                             android:contentDescription="@string/onboarding_copy_account"
                             android:padding="8dp"
                             android:src="@drawable/ic_copy"
-                            android:tint="@color/v_text_muted" />
+                            app:tint="@color/v_text_muted" />
                     </LinearLayout>
                 </LinearLayout>
                 <LinearLayout
@@ -371,7 +372,7 @@
                             android:layout_height="40dp"
                             android:padding="10dp"
                             android:src="@drawable/ic_wallet"
-                            android:tint="@color/v_usdt"
+                            app:tint="@color/v_usdt"
                             android:background="@drawable/bg_usdt_soft_circle" />
                         <LinearLayout
                             android:layout_width="0dp"

@@ -23,14 +23,14 @@
     <string name="account_storage_snapshots_unreported">Snapshot count unreported</string>
     <string name="account_storage_runway_unreported">Runway unreported</string>
     <string name="account_storage_sync_failed">Storage telemetry sync failed</string>
-    <string name="account_fingerprint_copied">Device fingerprint copied</string>
+    <string name="account_fingerprint_copied">Device ID copied</string>
     <string name="account_device_key_copied">Device signing public key copied</string>
     <string name="account_wipe_local_title">Clear Local Runtime Artifacts</string>
     <string name="account_wipe_local_body">Clears local caches, temporary files, transfer artifacts, and active session handles. Account and device identity stay linked.</string>
     <string name="account_wipe_local_done">Cleared %1$d local items</string>
-    <string name="account_delete_local_identity_title">Reset Local Identity</string>
-    <string name="account_delete_local_identity_body">This unlinks the local client, clears the device signing key, app lock credential, cached session handles, and local artifacts on this device. It does not delete server-side storage funds.</string>
-    <string name="account_delete_local_identity_confirm">Reset identity</string>
+    <string name="account_delete_local_identity_title">Delete Account Identity</string>
+    <string name="account_delete_local_identity_body">Deletes the server-side account, linked device, runtime metadata, sessions, logs, and storage metadata, then clears the local device signing key, app lock credential, cached session handles, and local artifacts.</string>
+    <string name="account_delete_local_identity_confirm">Delete identity</string>
     <string name="app_locked">App locked</string>
     <string name="lock_invalid_pin">Incorrect PIN</string>
     <string name="lock_invalid_passphrase">Incorrect passphrase</string>
@@ -285,7 +285,7 @@
     <string name="onboarding_account_id">ACCOUNT ID</string>
     <string name="onboarding_copy_account">Copy account ID</string>
     <string name="onboarding_account_copied">Account ID copied</string>
-    <string name="onboarding_device_fingerprint">DEVICE FINGERPRINT</string>
+    <string name="onboarding_device_fingerprint">DEVICE ID</string>
     <string name="onboarding_verified">Registered</string>
     <string name="onboarding_existing_access">Add Trusted Device</string>
     <string name="onboarding_create_identity">Create Identity</string>

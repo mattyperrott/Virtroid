@@ -1,5 +1,8 @@
 package org.client.scrcpy.crypto;
 
+import android.text.TextUtils;
+import android.util.Base64;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -33,7 +36,7 @@ public final class ViewerEncryption {
     private ViewerEncryption() {
     }
 
-    public static Streams open(Socket socket) throws IOException, GeneralSecurityException {
+    public static Streams open(Socket socket, String expectedServerPublicKey) throws IOException, GeneralSecurityException {
         InputStream input = socket.getInputStream();
         OutputStream output = socket.getOutputStream();
 
@@ -44,6 +47,7 @@ public final class ViewerEncryption {
 
         writeHandshake(output, clientPublic);
         byte[] serverPublic = readHandshake(input);
+        verifyServerPublicKey(serverPublic, expectedServerPublicKey);
         PublicKey serverKey = KeyFactory.getInstance("EC")
             .generatePublic(new X509EncodedKeySpec(serverPublic));
 
@@ -58,6 +62,29 @@ public final class ViewerEncryption {
             new EncryptedInputStream(input, keys.serverToClient),
             new EncryptedOutputStream(output, keys.clientToServer)
         );
+    }
+
+    private static void verifyServerPublicKey(byte[] actual, String expected) throws GeneralSecurityException {
+        if (TextUtils.isEmpty(expected)) {
+            throw new GeneralSecurityException("viewer server public key is required");
+        }
+        byte[] expectedBytes = decodeExpectedPublicKey(expected);
+        if (!MessageDigest.isEqual(expectedBytes, actual)) {
+            throw new GeneralSecurityException("viewer server public key mismatch");
+        }
+    }
+
+    private static byte[] decodeExpectedPublicKey(String expected) throws GeneralSecurityException {
+        String trimmed = expected.trim();
+        try {
+            return Base64.decode(trimmed, Base64.DEFAULT);
+        } catch (IllegalArgumentException first) {
+            try {
+                return Base64.decode(trimmed, Base64.NO_WRAP | Base64.NO_PADDING | Base64.URL_SAFE);
+            } catch (IllegalArgumentException second) {
+                throw new GeneralSecurityException("invalid viewer server public key", second);
+            }
+        }
     }
 
     private static byte[] readHandshake(InputStream input) throws IOException {

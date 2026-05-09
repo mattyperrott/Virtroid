@@ -28,7 +28,7 @@
                 android:contentDescription="@string/new_runtime_close"
                 android:padding="13dp"
                 android:src="@drawable/ic_close"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
             <TextView
                 android:id="@+id/text_nav_title"
                 style="@style/VirtroidText.NavTitle"

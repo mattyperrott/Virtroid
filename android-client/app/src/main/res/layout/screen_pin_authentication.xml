@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/unlockRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -30,7 +31,7 @@
                 android:background="@drawable/bg_surface_stroke_32"
                 android:padding="18dp"
                 android:src="@drawable/ic_lock"
-                android:tint="@color/v_accent" />
+                app:tint="@color/v_accent" />
 
             <TextView
                 android:id="@+id/text_title"
@@ -253,7 +254,7 @@
                     android:contentDescription="@string/onboarding_device_fingerprint"
                     android:padding="26dp"
                     android:src="@drawable/ic_fingerprint"
-                    android:tint="@color/v_accent" />
+                    app:tint="@color/v_accent" />
 
                 <Space android:layout_width="34dp" android:layout_height="1dp" />
 
@@ -273,7 +274,7 @@
                     android:contentDescription="@string/runtime_delete"
                     android:padding="28dp"
                     android:src="@drawable/ic_backspace"
-                    android:tint="@color/v_text_muted" />
+                    app:tint="@color/v_text_muted" />
             </LinearLayout>
         </LinearLayout>
 

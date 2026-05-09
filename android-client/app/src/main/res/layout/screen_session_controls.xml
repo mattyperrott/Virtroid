@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/controlsRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -27,7 +28,7 @@
                 android:contentDescription="@string/controls_back"
                 android:padding="13dp"
                 android:src="@drawable/ic_arrow_back"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
             <TextView
                 android:id="@+id/text_nav_title"
                 style="@style/VirtroidText.NavTitle"
@@ -44,7 +45,7 @@
                 android:contentDescription="@string/controls_connect"
                 android:padding="13dp"
                 android:src="@drawable/ic_hexagon"
-                android:tint="@color/v_text_primary" />
+                app:tint="@color/v_text_primary" />
         </LinearLayout>
         <ScrollView
             android:id="@+id/controls_scroll"
@@ -76,7 +77,7 @@
                         android:layout_height="72dp"
                         android:padding="18dp"
                         android:src="@drawable/ic_fingerprint"
-                        android:tint="@color/v_accent"
+                        app:tint="@color/v_accent"
                         android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -109,7 +110,7 @@
                         android:contentDescription="@string/runtime_controls"
                         android:padding="11dp"
                         android:src="@drawable/ic_tune"
-                        android:tint="@color/v_text_muted" />
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <HorizontalScrollView
                     android:id="@+id/stats_scroller"
@@ -137,7 +138,7 @@
                                 android:layout_height="40dp"
                                 android:padding="10dp"
                                 android:src="@drawable/ic_terminal"
-                                android:tint="@color/v_accent"
+                                app:tint="@color/v_accent"
                                 android:layout_marginBottom="18dp"
                                 android:background="@drawable/bg_surface_light_circle" />
                             <TextView
@@ -176,7 +177,7 @@
                                 android:layout_height="40dp"
                                 android:padding="10dp"
                                 android:src="@drawable/ic_shield"
-                                android:tint="@color/v_blue"
+                                app:tint="@color/v_blue"
                                 android:layout_marginBottom="18dp"
                                 android:background="@drawable/bg_surface_light_circle" />
                             <TextView
@@ -215,7 +216,7 @@
                                 android:layout_height="40dp"
                                 android:padding="10dp"
                                 android:src="@drawable/ic_storage"
-                                android:tint="@color/v_amber"
+                                app:tint="@color/v_amber"
                                 android:layout_marginBottom="18dp"
                                 android:background="@drawable/bg_surface_light_circle" />
                             <TextView
@@ -267,7 +268,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_phone"
-                        android:tint="@color/v_text_primary"
+                        app:tint="@color/v_text_primary"
                         android:background="@drawable/bg_surface_light_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -306,7 +307,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_session_menu"
-                        android:tint="@color/v_text_primary"
+                        app:tint="@color/v_text_primary"
                         android:background="@drawable/bg_surface_light_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -354,7 +355,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_camera"
-                        android:tint="@color/v_text_primary"
+                        app:tint="@color/v_text_primary"
                         android:background="@drawable/bg_surface_light_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -407,7 +408,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_terminal"
-                        android:tint="@color/v_text_primary"
+                        app:tint="@color/v_text_primary"
                         android:background="@drawable/bg_surface_light_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -467,7 +468,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_warning"
-                        android:tint="@color/v_danger"
+                        app:tint="@color/v_danger"
                         android:background="@drawable/bg_red_soft_12" />
                     <LinearLayout
                         android:layout_width="0dp"
@@ -518,7 +519,7 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_delete"
-                        android:tint="@color/v_danger"
+                        app:tint="@color/v_danger"
                         android:background="@drawable/bg_red_soft_12" />
                     <LinearLayout
                         android:layout_width="0dp"

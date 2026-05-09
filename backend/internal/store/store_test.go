@@ -115,6 +115,50 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 	}
 }
 
+func TestDeleteAccountErasesAccountRow(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+
+	mock.ExpectExec("DELETE FROM accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := st.DeleteAccount(context.Background(), accountID); err != nil {
+		t.Fatalf("DeleteAccount returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestDeleteAccountReportsMissingAccount(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+
+	mock.ExpectExec("DELETE FROM accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := st.DeleteAccount(context.Background(), accountID); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("DeleteAccount error = %v, want %v", err, ErrAccountNotFound)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestCreateRuntimeRequiresEntitlement(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

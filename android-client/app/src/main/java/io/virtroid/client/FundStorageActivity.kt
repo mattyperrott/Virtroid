@@ -1,8 +1,6 @@
 package io.virtroid.client
 
 import android.app.AlertDialog
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -21,6 +19,7 @@ import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenFundStorageBinding
+import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -178,12 +177,11 @@ class FundStorageActivity : AppCompatActivity() {
     }
 
     private fun copyToClipboard(label: String, value: String) {
-        val clipboard = getSystemService(ClipboardManager::class.java)
         if (value.isBlank()) {
             toast(getString(R.string.fund_storage_wallet_not_configured))
             return
         }
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+        copySensitiveToClipboard(label, value)
         toast(getString(R.string.fund_storage_copied))
     }
 

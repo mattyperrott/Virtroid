@@ -6,9 +6,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -19,7 +22,12 @@ func TestServerHandshakeEncryptedRoundTrip(t *testing.T) {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		conn, err := serverHandshake(serverSide)
+		serverPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		conn, err := serverHandshake(serverSide, serverPrivate)
 		if err != nil {
 			serverErr <- err
 			return
@@ -60,6 +68,27 @@ func TestServerHandshakeEncryptedRoundTrip(t *testing.T) {
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatalf("server side failed: %v", err)
+	}
+}
+
+func TestWritePublicKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "viewer-public-key")
+	publicKeyDER := []byte("public-key")
+
+	if err := writePublicKeyFile(path, publicKeyDER); err != nil {
+		t.Fatalf("writePublicKeyFile returned error: %v", err)
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read public key file: %v", err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(bytes.TrimSpace(payload)))
+	if err != nil {
+		t.Fatalf("decode public key: %v", err)
+	}
+	if !bytes.Equal(decoded, publicKeyDER) {
+		t.Fatalf("decoded public key = %q, want %q", decoded, publicKeyDER)
 	}
 }
 

@@ -55,6 +55,7 @@ var (
 	ErrRuntimeStartQuota      = errors.New("runtime start quota exceeded")
 	ErrRuntimeProfile         = errors.New("runtime profile is not allowed")
 	ErrSecurityEventRateLimit = errors.New("security event rate limit exceeded")
+	ErrAccountNotFound        = errors.New("account not found")
 )
 
 const (
@@ -416,6 +417,26 @@ func normalizeBootstrapUUID(value string, field string) (string, error) {
 		return "", fmt.Errorf("%s must be a valid uuid", field)
 	}
 	return parsed.String(), nil
+}
+
+func (s *Store) DeleteAccount(ctx context.Context, accountID string) error {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return ErrAccountNotFound
+	}
+
+	result, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id = $1`, accountID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrAccountNotFound
+	}
+	return nil
 }
 
 func (s *Store) CreateRuntime(ctx context.Context, accountID string, input CreateRuntimeInput) (Runtime, error) {

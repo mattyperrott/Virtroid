@@ -29,7 +29,7 @@ class AppSettingsStore(private val context: Context) {
         set(value) = prefs.edit().putInt(KEY_FAILED_ATTEMPTS_THRESHOLD, value.coerceAtLeast(1)).apply()
 
     var blockScreenCapture: Boolean
-        get() = prefs.getBoolean(KEY_BLOCK_SCREEN_CAPTURE, false)
+        get() = prefs.getBoolean(KEY_BLOCK_SCREEN_CAPTURE, true)
         set(value) = prefs.edit().putBoolean(KEY_BLOCK_SCREEN_CAPTURE, value).apply()
 
     var uiInactivityTimeoutMs: Long

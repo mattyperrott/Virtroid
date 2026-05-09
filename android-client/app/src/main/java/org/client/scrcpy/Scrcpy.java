@@ -9,6 +9,8 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.Surface;
 
+import io.virtroid.client.BuildConfig;
+
 import org.client.scrcpy.decoder.AudioDecoder;
 import org.client.scrcpy.decoder.VideoDecoder;
 import org.client.scrcpy.crypto.ViewerEncryption;
@@ -48,6 +50,7 @@ public class Scrcpy extends Service {
     private boolean relayTls = false;
     private String relayPath = "";
     private String relayToken = "";
+    private String viewerPublicKey = "";
     private Surface surface;
     private int screenWidth;
     private int screenHeight;
@@ -98,7 +101,7 @@ public class Scrcpy extends Service {
         return decoder;
     }
 
-    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, int screenHeight, int screenWidth, int delay) {
+    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, String viewerPublicKey, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
         first_time = true;
@@ -117,6 +120,7 @@ public class Scrcpy extends Service {
         this.relayTls = relayTls;
         this.relayPath = relayPath;
         this.relayToken = relayToken;
+        this.viewerPublicKey = viewerPublicKey;
 
         this.screenHeight = screenHeight;
         this.screenWidth = screenWidth;
@@ -152,7 +156,7 @@ public class Scrcpy extends Service {
         try {  // 请求关键帧, 避免花屏
             requestNewKeyFrame();
         } catch (IOException e) {
-            e.printStackTrace();
+            debugLog("request keyframe failed", e);
         }
     }
 
@@ -285,16 +289,16 @@ public class Scrcpy extends Service {
         int attempts = 50;
         while (attempts > 0 && LetServceRunning.get()) {
             try {
-                Log.e("Scrcpy", "Connecting to " + LOCAL_IP);
+                debugLog("Connecting to relay");
                 socket = connectRelaySocket(ip, port);
                 activeSocket = socket;
                 if (!LetServceRunning.get()) {
                     return;
                 }
 
-                Log.e("Scrcpy", "Connecting to " + LOCAL_IP + " success");
+                debugLog("Connected to relay");
                 performRelayHandshake(socket, ip, port);
-                ViewerEncryption.Streams encryptedStreams = ViewerEncryption.open(socket);
+                ViewerEncryption.Streams encryptedStreams = ViewerEncryption.open(socket, viewerPublicKey);
 
                 // 能够正常进行连接，说明可能建立了 tcp 连接，需要等待数据
                 // 一次等待时间为 2s ，最多等待五次，也就是 10秒
@@ -331,7 +335,7 @@ public class Scrcpy extends Service {
                 loop(dataInputStream, dataOutputStream, delay);
 
             } catch (Exception e) {
-                e.printStackTrace();
+                debugLog("viewer connection failed", e);
                 if (LetServceRunning.get()) {
                     attempts--;
                     if (attempts < 0) {
@@ -347,28 +351,27 @@ public class Scrcpy extends Service {
                     } catch (InterruptedException ignore) {
                     }
                 }
-                Log.e("Scrcpy", e.getMessage());
-                Log.e("Scrcpy", "attempts--");
+                debugLog("viewer connection retry scheduled");
             } finally {
                 if (socket != null) {
                     try {
                         socket.close();
                     } catch (IOException e) {
-                        e.printStackTrace();
+                        debugLog("close socket failed", e);
                     }
                 }
                 if (dataOutputStream != null) {
                     try {
                         dataOutputStream.close();
                     } catch (IOException e) {
-                        e.printStackTrace();
+                        debugLog("close output stream failed", e);
                     }
                 }
                 if (dataInputStream != null) {
                     try {
                         dataInputStream.close();
                     } catch (IOException e) {
-                        e.printStackTrace();
+                        debugLog("close input stream failed", e);
                     }
                 }
                 socketInputStream = null;
@@ -387,7 +390,8 @@ public class Scrcpy extends Service {
         Socket socket = new Socket();
         socket.connect(new InetSocketAddress(host, port), 5000);
         if (!relayTls) {
-            return socket;
+            socket.close();
+            throw new IOException("insecure relay transport rejected");
         }
 
         SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
@@ -482,7 +486,7 @@ public class Scrcpy extends Service {
                         byte[] data = ControlPacket.toArray(MediaPacket.Type.CONTROL, sendevent);
                         dataOutputStream.write(data);
                     } catch (IOException e) {
-                        e.printStackTrace();
+                        debugLog("write control packet failed", e);
                         if (serviceCallbacks != null) {
                             serviceCallbacks.errorDisconnect();
                         }
@@ -523,7 +527,7 @@ public class Scrcpy extends Service {
                                         try {
                                             Thread.sleep(100);
                                         } catch (InterruptedException e) {
-                                            e.printStackTrace();
+                                            debugLog("wait for surface interrupted", e);
                                         }
                                     }
 
@@ -542,7 +546,7 @@ public class Scrcpy extends Service {
                             }
                         } else if (videoPacket.flag == VideoPacket.Flag.END) {
                             // need close stream
-                            Log.e("Scrcpy", "END ... ");
+                            debugLog("Video stream ended");
                         } else {
                             // Log.e("Scrcpy", "videoPacket presentationTimeStamp ... " + videoPacket.presentationTimeStamp);
                             // 帧在 100 ms 以内
@@ -576,7 +580,7 @@ public class Scrcpy extends Service {
                             audioDecoder.configure(data);
                         } else if (audioPacket.flag == AudioPacket.Flag.END) {
                             // need close stream
-                            Log.e("Scrcpy", "Audio END ... ");
+                            debugLog("Audio stream ended");
                         } else {
                             if (lastAudioOffset == 0) {
                                 lastAudioOffset = System.currentTimeMillis() - (audioPacket.presentationTimeStamp / 1000);
@@ -590,8 +594,7 @@ public class Scrcpy extends Service {
 
                 }
             } catch (IOException e) {
-                Log.e("Scrcpy", "IOException: " + e.getMessage());
-                e.printStackTrace();
+                debugLog("viewer loop I/O failed", e);
             } finally {
                 if (waitEvent) {
                     Thread.sleep(5);
@@ -603,6 +606,18 @@ public class Scrcpy extends Service {
     private void notifyFirstVideoFrame() {
         if (firstVideoFrameDelivered.compareAndSet(false, true) && serviceCallbacks != null) {
             serviceCallbacks.firstVideoFrame();
+        }
+    }
+
+    private static void debugLog(String message) {
+        if (BuildConfig.DEBUG) {
+            Log.d("Scrcpy", message);
+        }
+    }
+
+    private static void debugLog(String message, Throwable throwable) {
+        if (BuildConfig.DEBUG) {
+            Log.e("Scrcpy", message, throwable);
         }
     }
 

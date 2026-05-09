@@ -34,7 +34,7 @@ public class Util {
 //                    serverHost = serverHost.substring(1, serverHost.length() - 1);
 //                }
             } catch (Exception e) {
-                e.printStackTrace();
+                // Keep malformed user-provided addresses on the default scrcpy port.
             }
         }
         return new String[]{serverHost, serverPort};
@@ -66,7 +66,7 @@ public class Util {
                     start = false;
                 }
             } catch (UnsupportedEncodingException e) {
-                e.printStackTrace();
+                // UTF-8 is always available on Android.
             }
 
         }

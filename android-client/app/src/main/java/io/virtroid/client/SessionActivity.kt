@@ -48,6 +48,7 @@ class SessionActivity : AppCompatActivity() {
     private var relayTls: Boolean = false
     private var relayPath: String = ""
     private var relayToken: String = ""
+    private var viewerPublicKey: String = ""
     private var sessionId: String = ""
     private var runtimeName: String = ""
     private var runtimeId: String = ""
@@ -118,6 +119,7 @@ class SessionActivity : AppCompatActivity() {
         relayTls = intent.getBooleanExtra(EXTRA_RELAY_TLS, false)
         relayPath = intent.getStringExtra(EXTRA_RELAY_PATH).orEmpty()
         relayToken = intent.getStringExtra(EXTRA_RELAY_TOKEN).orEmpty()
+        viewerPublicKey = intent.getStringExtra(EXTRA_VIEWER_PUBLIC_KEY).orEmpty()
         sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty()
         runtimeName = intent.getStringExtra(EXTRA_RUNTIME_NAME).orEmpty()
         runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID).orEmpty()
@@ -130,7 +132,7 @@ class SessionActivity : AppCompatActivity() {
         appLogs = AppLogStore.get(this)
         persistActiveSession()
 
-        if (relayHost.isBlank() || relayPort <= 0 || relayPath.isBlank() || relayToken.isBlank()) {
+        if (relayHost.isBlank() || relayPort <= 0 || !relayTls || relayPath.isBlank() || relayToken.isBlank() || viewerPublicKey.isBlank()) {
             toast(getString(R.string.session_missing_endpoint))
             finish()
             return
@@ -248,6 +250,7 @@ class SessionActivity : AppCompatActivity() {
             relayTls = relayTls,
             relayPath = relayPath,
             relayToken = relayToken,
+            viewerPublicKey = viewerPublicKey,
             surface = surface,
             displayWidth = binding.sessionSurfaceView.width.takeIf { it > 0 }
                 ?: resources.displayMetrics.widthPixels,
@@ -449,6 +452,7 @@ class SessionActivity : AppCompatActivity() {
                 relayPath = relayPath,
                 relayToken = relayToken,
                 sessionId = sessionId,
+                viewerPublicKey = viewerPublicKey,
             ),
         )
     }
@@ -521,6 +525,7 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_RELAY_TLS = "relay_tls"
         private const val EXTRA_RELAY_PATH = "relay_path"
         private const val EXTRA_RELAY_TOKEN = "relay_token"
+        private const val EXTRA_VIEWER_PUBLIC_KEY = "viewer_public_key"
         private const val EXTRA_SESSION_ID = "session_id"
         private const val EXTRA_RUNTIME_ID = "runtime_id"
         private const val EXTRA_ACCOUNT_ID = "account_id"
@@ -542,6 +547,7 @@ class SessionActivity : AppCompatActivity() {
             relayTls: Boolean,
             relayPath: String,
             relayToken: String,
+            viewerPublicKey: String,
             sessionId: String,
             viewerAddress: String,
         ): Intent {
@@ -557,6 +563,7 @@ class SessionActivity : AppCompatActivity() {
                 .putExtra(EXTRA_RELAY_TLS, relayTls)
                 .putExtra(EXTRA_RELAY_PATH, relayPath)
                 .putExtra(EXTRA_RELAY_TOKEN, relayToken)
+                .putExtra(EXTRA_VIEWER_PUBLIC_KEY, viewerPublicKey)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
         }
 
@@ -576,6 +583,7 @@ class SessionActivity : AppCompatActivity() {
                 relayTls = session.relayTls,
                 relayPath = session.relayPath,
                 relayToken = session.relayToken,
+                viewerPublicKey = session.viewerPublicKey,
                 sessionId = session.sessionId,
                 viewerAddress = session.viewerAddress,
             )

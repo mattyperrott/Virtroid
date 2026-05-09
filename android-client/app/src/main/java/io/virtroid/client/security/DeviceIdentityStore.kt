@@ -2,10 +2,10 @@ package io.virtroid.client.security
 
 import android.content.Context
 import android.os.Build
-import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import io.virtroid.client.data.KeystorePrefs
 import java.nio.ByteBuffer
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -46,6 +46,10 @@ class DeviceIdentityStore {
         }
     }
 
+    fun resetInstallDeviceId(context: Context) {
+        devicePrefs(context).clear(KEY_INSTALL_DEVICE_ID)
+    }
+
     fun defaultDeviceName(): String {
         return listOfNotNull(Build.MANUFACTURER, Build.MODEL)
             .joinToString(" ")
@@ -53,23 +57,16 @@ class DeviceIdentityStore {
     }
 
     fun deviceFingerprint(context: Context, accountId: String): String {
-        val androidId = Settings.Secure.getString(
-            context.contentResolver,
-            Settings.Secure.ANDROID_ID,
-        ).orEmpty()
+        val installDeviceId = devicePrefs(context).getString(KEY_INSTALL_DEVICE_ID, null)
+            ?.takeIf { runCatching { UUID.fromString(it) }.isSuccess }
+            ?: UUID.randomUUID().toString().also {
+                devicePrefs(context).putString(KEY_INSTALL_DEVICE_ID, it)
+            }
         val material = listOf(
-            "VIRTROID-DEVICE-FINGERPRINT-V1",
+            "VIRTROID-DEVICE-ID-V2",
             accountId.trim(),
+            installDeviceId,
             publicKeyMaterial(),
-            androidId,
-            Build.BRAND,
-            Build.MANUFACTURER,
-            Build.MODEL,
-            Build.DEVICE,
-            Build.PRODUCT,
-            Build.BOARD,
-            Build.HARDWARE,
-            Build.FINGERPRINT,
         ).joinToString("\n") { it.trim().ifBlank { "unknown" } }
 
         val digest = MessageDigest.getInstance("SHA-256")
@@ -126,10 +123,22 @@ class DeviceIdentityStore {
         return keyStore.getKey(KEY_ALIAS, null) as PrivateKey
     }
 
+    private fun devicePrefs(context: Context): KeystorePrefs {
+        pendingDevicePrefs?.let { return it }
+        return KeystorePrefs(
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+            DEVICE_PREFS_KEYSTORE_ALIAS,
+        ).also { pendingDevicePrefs = it }
+    }
+
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KEY_ALIAS = "virtroid_device_key"
+        const val PREFS_NAME = "virtroid-device-identity"
+        const val DEVICE_PREFS_KEYSTORE_ALIAS = "virtroid_device_identity_prefs_v1"
+        const val KEY_INSTALL_DEVICE_ID = "install_device_id"
         const val SIGNATURE_CONTEXT = "VIRTROID-DEVICE-SIGNATURE-V1"
         const val B64_URL_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
+        var pendingDevicePrefs: KeystorePrefs? = null
     }
 }

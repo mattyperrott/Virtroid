@@ -14,6 +14,7 @@ class AppLogStore private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext
         .getSharedPreferences("virtroid-app-logs", Context.MODE_PRIVATE)
+    private val securePrefs = KeystorePrefs(prefs, KEYSTORE_ALIAS)
     private val vault = SecureLocalVault.get(appContext)
     private val _entries = MutableStateFlow(loadEntries())
 
@@ -25,7 +26,7 @@ class AppLogStore private constructor(context: Context) {
             timestampMs = System.currentTimeMillis(),
             level = level,
             source = source,
-            message = message,
+            message = sanitizeMessage(message),
             criticalResolved = false,
         )
         val next = (_entries.value + entry).takeLast(MAX_ENTRIES)
@@ -53,13 +54,10 @@ class AppLogStore private constructor(context: Context) {
 
     fun clearAll() {
         _entries.value = emptyList()
-        when {
-            vault.isUnlocked -> {
-                vault.putString(NAMESPACE, KEY_ENTRIES, "[]")
-                prefs.edit().remove(KEY_ENTRIES).apply()
-            }
-            vault.exists -> Unit
-            else -> prefs.edit().remove(KEY_ENTRIES).apply()
+        securePrefs.putString(KEY_ENTRIES, "[]")
+        prefs.edit().remove(KEY_ENTRIES).apply()
+        if (vault.isUnlocked) {
+            vault.clearNamespace(NAMESPACE)
         }
     }
 
@@ -72,55 +70,53 @@ class AppLogStore private constructor(context: Context) {
     }
 
     private fun persist(next: List<AppLogEntry>) {
-        val bounded = next.takeLast(MAX_ENTRIES)
+        val bounded = next.map { it.copy(message = sanitizeMessage(it.message)) }.takeLast(MAX_ENTRIES)
         _entries.value = bounded
-        when {
-            vault.isUnlocked -> {
-                migrateToVaultIfUnlocked()
-                val merged = (_entries.value + bounded)
-                    .distinctBy { it.id }
-                    .sortedBy { it.timestampMs }
-                    .takeLast(MAX_ENTRIES)
-                _entries.value = merged
-                vault.putString(NAMESPACE, KEY_ENTRIES, encodeEntries(merged))
-                prefs.edit().remove(KEY_ENTRIES).apply()
-            }
-            vault.exists -> Unit
-            else -> prefs.edit().putString(KEY_ENTRIES, encodeEntries(bounded)).apply()
+        migrateToEncryptedIfNeeded()
+        securePrefs.putString(KEY_ENTRIES, encodeEntries(bounded))
+        prefs.edit().remove(KEY_ENTRIES).apply()
+        if (vault.isUnlocked) {
+            vault.clearNamespace(NAMESPACE)
         }
     }
 
     private fun loadEntries(): List<AppLogEntry> {
-        val encoded = when {
-            vault.isUnlocked -> vault.getString(NAMESPACE, KEY_ENTRIES, null)
-            vault.exists -> null
-            else -> prefs.getString(KEY_ENTRIES, null)
-        } ?: return emptyList()
+        migrateToEncryptedIfNeeded()?.let { return it }
+        val encoded = securePrefs.getString(KEY_ENTRIES, null) ?: return emptyList()
         return decodeEntries(encoded)
     }
 
     fun migrateToVaultIfUnlocked() {
-        if (!vault.isUnlocked) {
-            return
-        }
-        val vaultEntries = vault.getString(NAMESPACE, KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
-        val legacyEntries = prefs.getString(KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
-        val merged = (vaultEntries + legacyEntries + _entries.value)
-            .distinctBy { it.id }
-            .sortedBy { it.timestampMs }
-            .takeLast(MAX_ENTRIES)
-        vault.putString(NAMESPACE, KEY_ENTRIES, encodeEntries(merged))
-        prefs.edit().remove(KEY_ENTRIES).apply()
-        _entries.value = merged
+        migrateToEncryptedIfNeeded()?.let { _entries.value = it }
     }
 
     fun exportVaultToLegacyIfUnlocked() {
-        if (!vault.isUnlocked) {
-            return
+        migrateToEncryptedIfNeeded()?.let { _entries.value = it }
+        prefs.edit().remove(KEY_ENTRIES).apply()
+    }
+
+    private fun migrateToEncryptedIfNeeded(): List<AppLogEntry>? {
+        val encryptedEntries = securePrefs.getString(KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
+        val legacyEntries = prefs.getString(KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
+        val vaultEntries = if (vault.isUnlocked) {
+            vault.getString(NAMESPACE, KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
+        } else {
+            emptyList()
         }
-        val entries = vault.getString(NAMESPACE, KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
-        prefs.edit().putString(KEY_ENTRIES, encodeEntries(entries)).apply()
-        _entries.value = entries
+        if (encryptedEntries.isEmpty() && legacyEntries.isEmpty() && vaultEntries.isEmpty()) {
+            return null
+        }
+        val merged = (encryptedEntries + legacyEntries + vaultEntries)
+            .distinctBy { it.id }
+            .sortedBy { it.timestampMs }
+            .map { it.copy(message = sanitizeMessage(it.message)) }
+            .takeLast(MAX_ENTRIES)
+        securePrefs.putString(KEY_ENTRIES, encodeEntries(merged))
+        prefs.edit().remove(KEY_ENTRIES).apply()
+        if (vault.isUnlocked) {
+            vault.clearNamespace(NAMESPACE)
+        }
+        return merged
     }
 
     private fun encodeEntries(entries: List<AppLogEntry>): String {
@@ -151,7 +147,7 @@ class AppLogStore private constructor(context: Context) {
                             timestampMs = item.optLong("timestamp_ms"),
                             level = AppLogLevel.fromName(item.optString("level")),
                             source = item.optString("source", "app"),
-                            message = item.optString("message"),
+                            message = sanitizeMessage(item.optString("message")),
                             criticalResolved = item.optBoolean("critical_resolved", false),
                         ),
                     )
@@ -163,7 +159,15 @@ class AppLogStore private constructor(context: Context) {
     companion object {
         private const val NAMESPACE = "app_logs"
         private const val KEY_ENTRIES = "entries_json"
-        private const val MAX_ENTRIES = 400
+        private const val KEYSTORE_ALIAS = "virtroid_app_logs_prefs_v1"
+        private const val MAX_ENTRIES = 200
+        private val UUID_PATTERN = Regex(
+            "\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b",
+        )
+        private val SECRET_KV_PATTERN = Regex(
+            "(?i)\\b(relay[_ -]?token|blob[_ -]?access[_ -]?key|public[_ -]?key|signature|nonce)=\\S+",
+        )
+        private val LONG_TOKEN_PATTERN = Regex("\\b[A-Za-z0-9_+/=-]{48,}\\b")
 
         @Volatile
         private var instance: AppLogStore? = null
@@ -172,6 +176,14 @@ class AppLogStore private constructor(context: Context) {
             return instance ?: synchronized(this) {
                 instance ?: AppLogStore(context.applicationContext).also { instance = it }
             }
+        }
+
+        private fun sanitizeMessage(message: String): String {
+            return message
+                .replace(SECRET_KV_PATTERN) { match -> "${match.groupValues[1]}=[redacted]" }
+                .replace(UUID_PATTERN, "[id]")
+                .replace(LONG_TOKEN_PATTERN, "[redacted]")
+                .take(500)
         }
     }
 }

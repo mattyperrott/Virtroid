@@ -1,7 +1,5 @@
 package io.virtroid.client
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -26,6 +24,7 @@ import io.virtroid.client.data.AppLogFilter
 import io.virtroid.client.data.AppLogLevel
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.databinding.ScreenSystemLogsBinding
+import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -182,8 +181,7 @@ class SystemLogsActivity : AppCompatActivity() {
     }
 
     private fun copyLogs() {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Virtroid logs", appLogs.exportText(activeFilter)))
+        copySensitiveToClipboard("Virtroid logs", appLogs.exportText(activeFilter), clearAfterMs = 15_000L)
         toast(getString(R.string.system_logs_copied))
     }
 
