@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -181,6 +182,17 @@ type RuntimeLogEntry struct {
 	Level     string    `json:"level"`
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type SecurityEventInput struct {
+	NodeID    string
+	Source    string
+	Rule      string
+	Priority  string
+	Output    string
+	Tags      []string
+	EventJSON string
+	EventTime *time.Time
 }
 
 type CreateRuntimeInput struct {
@@ -1291,6 +1303,26 @@ func (s *Store) AppendRuntimeLog(ctx context.Context, runtimeID, source, level, 
 		defaultString(source, "system"),
 		defaultString(level, "info"),
 		strings.TrimSpace(message),
+	)
+	return err
+}
+
+func (s *Store) AppendSecurityEvent(ctx context.Context, event SecurityEventInput) error {
+	tagsJSON, err := json.Marshal(event.Tags)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO security_events (node_id, source, rule, priority, output, tags_json, event_json, event_time)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		strings.TrimSpace(event.NodeID),
+		defaultString(event.Source, "falco"),
+		defaultString(event.Rule, "security event"),
+		defaultString(event.Priority, "notice"),
+		strings.TrimSpace(event.Output),
+		string(tagsJSON),
+		defaultString(event.EventJSON, "{}"),
+		event.EventTime,
 	)
 	return err
 }

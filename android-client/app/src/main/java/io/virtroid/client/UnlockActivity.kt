@@ -143,13 +143,19 @@ class UnlockActivity : AppCompatActivity() {
     }
 
     private fun unlockWithBiometric() {
+        val cipher = appLockStore.biometricDecryptCipher()
+        if (cipher == null) {
+            toast(getString(R.string.lock_biometric_vault_unavailable))
+            renderBiometric()
+            return
+        }
         val prompt = BiometricPrompt(
             this,
             ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    if (appLockStore.markUnlocked()) {
+                    if (appLockStore.unlockWithBiometric(result.cryptoObject?.cipher)) {
                         appLogs.info("Biometric unlock succeeded", "auth")
                         launchNext()
                     } else {
@@ -170,6 +176,7 @@ class UnlockActivity : AppCompatActivity() {
                 .setNegativeButtonText(getString(R.string.biometric_unlock_use_pin))
                 .setAllowedAuthenticators(BIOMETRIC_AUTHENTICATORS)
                 .build(),
+            BiometricPrompt.CryptoObject(cipher),
         )
     }
 

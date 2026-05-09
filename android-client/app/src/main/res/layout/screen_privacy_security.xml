@@ -248,6 +248,40 @@
                 <View style="@style/VirtroidSettingsDivider" />
 
                 <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="72dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtroidSettingsTitle"
+                            android:text="@string/privacy_biometric_vault_unlock" />
+
+                        <TextView
+                            style="@style/VirtroidSettingsSubtitle"
+                            android:layout_marginTop="8dp"
+                            android:text="@string/privacy_biometric_vault_unlock_body" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/biometricUnlockSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
+                </LinearLayout>
+
+                <View style="@style/VirtroidSettingsDivider" />
+
+                <LinearLayout
                     android:id="@+id/autoLockTimerRow"
                     android:layout_width="match_parent"
                     android:layout_height="64dp"

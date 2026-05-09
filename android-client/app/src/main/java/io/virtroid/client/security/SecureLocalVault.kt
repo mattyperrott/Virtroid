@@ -26,6 +26,12 @@ class SecureLocalVault private constructor(context: Context) {
     val exists: Boolean
         get() = vaultFile.exists()
 
+    fun currentKeyCopy(): ByteArray? {
+        return synchronized(lock) {
+            vaultKey?.copyOf()
+        }
+    }
+
     fun unlockOrCreate(secret: String, saltB64: String): Boolean {
         val derivedKey = deriveKey(secret, saltB64) ?: return false
         synchronized(lock) {
@@ -40,6 +46,24 @@ class SecureLocalVault private constructor(context: Context) {
                 true
             }.getOrElse {
                 Arrays.fill(derivedKey, 0)
+                false
+            }
+        }
+    }
+
+    fun unlockWithKey(key: ByteArray): Boolean {
+        val keyCopy = key.copyOf()
+        synchronized(lock) {
+            return runCatching {
+                document = if (vaultFile.exists()) {
+                    JSONObject(decryptFile(keyCopy))
+                } else {
+                    JSONObject()
+                }
+                replaceKeyLocked(keyCopy)
+                true
+            }.getOrElse {
+                Arrays.fill(keyCopy, 0)
                 false
             }
         }
