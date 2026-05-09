@@ -1,13 +1,18 @@
 package io.virtroid.client.security
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import org.json.JSONObject
 import java.io.File
+import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Arrays
 import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
@@ -15,6 +20,7 @@ import javax.crypto.spec.SecretKeySpec
 
 class SecureLocalVault private constructor(context: Context) {
     private val appContext = context.applicationContext
+    private val keyPrefs = appContext.getSharedPreferences("virtroid-local-vault-key", Context.MODE_PRIVATE)
     private val vaultFile = File(appContext.filesDir, "secure-vault/local-state.v1")
     private val lock = Any()
     private var vaultKey: ByteArray? = null
@@ -33,20 +39,29 @@ class SecureLocalVault private constructor(context: Context) {
     }
 
     fun unlockOrCreate(secret: String, saltB64: String): Boolean {
-        val derivedKey = deriveKey(secret, saltB64) ?: return false
+        val legacyKey = deriveKey(secret, saltB64) ?: return false
         synchronized(lock) {
+            val isVersioned = vaultFile.exists() && isVersionedVaultFile()
+            val dataKey = runCatching { dataKeyForUnlockLocked(isVersioned) }.getOrNull() ?: run {
+                Arrays.fill(legacyKey, 0)
+                return false
+            }
             return runCatching {
-                document = if (vaultFile.exists()) {
-                    JSONObject(decryptFile(derivedKey))
-                } else {
-                    JSONObject()
+                document = when {
+                    vaultFile.exists() && isVersioned -> JSONObject(decryptVersionedFile(dataKey))
+                    vaultFile.exists() -> JSONObject(decryptLegacyFile(legacyKey))
+                    else -> JSONObject()
                 }
-                replaceKeyLocked(derivedKey)
+                replaceKeyLocked(dataKey)
                 persistLocked()
                 true
             }.getOrElse {
-                Arrays.fill(derivedKey, 0)
+                vaultKey = null
+                document = JSONObject()
+                Arrays.fill(dataKey, 0)
                 false
+            }.also {
+                Arrays.fill(legacyKey, 0)
             }
         }
     }
@@ -56,7 +71,10 @@ class SecureLocalVault private constructor(context: Context) {
         synchronized(lock) {
             return runCatching {
                 document = if (vaultFile.exists()) {
-                    JSONObject(decryptFile(keyCopy))
+                    if (!isVersionedVaultFile()) {
+                        throw IllegalStateException("legacy vault requires PIN migration before biometric unlock")
+                    }
+                    JSONObject(decryptVersionedFile(keyCopy))
                 } else {
                     JSONObject()
                 }
@@ -82,6 +100,10 @@ class SecureLocalVault private constructor(context: Context) {
             lock()
             if (vaultFile.exists()) {
                 vaultFile.delete()
+            }
+            keyPrefs.edit().clear().apply()
+            runCatching {
+                keyStore().deleteEntry(KEYSTORE_KEY_ALIAS)
             }
         }
     }
@@ -192,20 +214,31 @@ class SecureLocalVault private constructor(context: Context) {
         val cipher = Cipher.getInstance(AES_MODE)
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, KEY_ALGORITHM), GCMParameterSpec(GCM_TAG_BITS, iv))
         val ciphertext = cipher.doFinal(document.toString().toByteArray(Charsets.UTF_8))
-        val payload = ByteArray(iv.size + ciphertext.size)
-        System.arraycopy(iv, 0, payload, 0, iv.size)
-        System.arraycopy(ciphertext, 0, payload, iv.size, ciphertext.size)
+        val envelope = JSONObject()
+            .put("version", VAULT_VERSION)
+            .put("iv", Base64.encodeToString(iv, B64_FLAGS))
+            .put("ciphertext", Base64.encodeToString(ciphertext, B64_FLAGS))
 
         vaultFile.parentFile?.mkdirs()
         val tmp = File(vaultFile.parentFile, "${vaultFile.name}.tmp")
-        tmp.writeText(Base64.encodeToString(payload, B64_FLAGS), Charsets.UTF_8)
+        tmp.writeText(envelope.toString(), Charsets.UTF_8)
         if (!tmp.renameTo(vaultFile)) {
             tmp.delete()
             throw IllegalStateException("could not commit secure vault")
         }
     }
 
-    private fun decryptFile(key: ByteArray): String {
+    private fun decryptVersionedFile(key: ByteArray): String {
+        val envelope = JSONObject(vaultFile.readText(Charsets.UTF_8).trim())
+        require(envelope.optInt("version") == VAULT_VERSION)
+        val iv = Base64.decode(envelope.getString("iv"), B64_FLAGS)
+        val ciphertext = Base64.decode(envelope.getString("ciphertext"), B64_FLAGS)
+        val cipher = Cipher.getInstance(AES_MODE)
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, KEY_ALGORITHM), GCMParameterSpec(GCM_TAG_BITS, iv))
+        return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+    }
+
+    private fun decryptLegacyFile(key: ByteArray): String {
         val payload = Base64.decode(vaultFile.readText(Charsets.UTF_8).trim(), B64_FLAGS)
         require(payload.size > GCM_IV_BYTES)
         val iv = payload.copyOfRange(0, GCM_IV_BYTES)
@@ -213,6 +246,67 @@ class SecureLocalVault private constructor(context: Context) {
         val cipher = Cipher.getInstance(AES_MODE)
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, KEY_ALGORITHM), GCMParameterSpec(GCM_TAG_BITS, iv))
         return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+    }
+
+    private fun isVersionedVaultFile(): Boolean {
+        return vaultFile.readText(Charsets.UTF_8).trimStart().startsWith("{")
+    }
+
+    private fun dataKeyForUnlockLocked(isVersionedFile: Boolean): ByteArray? {
+        unwrapDataKeyLocked()?.let { return it }
+        if (isVersionedFile) {
+            return null
+        }
+        return ByteArray(KEY_BYTES).also {
+            SecureRandom().nextBytes(it)
+            wrapDataKeyLocked(it)
+        }
+    }
+
+    private fun unwrapDataKeyLocked(): ByteArray? {
+        val iv = decodeKeyPref(KEY_WRAPPED_DEK_IV) ?: return null
+        val ciphertext = decodeKeyPref(KEY_WRAPPED_DEK_CIPHERTEXT) ?: return null
+        return runCatching {
+            val cipher = Cipher.getInstance(AES_MODE)
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKeystoreKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.doFinal(ciphertext).takeIf { it.size == KEY_BYTES }
+        }.getOrNull()
+    }
+
+    private fun wrapDataKeyLocked(dataKey: ByteArray) {
+        val cipher = Cipher.getInstance(AES_MODE)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKeystoreKey())
+        val ciphertext = cipher.doFinal(dataKey)
+        val iv = cipher.iv ?: throw IllegalStateException("missing data-key wrap iv")
+        keyPrefs.edit()
+            .putString(KEY_WRAPPED_DEK_IV, Base64.encodeToString(iv, B64_FLAGS))
+            .putString(KEY_WRAPPED_DEK_CIPHERTEXT, Base64.encodeToString(ciphertext, B64_FLAGS))
+            .apply()
+    }
+
+    private fun decodeKeyPref(key: String): ByteArray? {
+        val value = keyPrefs.getString(key, null)?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching { Base64.decode(value, B64_FLAGS) }.getOrNull()
+    }
+
+    private fun getOrCreateKeystoreKey(): SecretKey {
+        keyStore().getKey(KEYSTORE_KEY_ALIAS, null)?.let { return it as SecretKey }
+
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        val spec = KeyGenParameterSpec.Builder(
+            KEYSTORE_KEY_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build()
+        generator.init(spec)
+        return generator.generateKey()
+    }
+
+    private fun keyStore(): KeyStore {
+        return KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     }
 
     private fun deriveKey(secret: String, saltB64: String): ByteArray? {
@@ -231,6 +325,11 @@ class SecureLocalVault private constructor(context: Context) {
         private const val PBKDF2_ITERATIONS = 210_000
         private const val KEY_BYTES = 32
         private const val B64_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
+        private const val VAULT_VERSION = 2
+        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        private const val KEYSTORE_KEY_ALIAS = "virtroid_local_vault_master_v2"
+        private const val KEY_WRAPPED_DEK_IV = "wrapped_dek_iv"
+        private const val KEY_WRAPPED_DEK_CIPHERTEXT = "wrapped_dek_ciphertext"
 
         @Volatile
         private var instance: SecureLocalVault? = null

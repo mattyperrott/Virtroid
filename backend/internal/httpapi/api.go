@@ -59,10 +59,12 @@ const bootstrapRateLimitWindow = time.Minute
 const defaultBootstrapMaxBodyBytes = 32 * 1024
 
 const (
-	maxSecurityEventOutputRunes = 4096
-	maxSecurityEventJSONRunes   = 65536
-	maxSecurityEventTags        = 16
-	maxSecurityEventTagRunes    = 64
+	maxSecurityEventOutputRunes            = 4096
+	maxSecurityEventJSONRunes              = 65536
+	maxSecurityEventTags                   = 16
+	maxSecurityEventTagRunes               = 64
+	defaultSecurityEventRateLimitPerMinute = 120
+	defaultSecurityEventRetention          = 7 * 24 * time.Hour
 )
 
 type bootstrapRateLimiter struct {
@@ -1273,7 +1275,16 @@ func (a *API) securityEventAppend(w http.ResponseWriter, r *http.Request) {
 	}
 	eventJSON = trimForStorage(eventJSON, maxSecurityEventJSONRunes)
 
-	if err := a.store.AppendSecurityEvent(r.Context(), store.SecurityEventInput{
+	rateLimit := a.cfg.SecurityEventRateLimitPerMinute
+	if rateLimit <= 0 {
+		rateLimit = defaultSecurityEventRateLimitPerMinute
+	}
+	retention := a.cfg.SecurityEventRetention
+	if retention <= 0 {
+		retention = defaultSecurityEventRetention
+	}
+
+	if err := a.store.AppendSecurityEventLimited(r.Context(), store.SecurityEventInput{
 		NodeID:    node.id,
 		Source:    trimForStorage(req.Source, 64),
 		Rule:      rule,
@@ -1282,7 +1293,11 @@ func (a *API) securityEventAppend(w http.ResponseWriter, r *http.Request) {
 		Tags:      normalizeSecurityEventTags(req.Tags),
 		EventJSON: eventJSON,
 		EventTime: req.Time,
-	}); err != nil {
+	}, rateLimit, retention); err != nil {
+		if errors.Is(err, store.ErrSecurityEventRateLimit) {
+			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "rate_limited": true})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}

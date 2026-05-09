@@ -7,18 +7,20 @@ import (
 )
 
 type ServerConfig struct {
-	AppEnv                      string
-	BindAddr                    string
-	DatabaseURL                 string
-	PublicBaseURL               string
-	PublicRelayURL              string
-	NodeSharedSecret            string
-	NodeRegistrationSecret      string
-	BootstrapRateLimitPerMinute int
-	BootstrapMaxBodyBytes       int64
-	SessionReaperInterval       time.Duration
-	ActiveSessionTimeout        time.Duration
-	RuntimeIdleTimeout          time.Duration
+	AppEnv                          string
+	BindAddr                        string
+	DatabaseURL                     string
+	PublicBaseURL                   string
+	PublicRelayURL                  string
+	NodeSharedSecret                string
+	NodeRegistrationSecret          string
+	BootstrapRateLimitPerMinute     int
+	BootstrapMaxBodyBytes           int64
+	SecurityEventRateLimitPerMinute int
+	SecurityEventRetention          time.Duration
+	SessionReaperInterval           time.Duration
+	ActiveSessionTimeout            time.Duration
+	RuntimeIdleTimeout              time.Duration
 }
 
 type NodeConfig struct {
@@ -56,23 +58,30 @@ func LoadServer() ServerConfig {
 	if err != nil {
 		bootstrapMaxBodyBytes = 32768
 	}
+	securityEventRateLimit, err := parseEnvInt("SECURITY_EVENT_RATE_LIMIT_PER_MINUTE", 120)
+	if err != nil {
+		securityEventRateLimit = 120
+	}
+	securityEventRetention := parseEnvDuration("SECURITY_EVENT_RETENTION", 7*24*time.Hour)
 	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
 	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
 	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 3*time.Minute)
 
 	return ServerConfig{
-		AppEnv:                      envOrDefault("APP_ENV", "development"),
-		BindAddr:                    envOrDefault("BIND_ADDR", ":8080"),
-		DatabaseURL:                 envOrDefault("DATABASE_URL", "postgres://virtroid:virtroid@127.0.0.1:5432/virtroid?sslmode=disable"),
-		PublicBaseURL:               envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
-		PublicRelayURL:              os.Getenv("PUBLIC_RELAY_URL"),
-		NodeSharedSecret:            os.Getenv("NODE_SHARED_SECRET"),
-		NodeRegistrationSecret:      envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
-		BootstrapRateLimitPerMinute: bootstrapRateLimit,
-		BootstrapMaxBodyBytes:       int64(bootstrapMaxBodyBytes),
-		SessionReaperInterval:       sessionReaperInterval,
-		ActiveSessionTimeout:        activeSessionTimeout,
-		RuntimeIdleTimeout:          runtimeIdleTimeout,
+		AppEnv:                          envOrDefault("APP_ENV", "development"),
+		BindAddr:                        envOrDefault("BIND_ADDR", ":8080"),
+		DatabaseURL:                     envOrDefault("DATABASE_URL", "postgres://virtroid:virtroid@127.0.0.1:5432/virtroid?sslmode=disable"),
+		PublicBaseURL:                   envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
+		PublicRelayURL:                  os.Getenv("PUBLIC_RELAY_URL"),
+		NodeSharedSecret:                os.Getenv("NODE_SHARED_SECRET"),
+		NodeRegistrationSecret:          envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
+		BootstrapRateLimitPerMinute:     bootstrapRateLimit,
+		BootstrapMaxBodyBytes:           int64(bootstrapMaxBodyBytes),
+		SecurityEventRateLimitPerMinute: securityEventRateLimit,
+		SecurityEventRetention:          securityEventRetention,
+		SessionReaperInterval:           sessionReaperInterval,
+		ActiveSessionTimeout:            activeSessionTimeout,
+		RuntimeIdleTimeout:              runtimeIdleTimeout,
 	}
 }
 

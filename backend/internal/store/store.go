@@ -38,22 +38,23 @@ type Store struct {
 }
 
 var (
-	ErrNoReadyHost         = errors.New("no redroid-capable host available")
-	ErrDeviceNotFound      = errors.New("device not found")
-	ErrRuntimeNotFound     = errors.New("runtime not found")
-	ErrRuntimeNotReady     = errors.New("runtime is not ready for sessions")
-	ErrSessionNotFound     = errors.New("session not found")
-	ErrIdentityNotFound    = errors.New("identity password is not configured for this device")
-	ErrIdentityAuthFailed  = errors.New("identity authentication failed")
-	ErrIdentityKeyRequired = errors.New("blob access key is required")
-	ErrDeviceRequestReplay = errors.New("device request nonce has already been used")
-	ErrNodeRequestReplay   = errors.New("node request nonce has already been used")
-	ErrHostNotFound        = errors.New("host not found")
-	ErrRuntimeEntitlement  = errors.New("runtime entitlement is required")
-	ErrRuntimeQuota        = errors.New("runtime quota exceeded")
-	ErrRuntimeActiveQuota  = errors.New("active runtime quota exceeded")
-	ErrRuntimeStartQuota   = errors.New("runtime start quota exceeded")
-	ErrRuntimeProfile      = errors.New("runtime profile is not allowed")
+	ErrNoReadyHost            = errors.New("no redroid-capable host available")
+	ErrDeviceNotFound         = errors.New("device not found")
+	ErrRuntimeNotFound        = errors.New("runtime not found")
+	ErrRuntimeNotReady        = errors.New("runtime is not ready for sessions")
+	ErrSessionNotFound        = errors.New("session not found")
+	ErrIdentityNotFound       = errors.New("identity password is not configured for this device")
+	ErrIdentityAuthFailed     = errors.New("identity authentication failed")
+	ErrIdentityKeyRequired    = errors.New("blob access key is required")
+	ErrDeviceRequestReplay    = errors.New("device request nonce has already been used")
+	ErrNodeRequestReplay      = errors.New("node request nonce has already been used")
+	ErrHostNotFound           = errors.New("host not found")
+	ErrRuntimeEntitlement     = errors.New("runtime entitlement is required")
+	ErrRuntimeQuota           = errors.New("runtime quota exceeded")
+	ErrRuntimeActiveQuota     = errors.New("active runtime quota exceeded")
+	ErrRuntimeStartQuota      = errors.New("runtime start quota exceeded")
+	ErrRuntimeProfile         = errors.New("runtime profile is not allowed")
+	ErrSecurityEventRateLimit = errors.New("security event rate limit exceeded")
 )
 
 const (
@@ -1308,14 +1309,58 @@ func (s *Store) AppendRuntimeLog(ctx context.Context, runtimeID, source, level, 
 }
 
 func (s *Store) AppendSecurityEvent(ctx context.Context, event SecurityEventInput) error {
+	return s.AppendSecurityEventLimited(ctx, event, 0, 0)
+}
+
+func (s *Store) AppendSecurityEventLimited(ctx context.Context, event SecurityEventInput, maxPerMinute int, retention time.Duration) error {
 	tagsJSON, err := json.Marshal(event.Tags)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if retention > 0 {
+		cutoff := time.Now().UTC().Add(-retention)
+		if _, err := tx.ExecContext(ctx, `DELETE FROM security_events WHERE created_at < $1`, cutoff); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM security_event_ingest_limits WHERE bucket_start < $1`, cutoff); err != nil {
+			return err
+		}
+	}
+
+	nodeID := strings.TrimSpace(event.NodeID)
+	if maxPerMinute > 0 {
+		bucketStart := time.Now().UTC().Truncate(time.Minute)
+		var count int
+		err := tx.QueryRowContext(ctx,
+			`INSERT INTO security_event_ingest_limits (node_id, bucket_start, event_count)
+			 VALUES ($1, $2, 1)
+			 ON CONFLICT (node_id, bucket_start) DO UPDATE
+			 SET event_count = security_event_ingest_limits.event_count + 1
+			 WHERE security_event_ingest_limits.event_count < $3
+			 RETURNING event_count`,
+			nodeID,
+			bucketStart,
+			maxPerMinute,
+		).Scan(&count)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSecurityEventRateLimit
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO security_events (node_id, source, rule, priority, output, tags_json, event_json, event_time)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		strings.TrimSpace(event.NodeID),
+		nodeID,
 		defaultString(event.Source, "falco"),
 		defaultString(event.Rule, "security event"),
 		defaultString(event.Priority, "notice"),
@@ -1323,8 +1368,11 @@ func (s *Store) AppendSecurityEvent(ctx context.Context, event SecurityEventInpu
 		string(tagsJSON),
 		defaultString(event.EventJSON, "{}"),
 		event.EventTime,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {

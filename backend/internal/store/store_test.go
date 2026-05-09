@@ -395,6 +395,72 @@ func TestHeartbeatSessionExtendsLease(t *testing.T) {
 	}
 }
 
+func TestAppendSecurityEventLimitedStopsAfterNodeRateLimit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	event := SecurityEventInput{
+		NodeID:    "node-1",
+		Rule:      "Virtroid Shell Spawned In Managed Container",
+		Priority:  "error",
+		Output:    "shell spawned in Virtroid container",
+		Tags:      []string{},
+		EventJSON: "{}",
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM security_events").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("DELETE FROM security_event_ingest_limits").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("INSERT INTO security_event_ingest_limits").
+		WithArgs("node-1", sqlmock.AnyArg(), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"event_count"}).AddRow(1))
+	mock.ExpectExec("INSERT INTO security_events").
+		WithArgs(
+			"node-1",
+			"falco",
+			"Virtroid Shell Spawned In Managed Container",
+			"error",
+			"shell spawned in Virtroid container",
+			"[]",
+			"{}",
+			nil,
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	if err := st.AppendSecurityEventLimited(context.Background(), event, 1, time.Hour); err != nil {
+		t.Fatalf("first AppendSecurityEventLimited error = %v", err)
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM security_events").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("DELETE FROM security_event_ingest_limits").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("INSERT INTO security_event_ingest_limits").
+		WithArgs("node-1", sqlmock.AnyArg(), 1).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	err = st.AppendSecurityEventLimited(context.Background(), event, 1, time.Hour)
+	if !errors.Is(err, ErrSecurityEventRateLimit) {
+		t.Fatalf("second AppendSecurityEventLimited error = %v, want %v", err, ErrSecurityEventRateLimit)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
