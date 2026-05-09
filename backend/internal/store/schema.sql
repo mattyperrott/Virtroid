@@ -220,6 +220,13 @@ CREATE TABLE IF NOT EXISTS security_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS security_event_ingest_limits (
+    node_id TEXT NOT NULL,
+    bucket_start TIMESTAMPTZ NOT NULL,
+    event_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (node_id, bucket_start)
+);
+
 CREATE TABLE IF NOT EXISTS runtime_start_events (
     id BIGSERIAL PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -247,4 +254,5 @@ CREATE INDEX IF NOT EXISTS idx_sessions_last_client_heartbeat_at ON sessions (la
 CREATE INDEX IF NOT EXISTS idx_runtime_logs_runtime_created_at ON runtime_logs (runtime_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_security_events_node_created_at ON security_events (node_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_security_events_priority_created_at ON security_events (priority, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_security_event_ingest_limits_bucket_start ON security_event_ingest_limits (bucket_start);
 CREATE INDEX IF NOT EXISTS idx_runtime_start_events_account_created_at ON runtime_start_events (account_id, created_at DESC);

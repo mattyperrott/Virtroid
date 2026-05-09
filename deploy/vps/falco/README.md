@@ -16,9 +16,14 @@ Read sensor logs:
 docker logs --tail=100 -f virtroid-falco
 ```
 
-Falco also writes JSON events into the `falco-events` volume. The
-`falco-forwarder` service tails that file and submits each event to the control
-plane through the existing signed node-request path.
+Falco posts JSON events directly to the local `falco-forwarder` over Docker
+network HTTP. The forwarder signs each accepted event with the node key and
+submits it to the control plane through the existing signed node-request path.
+
+The profile intentionally avoids a persistent Falco JSONL queue. Forwarding is
+bounded by `FALCO_FORWARD_MAX_EVENTS_PER_MINUTE` and
+`FALCO_FORWARD_DEDUP_WINDOW`, while the control plane also applies per-node
+ingest limits and retention before inserting rows into `security_events`.
 
 Falco is intentionally scoped to node-side detection. It does not replace APK
 intake scanning, runtime entitlement, node identity, remote attestation, or
