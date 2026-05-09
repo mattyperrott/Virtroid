@@ -115,7 +115,7 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 	}
 }
 
-func TestDeleteAccountErasesAccountRow(t *testing.T) {
+func TestDeleteAccountQueuesAssignedRuntimeCleanup(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -123,11 +123,94 @@ func TestDeleteAccountErasesAccountRow(t *testing.T) {
 	defer db.Close()
 
 	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(accountID))
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "host_id"}).AddRow(runtimeID, "host-1"))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(runtimeID, "system", "warn", "Account deletion requested; runtime cleanup queued.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM device_request_nonces").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM devices").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM account_storage").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT deleted_at FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"deleted_at"}).AddRow(now))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectCommit()
+
+	if err := st.DeleteAccount(context.Background(), accountID); err != nil {
+		t.Fatalf("DeleteAccount returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestDeleteAccountHardDeletesAfterUnassignedRuntimeCleanup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
 	accountID := "11111111-1111-1111-1111-111111111111"
 
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(accountID))
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "host_id"}))
+	mock.ExpectExec("DELETE FROM device_request_nonces").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM devices").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM account_storage").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT deleted_at FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"deleted_at"}).AddRow(now))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec("DELETE FROM accounts").
 		WithArgs(accountID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	if err := st.DeleteAccount(context.Background(), accountID); err != nil {
 		t.Fatalf("DeleteAccount returned error: %v", err)
@@ -147,12 +230,54 @@ func TestDeleteAccountReportsMissingAccount(t *testing.T) {
 	st := &Store{db: db}
 	accountID := "11111111-1111-1111-1111-111111111111"
 
-	mock.ExpectExec("DELETE FROM accounts").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id FROM accounts").
 		WithArgs(accountID).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 
 	if err := st.DeleteAccount(context.Background(), accountID); !errors.Is(err, ErrAccountNotFound) {
 		t.Fatalf("DeleteAccount error = %v, want %v", err, ErrAccountNotFound)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRuntimeDeletedObservationFinalizesPendingAccountDeletion(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	lastError := "removed"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(runtimeID, "host-1", sql.NullString{String: lastError, Valid: true}).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id"}).AddRow(accountID))
+	mock.ExpectQuery("SELECT deleted_at FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"deleted_at"}).AddRow(now))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
+		HostID:    "host-1",
+		Deleted:   true,
+		LastError: &lastError,
+	}); err != nil {
+		t.Fatalf("UpdateRuntimeObservation returned error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

@@ -11,6 +11,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 data class RuntimeSummary(
     val id: String,
@@ -118,8 +119,15 @@ class VirtroidApiException(
     val errorMessage: String,
 ) : IOException(errorMessage)
 
+private val DEFAULT_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(15, TimeUnit.SECONDS)
+    .readTimeout(90, TimeUnit.SECONDS)
+    .writeTimeout(30, TimeUnit.SECONDS)
+    .callTimeout(120, TimeUnit.SECONDS)
+    .build()
+
 class VirtroidApi(
-    private val okHttpClient: OkHttpClient = OkHttpClient(),
+    private val okHttpClient: OkHttpClient = DEFAULT_HTTP_CLIENT,
     private val deviceIdentityStore: DeviceIdentityStore = DeviceIdentityStore(),
 ) {
     suspend fun registerIdentity(

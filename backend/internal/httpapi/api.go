@@ -57,6 +57,7 @@ type activeBlobKeyHandoff struct {
 const activeBlobKeyHandoffTTL = 2 * time.Minute
 const bootstrapRateLimitWindow = time.Minute
 const defaultBootstrapMaxBodyBytes = 32 * 1024
+const viewerPrepareProxyTimeout = 90 * time.Second
 
 const (
 	maxSecurityEventOutputRunes            = 4096
@@ -1533,8 +1534,11 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 		return "", err
 	}
 
+	prepareCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), viewerPrepareProxyTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(
-		ctx,
+		prepareCtx,
 		http.MethodPost,
 		fmt.Sprintf("http://%s:%d/api/v1/internal/viewer/prepare", advertiseAddr, relayPort),
 		bytes.NewReader(body),

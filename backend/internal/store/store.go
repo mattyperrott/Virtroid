@@ -425,16 +425,130 @@ func (s *Store) DeleteAccount(ctx context.Context, accountID string) error {
 		return ErrAccountNotFound
 	}
 
-	result, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id = $1`, accountID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	rows, err := result.RowsAffected()
+	defer tx.Rollback()
+
+	var foundAccountID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		accountID,
+	).Scan(&foundAccountID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrAccountNotFound
+		}
+		return err
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`UPDATE runtimes
+		 SET status = CASE WHEN host_id IS NULL THEN 'deleted' ELSE 'deleting' END,
+		     desired_state = 'deleted',
+		     connection_status = 'offline',
+		     started_at = NULL,
+		     container_name = CASE WHEN host_id IS NULL THEN NULL ELSE container_name END,
+		     adb_port = CASE WHEN host_id IS NULL THEN NULL ELSE adb_port END,
+		     viewer_port = CASE WHEN host_id IS NULL THEN NULL ELSE viewer_port END,
+		     deleted_at = CASE WHEN host_id IS NULL THEN NOW() ELSE deleted_at END,
+		     updated_at = NOW()
+		 WHERE account_id = $1
+		   AND deleted_at IS NULL
+		 RETURNING id, host_id`,
+		accountID,
+	)
 	if err != nil {
 		return err
 	}
-	if rows == 0 {
-		return ErrAccountNotFound
+
+	var queuedRuntimeIDs []string
+	for rows.Next() {
+		var runtimeID string
+		var hostID sql.NullString
+		if err := rows.Scan(&runtimeID, &hostID); err != nil {
+			rows.Close()
+			return err
+		}
+		if hostID.Valid && strings.TrimSpace(hostID.String) != "" {
+			queuedRuntimeIDs = append(queuedRuntimeIDs, runtimeID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	for _, runtimeID := range queuedRuntimeIDs {
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Account deletion requested; runtime cleanup queued."); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM device_request_nonces WHERE account_id = $1`, accountID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE account_id = $1`, accountID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM account_storage WHERE account_id = $1`, accountID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM account_entitlements WHERE account_id = $1`, accountID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, accountID); err != nil {
+		return err
+	}
+	if err := deleteAccountIfRuntimeCleanupDoneTX(ctx, tx, accountID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func deleteAccountIfRuntimeCleanupDoneTX(ctx context.Context, tx *sql.Tx, accountID string) error {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
+	}
+
+	var deletedAt sql.NullTime
+	if err := tx.QueryRowContext(ctx,
+		`SELECT deleted_at FROM accounts WHERE id = $1`,
+		accountID,
+	).Scan(&deletedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !deletedAt.Valid {
+		return nil
+	}
+
+	var remaining int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runtimes WHERE account_id = $1 AND deleted_at IS NULL`,
+		accountID,
+	).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining > 0 {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM accounts WHERE id = $1 AND deleted_at IS NOT NULL`,
+		accountID,
+	); err != nil {
+		return err
 	}
 	return nil
 }
@@ -457,7 +571,7 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM accounts WHERE id = $1`, accountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM accounts WHERE id = $1 AND deleted_at IS NULL`, accountID); err != nil {
 		return Runtime{}, err
 	}
 	if err := ensureRuntimeCreateEntitlementTX(ctx, tx, accountID); err != nil {
@@ -935,8 +1049,11 @@ func (s *Store) DevicePublicKey(ctx context.Context, accountID, deviceID string)
 	var publicKey string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT public_key
-		 FROM devices
-		 WHERE account_id = $1 AND id = $2`,
+		 FROM devices d
+		 JOIN accounts a ON a.id = d.account_id
+		 WHERE d.account_id = $1
+		   AND d.id = $2
+		   AND a.deleted_at IS NULL`,
 		accountID,
 		deviceID,
 	).Scan(&publicKey)
@@ -1885,7 +2002,14 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 	}
 
 	if observation.Deleted {
-		_, err := s.db.ExecContext(ctx,
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		var accountID string
+		err = tx.QueryRowContext(ctx,
 			`UPDATE runtimes
 			 SET status = 'deleted',
 			     desired_state = 'deleted',
@@ -1902,12 +2026,22 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 			     last_error = $3,
 			     deleted_at = NOW(),
 			     updated_at = NOW()
-			 WHERE id = $1 AND host_id = $2 AND deleted_at IS NULL`,
+			 WHERE id = $1 AND host_id = $2 AND deleted_at IS NULL
+			 RETURNING account_id`,
 			runtimeID,
 			observation.HostID,
 			nullString(observation.LastError),
-		)
-		return err
+		).Scan(&accountID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if err := deleteAccountIfRuntimeCleanupDoneTX(ctx, tx, accountID); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 
 	_, err := s.db.ExecContext(ctx,

@@ -35,6 +35,7 @@ class SystemLogsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSystemLogsBinding
     private lateinit var appLogs: AppLogStore
     private var activeFilter = AppLogFilter.ALL
+    private var viewerClearedAtMs = 0L
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SS")
         .withZone(ZoneId.systemDefault())
 
@@ -63,9 +64,8 @@ class SystemLogsActivity : AppCompatActivity() {
         binding.filterErrorsButton.setOnClickListener { setFilter(AppLogFilter.ERRORS) }
         binding.filterWarnButton.setOnClickListener { setFilter(AppLogFilter.WARN) }
         binding.copyLogsButton.setOnClickListener { copyLogs() }
-        binding.systemLogsResolveButton.setOnClickListener {
-            appLogs.markCriticalResolved()
-            toast(getString(R.string.system_logs_acknowledged))
+        binding.clearLogViewerButton.setOnClickListener {
+            clearLogViewer()
         }
         startLivePulse()
         renderFilterState()
@@ -108,7 +108,7 @@ class SystemLogsActivity : AppCompatActivity() {
     }
 
     private fun renderLogs(entries: List<AppLogEntry>) {
-        val filtered = entries.filter { activeFilter.matches(it.level) }
+        val filtered = visibleEntries(entries)
         binding.logListContainer.removeAllViews()
         if (filtered.isEmpty()) {
             binding.logListContainer.addView(emptyText())
@@ -181,8 +181,24 @@ class SystemLogsActivity : AppCompatActivity() {
     }
 
     private fun copyLogs() {
-        copySensitiveToClipboard("Virtroid logs", appLogs.exportText(activeFilter), clearAfterMs = 15_000L)
+        val text = visibleEntries(appLogs.entries.value)
+            .joinToString("\n") { entry ->
+                "${Instant.ofEpochMilli(entry.timestampMs)} ${entry.level.name}/${entry.source}: ${entry.message}"
+            }
+        copySensitiveToClipboard("Virtroid logs", text, clearAfterMs = 15_000L)
         toast(getString(R.string.system_logs_copied))
+    }
+
+    private fun clearLogViewer() {
+        viewerClearedAtMs = System.currentTimeMillis()
+        renderLogs(appLogs.entries.value)
+        toast(getString(R.string.system_logs_viewer_cleared))
+    }
+
+    private fun visibleEntries(entries: List<AppLogEntry>): List<AppLogEntry> {
+        return entries.filter { entry ->
+            activeFilter.matches(entry.level) && entry.timestampMs > viewerClearedAtMs
+        }
     }
 
     private fun startLivePulse() {

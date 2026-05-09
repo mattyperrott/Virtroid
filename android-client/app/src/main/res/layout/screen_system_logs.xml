@@ -68,13 +68,13 @@
         </LinearLayout>
 
         <ImageButton
-            android:id="@+id/systemLogsResolveButton"
+            android:id="@+id/clearLogViewerButton"
             android:layout_width="44dp"
             android:layout_height="44dp"
             android:background="@drawable/bg_surface_circle"
-            android:contentDescription="@string/system_logs_acknowledge"
+            android:contentDescription="@string/system_logs_clear_viewer"
             android:padding="12dp"
-            android:src="@drawable/ic_tune"
+            android:src="@drawable/ic_close"
             app:tint="@color/v_text_primary" />
     </LinearLayout>
 

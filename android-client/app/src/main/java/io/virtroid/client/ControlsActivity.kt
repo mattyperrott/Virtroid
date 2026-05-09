@@ -262,7 +262,9 @@ class ControlsActivity : AppCompatActivity() {
                     runCatching {
                         val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
                         val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                        api.wipeRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                        val updated = api.wipeRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                        identityPasswordStore.saveConfigured(accountId, deviceId)
+                        updated
                     }.onSuccess {
                         runtime = it
                         bindRuntime(it)
@@ -297,6 +299,7 @@ class ControlsActivity : AppCompatActivity() {
                 val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                identityPasswordStore.saveConfigured(accountId, deviceId)
                 waitForRuntimeReady(accountId, deviceId, current.id)
             }.onSuccess {
                 runtime = it
@@ -351,7 +354,7 @@ class ControlsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching {
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                api.createSession(
+                val session = api.createSession(
                     baseUrl = sessionStore.baseUrl,
                     accountId = accountId,
                     deviceId = deviceId,
@@ -360,6 +363,8 @@ class ControlsActivity : AppCompatActivity() {
                     bitRate = DEFAULT_SESSION_BIT_RATE,
                     blobAccessKey = blobAccessKey,
                 )
+                identityPasswordStore.saveConfigured(accountId, deviceId)
+                session
             }.onSuccess { session ->
                 val activeSession = ActiveSessionStore.ActiveSession(
                     accountId = accountId,
