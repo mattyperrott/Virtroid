@@ -312,7 +312,7 @@
     <string name="unlock_enter_passphrase">Enter passphrase</string>
     <string name="unlock_continue">Unlock</string>
     <string name="biometric_unlock_title">Unlock Virtroid</string>
-    <string name="biometric_unlock_subtitle">Use your PIN to decrypt local app state.</string>
+    <string name="biometric_unlock_subtitle">Decrypt the local vault with device biometrics.</string>
     <string name="biometric_unlock_use_pin">Use PIN</string>
 
     <string name="system_logs_title">System Logs</string>
@@ -338,6 +338,11 @@
     <string name="privacy_app_lock_auth">App Lock &amp; Authentication</string>
     <string name="privacy_require_pin_biometric">Require PIN + Local Vault</string>
     <string name="privacy_require_pin_biometric_body">PIN encrypts logs, session state, metadata, and sensitive settings on this device.</string>
+    <string name="privacy_biometric_vault_unlock">Biometric vault unlock</string>
+    <string name="privacy_biometric_vault_unlock_body">Wraps the local vault key with Android Keystore and biometric authentication.</string>
+    <string name="privacy_biometric_not_available">Biometric authentication is not available on this device.</string>
+    <string name="privacy_biometric_enable_failed">Could not enable biometric vault unlock.</string>
+    <string name="privacy_biometric_enabled">Biometric vault unlock enabled.</string>
     <string name="privacy_auto_lock_timer">Auto-lock Timer</string>
     <string name="privacy_require_unlock_resume">Require unlock on app resume</string>
     <string name="privacy_failed_attempts_backoff">Failed attempts backoff</string>

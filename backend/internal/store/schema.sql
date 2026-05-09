@@ -207,6 +207,19 @@ CREATE TABLE IF NOT EXISTS runtime_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS security_events (
+    id BIGSERIAL PRIMARY KEY,
+    node_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    output TEXT NOT NULL,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    event_json TEXT NOT NULL,
+    event_time TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS runtime_start_events (
     id BIGSERIAL PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -232,4 +245,6 @@ CREATE INDEX IF NOT EXISTS idx_sessions_runtime_id ON sessions (runtime_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status_expires_at ON sessions (status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_client_heartbeat_at ON sessions (last_client_heartbeat_at);
 CREATE INDEX IF NOT EXISTS idx_runtime_logs_runtime_created_at ON runtime_logs (runtime_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_security_events_node_created_at ON security_events (node_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_security_events_priority_created_at ON security_events (priority, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runtime_start_events_account_created_at ON runtime_start_events (account_id, created_at DESC);

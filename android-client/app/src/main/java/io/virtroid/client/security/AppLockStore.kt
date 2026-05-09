@@ -7,6 +7,8 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Arrays
+import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
@@ -15,6 +17,7 @@ class AppLockStore(context: Context) {
     private val prefs = appContext.getSharedPreferences("virtroid-lock", Context.MODE_PRIVATE)
     private val appSettings = AppSettingsStore(appContext)
     private val appLogs = AppLogStore.get(appContext)
+    private val biometricVaultKeyStore = BiometricVaultKeyStore(appContext)
 
     fun hasCredential(): Boolean = mode != null && !credentialHash.isNullOrBlank() && !salt.isNullOrBlank()
 
@@ -36,6 +39,8 @@ class AppLockStore(context: Context) {
         if (!SecureLocalVault.get(appContext).unlockOrCreate(secret, vaultSalt)) {
             throw IllegalStateException("could not initialize secure local vault")
         }
+        biometricVaultKeyStore.clear()
+        appSettings.biometricUnlockEnabled = false
         LocalVaultMigration.migrateUnlocked(appContext)
         markUnlocked()
         appLogs.info("App lock credential configured", "auth")
@@ -103,6 +108,10 @@ class AppLockStore(context: Context) {
             LocalVaultMigration.exportUnlockedToLegacy(appContext)
             SecureLocalVault.get(appContext).destroy()
         }
+        if (!enabled) {
+            biometricVaultKeyStore.clear()
+            appSettings.biometricUnlockEnabled = false
+        }
         prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
         if (!enabled) {
             clearUnlocked()
@@ -111,6 +120,8 @@ class AppLockStore(context: Context) {
 
     fun clearCredential() {
         SecureLocalVault.get(appContext).destroy()
+        biometricVaultKeyStore.clear()
+        appSettings.biometricUnlockEnabled = false
         prefs.edit().clear().apply()
         clearUnlocked()
         appLogs.warn("App lock credential cleared with local identity reset", "auth")
@@ -151,7 +162,59 @@ class AppLockStore(context: Context) {
         get() = prefs.getString(KEY_MODE, null)?.let(LockMode::fromValue)
         set(value) = prefs.edit().putString(KEY_MODE, value?.value).apply()
 
-    fun canUseBiometricUnlock(): Boolean = false
+    fun canUseBiometricUnlock(): Boolean = biometricVaultKeyStore.hasWrappedKey()
+
+    fun biometricEncryptCipher(): Cipher? {
+        val vault = SecureLocalVault.get(appContext)
+        if (!vault.isUnlocked) {
+            return null
+        }
+        return biometricVaultKeyStore.createEncryptCipher()
+    }
+
+    fun saveBiometricVaultKey(cipher: Cipher): Boolean {
+        val key = SecureLocalVault.get(appContext).currentKeyCopy() ?: return false
+        return try {
+            val saved = biometricVaultKeyStore.saveWrappedKey(cipher, key)
+            if (saved) {
+                appSettings.biometricUnlockEnabled = true
+                appLogs.info("Biometric local vault unlock enabled", "auth")
+            }
+            saved
+        } finally {
+            Arrays.fill(key, 0)
+        }
+    }
+
+    fun biometricDecryptCipher(): Cipher? {
+        return if (canUseBiometricUnlock()) {
+            biometricVaultKeyStore.createDecryptCipher()
+        } else {
+            null
+        }
+    }
+
+    fun unlockWithBiometric(cipher: Cipher?): Boolean {
+        cipher ?: return false
+        val key = biometricVaultKeyStore.unwrapVaultKey(cipher) ?: return false
+        return try {
+            if (!SecureLocalVault.get(appContext).unlockWithKey(key)) {
+                appLogs.error("Biometric vault key could not decrypt local vault", "auth")
+                false
+            } else {
+                clearFailures()
+                markUnlocked()
+            }
+        } finally {
+            Arrays.fill(key, 0)
+        }
+    }
+
+    fun clearBiometricUnlock() {
+        biometricVaultKeyStore.clear()
+        appSettings.biometricUnlockEnabled = false
+        appLogs.info("Biometric local vault unlock disabled", "auth")
+    }
 
     private val credentialHash: String?
         get() = prefs.getString(KEY_HASH, null)

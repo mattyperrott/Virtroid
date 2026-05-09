@@ -8,6 +8,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroidd ./cmd/virtroidd
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtnoded ./cmd/virtnoded
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroid-viewercrypt ./cmd/viewercrypt
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/falco-forwarder ./cmd/falco-forwarder
 
 FROM debian:bookworm-slim
 
@@ -19,6 +20,7 @@ RUN apt-get update \
 COPY --from=build /out/virtroidd /usr/local/bin/virtroidd
 COPY --from=build /out/virtnoded /usr/local/bin/virtnoded
 COPY --from=build /out/virtroid-viewercrypt /usr/local/bin/virtroid-viewercrypt
+COPY --from=build /out/falco-forwarder /usr/local/bin/falco-forwarder
 
 USER virtroid
 WORKDIR /home/virtroid

@@ -58,6 +58,13 @@ const activeBlobKeyHandoffTTL = 10 * time.Minute
 const bootstrapRateLimitWindow = time.Minute
 const defaultBootstrapMaxBodyBytes = 32 * 1024
 
+const (
+	maxSecurityEventOutputRunes = 4096
+	maxSecurityEventJSONRunes   = 65536
+	maxSecurityEventTags        = 16
+	maxSecurityEventTagRunes    = 64
+)
+
 type bootstrapRateLimiter struct {
 	mu      sync.Mutex
 	max     int
@@ -196,6 +203,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/blob-key", api.runtimeBlobKey)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/status", api.runtimeStatusUpdate)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
+	mux.HandleFunc("POST /api/v1/internal/security/events", api.securityEventAppend)
 
 	return withJSON(mux)
 }
@@ -1223,6 +1231,65 @@ func (a *API) runtimeLogAppend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
+func (a *API) securityEventAppend(w http.ResponseWriter, r *http.Request) {
+	node, ok := a.requireNodeRequest(w, r, false)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Source   string          `json:"source"`
+		Rule     string          `json:"rule"`
+		Priority string          `json:"priority"`
+		Output   string          `json:"output"`
+		Tags     []string        `json:"tags"`
+		Time     *time.Time      `json:"time"`
+		Event    json.RawMessage `json:"event"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+
+	rule := trimForStorage(req.Rule, 256)
+	output := trimForStorage(req.Output, maxSecurityEventOutputRunes)
+	if rule == "" && output == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "rule or output is required"})
+		return
+	}
+
+	eventJSON := strings.TrimSpace(string(req.Event))
+	if eventJSON == "" || !json.Valid(req.Event) {
+		fallback, _ := json.Marshal(map[string]any{
+			"source":   req.Source,
+			"rule":     req.Rule,
+			"priority": req.Priority,
+			"output":   req.Output,
+			"tags":     req.Tags,
+			"time":     req.Time,
+		})
+		eventJSON = string(fallback)
+	}
+	eventJSON = trimForStorage(eventJSON, maxSecurityEventJSONRunes)
+
+	if err := a.store.AppendSecurityEvent(r.Context(), store.SecurityEventInput{
+		NodeID:    node.id,
+		Source:    trimForStorage(req.Source, 64),
+		Rule:      rule,
+		Priority:  trimForStorage(req.Priority, 32),
+		Output:    output,
+		Tags:      normalizeSecurityEventTags(req.Tags),
+		EventJSON: eventJSON,
+		EventTime: req.Time,
+	}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
 func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request) (string, string, bool) {
 	accountID := strings.TrimSpace(r.Header.Get("X-Virtroid-Account-ID"))
 	deviceID := strings.TrimSpace(r.Header.Get("X-Virtroid-Device-ID"))
@@ -1502,6 +1569,41 @@ func websocketBase(base string) string {
 	}
 
 	return strings.TrimRight(parsed.String(), "/")
+}
+
+func normalizeSecurityEventTags(tags []string) []string {
+	if len(tags) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, min(len(tags), maxSecurityEventTags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = trimForStorage(tag, maxSecurityEventTagRunes)
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		normalized = append(normalized, tag)
+		if len(normalized) >= maxSecurityEventTags {
+			break
+		}
+	}
+	return normalized
+}
+
+func trimForStorage(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	if maxRunes <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes])
 }
 
 func max(a, b int) int {

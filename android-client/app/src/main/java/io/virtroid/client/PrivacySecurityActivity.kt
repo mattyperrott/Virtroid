@@ -5,6 +5,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -63,6 +66,16 @@ class PrivacySecurityActivity : AppCompatActivity() {
                 lifecycleScope.launch { setAppLockEnabled(checked) }
             }
         }
+        binding.biometricUnlockSwitch.setOnCheckedChangeListener { _, checked ->
+            if (!bindingSettings) {
+                if (checked) {
+                    enableBiometricUnlock()
+                } else {
+                    appLockStore.clearBiometricUnlock()
+                    renderSettings()
+                }
+            }
+        }
         binding.requireUnlockResumeSwitch.setOnCheckedChangeListener { _, checked ->
             if (!bindingSettings) {
                 appSettings.requireUnlockOnResume = checked
@@ -107,7 +120,14 @@ class PrivacySecurityActivity : AppCompatActivity() {
 
     private fun renderSettings() {
         bindingSettings = true
-        binding.requirePinSwitch.isChecked = appLockStore.isEnabled() && appLockStore.hasCredential()
+        val lockConfigured = appLockStore.hasCredential()
+        val lockEnabled = appLockStore.isEnabled() && lockConfigured
+        binding.requirePinSwitch.isChecked = lockEnabled
+        binding.biometricUnlockSwitch.isEnabled = lockEnabled &&
+            appLockStore.mode == AppLockStore.LockMode.PIN &&
+            appLockStore.isUnlocked()
+        binding.biometricUnlockSwitch.isChecked = appSettings.biometricUnlockEnabled &&
+            appLockStore.canUseBiometricUnlock()
         binding.requireUnlockResumeSwitch.isChecked = appSettings.requireUnlockOnResume
         binding.blockScreenCaptureSwitch.isChecked = appSettings.blockScreenCapture
         binding.autoDeleteMetadataSwitch.isChecked = appSettings.autoDeleteMetadata
@@ -170,6 +190,63 @@ class PrivacySecurityActivity : AppCompatActivity() {
         appSettings.biometricUnlockEnabled = false
         appLogs.info("App lock enabled", "auth")
         renderSettings()
+    }
+
+    private fun enableBiometricUnlock() {
+        if (!appLockStore.isEnabled() || !appLockStore.hasCredential() || !appLockStore.isUnlocked()) {
+            toast(getString(R.string.lock_biometric_vault_unavailable))
+            renderSettings()
+            return
+        }
+        if (BiometricManager.from(this).canAuthenticate(BIOMETRIC_AUTHENTICATORS) !=
+            BiometricManager.BIOMETRIC_SUCCESS
+        ) {
+            toast(getString(R.string.privacy_biometric_not_available))
+            renderSettings()
+            return
+        }
+        val cipher = appLockStore.biometricEncryptCipher()
+        if (cipher == null) {
+            toast(getString(R.string.privacy_biometric_enable_failed))
+            renderSettings()
+            return
+        }
+
+        val prompt = BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    val authenticatedCipher = result.cryptoObject?.cipher
+                    if (authenticatedCipher != null && appLockStore.saveBiometricVaultKey(authenticatedCipher)) {
+                        toast(getString(R.string.privacy_biometric_enabled))
+                    } else {
+                        toast(getString(R.string.privacy_biometric_enable_failed))
+                    }
+                    renderSettings()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    renderSettings()
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    appLogs.warn("Biometric setup attempt failed", "auth")
+                }
+            },
+        )
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(getString(R.string.privacy_biometric_vault_unlock))
+                .setSubtitle(getString(R.string.privacy_biometric_vault_unlock_body))
+                .setNegativeButtonText(getString(R.string.biometric_unlock_use_pin))
+                .setAllowedAuthenticators(BIOMETRIC_AUTHENTICATORS)
+                .build(),
+            BiometricPrompt.CryptoObject(cipher),
+        )
     }
 
     private suspend fun collectPinSetup(): String? {
@@ -256,6 +333,8 @@ class PrivacySecurityActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val BIOMETRIC_AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG
+
         fun createIntent(context: Context): Intent {
             return Intent(context, PrivacySecurityActivity::class.java)
         }

@@ -134,13 +134,43 @@ services:
       - -o
       - stdout_output.enabled=true
       - -o
+      - file_output.enabled=true
+      - -o
+      - file_output.filename=/var/log/falco/events.jsonl
+      - -o
       - priority=${FALCO_MIN_PRIORITY:-error}
     volumes:
       - /sys/kernel/tracing:/sys/kernel/tracing:ro
       - /var/run/docker.sock:/host/var/run/docker.sock:ro
       - /proc:/host/proc:ro
       - /etc:/host/etc:ro
+      - falco-events:/var/log/falco
       - ./falco/falco_rules.local.yaml:/etc/falco/rules.d/virtroid_rules.yaml:ro
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  falco-forwarder:
+    build:
+      context: ../../backend
+    container_name: virtroid-falco-forwarder
+    command: ["falco-forwarder"]
+    user: "0:0"
+    restart: unless-stopped
+    profiles:
+      - falco
+    depends_on:
+      - virtroidd
+      - falco
+    environment:
+      CONTROL_PLANE_URL: http://virtroidd:8080
+      NODE_ID: ${NODE_ID:-mp-vps-storage}
+      NODE_PRIVATE_KEY_B64: ${NODE_PRIVATE_KEY_B64:?set NODE_PRIVATE_KEY_B64 to a base64 PKCS8 P-256 private key}
+      FALCO_EVENTS_FILE: /var/log/falco/events.jsonl
+    volumes:
+      - falco-events:/var/log/falco:ro
     logging:
       driver: local
       options:
@@ -150,3 +180,4 @@ services:
 volumes:
   postgres-data:
   renterd-data:
+  falco-events:
