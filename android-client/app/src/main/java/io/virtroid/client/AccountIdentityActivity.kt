@@ -103,11 +103,14 @@ class AccountIdentityActivity : AppCompatActivity() {
         } else {
             getString(R.string.account_identity_not_linked)
         }
-        binding.identityEncryptionValue.text = if (identityPasswordStore.isConfigured(accountId, deviceId)) {
+        val identityPasswordConfigured = identityPasswordStore.isConfigured(accountId, deviceId)
+        val identityPasswordStatus = if (identityPasswordConfigured) {
             getString(R.string.account_identity_encryption_ready)
         } else {
             getString(R.string.account_identity_encryption_missing)
         }
+        binding.identityEncryptionValue.text = identityPasswordStatus
+        binding.itemIdentityPasswordSubtitle.text = identityPasswordStatus
         binding.identityCreatedValue.text = if (hasLinkedIdentity) {
             getString(R.string.account_identity_local_linked)
         } else {

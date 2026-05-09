@@ -218,7 +218,9 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:checked="false"
-                            android:text="" />
+                            android:text=""
+                            android:thumbTint="@color/switch_thumb_tint"
+                            android:trackTint="@color/switch_track_tint" />
                     </LinearLayout>
                     <View
                         android:id="@+id/divider_passthrough_toggles"
@@ -245,7 +247,9 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:checked="false"
-                            android:text="" />
+                            android:text=""
+                            android:thumbTint="@color/switch_thumb_tint"
+                            android:trackTint="@color/switch_track_tint" />
                     </LinearLayout>
                 </LinearLayout>
             </LinearLayout>

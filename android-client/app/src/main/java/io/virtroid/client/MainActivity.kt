@@ -371,6 +371,7 @@ class MainActivity : AppCompatActivity() {
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 val profiledRuntime = updateRuntimeForViewerAspect(currentBaseUrl(), accountId, deviceId, runtime)
                 api.startRuntime(currentBaseUrl(), accountId, deviceId, profiledRuntime.id, blobAccessKey)
+                identityPasswordStore.saveConfigured(accountId, deviceId)
             }.onSuccess {
                 appLogs.info("Runtime start accepted for ${runtime.name}", "runtime")
                 refreshRuntimes(showBusy = false)
@@ -431,6 +432,7 @@ class MainActivity : AppCompatActivity() {
                     bitRate = DEFAULT_SESSION_BIT_RATE,
                     blobAccessKey = blobAccessKey,
                 )
+                identityPasswordStore.saveConfigured(accountId, deviceId)
                 Pair(session, readyRuntime)
             }.onSuccess { (session, readyRuntime) ->
                 setBusy(false)
@@ -781,6 +783,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun RuntimeSummary.isTransitioning(): Boolean {
+        if (status.equals("error", ignoreCase = true)) {
+            return false
+        }
         return desiredState.equals("running", ignoreCase = true) && !isReadyForSession() ||
             status.equals("starting", ignoreCase = true) ||
             status.equals("provisioning", ignoreCase = true) ||

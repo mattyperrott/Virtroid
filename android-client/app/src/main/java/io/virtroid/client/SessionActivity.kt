@@ -298,6 +298,7 @@ class SessionActivity : AppCompatActivity() {
                 }
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
+                identityPasswordStore.saveConfigured(accountId, deviceId)
                 waitForRuntimeStopped()
             }.onSuccess {
                 appSettings.lastSessionEndReason = reason
