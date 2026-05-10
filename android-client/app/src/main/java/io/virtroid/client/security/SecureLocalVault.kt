@@ -1,6 +1,8 @@
 package io.virtroid.client.security
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import org.json.JSONObject
 import java.io.File
@@ -9,6 +11,8 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Arrays
 import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
@@ -42,24 +46,24 @@ class SecureLocalVault private constructor(context: Context) {
             return runCatching {
                 document = when {
                     vaultFile.exists() && isVersioned -> {
-                        dataKey = unwrapSecretBoundDataKeyLocked(secretKey)
-                            ?: throw IllegalStateException("versioned vault is not bound to the app-lock secret")
+                        dataKey = unwrapDataKeyLocked(secretKey)
+                            ?: throw IllegalStateException("versioned vault is not bound to app-lock secret and device keystore")
                         JSONObject(decryptVersionedFile(dataKey!!))
                     }
                     vaultFile.exists() -> {
                         val plaintext = decryptLegacyFile(secretKey)
-                        dataKey = newSecretBoundDataKeyLocked(secretKey)
+                        dataKey = newHardwareSecretBoundDataKeyLocked(secretKey)
                         JSONObject(plaintext)
                     }
                     else -> {
-                        dataKey = newSecretBoundDataKeyLocked(secretKey)
+                        dataKey = newHardwareSecretBoundDataKeyLocked(secretKey)
                         JSONObject()
                     }
                 }
                 val unlockedKey = dataKey ?: throw IllegalStateException("secure vault key unavailable")
                 replaceKeyLocked(unlockedKey)
                 persistLocked()
-                clearLegacyKeystoreWrappedDataKeyLocked()
+                clearLegacyWrappedDataKeyPrefsLocked()
                 true
             }.getOrElse {
                 vaultKey = null
@@ -258,42 +262,79 @@ class SecureLocalVault private constructor(context: Context) {
         return vaultFile.readText(Charsets.UTF_8).trimStart().startsWith("{")
     }
 
-    private fun newSecretBoundDataKeyLocked(secretKey: ByteArray): ByteArray {
+    private fun newHardwareSecretBoundDataKeyLocked(secretKey: ByteArray): ByteArray {
         return ByteArray(KEY_BYTES).also {
             SecureRandom().nextBytes(it)
-            wrapSecretBoundDataKeyLocked(it, secretKey)
+            wrapHardwareSecretBoundDataKeyLocked(it, secretKey)
         }
     }
 
-    private fun unwrapSecretBoundDataKeyLocked(secretKey: ByteArray): ByteArray? {
+    private fun unwrapDataKeyLocked(secretKey: ByteArray): ByteArray? {
+        unwrapHardwareSecretBoundDataKeyLocked(secretKey)?.let { return it }
+
+        unwrapSecretOnlyDataKeyForMigrationLocked(secretKey)?.let { dataKey ->
+            wrapHardwareSecretBoundDataKeyLocked(dataKey, secretKey)
+            return dataKey
+        }
+
+        unwrapLegacyKeystoreWrappedDataKeyForMigrationLocked()?.let { dataKey ->
+            wrapHardwareSecretBoundDataKeyLocked(dataKey, secretKey)
+            return dataKey
+        }
+
+        return null
+    }
+
+    private fun unwrapHardwareSecretBoundDataKeyLocked(secretKey: ByteArray): ByteArray? {
+        val iv = decodeKeyPref(KEY_HARDWARE_SECRET_WRAPPED_DEK_IV) ?: return null
+        val ciphertext = decodeKeyPref(KEY_HARDWARE_SECRET_WRAPPED_DEK_CIPHERTEXT) ?: return null
+        return LocalVaultKeyEnvelope.unwrapHardwareSecretBoundDataKey(
+            LocalVaultKeyEnvelope.Wrapped(iv, ciphertext),
+            secretKey,
+            getOrCreateKeystoreKey(),
+        )
+    }
+
+    private fun wrapHardwareSecretBoundDataKeyLocked(dataKey: ByteArray, secretKey: ByteArray) {
+        val wrapped = LocalVaultKeyEnvelope.wrapHardwareSecretBoundDataKey(
+            dataKey,
+            secretKey,
+            getOrCreateKeystoreKey(),
+        )
+        keyPrefs.edit()
+            .putString(KEY_HARDWARE_SECRET_WRAPPED_DEK_IV, Base64.encodeToString(wrapped.iv, B64_FLAGS))
+            .putString(KEY_HARDWARE_SECRET_WRAPPED_DEK_CIPHERTEXT, Base64.encodeToString(wrapped.ciphertext, B64_FLAGS))
+            .apply()
+        Arrays.fill(wrapped.iv, 0)
+        Arrays.fill(wrapped.ciphertext, 0)
+    }
+
+    private fun unwrapSecretOnlyDataKeyForMigrationLocked(secretKey: ByteArray): ByteArray? {
         val iv = decodeKeyPref(KEY_SECRET_WRAPPED_DEK_IV) ?: return null
         val ciphertext = decodeKeyPref(KEY_SECRET_WRAPPED_DEK_CIPHERTEXT) ?: return null
+        return LocalVaultKeyEnvelope.unwrapSecretOnlyDataKey(
+            LocalVaultKeyEnvelope.Wrapped(iv, ciphertext),
+            secretKey,
+        )
+    }
+
+    private fun unwrapLegacyKeystoreWrappedDataKeyForMigrationLocked(): ByteArray? {
+        val iv = decodeKeyPref(KEY_WRAPPED_DEK_IV) ?: return null
+        val ciphertext = decodeKeyPref(KEY_WRAPPED_DEK_CIPHERTEXT) ?: return null
         return runCatching {
             val cipher = Cipher.getInstance(AES_MODE)
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(secretKey, KEY_ALGORITHM), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKeystoreKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             cipher.doFinal(ciphertext).takeIf { it.size == KEY_BYTES }
         }.getOrNull()
     }
 
-    private fun wrapSecretBoundDataKeyLocked(dataKey: ByteArray, secretKey: ByteArray) {
-        val cipher = Cipher.getInstance(AES_MODE)
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(secretKey, KEY_ALGORITHM))
-        val ciphertext = cipher.doFinal(dataKey)
-        val iv = cipher.iv ?: throw IllegalStateException("missing data-key wrap iv")
-        keyPrefs.edit()
-            .putString(KEY_SECRET_WRAPPED_DEK_IV, Base64.encodeToString(iv, B64_FLAGS))
-            .putString(KEY_SECRET_WRAPPED_DEK_CIPHERTEXT, Base64.encodeToString(ciphertext, B64_FLAGS))
-            .apply()
-    }
-
-    private fun clearLegacyKeystoreWrappedDataKeyLocked() {
+    private fun clearLegacyWrappedDataKeyPrefsLocked() {
         keyPrefs.edit()
             .remove(KEY_WRAPPED_DEK_IV)
             .remove(KEY_WRAPPED_DEK_CIPHERTEXT)
+            .remove(KEY_SECRET_WRAPPED_DEK_IV)
+            .remove(KEY_SECRET_WRAPPED_DEK_CIPHERTEXT)
             .apply()
-        runCatching {
-            keyStore().deleteEntry(KEYSTORE_KEY_ALIAS)
-        }
     }
 
     private fun decodeKeyPref(key: String): ByteArray? {
@@ -303,6 +344,22 @@ class SecureLocalVault private constructor(context: Context) {
 
     private fun keyStore(): KeyStore {
         return KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+    }
+
+    private fun getOrCreateKeystoreKey(): SecretKey {
+        keyStore().getKey(KEYSTORE_KEY_ALIAS, null)?.let { return it as SecretKey }
+
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        val spec = KeyGenParameterSpec.Builder(
+            KEYSTORE_KEY_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build()
+        generator.init(spec)
+        return generator.generateKey()
     }
 
     private fun deriveKey(secret: String, saltB64: String): ByteArray? {
@@ -328,6 +385,8 @@ class SecureLocalVault private constructor(context: Context) {
         private const val KEY_WRAPPED_DEK_CIPHERTEXT = "wrapped_dek_ciphertext"
         private const val KEY_SECRET_WRAPPED_DEK_IV = "secret_wrapped_dek_iv"
         private const val KEY_SECRET_WRAPPED_DEK_CIPHERTEXT = "secret_wrapped_dek_ciphertext"
+        private const val KEY_HARDWARE_SECRET_WRAPPED_DEK_IV = "hardware_secret_wrapped_dek_iv"
+        private const val KEY_HARDWARE_SECRET_WRAPPED_DEK_CIPHERTEXT = "hardware_secret_wrapped_dek_ciphertext"
 
         @Volatile
         private var instance: SecureLocalVault? = null
