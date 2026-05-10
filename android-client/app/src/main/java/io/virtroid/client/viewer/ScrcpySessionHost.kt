@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.os.Build
 import android.os.IBinder
 import android.view.MotionEvent
 import android.view.Surface
@@ -80,8 +81,22 @@ class ScrcpySessionHost(
 
     fun connect() {
         val intent = Intent(context, Scrcpy::class.java)
-        context.startService(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    fun pauseRendering() {
+        scrcpy?.pause()
+    }
+
+    fun attachSurface(surface: Surface, width: Int, height: Int) {
+        displayLandscape = width > height
+        scrcpy?.setParms(surface, width, height)
+        scrcpy?.resume()
     }
 
     fun sendTouch(event: MotionEvent, width: Int, height: Int): Boolean {

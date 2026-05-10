@@ -90,6 +90,19 @@
                         android:textColor="@color/v_accent"
                         android:textSize="11sp" />
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/sessionHeartbeatText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:ellipsize="end"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="@string/session_heartbeat_pending"
+                    android:textColor="@color/v_text_muted"
+                    android:textSize="10sp" />
             </LinearLayout>
 
             <ImageButton

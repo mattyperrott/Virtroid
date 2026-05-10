@@ -201,8 +201,12 @@ class MainActivity : AppCompatActivity() {
         }.onSuccess {
             activeSessionStore.touch(activeSession.sessionId)
         }.onFailure { error ->
-            activeSessionStore.clear()
-            appLogs.warn("Cleared stale active session after heartbeat failure: ${error.message}", "session")
+            if (error.isGoneSessionResponse()) {
+                activeSessionStore.clear()
+                appLogs.warn("Cleared stale active session after backend reported it gone: ${error.message}", "session")
+            } else {
+                appLogs.warn("Active session heartbeat unavailable during refresh: ${error.message}", "session")
+            }
         }
     }
 
@@ -406,9 +410,14 @@ class MainActivity : AppCompatActivity() {
                     appLogs.info("Returning to active session for ${runtime.name}", "session")
                     startActivity(SessionActivity.createIntent(this@MainActivity, session).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
                 }.onFailure { error ->
-                    activeSessionStore.clear()
-                    appLogs.warn("Stored active session was stale: ${error.message}", "session")
-                    connectRuntime(runtime)
+                    if (error.isGoneSessionResponse()) {
+                        activeSessionStore.clear()
+                        appLogs.warn("Stored active session was gone on backend: ${error.message}", "session")
+                        connectRuntime(runtime)
+                    } else {
+                        appLogs.warn("Stored active session heartbeat failed: ${error.message}", "session")
+                        showError(error)
+                    }
                 }
             }
             return
