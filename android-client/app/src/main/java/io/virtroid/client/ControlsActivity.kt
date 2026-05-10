@@ -114,11 +114,7 @@ class ControlsActivity : AppCompatActivity() {
     private fun bindRuntime(runtime: RuntimeSummary) {
         binding.controlsRuntimeNameText.text = runtime.name
         binding.controlsRuntimeSubtitleText.text = getString(R.string.controls_runtime_subtitle, runtime.id)
-        binding.controlsStateValue.text = if (runtime.isReadyForSession()) {
-            getString(R.string.controls_state_running)
-        } else {
-            getString(R.string.controls_state_stopped)
-        }
+        binding.controlsStateValue.text = runtime.lifecycleLabel()
         binding.controlsTunnelValue.text = getString(R.string.controls_tunnel_encrypted)
         binding.controlsStorageValue.text = when {
             runtime.blobLastSnapshotAt != null -> getString(R.string.controls_loaded)
@@ -137,6 +133,11 @@ class ControlsActivity : AppCompatActivity() {
             runtime.heightPx,
             runtime.densityDpi,
         )
+        val lifecycleBusy = runtime.isLifecycleBusy()
+        binding.controlsConnectButton.isEnabled = !lifecycleBusy || runtime.isReadyForSession()
+        binding.wipeRow.isEnabled = !lifecycleBusy
+        binding.destroyRow.isEnabled = !lifecycleBusy
+        binding.displayOutputRow.isEnabled = !lifecycleBusy
     }
 
     private fun showDisplayDialog() {
@@ -351,6 +352,8 @@ class ControlsActivity : AppCompatActivity() {
 
         val accountId = sessionStore.accountId ?: return
         val deviceId = sessionStore.deviceId ?: return
+        binding.controlsConnectButton.isEnabled = false
+        binding.controlsStateValue.text = getString(R.string.controls_state_preparing_viewer)
         lifecycleScope.launch {
             runCatching {
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
@@ -388,7 +391,9 @@ class ControlsActivity : AppCompatActivity() {
                 )
             }.onFailure {
                 appLogs.error(it.message ?: getString(R.string.status_error), "session")
-                toast(it.virtroidDisplayMessage(this@ControlsActivity))
+                binding.controlsConnectButton.isEnabled = true
+                binding.controlsStateValue.text = runtime.lifecycleLabel()
+                showSessionPrepareError(it, runtime)
             }
         }
     }
@@ -406,7 +411,7 @@ class ControlsActivity : AppCompatActivity() {
                     runCatching {
                         api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id)
                     }.onSuccess {
-                        toast(getString(R.string.runtime_deleted))
+                        toast(getString(R.string.runtime_delete_queued))
                         finish()
                     }.onFailure {
                         toast(it.virtroidDisplayMessage(this@ControlsActivity))
@@ -449,6 +454,44 @@ class ControlsActivity : AppCompatActivity() {
         return status.equals("running", ignoreCase = true) &&
             connectionStatus.equals("online", ignoreCase = true) &&
             !hostId.isNullOrBlank()
+    }
+
+    private fun RuntimeSummary.lifecycleLabel(): String {
+        return when {
+            isReadyForSession() -> getString(R.string.controls_state_running)
+            desiredState.equals("deleted", ignoreCase = true) ||
+                status.equals("deleting", ignoreCase = true) -> getString(R.string.controls_state_deleting)
+            status.equals("wiping", ignoreCase = true) -> getString(R.string.controls_state_wiping)
+            status.equals("stopping", ignoreCase = true) ||
+                desiredState.equals("stopped", ignoreCase = true) && connectionStatus.equals("online", ignoreCase = true) -> getString(R.string.controls_state_stopping)
+            status.equals("starting", ignoreCase = true) ||
+                connectionStatus.equals("connecting", ignoreCase = true) -> getString(R.string.controls_state_starting)
+            status.equals("provisioning", ignoreCase = true) ||
+                connectionStatus.equals("preparing", ignoreCase = true) -> getString(R.string.controls_state_preparing)
+            else -> getString(R.string.controls_state_stopped)
+        }
+    }
+
+    private fun RuntimeSummary.isLifecycleBusy(): Boolean {
+        return desiredState.equals("deleted", ignoreCase = true) ||
+            status.equals("deleting", ignoreCase = true) ||
+            status.equals("wiping", ignoreCase = true) ||
+            status.equals("stopping", ignoreCase = true) ||
+            status.equals("starting", ignoreCase = true) ||
+            status.equals("provisioning", ignoreCase = true) ||
+            connectionStatus.equals("connecting", ignoreCase = true) ||
+            connectionStatus.equals("preparing", ignoreCase = true)
+    }
+
+    private fun showSessionPrepareError(error: Throwable, runtime: RuntimeSummary) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.session_prepare_failed_title))
+            .setMessage(error.virtroidDisplayMessage(this))
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.session_prepare_retry)) { _, _ ->
+                connectRuntime(runtime)
+            }
+            .show()
     }
 
     companion object {

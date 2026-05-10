@@ -13,10 +13,14 @@
     <string name="account_present">Linked device client</string>
     <string name="account_active_local_session">Linked local client</string>
     <string name="account_identity_not_linked">Not linked</string>
-    <string name="account_identity_verified">Verified</string>
-    <string name="account_identity_encryption_ready">Blob key protected</string>
+    <string name="account_identity_verified">Registered</string>
+    <string name="account_identity_encryption_ready">Blob password configured</string>
     <string name="account_identity_encryption_missing">Identity password missing</string>
     <string name="account_identity_local_linked">Local link present</string>
+    <string name="account_identity_created">Identity created</string>
+    <string name="account_identity_blob_configured">Blob password configured</string>
+    <string name="account_identity_password_cached">Password cached for this app session</string>
+    <string name="account_identity_password_required_later">Configured; required again after app restart or logout</string>
     <string name="account_storage_not_synced">Waiting for storage sync</string>
     <string name="account_storage_unavailable">Unavailable</string>
     <string name="account_storage_usage_unreported">Usage is not reported by the storage backend yet</string>
@@ -50,6 +54,13 @@
     <string name="identity_password_mismatch">Identity passwords did not match</string>
     <string name="identity_password_required">Identity password is required</string>
     <string name="identity_unlock_title">Unlock Blob Identity</string>
+    <string name="identity_password_setup_body">Set the password used to derive the blob key for runtime snapshot restore and runtime authentication.</string>
+    <string name="identity_password_reset_body">Resetting this password updates the device verifier. Existing encrypted snapshots may still require the old password if they have not been re-saved.</string>
+    <string name="identity_password_set_action">Set password</string>
+    <string name="identity_password_reset_action">Reset password</string>
+    <string name="identity_password_clear_cache">Clear cache</string>
+    <string name="identity_password_cache_cleared">Cached identity password cleared</string>
+    <string name="identity_password_updated">Identity password updated</string>
     <string name="lock_pin_field_hint">Enter 6-digit PIN</string>
     <string name="lock_passphrase_field_hint">Enter passphrase</string>
 
@@ -65,7 +76,7 @@
     <string name="status_wiping_runtime">Wiping runtime data…</string>
     <string name="status_deleting_runtime">Deleting runtime…</string>
     <string name="status_loading_logs">Loading runtime logs…</string>
-    <string name="status_preparing_session">Preparing relay session…</string>
+    <string name="status_preparing_session">Preparing encrypted viewer…</string>
     <string name="status_waiting_runtime_ready">Waiting for runtime: %1$s / %2$s</string>
     <string name="status_waiting_runtime_stop">Waiting for runtime to stop: %1$s / %2$s</string>
     <string name="status_error">Something went wrong</string>
@@ -74,9 +85,10 @@
     <string name="runtime_created">Runtime created</string>
     <string name="runtime_saved">Runtime settings saved</string>
     <string name="runtime_deleted">Runtime deleted</string>
+    <string name="runtime_delete_queued">Runtime deletion queued</string>
     <string name="runtime_logs_empty">No logs available yet.</string>
     <string name="runtime_missing_for_session">Runtime is no longer available.</string>
-    <string name="runtime_start_timeout">Runtime did not come online in time.</string>
+    <string name="runtime_start_timeout">Runtime is still starting. Try again in a moment.</string>
 
     <string name="home_secure_client">VIRTROID CLIENT</string>
     <string name="home_title">My Runtimes</string>
@@ -142,7 +154,7 @@
     <string name="runtime_provisioning_command_storage">&gt; sia renterd reserve encrypted blockstore</string>
     <string name="runtime_provisioning_detail_storage">... allocating runtime storage volume_</string>
     <string name="runtime_provisioning_title_network">Preparing Network Route ...</string>
-    <string name="runtime_provisioning_command_network">&gt; relay route prepare secure edge path</string>
+    <string name="runtime_provisioning_command_network">&gt; relay route prepare encrypted edge path</string>
     <string name="runtime_provisioning_detail_network">... preparing encrypted route metadata_</string>
     <string name="runtime_provisioning_title_boot">Booting Runtime Instance ...</string>
     <string name="runtime_provisioning_command_boot">&gt; containerd: create redroid namespace</string>
@@ -156,7 +168,7 @@
     <string name="runtime_provisioning_title_viewer">Starting Encrypted Viewer ...</string>
     <string name="runtime_provisioning_command_viewer">&gt; launch viewercrypt bridge</string>
     <string name="runtime_provisioning_detail_viewer">... opening encrypted display channel_</string>
-    <string name="runtime_provisioning_title_connect">Preparing Secure Viewer ...</string>
+    <string name="runtime_provisioning_title_connect">Preparing Encrypted Viewer ...</string>
     <string name="runtime_provisioning_command_connect">&gt; relay attach encrypted viewer</string>
     <string name="runtime_provisioning_detail_connect">... waiting for encrypted display socket_</string>
     <string name="runtime_provisioning_title_error">Provisioning Failed ...</string>
@@ -167,12 +179,21 @@
     <string name="runtime_provisioning_event_filesystem">[ok] Mounting virtual filesystem</string>
     <string name="runtime_provisioning_event_image">[ok] Verifying runtime image</string>
     <string name="runtime_provisioning_event_services">[ok] Starting runtime services</string>
-    <string name="runtime_provisioning_event_channel">[ok] Establishing secure channel</string>
+    <string name="runtime_provisioning_event_channel">[ok] Establishing encrypted channel</string>
     <string name="runtime_provisioning_event_handoff">[ok] Finalizing session handoff</string>
     <string name="runtime_provisioning_event_ready">[ok] Runtime ready</string>
     <string name="runtime_provisioning_event_wait_ready">[wait] Waiting for runtime ready</string>
     <string name="runtime_provisioning_event_runtime_log">[node] %1$s</string>
     <string name="runtime_provisioning_event_error">[error] Provisioning halted</string>
+    <string name="runtime_lifecycle_title_stopping">Saving Runtime State ...</string>
+    <string name="runtime_lifecycle_command_stopping">&gt; stop runtime and snapshot data</string>
+    <string name="runtime_lifecycle_detail_stopping">... writing encrypted runtime snapshot_</string>
+    <string name="runtime_lifecycle_title_wiping">Wiping Runtime Data ...</string>
+    <string name="runtime_lifecycle_command_wiping">&gt; remove saved runtime state</string>
+    <string name="runtime_lifecycle_detail_wiping">... clearing runtime data and encrypted snapshots_</string>
+    <string name="runtime_lifecycle_title_deleting">Deleting Runtime ...</string>
+    <string name="runtime_lifecycle_command_deleting">&gt; remove node container and metadata</string>
+    <string name="runtime_lifecycle_detail_deleting">... waiting for node cleanup confirmation_</string>
 
     <string name="new_runtime_title">New Runtime</string>
     <string name="new_runtime_identity">Identity</string>
@@ -206,7 +227,7 @@
     <string name="new_runtime_provision_detail_ready">... ready for start node_</string>
     <string name="new_runtime_provision_title_error">Provisioning Failed ...</string>
     <string name="new_runtime_provision_command_error">&gt; provision runtime error</string>
-    <string name="new_runtime_provision_event_identity">[ok] Signed identity verified</string>
+    <string name="new_runtime_provision_event_identity">[ok] Signed identity registered</string>
     <string name="new_runtime_provision_event_capacity">[ok] Runtime entitlement reserved</string>
     <string name="new_runtime_provision_event_image">[ok] Android 14 image selected</string>
     <string name="new_runtime_provision_event_profile">[ok] Hardware persona generated</string>
@@ -221,6 +242,12 @@
     <string name="controls_storage">STORAGE</string>
     <string name="controls_state_running">Running</string>
     <string name="controls_state_stopped">Stopped</string>
+    <string name="controls_state_starting">Starting</string>
+    <string name="controls_state_preparing">Preparing</string>
+    <string name="controls_state_preparing_viewer">Preparing viewer</string>
+    <string name="controls_state_stopping">Saving</string>
+    <string name="controls_state_wiping">Wiping</string>
+    <string name="controls_state_deleting">Deleting</string>
     <string name="controls_tunnel_encrypted">Encrypted</string>
     <string name="controls_storage_volatile">Volatile</string>
     <string name="controls_storage_persistent">Persistent</string>
@@ -249,7 +276,7 @@
     <string name="controls_tunnel_direct">Encrypted</string>
     <string name="controls_loaded">Loaded</string>
 
-    <string name="session_title_fallback">Private Session</string>
+    <string name="session_title_fallback">Runtime Session</string>
     <string name="session_connecting">Connecting to runtime stream…</string>
     <string name="session_connecting_endpoint">Connecting to %1$s…</string>
     <string name="session_connected">Connected</string>
@@ -260,6 +287,10 @@
     <string name="session_ended">Session ended</string>
     <string name="session_stop_pending">Session close requested. Runtime is still saving state.</string>
     <string name="session_missing_endpoint">Viewer session details are missing.</string>
+    <string name="session_prepare_failed_title">Viewer not ready yet</string>
+    <string name="session_prepare_retry_message">The runtime is online, but the viewer bridge is still preparing. Try connecting again.</string>
+    <string name="session_prepare_retry">Retry connect</string>
+    <string name="session_retry">Retry</string>
     <string name="session_connecting_short">Connecting…</string>
     <string name="session_menu">Open Controls</string>
     <string name="session_close_drawer">Close</string>
@@ -279,6 +310,7 @@
     <string name="session_upload">Upload</string>
     <string name="session_controls">Controls</string>
     <string name="session_stream_connecting">Opening live Android display...</string>
+    <string name="session_stream_reconnecting">Reconnecting live Android display...</string>
     <string name="session_stream_receiving">Receiving live Android display...</string>
     <string name="onboarding_title">Generate Identity</string>
     <string name="onboarding_subtitle">This device creates a local signing key, then registers it with the control plane for signed API requests.</string>
@@ -287,7 +319,7 @@
     <string name="onboarding_account_copied">Account ID copied</string>
     <string name="onboarding_device_fingerprint">DEVICE ID</string>
     <string name="onboarding_verified">Registered</string>
-    <string name="onboarding_existing_access">Add Trusted Device</string>
+    <string name="onboarding_existing_access">Add Linked Device</string>
     <string name="onboarding_create_identity">Create Identity</string>
     <string name="onboarding_continue">Continue Setup</string>
     <string name="onboarding_local_encryption">Security Setup</string>
@@ -305,7 +337,7 @@
     <string name="provisioning_done">DONE</string>
     <string name="provisioning_active_waiting">Preparing Identity ...</string>
     <string name="provisioning_active_command">&gt; provision identity</string>
-    <string name="provisioning_active_detail">... waiting for secure input_</string>
+    <string name="provisioning_active_detail">... waiting for password input_</string>
     <string name="unlock_title">Unlock Identity</string>
     <string name="unlock_subtitle">Decrypting local state</string>
     <string name="unlock_use_passphrase">USE PASSPHRASE INSTEAD</string>
@@ -334,7 +366,7 @@
     <string name="privacy_security_telemetry">Security Telemetry</string>
     <string name="privacy_app_lock_status">App Lock Status</string>
     <string name="privacy_screenshot_protection">Screenshot Protection</string>
-    <string name="privacy_trusted_device">Trusted Device</string>
+    <string name="privacy_trusted_device">Linked Device</string>
     <string name="privacy_last_unlock">Last Unlock</string>
     <string name="privacy_last_session_end">Last Session End</string>
     <string name="privacy_app_lock_auth">App Lock &amp; Authentication</string>
@@ -370,7 +402,7 @@
     <string name="privacy_telemetry_setup_needed">Setup Needed</string>
     <string name="privacy_telemetry_active">ACTIVE</string>
     <string name="privacy_telemetry_off">OFF</string>
-    <string name="privacy_telemetry_verified">VERIFIED</string>
+    <string name="privacy_telemetry_verified">LINKED</string>
     <string name="privacy_telemetry_unlinked">UNLINKED</string>
     <string name="privacy_telemetry_never">Never</string>
 

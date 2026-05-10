@@ -156,6 +156,8 @@ type dockerInspectResponse struct {
 
 const (
 	viewerPrepareTimeout = 90 * time.Second
+	viewerDefaultMaxSize = 720
+	viewerPrewarmBitRate = 4_000_000
 )
 
 type nodeAgent struct {
@@ -537,6 +539,9 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 	if maxSize <= 0 {
 		maxSize = max(runtime.WidthPx, runtime.HeightPx)
 	}
+	if maxSize <= 0 {
+		maxSize = viewerDefaultMaxSize
+	}
 	bitRate := req.BitRate
 	if bitRate <= 0 {
 		bitRate = 8_000_000
@@ -820,6 +825,18 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				ADBPort:          &adbPort,
 				LastError:        stringPtr(""),
 			})
+		}
+		if !strings.EqualFold(runtime.Status, "running") || !strings.EqualFold(runtime.ConnectionStatus, "online") {
+			prewarmMaxSize := max(runtime.WidthPx, runtime.HeightPx)
+			if prewarmMaxSize <= 0 {
+				prewarmMaxSize = viewerDefaultMaxSize
+			}
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Prewarming encrypted viewer bridge.")
+			if err := n.startViewerService(ctx, containerName, "127.0.0.1", prewarmMaxSize, viewerPrewarmBitRate); err != nil {
+				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Viewer prewarm failed: %v.", err))
+			} else {
+				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Encrypted viewer bridge prewarmed.")
+			}
 		}
 		return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
 			Status:           "running",
@@ -1561,7 +1578,13 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 		clientIP = "127.0.0.1"
 	}
 	shellCmd := fmt.Sprintf(
-		"rm -f /data/local/tmp/virtroid-viewer.log; "+
+		"desired_ip=%s; desired_size=%d; desired_bitrate=%d; public_key=%s; "+
+			"current_ip=$(getprop virtroid.viewer.client_ip); "+
+			"current_size=$(getprop virtroid.viewer.max_size); "+
+			"current_bitrate=$(getprop virtroid.viewer.bit_rate); "+
+			"svc=$(getprop init.svc.virtroid_viewer); "+
+			"if [ \"$svc\" = \"running\" ] && [ \"$current_ip\" = \"$desired_ip\" ] && [ \"$current_size\" = \"$desired_size\" ] && [ \"$current_bitrate\" = \"$desired_bitrate\" ] && [ -s \"$public_key\" ] && ss -ltn 2>/dev/null | grep -q ':%d'; then exit 0; fi; "+
+			"rm -f /data/local/tmp/virtroid-viewer.log \"$public_key\"; "+
 			"setprop virtroid.viewer.client_ip %s; "+
 			"setprop virtroid.viewer.max_size %d; "+
 			"setprop virtroid.viewer.bit_rate %d; "+
@@ -1583,6 +1606,11 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 			"ss -ltn 2>/dev/null || true; "+
 			"cat /data/local/tmp/virtroid-viewer.log 2>/dev/null || true; "+
 			"exit 1",
+		shellEscape(clientIP),
+		maxSize,
+		bitRate,
+		shellEscape(viewerPublicKeyPath),
+		encryptedViewerPort,
 		shellEscape(clientIP),
 		maxSize,
 		bitRate,
