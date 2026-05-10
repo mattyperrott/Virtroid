@@ -14,6 +14,7 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.RuntimeUpdate
@@ -459,7 +460,7 @@ class MainActivity : AppCompatActivity() {
             }.onFailure { error ->
                 setBusy(false)
                 appLogs.error(error.message ?: getString(R.string.status_error), "session")
-                showError(error)
+                showSessionPrepareError(error, runtime)
             }
         }
     }
@@ -636,7 +637,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setBusy(isBusy: Boolean, message: String? = null) {
         binding.progressIndicator.isVisible = isBusy
-        binding.statusText.text = getString(R.string.home_secure_client)
+        binding.statusText.text = message ?: getString(R.string.home_secure_client)
         binding.notificationButton.isEnabled = !isBusy
         binding.createRuntimeButton.isEnabled = !isBusy && (latestEntitlement?.canCreateRuntime ?: true)
         binding.accessToggleButton.isEnabled = !isBusy
@@ -772,6 +773,18 @@ class MainActivity : AppCompatActivity() {
         toast(error.virtroidDisplayMessage(this))
     }
 
+    private fun showSessionPrepareError(error: Throwable, runtime: RuntimeSummary) {
+        val message = error.virtroidDisplayMessage(this)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.session_prepare_failed_title))
+            .setMessage(message)
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.session_prepare_retry)) { _, _ ->
+                connectRuntime(runtime)
+            }
+            .show()
+    }
+
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
@@ -786,7 +799,12 @@ class MainActivity : AppCompatActivity() {
         if (status.equals("error", ignoreCase = true)) {
             return false
         }
-        return desiredState.equals("running", ignoreCase = true) && !isReadyForSession() ||
+        return desiredState.equals("deleted", ignoreCase = true) ||
+            status.equals("deleting", ignoreCase = true) ||
+            status.equals("wiping", ignoreCase = true) ||
+            status.equals("stopping", ignoreCase = true) ||
+            desiredState.equals("stopped", ignoreCase = true) && connectionStatus.equals("online", ignoreCase = true) ||
+            desiredState.equals("running", ignoreCase = true) && !isReadyForSession() ||
             status.equals("starting", ignoreCase = true) ||
             status.equals("provisioning", ignoreCase = true) ||
             connectionStatus.equals("connecting", ignoreCase = true) ||
@@ -818,6 +836,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         return when {
+            desiredState.equals("deleted", ignoreCase = true) || status.equals("deleting", ignoreCase = true) -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_lifecycle_title_deleting),
+                command = getString(R.string.runtime_lifecycle_command_deleting),
+                detail = detail(getString(R.string.runtime_lifecycle_detail_deleting)),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+            )
+            status.equals("wiping", ignoreCase = true) -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_lifecycle_title_wiping),
+                command = getString(R.string.runtime_lifecycle_command_wiping),
+                detail = detail(getString(R.string.runtime_lifecycle_detail_wiping)),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+            )
+            status.equals("stopping", ignoreCase = true) ||
+                desiredState.equals("stopped", ignoreCase = true) && connectionStatus.equals("online", ignoreCase = true) -> RuntimeProvisioningMilestone(
+                title = getString(R.string.runtime_lifecycle_title_stopping),
+                command = getString(R.string.runtime_lifecycle_command_stopping),
+                detail = detail(getString(R.string.runtime_lifecycle_detail_stopping)),
+                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+            )
             status.equals("provisioning", ignoreCase = true) || connectionStatus.equals("preparing", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.new_runtime_provision_title_container),
                 command = getString(R.string.new_runtime_provision_command_container),

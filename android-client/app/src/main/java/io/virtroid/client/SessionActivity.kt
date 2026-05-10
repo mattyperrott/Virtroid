@@ -75,6 +75,7 @@ class SessionActivity : AppCompatActivity() {
                     remoteHeight,
                 )
                 binding.sessionStreamStatusText.text = getString(R.string.session_stream_receiving)
+                binding.sessionRetryButton.isVisible = false
                 applyRemoteSurfaceBounds(remoteWidth, remoteHeight)
                 updateViewerGestureExclusion()
                 hideSystemBars()
@@ -99,6 +100,10 @@ class SessionActivity : AppCompatActivity() {
                     binding.sessionStreamStatusText.text = message
                     binding.sessionStreamProgress.isVisible = false
                     binding.sessionStreamStatusOverlay.isVisible = true
+                    binding.sessionRetryButton.isVisible = true
+                    val failedHost = sessionHost
+                    sessionHost = null
+                    failedHost?.destroy()
                     toast(getString(R.string.session_failed))
                 }
             }
@@ -146,9 +151,13 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtimeId))
         }
+        binding.sessionRetryButton.setOnClickListener {
+            retryViewerConnection()
+        }
         binding.sessionUploadButton.isVisible = false
         binding.sessionCameraButton.isVisible = false
         binding.sessionOptionalActionsDivider.isVisible = false
+        binding.sessionRetryButton.isVisible = false
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
         binding.sessionStreamProgress.isVisible = true
         binding.sessionStreamStatusOverlay.isVisible = true
@@ -242,6 +251,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
         binding.sessionStreamProgress.isVisible = true
         binding.sessionStreamStatusOverlay.isVisible = true
+        binding.sessionRetryButton.isVisible = false
         appLogs.info("Opening viewer transport for $runtimeName", "session")
         sessionHost = ScrcpySessionHost(
             context = this,
@@ -263,6 +273,18 @@ class SessionActivity : AppCompatActivity() {
     private fun disconnectViewer() {
         sessionHost?.destroy()
         sessionHost = null
+    }
+
+    private fun retryViewerConnection() {
+        val surface = viewerSurface ?: return
+        appLogs.info("Retrying viewer transport for $runtimeName", "session")
+        disconnectViewer()
+        binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
+        binding.sessionStreamStatusText.text = getString(R.string.session_stream_reconnecting)
+        binding.sessionStreamProgress.isVisible = true
+        binding.sessionStreamStatusOverlay.isVisible = true
+        binding.sessionRetryButton.isVisible = false
+        connectViewer(surface)
     }
 
     private fun endSessionAndFinish() {

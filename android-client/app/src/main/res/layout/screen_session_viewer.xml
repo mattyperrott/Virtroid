@@ -173,6 +173,20 @@
                     android:text="@string/session_stream_connecting"
                     android:textColor="@color/v_text_muted"
                     android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sessionRetryButton"
+                    style="@style/VirtroidButton.Secondary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="18dp"
+                    android:minWidth="140dp"
+                    android:text="@string/session_retry"
+                    android:visibility="gone"
+                    app:icon="@drawable/ic_refresh"
+                    app:iconGravity="textStart"
+                    app:iconPadding="10dp"
+                    app:iconTint="@color/v_accent" />
             </LinearLayout>
         </FrameLayout>
     </LinearLayout>

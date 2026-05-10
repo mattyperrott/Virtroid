@@ -19,9 +19,11 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAccountIdentityBinding
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.DeviceIdentityStore
+import io.virtroid.client.security.IdentityCrypto
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.security.promptIdentityPasswordWithConfirmation
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -71,7 +73,7 @@ class AccountIdentityActivity : AppCompatActivity() {
             copy("device_id", deviceId, getString(R.string.account_fingerprint_copied))
         }
         binding.itemIdentityPassword.setOnClickListener {
-            startActivity(PrivacySecurityActivity.createIntent(this))
+            showIdentityPasswordActions()
         }
         binding.itemDeviceSigningKey.setOnClickListener {
             copy("device_public_key", deviceIdentityStore.publicKeyMaterial(), getString(R.string.account_device_key_copied))
@@ -104,15 +106,20 @@ class AccountIdentityActivity : AppCompatActivity() {
             getString(R.string.account_identity_not_linked)
         }
         val identityPasswordConfigured = identityPasswordStore.isConfigured(accountId, deviceId)
-        val identityPasswordStatus = if (identityPasswordConfigured) {
-            getString(R.string.account_identity_encryption_ready)
-        } else {
-            getString(R.string.account_identity_encryption_missing)
+        val identityPasswordCached = identityPasswordStore.isUnlockedFor(accountId, deviceId)
+        binding.identityEncryptionValue.text = when {
+            !hasLinkedIdentity -> getString(R.string.account_identity_not_linked)
+            identityPasswordConfigured -> getString(R.string.account_identity_blob_configured)
+            else -> getString(R.string.account_identity_encryption_missing)
         }
-        binding.identityEncryptionValue.text = identityPasswordStatus
-        binding.itemIdentityPasswordSubtitle.text = identityPasswordStatus
+        binding.itemIdentityPasswordSubtitle.text = when {
+            !hasLinkedIdentity -> getString(R.string.account_identity_not_linked)
+            identityPasswordCached -> getString(R.string.account_identity_password_cached)
+            identityPasswordConfigured -> getString(R.string.account_identity_password_required_later)
+            else -> getString(R.string.account_identity_encryption_missing)
+        }
         binding.identityCreatedValue.text = if (hasLinkedIdentity) {
-            getString(R.string.account_identity_local_linked)
+            getString(R.string.account_identity_created)
         } else {
             getString(R.string.account_identity_not_linked)
         }
@@ -164,6 +171,71 @@ class AccountIdentityActivity : AppCompatActivity() {
                 toast(getString(R.string.account_wipe_local_done, result.deletedItems))
             }
             .show()
+    }
+
+    private fun showIdentityPasswordActions() {
+        val accountId = sessionStore.accountId.orEmpty()
+        val deviceId = sessionStore.deviceId.orEmpty()
+        if (accountId.isBlank() || deviceId.isBlank()) {
+            toast(getString(R.string.account_identity_not_linked))
+            return
+        }
+
+        val configured = identityPasswordStore.isConfigured(accountId, deviceId)
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.identity_password_title))
+            .setMessage(
+                if (configured) {
+                    getString(R.string.identity_password_reset_body)
+                } else {
+                    getString(R.string.identity_password_setup_body)
+                },
+            )
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setNeutralButton(getString(R.string.identity_password_clear_cache)) { _, _ ->
+                identityPasswordStore.clearUnlocked()
+                renderIdentity()
+                toast(getString(R.string.identity_password_cache_cleared))
+            }
+            .setPositiveButton(
+                if (configured) getString(R.string.identity_password_reset_action)
+                else getString(R.string.identity_password_set_action),
+            ) { _, _ ->
+                resetIdentityPassword(accountId, deviceId)
+            }
+            .show()
+    }
+
+    private fun resetIdentityPassword(accountId: String, deviceId: String) {
+        lifecycleScope.launch {
+            val password = promptIdentityPasswordWithConfirmation(
+                title = getString(R.string.identity_password_title),
+                hint = getString(R.string.identity_password_prompt),
+                confirmHint = getString(R.string.identity_password_confirm_prompt),
+            )?.trim()
+            when {
+                password == null -> return@launch
+                password.isBlank() -> {
+                    toast(getString(R.string.identity_password_mismatch))
+                    return@launch
+                }
+            }
+
+            runCatching {
+                val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, password)
+                val verifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
+                api.registerIdentity(sessionStore.baseUrl, accountId, deviceId, verifier)
+                identityPasswordStore.unlock(accountId, deviceId, password)
+                identityPasswordStore.saveConfigured(accountId, deviceId)
+            }.onSuccess {
+                appLogs.warn("Identity blob password verifier updated", "auth")
+                renderIdentity()
+                toast(getString(R.string.identity_password_updated))
+            }.onFailure { error ->
+                appLogs.error("Identity blob password update failed: ${error.message}", "auth")
+                toast(error.virtroidDisplayMessage(this@AccountIdentityActivity))
+            }
+        }
     }
 
     private fun confirmLocalIdentityReset() {

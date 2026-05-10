@@ -96,6 +96,13 @@ class IdentityPasswordStore(context: Context) {
         }
     }
 
+    fun isUnlockedFor(accountId: String?, deviceId: String?): Boolean {
+        if (accountId.isNullOrBlank() || deviceId.isNullOrBlank()) {
+            return false
+        }
+        return unlockedBlobAccessKey(accountId, deviceId) != null
+    }
+
     fun clearUnlocked() {
         unlockedAccountId = null
         unlockedDeviceId = null

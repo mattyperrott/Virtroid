@@ -29,6 +29,7 @@ internal fun EntitlementSummary.startRuntimeBlockedMessage(context: Context): St
 
 internal fun Throwable.virtroidDisplayMessage(context: Context): String {
     val code = (this as? VirtroidApiException)?.code
+    val rawMessage = message.orEmpty()
     return when (code) {
         "runtime_entitlement_required" -> context.getString(R.string.entitlement_required)
         "runtime_quota_exceeded" -> context.getString(R.string.entitlement_runtime_quota_reached)
@@ -36,6 +37,13 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
         "runtime_start_quota_exceeded" -> context.getString(R.string.entitlement_start_quota_reached)
         "runtime_profile_not_allowed" -> context.getString(R.string.entitlement_profile_not_allowed)
         "no_ready_host" -> context.getString(R.string.entitlement_no_ready_host)
-        else -> message ?: context.getString(R.string.status_error)
+        else -> when {
+            rawMessage.contains("viewer prepare", ignoreCase = true) ||
+                rawMessage.contains("viewer service", ignoreCase = true) ||
+                rawMessage.contains("runtime stream timed out", ignoreCase = true) -> context.getString(R.string.session_prepare_retry_message)
+            rawMessage.contains("timed out", ignoreCase = true) ||
+                rawMessage.contains("timeout", ignoreCase = true) -> context.getString(R.string.runtime_start_timeout)
+            else -> rawMessage.ifBlank { context.getString(R.string.status_error) }
+        }
     }
 }
