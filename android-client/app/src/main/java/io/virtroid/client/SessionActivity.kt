@@ -1,7 +1,9 @@
 package io.virtroid.client
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.os.Build
@@ -37,6 +39,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 class SessionActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionViewerBinding
@@ -64,6 +69,8 @@ class SessionActivity : AppCompatActivity() {
     private var lastInteractionAtMs = System.currentTimeMillis()
     private var inactivityJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var sessionUnavailable = false
+    private var sessionUiVisible = false
 
     private val sessionCallback = object : ScrcpySessionHost.Callback {
         override fun onConnected(remoteWidth: Int, remoteHeight: Int) {
@@ -92,15 +99,21 @@ class SessionActivity : AppCompatActivity() {
             runOnUiThread {
                 binding.sessionSubtitleText.text = if (endingSession) {
                     getString(R.string.session_secure_saving)
+                } else if (sessionUnavailable) {
+                    getString(R.string.session_heartbeat_stale)
                 } else {
                     getString(R.string.session_failed_message_inline, message)
                 }
                 if (!endingSession) {
                     appLogs.error("Session stream disconnected: $message", "session")
-                    binding.sessionStreamStatusText.text = message
+                    binding.sessionStreamStatusText.text = if (sessionUnavailable) {
+                        getString(R.string.session_heartbeat_stale)
+                    } else {
+                        message
+                    }
                     binding.sessionStreamProgress.isVisible = false
                     binding.sessionStreamStatusOverlay.isVisible = true
-                    binding.sessionRetryButton.isVisible = true
+                    binding.sessionRetryButton.isVisible = !sessionUnavailable
                     val failedHost = sessionHost
                     sessionHost = null
                     failedHost?.destroy()
@@ -135,6 +148,7 @@ class SessionActivity : AppCompatActivity() {
         activeSessionStore = ActiveSessionStore(this)
         appSettings = AppSettingsStore(this)
         appLogs = AppLogStore.get(this)
+        maybeRequestSessionNotificationPermission()
         persistActiveSession()
 
         if (relayHost.isBlank() || relayPort <= 0 || !relayTls || relayPath.isBlank() || relayToken.isBlank() || viewerPublicKey.isBlank()) {
@@ -159,6 +173,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionOptionalActionsDivider.isVisible = false
         binding.sessionRetryButton.isVisible = false
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
+        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_pending)
         binding.sessionStreamProgress.isVisible = true
         binding.sessionStreamStatusOverlay.isVisible = true
         binding.sessionSurfaceView.isOpaque = true
@@ -182,7 +197,7 @@ class SessionActivity : AppCompatActivity() {
             override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                 val surface = Surface(surfaceTexture)
                 viewerSurface = surface
-                connectViewer(surface)
+                attachOrConnectViewer(surface, width, height)
             }
 
             override fun onSurfaceTextureSizeChanged(
@@ -192,7 +207,11 @@ class SessionActivity : AppCompatActivity() {
             ) = Unit
 
             override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
-                disconnectViewer()
+                if (endingSession || isFinishing) {
+                    disconnectViewer()
+                } else {
+                    sessionHost?.pauseRendering()
+                }
                 viewerSurface?.release()
                 viewerSurface = null
                 return true
@@ -203,7 +222,11 @@ class SessionActivity : AppCompatActivity() {
         if (binding.sessionSurfaceView.isAvailable) {
             val surface = Surface(binding.sessionSurfaceView.surfaceTexture)
             viewerSurface = surface
-            connectViewer(surface)
+            attachOrConnectViewer(
+                surface,
+                binding.sessionSurfaceView.width,
+                binding.sessionSurfaceView.height,
+            )
         }
         onBackPressedDispatcher.addCallback(this) {
             navigateBackToApp()
@@ -230,6 +253,18 @@ class SessionActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
+    override fun onStart() {
+        super.onStart()
+        sessionUiVisible = true
+        markInteraction()
+    }
+
+    override fun onStop() {
+        sessionUiVisible = false
+        persistActiveSession()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         inactivityJob?.cancel()
         heartbeatJob?.cancel()
@@ -240,6 +275,25 @@ class SessionActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
+    }
+
+    private fun attachOrConnectViewer(surface: Surface, width: Int, height: Int) {
+        val host = sessionHost
+        if (host == null) {
+            connectViewer(surface)
+            return
+        }
+
+        binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
+        binding.sessionStreamStatusText.text = getString(R.string.session_stream_resuming)
+        binding.sessionStreamProgress.isVisible = true
+        binding.sessionStreamStatusOverlay.isVisible = true
+        binding.sessionRetryButton.isVisible = false
+        host.attachSurface(
+            surface,
+            width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels,
+            height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels,
+        )
     }
 
     private fun connectViewer(surface: Surface) {
@@ -276,6 +330,10 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun retryViewerConnection() {
+        if (sessionUnavailable) {
+            toast(getString(R.string.session_heartbeat_stale))
+            return
+        }
         val surface = viewerSurface ?: return
         appLogs.info("Retrying viewer transport for $runtimeName", "session")
         disconnectViewer()
@@ -443,6 +501,19 @@ class SessionActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
+    private fun maybeRequestSessionNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            REQUEST_SESSION_NOTIFICATION_PERMISSION,
+        )
+    }
+
     private fun showEndingError(error: Throwable) {
         val message = error.message ?: getString(R.string.status_error)
         binding.sessionSubtitleText.text = message
@@ -480,21 +551,57 @@ class SessionActivity : AppCompatActivity() {
         )
     }
 
+    private fun markHeartbeatPending() {
+        binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_amber)
+        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_pending)
+    }
+
+    private fun markHeartbeatHealthy() {
+        val heartbeatAt = LocalTime.now().format(HEARTBEAT_TIME_FORMAT)
+        binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_accent)
+        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_ok, heartbeatAt)
+    }
+
+    private fun markHeartbeatRetrying() {
+        binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_amber)
+        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_retrying)
+    }
+
+    private fun markSessionUnavailable() {
+        sessionUnavailable = true
+        binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_muted)
+        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_stale)
+        binding.sessionSubtitleText.text = getString(R.string.session_heartbeat_stale)
+        binding.sessionStreamStatusText.text = getString(R.string.session_heartbeat_stale)
+        binding.sessionStreamProgress.isVisible = false
+        binding.sessionStreamStatusOverlay.isVisible = true
+        binding.sessionRetryButton.isVisible = false
+    }
+
     private fun startSessionHeartbeat() {
         heartbeatJob?.cancel()
         if (baseUrl.isBlank() || accountId.isBlank() || deviceId.isBlank() || sessionId.isBlank()) {
             return
         }
+        markHeartbeatPending()
         heartbeatJob = lifecycleScope.launch {
             while (isActive && !endingSession) {
                 runCatching {
                     api.heartbeatSession(baseUrl, accountId, deviceId, sessionId)
                 }.onSuccess {
                     activeSessionStore.touch(sessionId)
+                    markHeartbeatHealthy()
                 }.onFailure { error ->
-                    appLogs.warn("Active session heartbeat failed: ${error.message}", "session")
-                    activeSessionStore.clear()
-                    return@launch
+                    if (error.isGoneSessionResponse()) {
+                        appLogs.warn("Active session heartbeat returned a stale session: ${error.message}", "session")
+                        activeSessionStore.clear()
+                        relayToken = ""
+                        markSessionUnavailable()
+                        disconnectViewer()
+                        return@launch
+                    }
+                    appLogs.warn("Active session heartbeat failed; keeping session handle for retry: ${error.message}", "session")
+                    markHeartbeatRetrying()
                 }
                 delay(SESSION_HEARTBEAT_INTERVAL_MS)
             }
@@ -510,6 +617,9 @@ class SessionActivity : AppCompatActivity() {
         inactivityJob = lifecycleScope.launch {
             while (!endingSession) {
                 delay(5_000L)
+                if (!sessionUiVisible) {
+                    continue
+                }
                 val timeoutMs = appSettings.uiInactivityTimeoutMs
                 if (System.currentTimeMillis() - lastInteractionAtMs >= timeoutMs) {
                     appLogs.warn("UI inactivity timeout reached", "session")
@@ -557,6 +667,8 @@ class SessionActivity : AppCompatActivity() {
         private const val STOP_WAIT_ATTEMPTS = 30
         private const val STOP_WAIT_DELAY_MS = 1_000L
         private const val SESSION_HEARTBEAT_INTERVAL_MS = 20_000L
+        private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182
+        private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 
         fun createIntent(
             context: Context,

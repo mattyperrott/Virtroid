@@ -1,8 +1,15 @@
 package org.client.scrcpy;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Binder;
+import android.os.Build;
 import android.os.IBinder;
 import android.text.TextUtils;
 import android.util.Log;
@@ -10,6 +17,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 
 import io.virtroid.client.BuildConfig;
+import io.virtroid.client.R;
 
 import org.client.scrcpy.decoder.AudioDecoder;
 import org.client.scrcpy.decoder.VideoDecoder;
@@ -43,6 +51,8 @@ public class Scrcpy extends Service {
     public static final String LOCAL_IP = "127.0.0.1";
     // 本地画面转发占用的端口
     public static final int LOCAL_FORWART_PORT = 7008;
+    private static final String NOTIFICATION_CHANNEL_ID = "virtroid_viewer_session";
+    private static final int NOTIFICATION_ID = 7318;
 
     public static final int DEFAULT_ADB_PORT = 5555;
     private String serverHost;
@@ -74,6 +84,18 @@ public class Scrcpy extends Service {
     private Socket activeSocket = null;
 
     @Override
+    public void onCreate() {
+        super.onCreate();
+        ensureForeground();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        ensureForeground();
+        return START_STICKY;
+    }
+
+    @Override
     public IBinder onBind(Intent intent) {
         return mBinder;
     }
@@ -87,8 +109,12 @@ public class Scrcpy extends Service {
         this.screenHeight = NewHeight;
         this.surface = NewSurface;
 
-        videoDecoder.start();
-        audioDecoder.start();
+        if (videoDecoder != null) {
+            videoDecoder.start();
+        }
+        if (audioDecoder != null) {
+            audioDecoder.start();
+        }
 
 
         updateAvailable.set(true);
@@ -162,6 +188,7 @@ public class Scrcpy extends Service {
 
     public void StopService() {
         LetServceRunning.set(false);
+        stopForegroundCompat();
         if (activeSocket != null) {
             try {
                 activeSocket.close();
@@ -175,6 +202,89 @@ public class Scrcpy extends Service {
             audioDecoder.stop();
         }
         stopSelf();
+    }
+
+    @Override
+    public void onDestroy() {
+        LetServceRunning.set(false);
+        if (activeSocket != null) {
+            try {
+                activeSocket.close();
+            } catch (IOException ignore) {
+            }
+        }
+        if (videoDecoder != null) {
+            videoDecoder.stop();
+        }
+        if (audioDecoder != null) {
+            audioDecoder.stop();
+        }
+        stopForegroundCompat();
+        super.onDestroy();
+    }
+
+    private void ensureForeground() {
+        createNotificationChannel();
+        Notification notification = buildForegroundNotification();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (notificationManager == null || notificationManager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) {
+            return;
+        }
+        NotificationChannel channel = new NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                getString(R.string.viewer_service_channel_name),
+                NotificationManager.IMPORTANCE_LOW
+        );
+        channel.setShowBadge(false);
+        notificationManager.createNotificationChannel(channel);
+    }
+
+    private Notification buildForegroundNotification() {
+        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (launchIntent == null) {
+            launchIntent = new Intent();
+        }
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, launchIntent, pendingIntentFlags);
+
+        Notification.Builder builder;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new Notification.Builder(this, NOTIFICATION_CHANNEL_ID);
+        } else {
+            builder = new Notification.Builder(this);
+        }
+        return builder
+                .setSmallIcon(R.drawable.ic_phone)
+                .setContentTitle(getString(R.string.viewer_service_notification_title))
+                .setContentText(getString(R.string.viewer_service_notification_body))
+                .setContentIntent(contentIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .build();
+    }
+
+    private void stopForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+        } else {
+            stopForeground(true);
+        }
     }
 
 

@@ -342,9 +342,14 @@ class ControlsActivity : AppCompatActivity() {
                     appLogs.info("Returning to active session from controls for ${runtime.name}", "session")
                     startActivity(SessionActivity.createIntent(this@ControlsActivity, storedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
                 }.onFailure { error ->
-                    activeSessionStore.clear()
-                    appLogs.warn("Stored active session from controls was stale: ${error.message}", "session")
-                    connectRuntime(runtime)
+                    if (error.isGoneSessionResponse()) {
+                        activeSessionStore.clear()
+                        appLogs.warn("Stored active session from controls was gone on backend: ${error.message}", "session")
+                        connectRuntime(runtime)
+                    } else {
+                        appLogs.warn("Stored active session heartbeat from controls failed: ${error.message}", "session")
+                        toast(error.virtroidDisplayMessage(this@ControlsActivity))
+                    }
                 }
             }
             return

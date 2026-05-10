@@ -311,7 +311,15 @@
     <string name="session_controls">Controls</string>
     <string name="session_stream_connecting">Opening live Android display...</string>
     <string name="session_stream_reconnecting">Reconnecting live Android display...</string>
+    <string name="session_stream_resuming">Resuming live Android display...</string>
     <string name="session_stream_receiving">Receiving live Android display...</string>
+    <string name="session_heartbeat_pending">Relay heartbeat pending</string>
+    <string name="session_heartbeat_ok">Relay OK • %1$s</string>
+    <string name="session_heartbeat_retrying">Relay heartbeat retrying</string>
+    <string name="session_heartbeat_stale">Session no longer active</string>
+    <string name="viewer_service_channel_name">Viewer sessions</string>
+    <string name="viewer_service_notification_title">Virtroid viewer active</string>
+    <string name="viewer_service_notification_body">Keeping the relay connection active in background.</string>
     <string name="onboarding_title">Generate Identity</string>
     <string name="onboarding_subtitle">This device creates a local signing key, then registers it with the control plane for signed API requests.</string>
     <string name="onboarding_account_id">ACCOUNT ID</string>
