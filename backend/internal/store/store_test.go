@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -218,6 +219,117 @@ func TestDeleteAccountHardDeletesAfterUnassignedRuntimeCleanup(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
+}
+
+func TestRegisterDeviceBlobKeyVerifierAllowsInitialSetupWithoutCurrentKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	verifier := blobVerifierForTest(0x11)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(nil))
+	mock.ExpectExec("UPDATE devices").
+		WithArgs(accountID, deviceID, verifier).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, verifier, ""); err != nil {
+		t.Fatalf("RegisterDeviceBlobKeyVerifier initial setup returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRegisterDeviceBlobKeyVerifierRequiresCurrentKeyForOverwrite(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	oldVerifier := blobVerifierForTest(0x22)
+	newVerifier := blobVerifierForTest(0x33)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(oldVerifier))
+	mock.ExpectRollback()
+
+	err = st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, "")
+	if !errors.Is(err, ErrIdentityKeyRequired) {
+		t.Fatalf("RegisterDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityKeyRequired)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	oldAccessKey := blobAccessKeyForTest(0x44)
+	oldVerifier := blobVerifierFromAccessKeyForTest(t, oldAccessKey)
+	newVerifier := blobVerifierForTest(0x55)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(oldVerifier))
+	mock.ExpectExec("UPDATE devices").
+		WithArgs(accountID, deviceID, newVerifier).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, oldAccessKey); err != nil {
+		t.Fatalf("RegisterDeviceBlobKeyVerifier overwrite returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func blobAccessKeyForTest(fill byte) string {
+	raw := make([]byte, 32)
+	for i := range raw {
+		raw[i] = fill
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func blobVerifierForTest(fill byte) string {
+	return blobVerifierFromAccessKeyForTest(nil, blobAccessKeyForTest(fill))
+}
+
+func blobVerifierFromAccessKeyForTest(t *testing.T, accessKey string) string {
+	_, raw, err := normalizeBlobAccessKey(accessKey)
+	if err != nil {
+		if t == nil {
+			panic(err)
+		}
+		t.Fatalf("normalizeBlobAccessKey: %v", err)
+	}
+	return blobKeyVerifier(raw)
 }
 
 func TestDeleteAccountReportsMissingAccount(t *testing.T) {

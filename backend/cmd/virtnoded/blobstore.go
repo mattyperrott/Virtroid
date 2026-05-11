@@ -358,6 +358,9 @@ func (n *nodeAgent) clearManifestChunks(runtime runtimeAssignment) error {
 	if manifest == nil || len(manifest.Chunks) == 0 {
 		return nil
 	}
+	if err := validateBlobManifestForRuntime(manifest, runtime.ID); err != nil {
+		return err
+	}
 	store, err := n.blobStoreForManifest(manifest)
 	if err != nil {
 		return err
@@ -586,7 +589,7 @@ func (s *localBlobStore) restoreToDir(ctx context.Context, runtimeID string, man
 	if manifest.Store != s.kind() {
 		return fmt.Errorf("unsupported blob store kind %q", manifest.Store)
 	}
-	if err := validateBlobManifest(manifest); err != nil {
+	if err := validateBlobManifestForRuntime(manifest, runtimeID); err != nil {
 		return err
 	}
 
@@ -625,6 +628,10 @@ func (s *localBlobStore) restoreToDir(ctx context.Context, runtimeID string, man
 }
 
 func validateBlobManifest(manifest *blobManifest) error {
+	return validateBlobManifestForRuntime(manifest, "")
+}
+
+func validateBlobManifestForRuntime(manifest *blobManifest, runtimeID string) error {
 	if manifest == nil {
 		return errSnapshotMissing
 	}
@@ -643,13 +650,16 @@ func validateBlobManifest(manifest *blobManifest) error {
 	if len(manifest.Chunks) == 0 {
 		return errors.New("blob manifest has no chunks")
 	}
+	if err := validateSnapshotID(manifest.SnapshotID); err != nil {
+		return err
+	}
 	var totalBytes int64
 	for index, chunk := range manifest.Chunks {
 		if chunk.Index != index {
 			return fmt.Errorf("blob manifest chunk index mismatch at %d", index)
 		}
-		if strings.TrimSpace(chunk.Key) == "" {
-			return fmt.Errorf("blob manifest chunk %d has empty key", index)
+		if err := validateBlobChunkKey(runtimeID, manifest.SnapshotID, index, chunk.Key); err != nil {
+			return err
 		}
 		if chunk.Size <= 0 {
 			return fmt.Errorf("blob manifest chunk %d has invalid size", index)
@@ -661,6 +671,36 @@ func validateBlobManifest(manifest *blobManifest) error {
 	}
 	if manifest.TotalBytes != totalBytes {
 		return fmt.Errorf("blob manifest byte total mismatch")
+	}
+	return nil
+}
+
+func validateSnapshotID(snapshotID string) error {
+	if strings.TrimSpace(snapshotID) == "" {
+		return errors.New("blob manifest has empty snapshot id")
+	}
+	if strings.TrimSpace(snapshotID) != snapshotID ||
+		snapshotID == "." ||
+		snapshotID == ".." ||
+		strings.Contains(snapshotID, "/") ||
+		strings.Contains(snapshotID, "\\") {
+		return fmt.Errorf("invalid blob snapshot id %q", snapshotID)
+	}
+	return nil
+}
+
+func validateBlobChunkKey(runtimeID, snapshotID string, index int, key string) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("blob manifest chunk %d has empty key", index)
+	}
+	if strings.TrimSpace(key) != key || filepath.IsAbs(filepath.FromSlash(key)) {
+		return fmt.Errorf("blob manifest chunk %d has invalid key %q", index, key)
+	}
+	if runtimeID != "" {
+		expected := filepath.ToSlash(filepath.Join(runtimeID, snapshotID, fmt.Sprintf("chunk-%05d.bin", index)))
+		if key != expected {
+			return fmt.Errorf("blob manifest chunk %d key %q does not match expected runtime path", index, key)
+		}
 	}
 	return nil
 }
@@ -806,7 +846,7 @@ func (s *renterdBlobStore) restoreToDir(ctx context.Context, runtimeID string, m
 	if manifest.Store != s.kind() {
 		return fmt.Errorf("unsupported blob store kind %q", manifest.Store)
 	}
-	if err := validateBlobManifest(manifest); err != nil {
+	if err := validateBlobManifestForRuntime(manifest, runtimeID); err != nil {
 		return err
 	}
 
@@ -1430,6 +1470,9 @@ func extractTarToDir(reader *tar.Reader, root string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
+			if err := ensureNoSymlinkInPath(root, targetPath); err != nil {
+				return err
+			}
 			if err := os.MkdirAll(targetPath, fs.FileMode(header.Mode)); err != nil {
 				return err
 			}
@@ -1437,6 +1480,12 @@ func extractTarToDir(reader *tar.Reader, root string) error {
 				return err
 			}
 		case tar.TypeSymlink:
+			if err := validateSymlinkTarget(root, targetPath, header.Linkname); err != nil {
+				return err
+			}
+			if err := ensureNoSymlinkInPath(root, filepath.Dir(targetPath)); err != nil {
+				return err
+			}
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return err
 			}
@@ -1448,6 +1497,9 @@ func extractTarToDir(reader *tar.Reader, root string) error {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
+			if err := ensureNoSymlinkInPath(root, targetPath); err != nil {
+				return err
+			}
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return err
 			}
@@ -1509,12 +1561,63 @@ func applyExtractedMetadata(targetPath string, header *tar.Header, isSymlink boo
 }
 
 func secureJoin(root, relativePath string) (string, error) {
+	if filepath.IsAbs(filepath.FromSlash(relativePath)) {
+		return "", fmt.Errorf("invalid absolute archive path %q", relativePath)
+	}
 	cleanRoot := filepath.Clean(root)
 	cleanPath := filepath.Clean(filepath.Join(cleanRoot, relativePath))
 	if cleanPath != cleanRoot && !strings.HasPrefix(cleanPath, cleanRoot+string(os.PathSeparator)) {
 		return "", fmt.Errorf("invalid archive path %q", relativePath)
 	}
 	return cleanPath, nil
+}
+
+func validateSymlinkTarget(root, targetPath, linkName string) error {
+	if strings.TrimSpace(linkName) == "" {
+		return errors.New("archive symlink has empty target")
+	}
+	if filepath.IsAbs(filepath.FromSlash(linkName)) {
+		return fmt.Errorf("archive symlink %q has absolute target %q", targetPath, linkName)
+	}
+	cleanRoot := filepath.Clean(root)
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(targetPath), filepath.FromSlash(linkName)))
+	if resolved != cleanRoot && !strings.HasPrefix(resolved, cleanRoot+string(os.PathSeparator)) {
+		return fmt.Errorf("archive symlink %q escapes restore root", targetPath)
+	}
+	return nil
+}
+
+func ensureNoSymlinkInPath(root, targetPath string) error {
+	cleanRoot := filepath.Clean(root)
+	cleanTarget := filepath.Clean(targetPath)
+	if cleanTarget == cleanRoot {
+		return nil
+	}
+	if !strings.HasPrefix(cleanTarget, cleanRoot+string(os.PathSeparator)) {
+		return fmt.Errorf("archive path %q escapes restore root", targetPath)
+	}
+	relativePath, err := filepath.Rel(cleanRoot, cleanTarget)
+	if err != nil {
+		return err
+	}
+	current := cleanRoot
+	for _, part := range strings.Split(relativePath, string(os.PathSeparator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("archive path %q crosses symlink %q", targetPath, current)
+		}
+	}
+	return nil
 }
 
 func directoryHasEntries(root string) bool {

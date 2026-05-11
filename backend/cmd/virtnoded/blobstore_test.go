@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -135,8 +136,96 @@ func TestLocalBlobStoreRejectsTraversalChunkKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("restoreToDir accepted traversal chunk key")
 	}
-	if !strings.Contains(err.Error(), "invalid archive path") {
-		t.Fatalf("restoreToDir error = %q, want invalid path", err.Error())
+	if !strings.Contains(err.Error(), "does not match expected runtime path") {
+		t.Fatalf("restoreToDir error = %q, want runtime path validation", err.Error())
+	}
+}
+
+func TestValidateBlobManifestRejectsWrongRuntimeChunkKey(t *testing.T) {
+	manifest := &blobManifest{
+		Version:     1,
+		Store:       blobStoreLocal,
+		ObjectType:  "runtime-userdata",
+		SnapshotID:  "snapshot",
+		ChunkSize:   16,
+		TotalBytes:  1,
+		Compression: "gzip",
+		Encryption:  "aes-ctr+hmac-sha256",
+		Chunks: []blobChunk{{
+			Index:  0,
+			Key:    "other-runtime/snapshot/chunk-00000.bin",
+			Size:   1,
+			SHA256: strings.Repeat("0", 64),
+		}},
+	}
+
+	err := validateBlobManifestForRuntime(manifest, "runtime-1")
+	if err == nil {
+		t.Fatal("validateBlobManifestForRuntime accepted a chunk key for another runtime")
+	}
+	if !strings.Contains(err.Error(), "does not match expected runtime path") {
+		t.Fatalf("validateBlobManifestForRuntime error = %q, want runtime path validation", err.Error())
+	}
+}
+
+func TestExtractTarRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{
+		Name:     "escape",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "../../outside",
+		Mode:     0o777,
+	}); err != nil {
+		t.Fatalf("write symlink header: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+
+	err := extractTarToDir(tar.NewReader(bytes.NewReader(archive.Bytes())), root)
+	if err == nil {
+		t.Fatal("extractTarToDir accepted symlink escaping restore root")
+	}
+	if !strings.Contains(err.Error(), "escapes restore root") {
+		t.Fatalf("extractTarToDir error = %q, want symlink escape rejection", err.Error())
+	}
+}
+
+func TestExtractTarRejectsWriteThroughExistingSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "linkdir")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{
+		Name:     "linkdir/payload.txt",
+		Typeflag: tar.TypeReg,
+		Mode:     0o600,
+		Size:     int64(len("payload")),
+	}); err != nil {
+		t.Fatalf("write file header: %v", err)
+	}
+	if _, err := writer.Write([]byte("payload")); err != nil {
+		t.Fatalf("write file payload: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+
+	err := extractTarToDir(tar.NewReader(bytes.NewReader(archive.Bytes())), root)
+	if err == nil {
+		t.Fatal("extractTarToDir wrote through an existing symlink")
+	}
+	if !strings.Contains(err.Error(), "crosses symlink") {
+		t.Fatalf("extractTarToDir error = %q, want symlink crossing rejection", err.Error())
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "payload.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("payload escaped through symlink, statErr=%v", statErr)
 	}
 }
 

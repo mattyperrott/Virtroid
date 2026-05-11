@@ -277,11 +277,6 @@ class SecureLocalVault private constructor(context: Context) {
             return dataKey
         }
 
-        unwrapLegacyKeystoreWrappedDataKeyForMigrationLocked()?.let { dataKey ->
-            wrapHardwareSecretBoundDataKeyLocked(dataKey, secretKey)
-            return dataKey
-        }
-
         return null
     }
 
@@ -316,16 +311,6 @@ class SecureLocalVault private constructor(context: Context) {
             LocalVaultKeyEnvelope.Wrapped(iv, ciphertext),
             secretKey,
         )
-    }
-
-    private fun unwrapLegacyKeystoreWrappedDataKeyForMigrationLocked(): ByteArray? {
-        val iv = decodeKeyPref(KEY_WRAPPED_DEK_IV) ?: return null
-        val ciphertext = decodeKeyPref(KEY_WRAPPED_DEK_CIPHERTEXT) ?: return null
-        return runCatching {
-            val cipher = Cipher.getInstance(AES_MODE)
-            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKeystoreKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-            cipher.doFinal(ciphertext).takeIf { it.size == KEY_BYTES }
-        }.getOrNull()
     }
 
     private fun clearLegacyWrappedDataKeyPrefsLocked() {

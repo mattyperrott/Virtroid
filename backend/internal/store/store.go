@@ -844,13 +844,46 @@ func (s *Store) DeleteRuntime(ctx context.Context, accountID, runtimeID string) 
 	return runtime, nil
 }
 
-func (s *Store) RegisterDeviceBlobKeyVerifier(ctx context.Context, accountID, deviceID, blobKeyVerifier string) error {
+func (s *Store) RegisterDeviceBlobKeyVerifier(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	blobKeyVerifier string,
+	currentBlobAccessKey string,
+) error {
 	verifier := strings.TrimSpace(blobKeyVerifier)
 	if verifier == "" {
 		return ErrIdentityKeyRequired
 	}
 
-	result, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var storedVerifier sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT blob_key_verifier
+		 FROM devices
+		 WHERE account_id = $1 AND id = $2
+		 FOR UPDATE`,
+		accountID,
+		deviceID,
+	).Scan(&storedVerifier); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrDeviceNotFound
+		}
+		return err
+	}
+
+	if storedVerifier.Valid && strings.TrimSpace(storedVerifier.String) != "" {
+		if _, err := verifyBlobAccessKeyAgainstVerifier(currentBlobAccessKey, storedVerifier.String); err != nil {
+			return err
+		}
+	}
+
+	result, err := tx.ExecContext(ctx,
 		`UPDATE devices
 		 SET blob_key_verifier = $3,
 		     last_seen_at = NOW()
@@ -869,7 +902,7 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(ctx context.Context, accountID, de
 	if rowsAffected == 0 {
 		return ErrDeviceNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) GetAccountStorage(ctx context.Context, accountID string) (AccountStorage, error) {
@@ -1147,13 +1180,8 @@ func (s *Store) RememberNodeRequestNonce(ctx context.Context, nodeID, nonce stri
 }
 
 func (s *Store) VerifyDeviceBlobAccessKey(ctx context.Context, accountID, deviceID, blobAccessKeyB64 string) (string, error) {
-	canonicalKey, rawKey, err := normalizeBlobAccessKey(blobAccessKeyB64)
-	if err != nil {
-		return "", err
-	}
-
 	var storedVerifier sql.NullString
-	err = s.db.QueryRowContext(ctx,
+	err := s.db.QueryRowContext(ctx,
 		`SELECT blob_key_verifier
 		 FROM devices
 		 WHERE account_id = $1 AND id = $2`,
@@ -1170,11 +1198,7 @@ func (s *Store) VerifyDeviceBlobAccessKey(ctx context.Context, accountID, device
 		return "", ErrIdentityNotFound
 	}
 
-	expected := blobKeyVerifier(rawKey)
-	if subtle.ConstantTimeCompare([]byte(expected), []byte(strings.TrimSpace(storedVerifier.String))) != 1 {
-		return "", ErrIdentityAuthFailed
-	}
-	return canonicalKey, nil
+	return verifyBlobAccessKeyAgainstVerifier(blobAccessKeyB64, storedVerifier.String)
 }
 
 func (s *Store) StartRuntimeWithBlobAccessKey(
@@ -2647,4 +2671,16 @@ func normalizeBlobAccessKey(blobAccessKeyB64 string) (string, []byte, error) {
 func blobKeyVerifier(rawKey []byte) string {
 	sum := sha256.Sum256(append([]byte("virtroid-blob-verifier-v1:"), rawKey...))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func verifyBlobAccessKeyAgainstVerifier(blobAccessKeyB64 string, verifier string) (string, error) {
+	canonicalKey, rawKey, err := normalizeBlobAccessKey(blobAccessKeyB64)
+	if err != nil {
+		return "", err
+	}
+	expected := blobKeyVerifier(rawKey)
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(strings.TrimSpace(verifier))) != 1 {
+		return "", ErrIdentityAuthFailed
+	}
+	return canonicalKey, nil
 }

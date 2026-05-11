@@ -446,9 +446,10 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID       string `json:"account_id"`
-		DeviceID        string `json:"device_id"`
-		BlobKeyVerifier string `json:"blob_key_verifier"`
+		AccountID            string `json:"account_id"`
+		DeviceID             string `json:"device_id"`
+		BlobKeyVerifier      string `json:"blob_key_verifier"`
+		CurrentBlobAccessKey string `json:"current_blob_access_key"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -469,12 +470,15 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 		accountID,
 		deviceID,
 		req.BlobKeyVerifier,
+		req.CurrentBlobAccessKey,
 	); err != nil {
 		switch err {
 		case store.ErrDeviceNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		case store.ErrIdentityKeyRequired:
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		case store.ErrIdentityAuthFailed:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		default:
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
