@@ -113,6 +113,10 @@ val verifyReleaseSecurityManifest by tasks.registering {
             "usesCleartextTraffic must be false",
         )
         requireManifestControl(
+            text.contains("android:networkSecurityConfig="),
+            "networkSecurityConfig must be present",
+        )
+        requireManifestControl(
             text.contains("android:dataExtractionRules="),
             "dataExtractionRules must be present",
         )

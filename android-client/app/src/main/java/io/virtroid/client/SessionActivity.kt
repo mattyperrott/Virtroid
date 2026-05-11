@@ -70,7 +70,6 @@ class SessionActivity : AppCompatActivity() {
     private var inactivityJob: Job? = null
     private var heartbeatJob: Job? = null
     private var sessionUnavailable = false
-    private var sessionUiVisible = false
 
     private val sessionCallback = object : ScrcpySessionHost.Callback {
         override fun onConnected(remoteWidth: Int, remoteHeight: Int) {
@@ -253,14 +252,7 @@ class SessionActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    override fun onStart() {
-        super.onStart()
-        sessionUiVisible = true
-        markInteraction()
-    }
-
     override fun onStop() {
-        sessionUiVisible = false
         persistActiveSession()
         super.onStop()
     }
@@ -617,12 +609,9 @@ class SessionActivity : AppCompatActivity() {
         inactivityJob = lifecycleScope.launch {
             while (!endingSession) {
                 delay(5_000L)
-                if (!sessionUiVisible) {
-                    continue
-                }
                 val timeoutMs = appSettings.uiInactivityTimeoutMs
                 if (System.currentTimeMillis() - lastInteractionAtMs >= timeoutMs) {
-                    appLogs.warn("UI inactivity timeout reached", "session")
+                    appLogs.warn("Session inactivity timeout reached", "session")
                     endSessionAndFinish(AppSettingsStore.SESSION_END_INACTIVITY)
                     return@launch
                 }

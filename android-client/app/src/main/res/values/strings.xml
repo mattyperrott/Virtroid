@@ -48,6 +48,7 @@
     <string name="lock_passphrase_empty">Passphrase cannot be empty</string>
     <string name="identity_password_title">Identity Password</string>
     <string name="identity_password_prompt">Choose the password used for blob encryption and runtime authentication</string>
+    <string name="identity_password_current_prompt">Enter the current identity password</string>
     <string name="identity_password_confirm_prompt">Confirm your identity password</string>
     <string name="identity_password_field_hint">Identity password</string>
     <string name="identity_password_confirm_field_hint">Confirm identity password</string>

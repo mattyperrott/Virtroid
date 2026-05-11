@@ -157,6 +157,11 @@ type dockerInspectResponse struct {
 const (
 	viewerPrepareTimeout = 90 * time.Second
 	viewerDefaultMaxSize = 720
+	viewerMinMaxSize     = 240
+	viewerMaxMaxSize     = 1600
+	viewerDefaultBitRate = 8_000_000
+	viewerMinBitRate     = 250_000
+	viewerMaxBitRate     = 32_000_000
 	viewerPrewarmBitRate = 4_000_000
 )
 
@@ -535,16 +540,10 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	maxSize := req.MaxSize
-	if maxSize <= 0 {
-		maxSize = max(runtime.WidthPx, runtime.HeightPx)
-	}
-	if maxSize <= 0 {
-		maxSize = viewerDefaultMaxSize
-	}
-	bitRate := req.BitRate
-	if bitRate <= 0 {
-		bitRate = 8_000_000
+	maxSize, bitRate, err := normalizeViewerPrepareParams(req.MaxSize, req.BitRate, *runtime)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
 	}
 
 	viewerPublicKey, err := n.prepareViewer(ctx, *runtime, maxSize, bitRate)
@@ -1480,6 +1479,28 @@ func (n *nodeAgent) adbSerialForRuntime(runtime runtimeAssignment, inspect docke
 	}
 
 	return "", errors.New("runtime container has no reachable ADB address")
+}
+
+func normalizeViewerPrepareParams(requestedMaxSize, requestedBitRate int, runtime runtimeAssignment) (int, int, error) {
+	maxSize := requestedMaxSize
+	if maxSize <= 0 {
+		maxSize = max(runtime.WidthPx, runtime.HeightPx)
+	}
+	if maxSize <= 0 {
+		maxSize = viewerDefaultMaxSize
+	}
+	if maxSize < viewerMinMaxSize || maxSize > viewerMaxMaxSize {
+		return 0, 0, fmt.Errorf("max_size must be between %d and %d", viewerMinMaxSize, viewerMaxMaxSize)
+	}
+
+	bitRate := requestedBitRate
+	if bitRate <= 0 {
+		bitRate = viewerDefaultBitRate
+	}
+	if bitRate < viewerMinBitRate || bitRate > viewerMaxBitRate {
+		return 0, 0, fmt.Errorf("bit_rate must be between %d and %d", viewerMinBitRate, viewerMaxBitRate)
+	}
+	return maxSize, bitRate, nil
 }
 
 func (n *nodeAgent) adbConnect(ctx context.Context, serial string) error {

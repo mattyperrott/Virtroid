@@ -23,6 +23,7 @@ import io.virtroid.client.security.IdentityCrypto
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.promptIdentityPasswordWithConfirmation
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -208,6 +209,24 @@ class AccountIdentityActivity : AppCompatActivity() {
 
     private fun resetIdentityPassword(accountId: String, deviceId: String) {
         lifecycleScope.launch {
+            val configured = identityPasswordStore.isConfigured(accountId, deviceId)
+            val currentBlobAccessKey = if (configured) {
+                val currentPassword = promptIdentityPassword(
+                    title = getString(R.string.identity_password_title),
+                    hint = getString(R.string.identity_password_current_prompt),
+                )?.trim()
+                when {
+                    currentPassword == null -> return@launch
+                    currentPassword.isBlank() -> {
+                        toast(getString(R.string.identity_password_required))
+                        return@launch
+                    }
+                    else -> IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, currentPassword)
+                }
+            } else {
+                null
+            }
+
             val password = promptIdentityPasswordWithConfirmation(
                 title = getString(R.string.identity_password_title),
                 hint = getString(R.string.identity_password_prompt),
@@ -224,7 +243,13 @@ class AccountIdentityActivity : AppCompatActivity() {
             runCatching {
                 val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, password)
                 val verifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
-                api.registerIdentity(sessionStore.baseUrl, accountId, deviceId, verifier)
+                api.registerIdentity(
+                    baseUrl = sessionStore.baseUrl,
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    blobKeyVerifier = verifier,
+                    currentBlobAccessKey = currentBlobAccessKey,
+                )
                 identityPasswordStore.unlock(accountId, deviceId, password)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
             }.onSuccess {
