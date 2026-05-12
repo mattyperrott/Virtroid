@@ -28,11 +28,13 @@ CREATE TABLE IF NOT EXISTS devices (
     name TEXT NOT NULL,
     public_key TEXT NOT NULL,
     blob_key_verifier TEXT,
+    revoked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at TIMESTAMPTZ
 );
 
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS blob_key_verifier TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS account_storage (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,

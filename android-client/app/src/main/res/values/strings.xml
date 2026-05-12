@@ -29,6 +29,17 @@
     <string name="account_storage_sync_failed">Storage telemetry sync failed</string>
     <string name="account_fingerprint_copied">Device ID copied</string>
     <string name="account_device_key_copied">Device signing public key copied</string>
+    <string name="account_linked_devices_title">Linked Devices</string>
+    <string name="account_linked_devices_subtitle">Review or revoke trusted devices</string>
+    <string name="account_linked_devices_empty">No linked devices returned by the server.</string>
+    <string name="account_linked_devices_current">This device</string>
+    <string name="account_linked_devices_last_seen">Last seen %1$s</string>
+    <string name="account_linked_devices_never_seen">No recent activity</string>
+    <string name="account_revoke_device_title">Revoke Device</string>
+    <string name="account_revoke_device_body">This stops active sessions for the selected device and blocks future signed requests from it.</string>
+    <string name="account_revoke_current_device_body">This revokes this device, stops active sessions, and clears the local identity on this phone.</string>
+    <string name="account_revoke_device_confirm">Revoke</string>
+    <string name="account_revoke_device_done">Device revoked</string>
     <string name="account_wipe_local_title">Clear Local Runtime Artifacts</string>
     <string name="account_wipe_local_body">Clears local caches, temporary files, transfer artifacts, and active session handles. Account and device identity stay linked.</string>
     <string name="account_wipe_local_done">Cleared %1$d local items</string>

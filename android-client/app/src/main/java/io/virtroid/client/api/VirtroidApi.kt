@@ -90,6 +90,15 @@ data class AccountStorage(
     val encryptedSeedBackedUp: Boolean,
 )
 
+data class TrustedDeviceSummary(
+    val id: String,
+    val name: String,
+    val publicKey: String,
+    val createdAt: String,
+    val lastSeenAt: String?,
+    val revokedAt: String?,
+)
+
 data class EntitlementSummary(
     val accountId: String,
     val source: String,
@@ -491,6 +500,48 @@ class VirtroidApi(
                 method = "DELETE",
                 accountId = accountId,
                 deviceId = deviceId,
+            ),
+        )
+    }
+
+    suspend fun listDevices(baseUrl: String, accountId: String, deviceId: String): List<TrustedDeviceSummary> =
+        withContext(Dispatchers.IO) {
+            val payload = executeJson(
+                signedJsonRequest(
+                    baseUrl = baseUrl,
+                    pathAndQuery = "/api/v1/me/devices?account_id=$accountId&device_id=$deviceId",
+                    method = "GET",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                ),
+            )
+            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
+            List(items.length()) { index ->
+                val item = items.getJSONObject(index)
+                TrustedDeviceSummary(
+                    id = item.getString("id"),
+                    name = item.optString("name").ifBlank { "Linked device" },
+                    publicKey = item.optString("public_key"),
+                    createdAt = item.optString("created_at"),
+                    lastSeenAt = item.optString("last_seen_at").ifBlank { null },
+                    revokedAt = item.optString("revoked_at").ifBlank { null },
+                )
+            }
+        }
+
+    suspend fun revokeDevice(
+        baseUrl: String,
+        accountId: String,
+        signingDeviceId: String,
+        targetDeviceId: String,
+    ) = withContext(Dispatchers.IO) {
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/devices/$targetDeviceId?account_id=$accountId&device_id=$signingDeviceId",
+                method = "DELETE",
+                accountId = accountId,
+                deviceId = signingDeviceId,
             ),
         )
     }
