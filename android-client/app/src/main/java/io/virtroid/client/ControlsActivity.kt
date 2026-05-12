@@ -414,6 +414,9 @@ class ControlsActivity : AppCompatActivity() {
                 val deviceId = sessionStore.deviceId ?: return@setPositiveButton
                 lifecycleScope.launch {
                     runCatching {
+                        activeSessionStore.loadForRuntime(current.id)?.let {
+                            activeSessionStore.clear()
+                        }
                         api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id)
                     }.onSuccess {
                         toast(getString(R.string.runtime_delete_queued))

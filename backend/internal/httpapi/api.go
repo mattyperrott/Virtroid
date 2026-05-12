@@ -210,6 +210,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/session", api.createMyRuntimeSession)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/logs", api.runtimeLogs)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/heartbeat", api.heartbeatMySession)
+	mux.HandleFunc("POST /api/v1/me/sessions/{id}/end", api.endMySession)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/close", api.closeMySession)
 
 	mux.HandleFunc("POST /api/v1/internal/hosts/heartbeat", api.hostHeartbeat)
@@ -874,7 +875,11 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	if runtime.Status != "running" || runtime.DesiredState != "running" || runtime.HostID == nil || runtime.ViewerPort == nil {
+	if runtime.Status != "running" ||
+		runtime.DesiredState != "running" ||
+		runtime.ConnectionStatus != "online" ||
+		runtime.HostID == nil ||
+		runtime.ViewerPort == nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": store.ErrRuntimeNotReady.Error()})
 		return
 	}
@@ -883,19 +888,6 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	host, err := a.store.GetHost(r.Context(), *runtime.HostID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-
-	session, err := a.store.CreateSession(r.Context(), deviceID, runtime.ID)
-	if err != nil {
-		switch err {
-		case store.ErrRuntimeNotFound:
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		case store.ErrRuntimeNotReady:
-			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
-		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
 		return
 	}
 
@@ -910,7 +902,26 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 
 	viewerPublicKey, err := a.prepareViewer(r.Context(), host.AdvertiseAddr, host.RelayPort, runtime.ID, maxSize, bitRate)
 	if err != nil {
+		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), accountID, runtime.ID); stopErr == nil {
+			a.publishActiveBlobKey(accountID, stoppedRuntime, "stop", blobAccessKey)
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+
+	session, err := a.store.CreateSession(r.Context(), deviceID, runtime.ID)
+	if err != nil {
+		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), accountID, runtime.ID); stopErr == nil {
+			a.publishActiveBlobKey(accountID, stoppedRuntime, "stop", blobAccessKey)
+		}
+		switch err {
+		case store.ErrRuntimeNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		case store.ErrRuntimeNotReady:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
 		return
 	}
 
@@ -932,6 +943,60 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		"relay_path":        "/api/v1/relay/" + session.ID,
 		"viewer_public_key": viewerPublicKey,
 	})
+}
+
+func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		AccountID     string `json:"account_id"`
+		DeviceID      string `json:"device_id"`
+		BlobAccessKey string `json:"blob_access_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if strings.TrimSpace(req.AccountID) != "" && strings.TrimSpace(req.AccountID) != accountID {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed account does not match request body"})
+		return
+	}
+	if strings.TrimSpace(req.DeviceID) != "" && strings.TrimSpace(req.DeviceID) != deviceID {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed device does not match request body"})
+		return
+	}
+
+	blobAccessKey, err := a.store.VerifyDeviceBlobAccessKey(r.Context(), accountID, deviceID, req.BlobAccessKey)
+	if err != nil {
+		switch err {
+		case store.ErrDeviceNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		case store.ErrIdentityNotFound, store.ErrIdentityAuthFailed, store.ErrIdentityKeyRequired:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return
+	}
+
+	runtime, err := a.store.EndSessionAndStopRuntime(r.Context(), accountID, deviceID, r.PathValue("id"))
+	if err != nil {
+		switch err {
+		case store.ErrSessionNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		case store.ErrRuntimeNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return
+	}
+	a.publishActiveBlobKey(accountID, runtime, "stop", blobAccessKey)
+
+	writeJSON(w, http.StatusAccepted, runtime)
 }
 
 func (a *API) closeMySession(w http.ResponseWriter, r *http.Request) {

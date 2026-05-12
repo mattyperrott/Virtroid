@@ -319,10 +319,13 @@ class MainActivity : AppCompatActivity() {
                 toast(message)
                 return@setOnClickListener
             }
-            startRuntime(runtime, cardBinding)
+            connectRuntime(runtime)
         }
         cardBinding.deleteRuntimeButton.setOnClickListener {
             mutateRuntime(getString(R.string.status_deleting_runtime)) {
+                activeSessionStore.loadForRuntime(runtime.id)?.let {
+                    activeSessionStore.clear()
+                }
                 api.deleteRuntime(
                     currentBaseUrl(),
                     requireAccountId() ?: return@mutateRuntime,
@@ -345,59 +348,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
         startActivity(NewRuntimeActivity.createIntent(this))
-    }
-
-    private fun startRuntime(runtime: RuntimeSummary, cardBinding: RuntimeCardBinding) {
-        latestEntitlement?.startRuntimeBlockedMessage(this)?.let { message ->
-            toast(message)
-            return
-        }
-        showRuntimeProvisioning(
-            cardBinding,
-            RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_request),
-                command = getString(R.string.runtime_provisioning_command_request),
-                detail = getString(R.string.runtime_provisioning_detail_request),
-                events = provisioningEvents(0L),
-            ),
-            animate = true,
-        )
-        runtimeProvisioningStartedAtMs[runtime.id] = System.currentTimeMillis()
-        runtimeProvisioningLastMessage[runtime.id] = getString(R.string.runtime_provisioning_detail_request)
-        appLogs.info("Runtime provisioning requested for ${runtime.name}", "runtime")
-        cardBinding.startRuntimeButton.isEnabled = false
-        cardBinding.actionControlsButton.isEnabled = false
-        cardBinding.deleteRuntimeButton.isEnabled = false
-
-        lifecycleScope.launch {
-            runCatching {
-                val accountId = requireAccountId() ?: throw IOException(getString(R.string.account_missing))
-                val deviceId = requireDeviceId() ?: throw IOException(getString(R.string.device_missing))
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                val profiledRuntime = updateRuntimeForViewerAspect(currentBaseUrl(), accountId, deviceId, runtime)
-                api.startRuntime(currentBaseUrl(), accountId, deviceId, profiledRuntime.id, blobAccessKey)
-                identityPasswordStore.saveConfigured(accountId, deviceId)
-            }.onSuccess {
-                appLogs.info("Runtime start accepted for ${runtime.name}", "runtime")
-                refreshRuntimes(showBusy = false)
-            }.onFailure { error ->
-                appLogs.error(error.message ?: getString(R.string.status_error), "runtime")
-                showRuntimeProvisioning(
-                    cardBinding,
-                    RuntimeProvisioningMilestone(
-                        title = getString(R.string.runtime_provisioning_title_error),
-                        command = getString(R.string.runtime_provisioning_command_error),
-                        detail = "... ${error.message ?: getString(R.string.status_error)}",
-                        events = listOf(getString(R.string.runtime_provisioning_event_error)),
-                    ),
-                    animate = false,
-                )
-                cardBinding.startRuntimeButton.isEnabled = true
-                cardBinding.actionControlsButton.isEnabled = true
-                cardBinding.deleteRuntimeButton.isEnabled = true
-                showError(error)
-            }
-        }
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {

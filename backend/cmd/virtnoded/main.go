@@ -737,8 +737,6 @@ func (n *nodeAgent) reconcileRuntime(ctx context.Context, runtime runtimeAssignm
 		return n.wipeRuntime(ctx, runtime)
 	case runtime.DesiredState == "running":
 		return n.ensureRuntimeRunning(ctx, runtime)
-	case runtime.DesiredState == "stopped" && (runtime.Status == "provisioning" || runtime.Status == "provisioned"):
-		return n.ensureRuntimeProvisioned(ctx, runtime)
 	default:
 		return n.ensureRuntimeStopped(ctx, runtime, false)
 	}
@@ -938,30 +936,6 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 			),
 		)
 	}
-	provisionedOffline := false
-	adbPort := adbPortForRuntime(runtime.ID)
-	persona := buildSessionPersona(runtime)
-	personaJSON := marshalSessionPersona(persona)
-	if !runtime.WipeRequested && runtime.DesiredState == "stopped" {
-		if err := os.MkdirAll(dataDir, 0o755); err != nil {
-			return fmt.Errorf("create offline runtime data dir: %w", err)
-		}
-		if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
-			return fmt.Errorf("pull runtime image for offline reprovision: %w", err)
-		}
-		if err := n.createContainer(ctx, containerName, runtime, dataDir, adbPort, persona); err != nil {
-			return fmt.Errorf("recreate offline container: %w", err)
-		}
-		provisionedOffline = true
-		_ = n.appendRuntimeLog(
-			ctx,
-			runtime.ID,
-			"node",
-			"info",
-			fmt.Sprintf("Runtime container %s reprovisioned offline with persona %s.", containerName, personaSummary(persona)),
-		)
-	}
-
 	status := runtimeStatusUpdate{
 		Status:             "stopped",
 		ConnectionStatus:   "offline",
@@ -970,12 +944,7 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 		LastError:          stringPtr(""),
 		BlobLastSnapshotAt: persisted.SnapshotAt,
 		ClearWipeRequested: clearWipe,
-	}
-	if provisionedOffline {
-		status.Status = "provisioned"
-		status.ContainerName = stringPtr(containerName)
-		status.ADBPort = &adbPort
-		status.ActivePersonaJSON = stringPtr(personaJSON)
+		ClearActivePersona: true,
 	}
 	if persisted != nil && persisted.Manifest != nil {
 		status.BlobStoreKind = stringPtr(persisted.Manifest.Store)

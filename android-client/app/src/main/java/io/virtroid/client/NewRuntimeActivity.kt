@@ -136,7 +136,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                         events = provisionEvents(Long.MAX_VALUE),
                     ),
                 )
-                appLogs.info("Runtime provisioned", "runtime")
+                appLogs.info("Runtime profile created", "runtime")
                 toast(getString(R.string.runtime_created))
                 delay(550L)
                 setResult(RESULT_OK)
@@ -173,7 +173,9 @@ class NewRuntimeActivity : AppCompatActivity() {
             }.getOrDefault(emptyList())
             val latestLog = logs.firstOrNull()?.message
             renderProvisionMilestone(provisionMilestoneForRuntime(runtime, System.currentTimeMillis() - startedAt, latestLog))
-            if (runtime.status.equals("provisioned", ignoreCase = true)) {
+            if (runtime.status.equals("provisioned", ignoreCase = true) ||
+                runtime.status.equals("stopped", ignoreCase = true)
+            ) {
                 return runtime
             }
             if (runtime.status.equals("error", ignoreCase = true)) {
@@ -189,7 +191,8 @@ class NewRuntimeActivity : AppCompatActivity() {
     private fun provisionMilestoneForRuntime(runtime: RuntimeSummary, elapsedMs: Long, latestLog: String?): ProvisionMilestone {
         val detail = latestLog?.takeIf { it.isNotBlank() }?.let { "... $it" }
         return when {
-            runtime.status.equals("provisioned", ignoreCase = true) -> ProvisionMilestone(
+            runtime.status.equals("provisioned", ignoreCase = true) ||
+                runtime.status.equals("stopped", ignoreCase = true) -> ProvisionMilestone(
                 title = getString(R.string.new_runtime_provision_title_ready),
                 command = getString(R.string.new_runtime_provision_command_ready),
                 detail = detail ?: getString(R.string.new_runtime_provision_detail_ready),

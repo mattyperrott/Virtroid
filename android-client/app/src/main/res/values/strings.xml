@@ -68,7 +68,7 @@
     <string name="status_idle">Ready</string>
     <string name="status_refreshing">Refreshing runtimes…</string>
     <string name="status_bootstrapping">Creating account and registering this device…</string>
-    <string name="status_creating_runtime">Provisioning runtime…</string>
+    <string name="status_creating_runtime">Creating runtime…</string>
     <string name="status_saving_runtime">Saving runtime settings…</string>
     <string name="status_starting_runtime">Starting runtime…</string>
     <string name="status_starting_runtime_for_session">Starting runtime for session…</string>
@@ -97,14 +97,14 @@
     <string name="home_refresh">Refresh</string>
     <string name="home_access">Access</string>
     <string name="home_empty_title">No runtimes yet</string>
-    <string name="home_empty_subtitle">Provision your first cloud phone to get started.</string>
+    <string name="home_empty_subtitle">Create your first cloud phone to get started.</string>
     <string name="entitlement_trial_title">Trial: %1$d runtimes, %2$d starts/day</string>
     <string name="entitlement_plan_title">%1$s: %2$d runtimes, %3$d starts/day</string>
     <string name="entitlement_trial_title_fallback">Trial runtime allowance</string>
     <string name="entitlement_detail">%1$d of %2$d runtimes used • %3$d starts left today</string>
     <string name="entitlement_detail_fallback">Runtime allowance loading…</string>
     <string name="entitlement_unavailable">Runtime allowance is unavailable.</string>
-    <string name="entitlement_required">Storage or plan setup is required before provisioning runtimes.</string>
+    <string name="entitlement_required">Storage or plan setup is required before creating runtimes.</string>
     <string name="entitlement_runtime_quota_reached">Runtime limit reached for this account.</string>
     <string name="entitlement_active_runtime_limit">Stop the active runtime before starting another one.</string>
     <string name="entitlement_start_quota_reached">Daily runtime start limit reached.</string>
@@ -120,7 +120,7 @@
 
     <string name="create_runtime_heading">New Runtime</string>
     <string name="new_runtime_name_hint">Session Name (e.g. Work Alt)</string>
-    <string name="create_runtime">Provision Runtime</string>
+    <string name="create_runtime">Create Runtime</string>
     <string name="runtimes_heading">My Runtimes</string>
     <string name="runtime_empty">No runtimes available.</string>
 
@@ -138,7 +138,7 @@
     <string name="runtime_stat_ping_live">-</string>
     <string name="runtime_stat_ping_offline">-</string>
     <string name="runtime_connect_display">Connect</string>
-    <string name="runtime_start">Start Node</string>
+    <string name="runtime_start">Start Session</string>
     <string name="runtime_stop">Stop</string>
     <string name="runtime_delete">Delete</string>
     <string name="runtime_controls">Controls</string>
@@ -211,28 +211,28 @@
     <string name="new_runtime_camera_passthrough_unavailable">Camera Passthrough (not available)</string>
     <string name="new_runtime_close">Close</string>
     <string name="new_runtime_missing_access">Link this device to an account before creating runtimes.</string>
-    <string name="new_runtime_provision_title_request">Requesting Runtime Provision ...</string>
+    <string name="new_runtime_provision_title_request">Creating Runtime Profile ...</string>
     <string name="new_runtime_provision_command_request">&gt; signed create runtime</string>
-    <string name="new_runtime_provision_detail_request">... reserving node capacity_</string>
+    <string name="new_runtime_provision_detail_request">... saving runtime settings_</string>
     <string name="new_runtime_provision_title_image">Verifying Runtime Image ...</string>
-    <string name="new_runtime_provision_command_image">&gt; docker image inspect redroid</string>
-    <string name="new_runtime_provision_detail_image">... preparing Android 14 runtime image_</string>
+    <string name="new_runtime_provision_command_image">&gt; select redroid profile</string>
+    <string name="new_runtime_provision_detail_image">... selecting Android 14 runtime image_</string>
     <string name="new_runtime_provision_title_profile">Generating Device Profile ...</string>
-    <string name="new_runtime_provision_command_profile">&gt; synthesize hardware persona</string>
-    <string name="new_runtime_provision_detail_profile">... binding native display profile_</string>
-    <string name="new_runtime_provision_title_container">Creating Offline Container ...</string>
-    <string name="new_runtime_provision_command_container">&gt; docker create redroid namespace</string>
-    <string name="new_runtime_provision_detail_container">... creating stopped runtime container_</string>
-    <string name="new_runtime_provision_title_ready">Runtime Provisioned ...</string>
-    <string name="new_runtime_provision_command_ready">&gt; container offline ready</string>
-    <string name="new_runtime_provision_detail_ready">... ready for start node_</string>
+    <string name="new_runtime_provision_command_profile">&gt; save hardware profile</string>
+    <string name="new_runtime_provision_detail_profile">... saving native display profile_</string>
+    <string name="new_runtime_provision_title_container">Saving Runtime Profile ...</string>
+    <string name="new_runtime_provision_command_container">&gt; create session profile</string>
+    <string name="new_runtime_provision_detail_container">... ready for a fresh session container_</string>
+    <string name="new_runtime_provision_title_ready">Runtime Ready ...</string>
+    <string name="new_runtime_provision_command_ready">&gt; profile ready</string>
+    <string name="new_runtime_provision_detail_ready">... start a session to create a fresh runtime_</string>
     <string name="new_runtime_provision_title_error">Provisioning Failed ...</string>
     <string name="new_runtime_provision_command_error">&gt; provision runtime error</string>
     <string name="new_runtime_provision_event_identity">[ok] Signed identity registered</string>
     <string name="new_runtime_provision_event_capacity">[ok] Runtime entitlement reserved</string>
     <string name="new_runtime_provision_event_image">[ok] Android 14 image selected</string>
-    <string name="new_runtime_provision_event_profile">[ok] Hardware persona generated</string>
-    <string name="new_runtime_provision_event_container">[ok] Offline container created</string>
+    <string name="new_runtime_provision_event_profile">[ok] Hardware profile saved</string>
+    <string name="new_runtime_provision_event_container">[ok] Runtime profile saved</string>
     <string name="new_runtime_provision_event_ready">[ok] Ready to start</string>
 
     <string name="controls_title">Controls</string>
