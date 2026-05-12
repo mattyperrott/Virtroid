@@ -27,6 +27,7 @@ const (
 	defaultAndroidImage = "redroid/redroid:14.0.0_64only-latest"
 	viewerPortStart     = 46000
 	viewerPortEnd       = 46099
+	sessionAttachTTL    = 2 * time.Minute
 )
 
 var allowedAndroidImages = map[string]struct{}{
@@ -577,22 +578,16 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 	if err := ensureRuntimeCreateEntitlementTX(ctx, tx, accountID); err != nil {
 		return Runtime{}, err
 	}
-	hostID, err := pickReadyHostTX(ctx, tx, "")
-	if err != nil {
-		return Runtime{}, err
-	}
-
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`INSERT INTO runtimes (
-			id, account_id, name, status, desired_state, connection_status, host_id, android_image, android_version,
+			id, account_id, name, status, desired_state, connection_status, android_image, android_version,
 			width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days
-		) VALUES ($1, $2, $3, 'provisioning', 'stopped', 'preparing', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		) VALUES ($1, $2, $3, 'stopped', 'stopped', 'offline', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING %s`, runtimeColumns),
 		runtimeID,
 		accountID,
 		input.Name,
-		hostID,
 		input.AndroidImage,
 		input.AndroidVersion,
 		input.WidthPx,
@@ -607,7 +602,7 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		return Runtime{}, err
 	}
 
-	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", fmt.Sprintf("Runtime provisioning requested on host %s.", hostID)); err != nil {
+	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Runtime profile created. A fresh container will be assigned when a session starts."); err != nil {
 		return Runtime{}, err
 	}
 
@@ -623,7 +618,6 @@ func (s *Store) ListRuntimes(ctx context.Context, accountID string) ([]Runtime, 
 		fmt.Sprintf(`SELECT %s FROM runtimes
 		 WHERE account_id = $1
 		   AND deleted_at IS NULL
-		   AND desired_state <> 'deleted'
 		 ORDER BY created_at DESC`, runtimeColumns),
 		accountID,
 	)
@@ -654,7 +648,7 @@ func (s *Store) GetRuntime(ctx context.Context, accountID, runtimeID string) (Ru
 	var runtime Runtime
 	err := s.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT %s FROM runtimes
-		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'`, runtimeColumns),
+		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL`, runtimeColumns),
 		accountID,
 		runtimeID,
 	).Scan(scanRuntimeDest(&runtime)...)
@@ -1669,11 +1663,12 @@ func (s *Store) ResolveSessionRelayTarget(ctx context.Context, sessionID, relayT
 		 WHERE s.id = $1
 		   AND s.relay_token = $2
 		   AND s.expires_at > NOW()
-		   AND s.status = 'pending'
+		   AND s.status IN ('pending', 'active')
 		   AND r.id = s.runtime_id
 		   AND r.deleted_at IS NULL
 		   AND r.desired_state = 'running'
 		   AND r.status = 'running'
+		   AND r.connection_status = 'online'
 		   AND r.host_id IS NOT NULL
 		   AND r.viewer_port IS NOT NULL
 		 RETURNING s.id, s.runtime_id, s.device_id, r.host_id, r.viewer_port`,
@@ -1723,6 +1718,75 @@ func (s *Store) CloseSession(ctx context.Context, accountID, deviceID, sessionID
 	return nil
 }
 
+func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceID, sessionID string) (Runtime, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Runtime{}, err
+	}
+	defer tx.Rollback()
+
+	var runtimeID string
+	if err := tx.QueryRowContext(ctx,
+		`UPDATE sessions AS s
+		 SET status = 'closed',
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = 'client closed'
+		 FROM runtimes AS r
+		 WHERE s.id = $1
+		   AND s.device_id = $2
+		   AND r.id = s.runtime_id
+		   AND r.account_id = $3
+		   AND s.status IN ('pending', 'active')
+		 RETURNING s.runtime_id`,
+		sessionID,
+		deviceID,
+		accountID,
+	).Scan(&runtimeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Runtime{}, ErrSessionNotFound
+		}
+		return Runtime{}, err
+	}
+
+	var runtime Runtime
+	if err := tx.QueryRowContext(ctx,
+		fmt.Sprintf(`UPDATE runtimes
+		 SET status = CASE
+		         WHEN host_id IS NULL THEN 'stopped'
+		         ELSE 'stopping'
+		     END,
+		     desired_state = 'stopped',
+		     connection_status = CASE
+		         WHEN host_id IS NULL THEN 'offline'
+		         ELSE 'disconnecting'
+		     END,
+		     started_at = NULL,
+		     last_error = NULL,
+		     updated_at = NOW()
+		 WHERE account_id = $1
+		   AND id = $2
+		   AND deleted_at IS NULL
+		   AND desired_state <> 'deleted'
+		 RETURNING %s`, runtimeColumns),
+		accountID,
+		runtimeID,
+	).Scan(scanRuntimeDest(&runtime)...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Runtime{}, ErrRuntimeNotFound
+		}
+		return Runtime{}, err
+	}
+
+	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Session closed and runtime stop queued."); err != nil {
+		return Runtime{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Runtime{}, err
+	}
+	return runtime, nil
+}
+
 func (s *Store) HeartbeatSession(ctx context.Context, accountID, deviceID, sessionID string) (Session, error) {
 	accountID = strings.TrimSpace(accountID)
 	deviceID = strings.TrimSpace(deviceID)
@@ -1735,8 +1799,14 @@ func (s *Store) HeartbeatSession(ctx context.Context, accountID, deviceID, sessi
 	err := s.db.QueryRowContext(ctx,
 		`UPDATE sessions AS s
 		 SET updated_at = NOW(),
-		     last_client_heartbeat_at = NOW(),
-		     expires_at = NOW() + INTERVAL '2 minutes'
+		     last_client_heartbeat_at = CASE
+		         WHEN s.status = 'active' THEN NOW()
+		         ELSE s.last_client_heartbeat_at
+		     END,
+		     expires_at = CASE
+		         WHEN s.status = 'active' THEN NOW() + INTERVAL '2 minutes'
+		         ELSE s.expires_at
+		     END
 		 FROM runtimes AS r
 		 WHERE s.id = $1
 		   AND s.device_id = $2
@@ -1827,11 +1897,11 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		 candidates AS (
 		     SELECT r.id
 		       FROM runtimes r
-		       JOIN latest_session ls ON ls.runtime_id = r.id
+		       LEFT JOIN latest_session ls ON ls.runtime_id = r.id
 		      WHERE r.deleted_at IS NULL
 		        AND r.desired_state = 'running'
 		        AND r.status IN ('starting', 'running', 'error')
-		        AND ls.last_session_at < NOW() - $2::interval
+		        AND COALESCE(ls.last_session_at, r.updated_at) < NOW() - $2::interval
 		        AND NOT EXISTS (
 		            SELECT 1
 		              FROM sessions live
@@ -2072,9 +2142,13 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		`UPDATE runtimes
 		 SET status = $3,
 		     connection_status = $4,
+		     host_id = CASE
+		         WHEN desired_state <> 'deleted' AND ($3 IN ('stopped', 'provisioned') OR ($3 = 'error' AND desired_state <> 'running')) THEN NULL
+		         ELSE host_id
+		     END,
 		     container_name = $5,
 		     adb_port = $6,
-			     viewer_port = CASE
+		     viewer_port = CASE
 			         WHEN $3 IN ('stopped', 'provisioned') OR ($3 = 'error' AND desired_state <> 'running') THEN NULL
 			         ELSE viewer_port
 			     END,
@@ -2114,8 +2188,9 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (Session, error) {
 	var status string
 	var desiredState string
+	var connectionStatus string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT r.status, r.desired_state
+		`SELECT r.status, r.desired_state, r.connection_status
 		 FROM runtimes r
 		 JOIN devices d ON d.account_id = r.account_id
 		 WHERE r.id = $1
@@ -2124,14 +2199,14 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 		   AND r.desired_state <> 'deleted'`,
 		runtimeID,
 		deviceID,
-	).Scan(&status, &desiredState); err != nil {
+	).Scan(&status, &desiredState, &connectionStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Session{}, ErrRuntimeNotFound
 		}
 		return Session{}, err
 	}
 
-	if desiredState != "running" || status != "running" {
+	if desiredState != "running" || status != "running" || connectionStatus != "online" {
 		return Session{}, ErrRuntimeNotReady
 	}
 
@@ -2141,7 +2216,7 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 		return Session{}, err
 	}
 	relayTokenHash := hashRelayToken(relayToken)
-	expiresAt := time.Now().UTC().Add(15 * time.Minute)
+	expiresAt := time.Now().UTC().Add(sessionAttachTTL)
 
 	var session Session
 	err = s.db.QueryRowContext(ctx,

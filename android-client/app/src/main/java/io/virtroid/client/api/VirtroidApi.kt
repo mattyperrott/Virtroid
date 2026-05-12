@@ -510,6 +510,31 @@ class VirtroidApi(
         )
     }
 
+    suspend fun endSession(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        sessionId: String,
+        blobAccessKey: String,
+    ): RuntimeSummary = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject()
+            .put("account_id", accountId)
+            .put("device_id", deviceId)
+            .put("blob_access_key", blobAccessKey)
+            .toString()
+
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/sessions/$sessionId/end",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = requestBody,
+            ),
+        ).toRuntimeSummary()
+    }
+
     suspend fun heartbeatSession(
         baseUrl: String,
         accountId: String,

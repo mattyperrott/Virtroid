@@ -362,14 +362,21 @@ class SessionActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             runCatching {
+                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 if (sessionId.isNotBlank()) {
-                    runCatching {
-                        api.closeSession(baseUrl, accountId, deviceId, sessionId)
+                    val endResult = runCatching {
+                        api.endSession(baseUrl, accountId, deviceId, sessionId, blobAccessKey)
+                    }
+                    endResult.onFailure { error ->
+                        if (!error.isGoneSessionResponse()) {
+                            throw error
+                        }
+                        api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
                     }
                     relayToken = ""
+                } else {
+                    api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
                 }
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
                 waitForRuntimeStopped()
             }.onSuccess {
