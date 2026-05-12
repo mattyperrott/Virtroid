@@ -3,6 +3,7 @@ package io.virtroid.client.api
 import io.virtroid.client.BuildConfig
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.DeviceIdentityStore
+import io.virtroid.client.security.TlsPins
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -120,6 +121,7 @@ class VirtroidApiException(
 ) : IOException(errorMessage)
 
 private val DEFAULT_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
+    .certificatePinner(TlsPins.certificatePinner())
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(90, TimeUnit.SECONDS)
     .writeTimeout(30, TimeUnit.SECONDS)

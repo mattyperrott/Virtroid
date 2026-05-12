@@ -18,6 +18,7 @@ import android.view.Surface;
 
 import io.virtroid.client.BuildConfig;
 import io.virtroid.client.R;
+import io.virtroid.client.security.TlsPins;
 
 import org.client.scrcpy.decoder.AudioDecoder;
 import org.client.scrcpy.decoder.VideoDecoder;
@@ -510,6 +511,7 @@ public class Scrcpy extends Service {
         sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
         sslSocket.setSSLParameters(sslParameters);
         sslSocket.startHandshake();
+        TlsPins.checkPeerCertificates(host, sslSocket.getSession().getPeerCertificates());
         return sslSocket;
     }
 
