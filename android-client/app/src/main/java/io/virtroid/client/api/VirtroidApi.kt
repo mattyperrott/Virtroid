@@ -641,11 +641,17 @@ class VirtroidApi(
         deviceId: String,
         body: String = "",
     ): Request {
-        val bodyBytes = body.toByteArray(Charsets.UTF_8)
-        val requestBody = if (body.isBlank()) null else body.toRequestBody(JSON_MEDIA_TYPE)
+        val normalizedMethod = method.uppercase()
+        val signedBody = when {
+            body.isNotBlank() -> body
+            normalizedMethod in METHODS_REQUIRING_REQUEST_BODY -> "{}"
+            else -> ""
+        }
+        val bodyBytes = signedBody.toByteArray(Charsets.UTF_8)
+        val requestBody = if (signedBody.isBlank()) null else signedBody.toRequestBody(JSON_MEDIA_TYPE)
         val builder = Request.Builder()
             .url(normalizeBaseUrl(baseUrl) + pathAndQuery)
-            .method(method.uppercase(), requestBody)
+            .method(normalizedMethod, requestBody)
 
         deviceIdentityStore.signedHeaders(
             method = method,
@@ -758,5 +764,6 @@ class VirtroidApi(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
     }
 }
