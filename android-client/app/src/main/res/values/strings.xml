@@ -91,9 +91,9 @@
     <string name="runtime_missing_for_session">Runtime is no longer available.</string>
     <string name="runtime_start_timeout">Runtime is still starting. Try again in a moment.</string>
 
-    <string name="home_secure_client">VIRTROID CLIENT</string>
+    <string name="home_secure_client">TRUSTED OPERATOR MODE</string>
     <string name="home_title">My Runtimes</string>
-    <string name="home_subtitle">Remote Android runtimes with signed device requests.</string>
+    <string name="home_subtitle">Development runtime nodes are not confidentially attested yet.</string>
     <string name="home_refresh">Refresh</string>
     <string name="home_access">Access</string>
     <string name="home_empty_title">No runtimes yet</string>
@@ -142,7 +142,7 @@
     <string name="runtime_stop">Stop</string>
     <string name="runtime_delete">Delete</string>
     <string name="runtime_controls">Controls</string>
-    <string name="runtime_secure_route">Routed</string>
+    <string name="runtime_secure_route">Trusted operator</string>
     <string name="runtime_connectivity_online">Online</string>
     <string name="runtime_connectivity_offline">Offline</string>
     <string name="runtime_provisioning_title_request">Requesting Runtime Start ...</string>
@@ -249,7 +249,7 @@
     <string name="controls_state_stopping">Saving</string>
     <string name="controls_state_wiping">Wiping</string>
     <string name="controls_state_deleting">Deleting</string>
-    <string name="controls_tunnel_encrypted">Encrypted</string>
+    <string name="controls_tunnel_encrypted">Pinned TLS</string>
     <string name="controls_storage_volatile">Volatile</string>
     <string name="controls_storage_persistent">Persistent</string>
     <string name="controls_session_parameters">SESSION PARAMETERS</string>
@@ -274,7 +274,7 @@
     <string name="controls_confirm">Confirm</string>
     <string name="controls_cancel">Cancel</string>
     <string name="controls_display_dialog_title">Display &amp; Output</string>
-    <string name="controls_tunnel_direct">Encrypted</string>
+    <string name="controls_tunnel_direct">Pinned TLS</string>
     <string name="controls_loaded">Loaded</string>
 
     <string name="session_title_fallback">Runtime Session</string>
