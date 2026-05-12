@@ -273,13 +273,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         cardBinding.runtimeTitleText.text = runtime.name
-        cardBinding.runtimeSubtitleText.text = if (isLive) {
-            getString(R.string.runtime_connectivity_online)
-        } else {
-            getString(R.string.runtime_connectivity_offline)
-        }
+        cardBinding.runtimeSubtitleText.text = runtime.connectivityLabel(isLive)
         cardBinding.runtimeStatusDot.setBackgroundResource(
-            if (isLive) R.drawable.bg_dot_accent else R.drawable.bg_dot_muted,
+            when {
+                isLive -> R.drawable.bg_dot_accent
+                runtime.isStartingForSession() -> R.drawable.bg_dot_amber
+                else -> R.drawable.bg_dot_muted
+            },
         )
         cardBinding.runtimeIcon.setColorFilter(
             getColor(if (isLive) R.color.v_accent else R.color.v_text_muted),
@@ -596,7 +596,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setBusy(isBusy: Boolean, message: String? = null) {
         binding.progressIndicator.isVisible = isBusy
-        binding.statusText.text = message ?: getString(R.string.home_secure_client)
+        binding.statusText.text = getString(R.string.home_secure_client)
         binding.notificationButton.isEnabled = !isBusy
         binding.createRuntimeButton.isEnabled = !isBusy && (latestEntitlement?.canCreateRuntime ?: true)
         binding.accessToggleButton.isEnabled = !isBusy
@@ -752,6 +752,25 @@ class MainActivity : AppCompatActivity() {
         return status.equals("running", ignoreCase = true) &&
             connectionStatus.equals("online", ignoreCase = true) &&
             !hostId.isNullOrBlank()
+    }
+
+    private fun RuntimeSummary.connectivityLabel(isLive: Boolean): String {
+        return when {
+            isLive -> getString(R.string.runtime_connectivity_online)
+            isStartingForSession() -> getString(R.string.runtime_connectivity_starting)
+            else -> getString(R.string.runtime_connectivity_offline)
+        }
+    }
+
+    private fun RuntimeSummary.isStartingForSession(): Boolean {
+        if (status.equals("error", ignoreCase = true)) {
+            return false
+        }
+        return desiredState.equals("running", ignoreCase = true) && !isReadyForSession() ||
+            status.equals("starting", ignoreCase = true) ||
+            status.equals("provisioning", ignoreCase = true) ||
+            connectionStatus.equals("connecting", ignoreCase = true) ||
+            connectionStatus.equals("preparing", ignoreCase = true)
     }
 
     private fun RuntimeSummary.isTransitioning(): Boolean {

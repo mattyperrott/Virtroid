@@ -102,7 +102,7 @@
     <string name="runtime_missing_for_session">Runtime is no longer available.</string>
     <string name="runtime_start_timeout">Runtime is still starting. Try again in a moment.</string>
 
-    <string name="home_secure_client">TRUSTED OPERATOR MODE</string>
+    <string name="home_secure_client">VIRTROID CLIENT</string>
     <string name="home_title">My Runtimes</string>
     <string name="home_subtitle">Development runtime nodes are not confidentially attested yet.</string>
     <string name="home_refresh">Refresh</string>
@@ -155,6 +155,7 @@
     <string name="runtime_controls">Controls</string>
     <string name="runtime_secure_route">Trusted operator</string>
     <string name="runtime_connectivity_online">Online</string>
+    <string name="runtime_connectivity_starting">Starting</string>
     <string name="runtime_connectivity_offline">Offline</string>
     <string name="runtime_provisioning_title_request">Requesting Runtime Start ...</string>
     <string name="runtime_provisioning_command_request">&gt; signed start request</string>
