@@ -141,6 +141,7 @@ type Device struct {
 	BlobKeyVerifier *string    `json:"-"`
 	CreatedAt       time.Time  `json:"created_at"`
 	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
+	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
 }
 
 type Runtime struct {
@@ -514,6 +515,182 @@ func (s *Store) DeleteAccount(ctx context.Context, accountID string) error {
 	return nil
 }
 
+func (s *Store) ListDevices(ctx context.Context, accountID string) ([]Device, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return []Device{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT d.id, d.account_id, d.name, d.public_key, d.blob_key_verifier, d.created_at, d.last_seen_at, d.revoked_at
+		 FROM devices d
+		 JOIN accounts a ON a.id = d.account_id
+		 WHERE d.account_id = $1
+		   AND a.deleted_at IS NULL
+		   AND d.revoked_at IS NULL
+		 ORDER BY COALESCE(d.last_seen_at, d.created_at) DESC, d.created_at DESC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []Device
+	for rows.Next() {
+		var device Device
+		if err := rows.Scan(
+			&device.ID,
+			&device.AccountID,
+			&device.Name,
+			&device.PublicKey,
+			&device.BlobKeyVerifier,
+			&device.CreatedAt,
+			&device.LastSeenAt,
+			&device.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		devices = append(devices, device)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if devices == nil {
+		return []Device{}, nil
+	}
+	return devices, nil
+}
+
+func (s *Store) RevokeDevice(ctx context.Context, accountID, targetDeviceID string) (Device, []string, error) {
+	accountID = strings.TrimSpace(accountID)
+	targetDeviceID = strings.TrimSpace(targetDeviceID)
+	if accountID == "" || targetDeviceID == "" {
+		return Device{}, nil, ErrDeviceNotFound
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Device{}, nil, err
+	}
+	defer tx.Rollback()
+
+	var device Device
+	if err := tx.QueryRowContext(ctx,
+		`UPDATE devices d
+		 SET revoked_at = NOW(),
+		     last_seen_at = NOW()
+		 FROM accounts a
+		 WHERE d.account_id = $1
+		   AND d.id = $2
+		   AND d.account_id = a.id
+		   AND a.deleted_at IS NULL
+		   AND d.revoked_at IS NULL
+		 RETURNING d.id, d.account_id, d.name, d.public_key, d.blob_key_verifier, d.created_at, d.last_seen_at, d.revoked_at`,
+		accountID,
+		targetDeviceID,
+	).Scan(
+		&device.ID,
+		&device.AccountID,
+		&device.Name,
+		&device.PublicKey,
+		&device.BlobKeyVerifier,
+		&device.CreatedAt,
+		&device.LastSeenAt,
+		&device.RevokedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Device{}, nil, ErrDeviceNotFound
+		}
+		return Device{}, nil, err
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM device_request_nonces WHERE account_id = $1 AND device_id = $2`,
+		accountID,
+		targetDeviceID,
+	); err != nil {
+		return Device{}, nil, err
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`WITH revoked_sessions AS (
+		     UPDATE sessions AS s
+		        SET status = 'revoked',
+		            updated_at = NOW(),
+		            ended_at = NOW(),
+		            end_reason = 'device revoked'
+		       FROM runtimes AS runtime_owner
+		      WHERE s.device_id = $2
+		        AND runtime_owner.id = s.runtime_id
+		        AND runtime_owner.account_id = $1
+		        AND s.status IN ('pending', 'active')
+		      RETURNING s.runtime_id
+		 ),
+		 candidate_runtimes AS (
+		     SELECT DISTINCT r.id
+		       FROM runtimes r
+		       JOIN revoked_sessions s ON s.runtime_id = r.id
+		      WHERE r.account_id = $1
+		        AND r.deleted_at IS NULL
+		        AND r.desired_state = 'running'
+		        AND NOT EXISTS (
+		            SELECT 1
+		              FROM sessions live
+		             WHERE live.runtime_id = r.id
+		               AND live.device_id <> $2
+		               AND live.status IN ('pending', 'active')
+		               AND live.expires_at > NOW()
+		        )
+		 ),
+		 updated AS (
+		     UPDATE runtimes r
+		        SET status = CASE WHEN r.host_id IS NULL THEN 'stopped' ELSE 'stopping' END,
+		            desired_state = 'stopped',
+		            connection_status = CASE WHEN r.host_id IS NULL THEN 'offline' ELSE 'disconnecting' END,
+		            started_at = NULL,
+		            last_error = NULL,
+		            updated_at = NOW()
+		       FROM candidate_runtimes c
+		      WHERE r.id = c.id
+		      RETURNING r.id
+		 )
+		 SELECT id FROM updated`,
+		accountID,
+		targetDeviceID,
+	)
+	if err != nil {
+		return Device{}, nil, err
+	}
+	var stoppedRuntimeIDs []string
+	for rows.Next() {
+		var runtimeID string
+		if err := rows.Scan(&runtimeID); err != nil {
+			rows.Close()
+			return Device{}, nil, err
+		}
+		stoppedRuntimeIDs = append(stoppedRuntimeIDs, runtimeID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Device{}, nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return Device{}, nil, err
+	}
+
+	for _, runtimeID := range stoppedRuntimeIDs {
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because a linked device was revoked."); err != nil {
+			return Device{}, nil, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Device{}, nil, err
+	}
+	return device, stoppedRuntimeIDs, nil
+}
+
 func deleteAccountIfRuntimeCleanupDoneTX(ctx context.Context, tx *sql.Tx, accountID string) error {
 	accountID = strings.TrimSpace(accountID)
 	if accountID == "" {
@@ -861,6 +1038,7 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(
 		`SELECT blob_key_verifier
 		 FROM devices
 		 WHERE account_id = $1 AND id = $2
+		   AND revoked_at IS NULL
 		 FOR UPDATE`,
 		accountID,
 		deviceID,
@@ -881,7 +1059,8 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(
 		`UPDATE devices
 		 SET blob_key_verifier = $3,
 		     last_seen_at = NOW()
-		 WHERE account_id = $1 AND id = $2`,
+		 WHERE account_id = $1 AND id = $2
+		   AND revoked_at IS NULL`,
 		accountID,
 		deviceID,
 		verifier,
@@ -1080,7 +1259,8 @@ func (s *Store) DevicePublicKey(ctx context.Context, accountID, deviceID string)
 		 JOIN accounts a ON a.id = d.account_id
 		 WHERE d.account_id = $1
 		   AND d.id = $2
-		   AND a.deleted_at IS NULL`,
+		   AND a.deleted_at IS NULL
+		   AND d.revoked_at IS NULL`,
 		accountID,
 		deviceID,
 	).Scan(&publicKey)
@@ -1178,7 +1358,7 @@ func (s *Store) VerifyDeviceBlobAccessKey(ctx context.Context, accountID, device
 	err := s.db.QueryRowContext(ctx,
 		`SELECT blob_key_verifier
 		 FROM devices
-		 WHERE account_id = $1 AND id = $2`,
+		 WHERE account_id = $1 AND id = $2 AND revoked_at IS NULL`,
 		accountID,
 		deviceID,
 	).Scan(&storedVerifier)

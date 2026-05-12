@@ -199,6 +199,8 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/me/storage", api.getMyStorage)
 	mux.HandleFunc("PUT /api/v1/me/storage", api.updateMyStorage)
 	mux.HandleFunc("DELETE /api/v1/me", api.deleteMyAccount)
+	mux.HandleFunc("GET /api/v1/me/devices", api.listMyDevices)
+	mux.HandleFunc("DELETE /api/v1/me/devices/{device_id}", api.revokeMyDevice)
 	mux.HandleFunc("POST /api/v1/me/identity/register", api.registerMyIdentity)
 	mux.HandleFunc("POST /api/v1/me/runtimes", api.createMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}", api.getMyRuntime)
@@ -506,6 +508,44 @@ func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
 	a.activeBlobKeys.clearAccount(accountID)
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (a *API) listMyDevices(w http.ResponseWriter, r *http.Request) {
+	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	devices, err := a.store.ListDevices(r.Context(), accountID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": devices})
+}
+
+func (a *API) revokeMyDevice(w http.ResponseWriter, r *http.Request) {
+	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	device, stoppedRuntimeIDs, err := a.store.RevokeDevice(r.Context(), accountID, r.PathValue("device_id"))
+	if err != nil {
+		if err == store.ErrDeviceNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	a.activeBlobKeys.clearAccount(accountID)
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"device":                device,
+		"stopped_runtime_ids":   stoppedRuntimeIDs,
+		"stopped_runtime_count": len(stoppedRuntimeIDs),
+	})
 }
 
 func (a *API) getMyRuntime(w http.ResponseWriter, r *http.Request) {

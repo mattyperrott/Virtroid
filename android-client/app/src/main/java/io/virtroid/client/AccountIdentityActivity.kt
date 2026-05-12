@@ -11,6 +11,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import io.virtroid.client.api.TrustedDeviceSummary
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
 import io.virtroid.client.data.AppLogStore
@@ -79,6 +80,9 @@ class AccountIdentityActivity : AppCompatActivity() {
         binding.itemDeviceSigningKey.setOnClickListener {
             copy("device_public_key", deviceIdentityStore.publicKeyMaterial(), getString(R.string.account_device_key_copied))
         }
+        binding.itemLinkedDevices.setOnClickListener {
+            showLinkedDevices()
+        }
         binding.itemWipeUserData.setOnClickListener {
             confirmLocalDataWipe()
         }
@@ -119,6 +123,11 @@ class AccountIdentityActivity : AppCompatActivity() {
             identityPasswordConfigured -> getString(R.string.account_identity_password_required_later)
             else -> getString(R.string.account_identity_encryption_missing)
         }
+        binding.itemLinkedDevicesSubtitle.text = if (hasLinkedIdentity) {
+            getString(R.string.account_linked_devices_subtitle)
+        } else {
+            getString(R.string.account_identity_not_linked)
+        }
         binding.identityCreatedValue.text = if (hasLinkedIdentity) {
             getString(R.string.account_identity_created)
         } else {
@@ -155,6 +164,105 @@ class AccountIdentityActivity : AppCompatActivity() {
                 binding.storageUsageSubtitle.text = getString(R.string.account_storage_sync_failed)
                 binding.storageSnapshots.text = getString(R.string.account_storage_snapshots_unreported)
                 binding.storageRunwayValue.text = getString(R.string.account_storage_runway_unreported)
+            }
+        }
+    }
+
+    private fun showLinkedDevices() {
+        val accountId = sessionStore.accountId.orEmpty()
+        val deviceId = sessionStore.deviceId.orEmpty()
+        if (accountId.isBlank() || deviceId.isBlank()) {
+            toast(getString(R.string.account_identity_not_linked))
+            return
+        }
+
+        binding.itemLinkedDevices.isEnabled = false
+        lifecycleScope.launch {
+            runCatching {
+                api.listDevices(sessionStore.baseUrl, accountId, deviceId)
+            }.onSuccess { devices ->
+                binding.itemLinkedDevices.isEnabled = true
+                if (devices.isEmpty()) {
+                    toast(getString(R.string.account_linked_devices_empty))
+                    return@onSuccess
+                }
+                val labels = devices.map { device -> linkedDeviceLabel(device, deviceId) }.toTypedArray()
+                AlertDialog.Builder(this@AccountIdentityActivity)
+                    .setTitle(getString(R.string.account_linked_devices_title))
+                    .setItems(labels) { _, index ->
+                        confirmDeviceRevoke(devices[index])
+                    }
+                    .setNegativeButton(getString(R.string.controls_cancel), null)
+                    .show()
+            }.onFailure { error ->
+                binding.itemLinkedDevices.isEnabled = true
+                appLogs.error("Linked device list failed: ${error.message}", "auth")
+                toast(error.virtroidDisplayMessage(this@AccountIdentityActivity))
+            }
+        }
+    }
+
+    private fun linkedDeviceLabel(device: TrustedDeviceSummary, currentDeviceId: String): String {
+        val currentMarker = if (device.id == currentDeviceId) {
+            " - ${getString(R.string.account_linked_devices_current)}"
+        } else {
+            ""
+        }
+        val activity = device.lastSeenAt
+            ?.takeIf { it.isNotBlank() }
+            ?.let { getString(R.string.account_linked_devices_last_seen, formatRemoteTimestamp(it)) }
+            ?: getString(R.string.account_linked_devices_never_seen)
+        return "${device.name.ifBlank { shortId(device.id) }}$currentMarker\n${shortId(device.id)} - $activity"
+    }
+
+    private fun confirmDeviceRevoke(device: TrustedDeviceSummary) {
+        val currentDeviceId = sessionStore.deviceId.orEmpty()
+        val message = if (device.id == currentDeviceId) {
+            getString(R.string.account_revoke_current_device_body)
+        } else {
+            getString(R.string.account_revoke_device_body)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.account_revoke_device_title))
+            .setMessage(message)
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.account_revoke_device_confirm)) { _, _ ->
+                revokeDevice(device)
+            }
+            .show()
+    }
+
+    private fun revokeDevice(device: TrustedDeviceSummary) {
+        val accountId = sessionStore.accountId.orEmpty()
+        val signingDeviceId = sessionStore.deviceId.orEmpty()
+        if (accountId.isBlank() || signingDeviceId.isBlank()) {
+            toast(getString(R.string.account_identity_not_linked))
+            return
+        }
+
+        binding.itemLinkedDevices.isEnabled = false
+        lifecycleScope.launch {
+            runCatching {
+                api.revokeDevice(
+                    baseUrl = sessionStore.baseUrl,
+                    accountId = accountId,
+                    signingDeviceId = signingDeviceId,
+                    targetDeviceId = device.id,
+                )
+            }.onSuccess {
+                appLogs.critical("Trusted device revoked: ${shortId(device.id)}", "auth")
+                toast(getString(R.string.account_revoke_device_done))
+                if (device.id == signingDeviceId) {
+                    resetLocalIdentity()
+                } else {
+                    activeSessionStore.clear()
+                    binding.itemLinkedDevices.isEnabled = true
+                    renderIdentity()
+                }
+            }.onFailure { error ->
+                binding.itemLinkedDevices.isEnabled = true
+                appLogs.error("Trusted device revoke failed: ${error.message}", "auth")
+                toast(error.virtroidDisplayMessage(this@AccountIdentityActivity))
             }
         }
     }
@@ -326,6 +434,12 @@ class AccountIdentityActivity : AppCompatActivity() {
         } else {
             value.take(8) + "..." + value.takeLast(6)
         }
+    }
+
+    private fun formatRemoteTimestamp(value: String): String {
+        return runCatching {
+            OffsetDateTime.parse(value).format(timestampFormatter)
+        }.getOrDefault(shortId(value))
     }
 
     private fun linkedDeviceFingerprint(): String {

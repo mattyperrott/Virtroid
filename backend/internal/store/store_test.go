@@ -221,6 +221,60 @@ func TestDeleteAccountHardDeletesAfterUnassignedRuntimeCleanup(t *testing.T) {
 	}
 }
 
+func TestRevokeDeviceMarksDeviceAndStopsItsLiveRuntime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE devices d").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_id", "name", "public_key", "blob_key_verifier", "created_at", "last_seen_at", "revoked_at",
+		}).AddRow(
+			deviceID,
+			accountID,
+			"Pixel",
+			"public-key",
+			nil,
+			now,
+			now,
+			now,
+		))
+	mock.ExpectExec("DELETE FROM device_request_nonces").
+		WithArgs(accountID, deviceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("WITH revoked_sessions").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(runtimeID))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(runtimeID, "system", "warn", "Runtime stop queued because a linked device was revoked.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	device, stoppedRuntimeIDs, err := st.RevokeDevice(context.Background(), accountID, deviceID)
+	if err != nil {
+		t.Fatalf("RevokeDevice returned error: %v", err)
+	}
+	if device.ID != deviceID || device.RevokedAt == nil {
+		t.Fatalf("revoked device = %+v, want id %s with revoked_at", device, deviceID)
+	}
+	if len(stoppedRuntimeIDs) != 1 || stoppedRuntimeIDs[0] != runtimeID {
+		t.Fatalf("stopped runtime ids = %#v, want [%s]", stoppedRuntimeIDs, runtimeID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestRegisterDeviceBlobKeyVerifierAllowsInitialSetupWithoutCurrentKey(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
