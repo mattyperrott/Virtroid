@@ -155,7 +155,9 @@
     <string name="runtime_secure_route">Trusted operator</string>
     <string name="runtime_connectivity_online">Online</string>
     <string name="runtime_connectivity_starting">Starting</string>
+    <string name="runtime_connectivity_stopping">Stopping</string>
     <string name="runtime_connectivity_offline">Offline</string>
+    <string name="runtime_shutdown_in_progress">Runtime is still shutting down.</string>
     <string name="runtime_provisioning_title_request">Requesting Runtime Start ...</string>
     <string name="runtime_provisioning_command_request">&gt; signed start request</string>
     <string name="runtime_provisioning_detail_request">... sending runtime assignment request_</string>
@@ -312,6 +314,7 @@
     <string name="session_drawer_status">Status: %1$s</string>
     <string name="session_secure_online_with_resolution">Connected • %1$dx%2$d</string>
     <string name="session_secure_saving">Saving state…</string>
+    <string name="session_shutdown_status">Stopping runtime and saving state…</string>
     <string name="session_back">Back</string>
     <string name="session_home">Home</string>
     <string name="session_apps">Apps</string>
