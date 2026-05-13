@@ -1375,46 +1375,43 @@ func (s *Store) VerifyDeviceBlobAccessKey(ctx context.Context, accountID, device
 	return verifyBlobAccessKeyAgainstVerifier(blobAccessKeyB64, storedVerifier.String)
 }
 
-func (s *Store) StartRuntimeWithBlobAccessKey(
-	ctx context.Context,
-	accountID string,
-	deviceID string,
-	runtimeID string,
-	blobAccessKeyB64 string,
-) (Runtime, error) {
-	if _, err := s.VerifyDeviceBlobAccessKey(ctx, accountID, deviceID, blobAccessKeyB64); err != nil {
-		return Runtime{}, err
+func (s *Store) VerifyDeviceBlobKeyVerifier(ctx context.Context, accountID, deviceID, blobKeyVerifier string) error {
+	var storedVerifier sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT blob_key_verifier
+		 FROM devices
+		 WHERE account_id = $1 AND id = $2 AND revoked_at IS NULL`,
+		accountID,
+		deviceID,
+	).Scan(&storedVerifier)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrDeviceNotFound
+		}
+		return err
 	}
-	return s.StartRuntime(ctx, accountID, runtimeID)
-}
-
-func (s *Store) StopRuntimeWithBlobAccessKey(
-	ctx context.Context,
-	accountID string,
-	deviceID string,
-	runtimeID string,
-	blobAccessKeyB64 string,
-) (Runtime, error) {
-	if _, err := s.VerifyDeviceBlobAccessKey(ctx, accountID, deviceID, blobAccessKeyB64); err != nil {
-		return Runtime{}, err
+	if !storedVerifier.Valid || strings.TrimSpace(storedVerifier.String) == "" {
+		return ErrIdentityNotFound
 	}
-	return s.StopRuntime(ctx, accountID, runtimeID)
-}
-
-func (s *Store) WipeRuntimeWithBlobAccessKey(
-	ctx context.Context,
-	accountID string,
-	deviceID string,
-	runtimeID string,
-	blobAccessKeyB64 string,
-) (Runtime, error) {
-	if _, err := s.VerifyDeviceBlobAccessKey(ctx, accountID, deviceID, blobAccessKeyB64); err != nil {
-		return Runtime{}, err
+	verifier := strings.TrimSpace(blobKeyVerifier)
+	if verifier == "" {
+		return ErrIdentityKeyRequired
 	}
-	return s.WipeRuntime(ctx, accountID, runtimeID)
+	if subtle.ConstantTimeCompare([]byte(verifier), []byte(strings.TrimSpace(storedVerifier.String))) != 1 {
+		return ErrIdentityAuthFailed
+	}
+	return nil
 }
 
 func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (Runtime, error) {
+	return s.startRuntime(ctx, accountID, runtimeID, "")
+}
+
+func (s *Store) StartRuntimeOnHost(ctx context.Context, accountID, runtimeID, hostID string) (Runtime, error) {
+	return s.startRuntime(ctx, accountID, runtimeID, strings.TrimSpace(hostID))
+}
+
+func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, requiredHostID string) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Runtime{}, err
@@ -1439,9 +1436,17 @@ func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (
 		return Runtime{}, err
 	}
 
-	hostID, err := pickReadyHostTX(ctx, tx, currentHost.String)
-	if err != nil {
-		return Runtime{}, err
+	var hostID string
+	if requiredHostID != "" {
+		hostID, err = requireReadyHostTX(ctx, tx, requiredHostID)
+		if err != nil {
+			return Runtime{}, err
+		}
+	} else {
+		hostID, err = pickReadyHostTX(ctx, tx, currentHost.String)
+		if err != nil {
+			return Runtime{}, err
+		}
 	}
 
 	viewerPort := currentViewerPort
@@ -1783,6 +1788,70 @@ func (s *Store) HostPublicKey(ctx context.Context, hostID string) (string, error
 		return "", err
 	}
 	return strings.TrimSpace(publicKey), nil
+}
+
+func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, operation string) (Runtime, Host, error) {
+	accountID = strings.TrimSpace(accountID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	operation = strings.ToLower(strings.TrimSpace(operation))
+	if accountID == "" || runtimeID == "" {
+		return Runtime{}, Host{}, ErrRuntimeNotFound
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Runtime{}, Host{}, err
+	}
+	defer tx.Rollback()
+
+	var runtime Runtime
+	if err := tx.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM runtimes
+		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'`, runtimeColumns),
+		accountID,
+		runtimeID,
+	).Scan(scanRuntimeDest(&runtime)...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Runtime{}, Host{}, ErrRuntimeNotFound
+		}
+		return Runtime{}, Host{}, err
+	}
+
+	var hostID string
+	switch operation {
+	case "start":
+		hostID, err = pickReadyHostTX(ctx, tx, valueOrEmpty(runtime.HostID))
+		if err != nil {
+			return Runtime{}, Host{}, err
+		}
+	case "stop", "wipe":
+		hostID = valueOrEmpty(runtime.HostID)
+		if hostID == "" {
+			return Runtime{}, Host{}, ErrRuntimeNotReady
+		}
+	case "session":
+		if runtime.Status != "running" || runtime.DesiredState != "running" || runtime.ConnectionStatus != "online" {
+			return Runtime{}, Host{}, ErrRuntimeNotReady
+		}
+		hostID = valueOrEmpty(runtime.HostID)
+		if hostID == "" {
+			return Runtime{}, Host{}, ErrRuntimeNotReady
+		}
+	default:
+		return Runtime{}, Host{}, ErrRuntimeNotReady
+	}
+
+	host, err := getBlobKeyHostTX(ctx, tx, hostID)
+	if err != nil {
+		return Runtime{}, Host{}, err
+	}
+	if strings.TrimSpace(host.PublicKey) == "" {
+		return Runtime{}, Host{}, ErrHostNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return Runtime{}, Host{}, err
+	}
+	return runtime, host, nil
 }
 
 func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat) (Host, error) {
@@ -2424,19 +2493,11 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 
 func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (string, error) {
 	if strings.TrimSpace(preferredHostID) != "" {
-		var hostID string
-		err := tx.QueryRowContext(ctx,
-			`SELECT id FROM hosts
-			 WHERE id = $1
-			   AND docker_socket = TRUE
-			   AND binder = TRUE
-			   AND last_heartbeat_at >= NOW() - INTERVAL '2 minutes'`,
-			preferredHostID,
-		).Scan(&hostID)
+		hostID, err := requireReadyHostTX(ctx, tx, preferredHostID)
 		if err == nil {
 			return hostID, nil
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if err != ErrNoReadyHost {
 			return "", err
 		}
 	}
@@ -2456,6 +2517,63 @@ func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (s
 		return "", err
 	}
 	return hostID, nil
+}
+
+func requireReadyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (string, error) {
+	hostID = strings.TrimSpace(hostID)
+	if hostID == "" {
+		return "", ErrNoReadyHost
+	}
+	var found string
+	err := tx.QueryRowContext(ctx,
+		`SELECT id FROM hosts
+		 WHERE id = $1
+		   AND docker_socket = TRUE
+		   AND binder = TRUE
+		   AND last_heartbeat_at >= NOW() - INTERVAL '2 minutes'`,
+		hostID,
+	).Scan(&found)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNoReadyHost
+		}
+		return "", err
+	}
+	return found, nil
+}
+
+func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, error) {
+	var host Host
+	err := tx.QueryRowContext(ctx,
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at
+		 FROM hosts WHERE id = $1`,
+		strings.TrimSpace(hostID),
+	).Scan(
+		&host.ID,
+		&host.Name,
+		&host.AdvertiseAddr,
+		&host.RelayPort,
+		&host.DockerSocket,
+		&host.Binder,
+		&host.PublicKey,
+		&host.CreatedAt,
+		&host.UpdatedAt,
+		&host.LastHeartbeatAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Host{}, ErrHostNotFound
+		}
+		return Host{}, err
+	}
+	return host, nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func ensureRuntimeCreateEntitlementTX(ctx context.Context, tx *sql.Tx, accountID string) error {

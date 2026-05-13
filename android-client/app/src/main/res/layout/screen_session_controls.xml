@@ -459,17 +459,17 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_red_card_24"
+                    android:background="@drawable/bg_amber_soft_24"
                     android:padding="16dp"
-                    android:layout_marginBottom="0dp">
+                    android:layout_marginBottom="12dp">
                     <ImageView
                         android:id="@+id/item_wipe_destroy_icon"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_warning"
-                        app:tint="@color/v_danger"
-                        android:background="@drawable/bg_red_soft_12" />
+                        app:tint="@color/v_amber"
+                        android:background="@drawable/bg_amber_soft_12" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -481,15 +481,15 @@
                             style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Wipe &amp; Destroy"
-                            android:textColor="@color/v_danger" />
+                            android:text="@string/controls_wipe_title"
+                            android:textColor="@color/v_amber" />
                         <TextView
                             android:id="@+id/item_wipe_destroy_subtitle"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Irreversibly delete instance"
-                            android:textColor="@color/v_danger_muted"
+                            android:text="@string/controls_wipe_body"
+                            android:textColor="@color/v_amber_muted"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                     <TextView
@@ -497,7 +497,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="&gt;"
-                        android:textColor="@color/v_danger_dim"
+                        android:textColor="@color/v_amber_muted"
                         android:textSize="18sp"
                         android:fontFamily="sans"
                         android:includeFontPadding="false"
@@ -511,8 +511,7 @@
                     android:orientation="horizontal"
                     android:background="@drawable/bg_red_card_24"
                     android:padding="16dp"
-                    android:layout_marginBottom="0dp"
-                    android:visibility="gone">
+                    android:layout_marginBottom="0dp">
                     <ImageView
                         android:id="@+id/item_destroy_icon"
                         android:layout_width="48dp"
@@ -532,14 +531,14 @@
                             style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Destroy Runtime"
+                            android:text="@string/controls_destroy_title"
                             android:textColor="@color/v_danger" />
                         <TextView
                             android:id="@+id/item_destroy_subtitle"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Irreversibly delete this instance"
+                            android:text="@string/controls_destroy_body"
                             android:textColor="@color/v_danger_muted"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>

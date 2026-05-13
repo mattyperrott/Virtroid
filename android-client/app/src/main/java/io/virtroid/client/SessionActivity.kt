@@ -365,7 +365,7 @@ class SessionActivity : AppCompatActivity() {
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 if (sessionId.isNotBlank()) {
                     val endResult = runCatching {
-                        api.endSession(baseUrl, accountId, deviceId, sessionId, blobAccessKey)
+                        api.endSession(baseUrl, accountId, deviceId, runtimeId, sessionId, blobAccessKey)
                     }
                     endResult.onFailure { error ->
                         if (!error.isGoneSessionResponse()) {
@@ -639,9 +639,12 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun io.virtroid.client.api.RuntimeSummary.isStoppedForSession(): Boolean {
-        val stopped = status.equals("stopped", ignoreCase = true) ||
-            desiredState.equals("stopped", ignoreCase = true)
-        return stopped && !connectionStatus.equals("online", ignoreCase = true)
+        val stopped = status.equals("stopped", ignoreCase = true)
+        val desiredStopped = desiredState.equals("stopped", ignoreCase = true)
+        val offline = connectionStatus.isBlank() ||
+            connectionStatus.equals("offline", ignoreCase = true) ||
+            connectionStatus.equals("disconnected", ignoreCase = true)
+        return stopped && desiredStopped && offline
     }
 
     private class StopTimeoutException : IOException()

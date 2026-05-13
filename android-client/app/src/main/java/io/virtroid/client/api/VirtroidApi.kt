@@ -2,7 +2,10 @@ package io.virtroid.client.api
 
 import io.virtroid.client.BuildConfig
 import io.virtroid.client.device.DeviceRuntimeProfile
+import io.virtroid.client.security.BlobKeyEnvelopeCrypto
+import io.virtroid.client.security.BlobKeyLease
 import io.virtroid.client.security.DeviceIdentityStore
+import io.virtroid.client.security.IdentityCrypto
 import io.virtroid.client.security.TlsPins
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -444,12 +447,16 @@ class VirtroidApi(
         bitRate: Int,
         blobAccessKey: String,
     ): SessionLaunch = withContext(Dispatchers.IO) {
+        val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
+        val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "session", blobKeyVerifier)
+        val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("account_id", accountId)
             .put("device_id", deviceId)
             .put("max_size", maxSize)
             .put("bit_rate", bitRate)
-            .put("blob_access_key", blobAccessKey)
+            .put("blob_key_verifier", blobKeyVerifier)
+            .put("blob_key_envelope", envelope)
             .toString()
 
         val payload = executeJson(
@@ -567,13 +574,18 @@ class VirtroidApi(
         baseUrl: String,
         accountId: String,
         deviceId: String,
+        runtimeId: String,
         sessionId: String,
         blobAccessKey: String,
     ): RuntimeSummary = withContext(Dispatchers.IO) {
+        val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
+        val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "stop", blobKeyVerifier)
+        val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("account_id", accountId)
             .put("device_id", deviceId)
-            .put("blob_access_key", blobAccessKey)
+            .put("blob_key_verifier", blobKeyVerifier)
+            .put("blob_key_envelope", envelope)
             .toString()
 
         executeJson(
@@ -605,6 +617,42 @@ class VirtroidApi(
         )
     }
 
+    private fun requestBlobKeyLease(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        operation: String,
+        blobKeyVerifier: String,
+    ): BlobKeyLease {
+        val requestBody = JSONObject()
+            .put("account_id", accountId)
+            .put("device_id", deviceId)
+            .put("operation", operation)
+            .put("blob_key_verifier", blobKeyVerifier)
+            .toString()
+
+        val payload = executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/blob-key-lease",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = requestBody,
+            ),
+        )
+
+        return BlobKeyLease(
+            leaseId = payload.getString("lease_id"),
+            runtimeId = payload.getString("runtime_id"),
+            hostId = payload.getString("host_id"),
+            operation = payload.getString("operation"),
+            algorithm = payload.getString("algorithm"),
+            nodePublicKey = payload.getString("node_public_key"),
+        )
+    }
+
     private suspend fun mutateRuntime(
         baseUrl: String,
         accountId: String,
@@ -613,10 +661,14 @@ class VirtroidApi(
         blobAccessKey: String,
         action: String,
     ): RuntimeSummary = withContext(Dispatchers.IO) {
+        val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
+        val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, action, blobKeyVerifier)
+        val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("account_id", accountId)
             .put("device_id", deviceId)
-            .put("blob_access_key", blobAccessKey)
+            .put("blob_key_verifier", blobKeyVerifier)
+            .put("blob_key_envelope", envelope)
             .toString()
 
         val payload = executeJson(

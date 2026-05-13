@@ -10,7 +10,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -373,31 +372,14 @@ func (n *nodeAgent) clearManifestChunks(runtime runtimeAssignment) error {
 }
 
 func (n *nodeAgent) runtimeBlobKey(runtime runtimeAssignment) ([]byte, error) {
-	key, expiresAt, err := n.fetchActiveBlobKey(context.Background(), runtime.ID)
+	envelope, expiresAt, err := n.fetchActiveBlobKey(context.Background(), runtime.ID)
 	if err != nil {
 		return nil, err
 	}
-	return decodeActiveBlobKey(key, expiresAt)
+	return n.decryptBlobKeyEnvelope(envelope, expiresAt)
 }
 
-func decodeActiveBlobKey(activeBlobKeyB64 string, expiresAt time.Time) ([]byte, error) {
-	if strings.TrimSpace(activeBlobKeyB64) == "" {
-		return nil, errors.New("runtime is missing active blob key")
-	}
-	if expiresAt.IsZero() || time.Now().UTC().After(expiresAt.UTC()) {
-		return nil, errors.New("runtime active blob key has expired")
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(activeBlobKeyB64))
-	if err != nil {
-		return nil, fmt.Errorf("decode active blob key: %w", err)
-	}
-	if len(raw) != 32 {
-		return nil, errors.New("active blob key has invalid length")
-	}
-	return raw, nil
-}
-
-func (n *nodeAgent) fetchActiveBlobKey(ctx context.Context, runtimeID string) (string, time.Time, error) {
+func (n *nodeAgent) fetchActiveBlobKey(ctx context.Context, runtimeID string) (blobKeyEnvelopePayload, time.Time, error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
@@ -405,34 +387,34 @@ func (n *nodeAgent) fetchActiveBlobKey(ctx context.Context, runtimeID string) (s
 		nil,
 	)
 	if err != nil {
-		return "", time.Time{}, err
+		return blobKeyEnvelopePayload{}, time.Time{}, err
 	}
 	if err := n.signControlPlaneRequest(req, nil, false); err != nil {
-		return "", time.Time{}, err
+		return blobKeyEnvelopePayload{}, time.Time{}, err
 	}
 
 	resp, err := n.controlPlane.Do(req)
 	if err != nil {
-		return "", time.Time{}, err
+		return blobKeyEnvelopePayload{}, time.Time{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", time.Time{}, fmt.Errorf("fetch active blob key: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return blobKeyEnvelopePayload{}, time.Time{}, fmt.Errorf("fetch active blob key envelope: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
 	var payload struct {
-		BlobKeyB64     string    `json:"blob_key_b64"`
-		BlobKeyExpires time.Time `json:"blob_key_expires_at"`
+		BlobKeyEnvelope blobKeyEnvelopePayload `json:"blob_key_envelope"`
+		BlobKeyExpires  time.Time              `json:"blob_key_expires_at"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", time.Time{}, err
+		return blobKeyEnvelopePayload{}, time.Time{}, err
 	}
-	if strings.TrimSpace(payload.BlobKeyB64) == "" || payload.BlobKeyExpires.IsZero() {
-		return "", time.Time{}, errors.New("blob key handoff response is incomplete")
+	if strings.TrimSpace(payload.BlobKeyEnvelope.Ciphertext) == "" || payload.BlobKeyExpires.IsZero() {
+		return blobKeyEnvelopePayload{}, time.Time{}, errors.New("blob key envelope handoff response is incomplete")
 	}
-	return strings.TrimSpace(payload.BlobKeyB64), payload.BlobKeyExpires, nil
+	return payload.BlobKeyEnvelope, payload.BlobKeyExpires, nil
 }
 
 func parseBlobManifest(raw *string) (*blobManifest, error) {

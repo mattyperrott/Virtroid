@@ -4,6 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -230,12 +238,11 @@ func TestExtractTarRejectsWriteThroughExistingSymlink(t *testing.T) {
 }
 
 func TestRuntimeBlobKeyRejectsExpiredKey(t *testing.T) {
-	encodedKey := base64.RawURLEncoding.EncodeToString(testBlobKey(1))
 	expiredAt := time.Now().UTC().Add(-time.Second)
 
-	_, err := decodeActiveBlobKey(encodedKey, expiredAt)
+	_, err := (&nodeAgent{}).decryptBlobKeyEnvelope(blobKeyEnvelopePayload{}, expiredAt)
 	if err == nil {
-		t.Fatal("runtimeBlobKey accepted expired key")
+		t.Fatal("runtimeBlobKey accepted expired envelope")
 	}
 	if !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("runtimeBlobKey error = %q, want expired", err.Error())
@@ -336,6 +343,11 @@ func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
 	runtimeID := "11111111-1111-1111-1111-111111111111"
 	dataDir := filepath.Join(root, runtimeID, "data")
 	writeFile(t, filepath.Join(dataDir, "app", "secret.db"), "plaintext")
+	nodePrivateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	envelope := testBlobKeyEnvelope(t, nodePrivateKey, runtimeID, "host-1", "stop", "lease-1", testBlobKey(1))
 
 	var blobKeyFetches int
 	var statusUpdates int
@@ -347,7 +359,7 @@ func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
 			}
 			blobKeyFetches++
 			writeJSONForTest(t, w, map[string]any{
-				"blob_key_b64":        base64.RawURLEncoding.EncodeToString(testBlobKey(1)),
+				"blob_key_envelope":   envelope,
 				"blob_key_expires_at": time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
 			})
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/status"):
@@ -378,6 +390,7 @@ func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
 				}, nil
 			}),
 		},
+		nodePrivateKey: nodePrivateKey,
 	}
 
 	if err := node.ensureRuntimeStopped(context.Background(), runtimeAssignment{
@@ -427,6 +440,58 @@ func testBlobKey(seed byte) []byte {
 		key[i] = seed
 	}
 	return key
+}
+
+func testBlobKeyEnvelope(t *testing.T, nodePrivateKey *ecdsa.PrivateKey, runtimeID, hostID, operation, leaseID string, blobKey []byte) blobKeyEnvelopePayload {
+	t.Helper()
+	ephemeralKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey ephemeral: %v", err)
+	}
+	ephemeralScalar := ephemeralKey.D.FillBytes(make([]byte, 32))
+	ephemeralECDH, err := ecdh.P256().NewPrivateKey(ephemeralScalar)
+	if err != nil {
+		t.Fatalf("NewPrivateKey ephemeral: %v", err)
+	}
+	nodePublicBytes := elliptic.Marshal(elliptic.P256(), nodePrivateKey.PublicKey.X, nodePrivateKey.PublicKey.Y)
+	nodeECDH, err := ecdh.P256().NewPublicKey(nodePublicBytes)
+	if err != nil {
+		t.Fatalf("NewPublicKey node: %v", err)
+	}
+	sharedSecret, err := ephemeralECDH.ECDH(nodeECDH)
+	if err != nil {
+		t.Fatalf("ECDH: %v", err)
+	}
+
+	envelope := blobKeyEnvelopePayload{
+		Version:   1,
+		Algorithm: blobKeyEnvelopeAlgorithm,
+		LeaseID:   leaseID,
+		Operation: operation,
+		RuntimeID: runtimeID,
+		HostID:    hostID,
+	}
+	aad := blobKeyEnvelopeAAD(envelope)
+	salt := sha256.Sum256(aad)
+	wrappingKey := hkdfSHA256(sharedSecret, salt[:], []byte("virtroid-blob-key-envelope-v1"), 32)
+	block, err := aes.NewCipher(wrappingKey)
+	if err != nil {
+		t.Fatalf("NewCipher: %v", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("NewGCM: %v", err)
+	}
+	iv := bytes.Repeat([]byte{7}, gcm.NonceSize())
+	ciphertext := gcm.Seal(nil, iv, blobKey, aad)
+	publicDER, err := x509.MarshalPKIXPublicKey(&ephemeralKey.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	envelope.EphemeralPublicKey = base64.StdEncoding.EncodeToString(publicDER)
+	envelope.IV = base64.StdEncoding.EncodeToString(iv)
+	envelope.Ciphertext = base64.StdEncoding.EncodeToString(ciphertext)
+	return envelope
 }
 
 func configForRenterdTest(serverURL, password string) config.NodeConfig {
