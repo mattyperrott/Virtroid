@@ -1,8 +1,9 @@
 package io.virtroid.client
 
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
-import android.content.Intent
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -54,7 +55,9 @@ class MainActivity : AppCompatActivity() {
     private val runtimeProvisioningStartedAtMs = mutableMapOf<String, Long>()
     private val runtimeProvisioningLastMessage = mutableMapOf<String, String>()
     private val reportedRuntimeErrors = mutableMapOf<String, String>()
+    private val locallyStoppingRuntimeIds = mutableSetOf<String>()
     private var latestEntitlement: EntitlementSummary? = null
+    private var latestRuntimes: List<RuntimeSummary> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,7 +112,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        handleRuntimeLifecycleIntent(intent)
         refreshRuntimes()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleRuntimeLifecycleIntent(intent)
+        refreshRuntimes(showBusy = false)
     }
 
     override fun onResume() {
@@ -156,6 +167,9 @@ class MainActivity : AppCompatActivity() {
                 RuntimeListState(runtimes, entitlement)
             }.onSuccess { state ->
                 latestEntitlement = state.entitlement
+                state.runtimes
+                    .filter { it.isStoppedForSession() }
+                    .forEach { locallyStoppingRuntimeIds.remove(it.id) }
                 renderRuntimes(state.runtimes, state.entitlement)
                 if (showBusy) {
                     setBusy(false)
@@ -212,6 +226,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderRuntimes(runtimes: List<RuntimeSummary>, entitlement: EntitlementSummary? = latestEntitlement) {
         latestEntitlement = entitlement
+        latestRuntimes = runtimes
         renderEntitlement(entitlement)
         binding.runtimeListContainer.removeAllViews()
         binding.runtimeEmptyText.isVisible = runtimes.isEmpty()
@@ -264,8 +279,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary) {
-        val isLive = runtime.isReadyForSession()
-        if (runtime.isTransitioning()) {
+        if (runtime.isStoppedForSession()) {
+            locallyStoppingRuntimeIds.remove(runtime.id)
+        }
+        val isLocallyStopping = runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()
+        val isLive = runtime.isReadyForSession() && !isLocallyStopping
+        if (runtime.isTransitioning() || isLocallyStopping) {
             runtimeProvisioningStartedAtMs.putIfAbsent(runtime.id, System.currentTimeMillis())
         } else {
             runtimeProvisioningStartedAtMs.remove(runtime.id)
@@ -273,10 +292,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         cardBinding.runtimeTitleText.text = runtime.name
-        cardBinding.runtimeSubtitleText.text = runtime.connectivityLabel(isLive)
+        cardBinding.runtimeSubtitleText.text = if (isLocallyStopping) {
+            getString(R.string.runtime_connectivity_stopping)
+        } else {
+            runtime.connectivityLabel(isLive)
+        }
         cardBinding.runtimeStatusDot.setBackgroundResource(
             when {
                 isLive -> R.drawable.bg_dot_accent
+                isLocallyStopping -> R.drawable.bg_dot_amber
                 runtime.isStartingForSession() -> R.drawable.bg_dot_amber
                 else -> R.drawable.bg_dot_muted
             },
@@ -300,21 +324,35 @@ class MainActivity : AppCompatActivity() {
         }
         cardBinding.connectRuntimeButton.isVisible = isLive
         cardBinding.runtimeActionRow.isVisible = !isLive
-        val provisioningMilestone = runtime.provisioningMilestone()
+        val provisioningMilestone = if (isLocallyStopping) {
+            runtime.stoppingMilestone()
+        } else {
+            runtime.provisioningMilestone()
+        }
         if (provisioningMilestone != null) {
             showRuntimeProvisioning(cardBinding, provisioningMilestone, animate = false)
         } else {
             hideRuntimeProvisioning(cardBinding)
         }
-        val actionsEnabled = provisioningMilestone == null
+        val actionsEnabled = provisioningMilestone == null && !isLocallyStopping
         cardBinding.startRuntimeButton.isEnabled = actionsEnabled && (latestEntitlement?.canStartRuntime ?: true)
         cardBinding.actionControlsButton.isEnabled = actionsEnabled
         cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled
 
         cardBinding.connectRuntimeButton.setOnClickListener {
+            if (isLocallyStopping) {
+                toast(getString(R.string.runtime_shutdown_in_progress))
+                refreshRuntimes(showBusy = false)
+                return@setOnClickListener
+            }
             connectRuntime(runtime)
         }
         cardBinding.startRuntimeButton.setOnClickListener {
+            if (isLocallyStopping) {
+                toast(getString(R.string.runtime_shutdown_in_progress))
+                refreshRuntimes(showBusy = false)
+                return@setOnClickListener
+            }
             latestEntitlement?.startRuntimeBlockedMessage(this)?.let { message ->
                 toast(message)
                 return@setOnClickListener
@@ -351,6 +389,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {
+        if (runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()) {
+            toast(getString(R.string.runtime_shutdown_in_progress))
+            refreshRuntimes(showBusy = false)
+            return
+        }
+
         activeSessionStore.loadForRuntime(runtime.id)?.let { session ->
             lifecycleScope.launch {
                 runCatching {
@@ -431,17 +475,34 @@ class MainActivity : AppCompatActivity() {
         runtime: RuntimeSummary,
         blobAccessKey: String,
     ): RuntimeSummary {
-        if (runtime.isReadyForSession()) {
-            return runtime
+        val currentRuntime = latestRuntimeSnapshot(baseUrl, accountId, deviceId, runtime.id)
+        if (currentRuntime.id in locallyStoppingRuntimeIds && !currentRuntime.isStoppedForSession()) {
+            throw IOException(getString(R.string.runtime_shutdown_in_progress))
+        }
+        if (currentRuntime.isReadyForSession()) {
+            return currentRuntime
         }
         latestEntitlement?.startRuntimeBlockedMessage(this)?.let { message ->
             throw IOException(message)
         }
 
         setBusy(true, getString(R.string.status_starting_runtime_for_session))
-        val profiledRuntime = updateRuntimeForViewerAspect(baseUrl, accountId, deviceId, runtime)
+        val profiledRuntime = updateRuntimeForViewerAspect(baseUrl, accountId, deviceId, currentRuntime)
         api.startRuntime(baseUrl, accountId, deviceId, profiledRuntime.id, blobAccessKey)
         return waitForRuntimeReady(baseUrl, accountId, deviceId, profiledRuntime.id)
+    }
+
+    private suspend fun latestRuntimeSnapshot(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+    ): RuntimeSummary {
+        val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
+        updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes)
+        renderRuntimes(runtimes)
+        return runtimes.firstOrNull { it.id == runtimeId }
+            ?: throw IOException(getString(R.string.runtime_missing_for_session))
     }
 
     private suspend fun updateRuntimeForViewerAspect(
@@ -571,7 +632,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateRuntimePolling(runtimes: List<RuntimeSummary>) {
-        val shouldPoll = runtimes.any { it.isTransitioning() }
+        val shouldPoll = runtimes.any { it.isTransitioning() || it.id in locallyStoppingRuntimeIds }
         if (!shouldPoll) {
             runtimePollJob?.cancel()
             runtimePollJob = null
@@ -615,7 +676,7 @@ class MainActivity : AppCompatActivity() {
         runtimes: List<RuntimeSummary>,
     ) {
         val transitioningIds = runtimes
-            .filter { it.isTransitioning() }
+            .filter { it.isTransitioning() || it.id in locallyStoppingRuntimeIds }
             .map { it.id }
             .toSet()
         runtimeProvisioningStartedAtMs.keys.removeAll { it !in transitioningIds }
@@ -752,6 +813,15 @@ class MainActivity : AppCompatActivity() {
         return status.equals("running", ignoreCase = true) &&
             connectionStatus.equals("online", ignoreCase = true) &&
             !hostId.isNullOrBlank()
+    }
+
+    private fun RuntimeSummary.isStoppedForSession(): Boolean {
+        val stopped = status.equals("stopped", ignoreCase = true)
+        val desiredStopped = desiredState.equals("stopped", ignoreCase = true)
+        val offline = connectionStatus.isBlank() ||
+            connectionStatus.equals("offline", ignoreCase = true) ||
+            connectionStatus.equals("disconnected", ignoreCase = true)
+        return stopped && desiredStopped && offline
     }
 
     private fun RuntimeSummary.connectivityLabel(isLive: Boolean): String {
@@ -902,6 +972,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun RuntimeSummary.stoppingMilestone(): RuntimeProvisioningMilestone {
+        val startedAt = runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
+        val elapsedMs = System.currentTimeMillis() - startedAt
+        val latest = runtimeProvisioningLastMessage[id]?.trim().orEmpty()
+        val detail = if (latest.isNotBlank()) {
+            if (latest.startsWith("...")) latest else "... $latest"
+        } else {
+            getString(R.string.runtime_lifecycle_detail_stopping)
+        }
+        return RuntimeProvisioningMilestone(
+            title = getString(R.string.runtime_lifecycle_title_stopping),
+            command = getString(R.string.runtime_lifecycle_command_stopping),
+            detail = detail,
+            events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+        )
+    }
+
+    private fun handleRuntimeLifecycleIntent(intent: Intent?) {
+        val stoppingRuntimeId = intent
+            ?.getStringExtra(EXTRA_STOPPING_RUNTIME_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: return
+        locallyStoppingRuntimeIds.add(stoppingRuntimeId)
+        activeSessionStore.clear()
+        if (latestRuntimes.isNotEmpty()) {
+            renderRuntimes(latestRuntimes)
+        }
+    }
+
     private fun provisioningEvents(elapsedMs: Long, latestRuntimeLog: String? = null): List<String> {
         val runtimeLog = latestRuntimeLog?.trim().orEmpty()
         if (runtimeLog.isNotBlank() && !runtimeLog.startsWith("...")) {
@@ -939,11 +1038,17 @@ class MainActivity : AppCompatActivity() {
         val entitlement: EntitlementSummary,
     )
 
-    private companion object {
+    companion object {
         val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
+        private const val EXTRA_STOPPING_RUNTIME_ID = "io.virtroid.client.extra.STOPPING_RUNTIME_ID"
         const val DEFAULT_SESSION_BIT_RATE = 4_000_000
         const val CONNECT_WAIT_ATTEMPTS = 45
         const val CONNECT_WAIT_DELAY_MS = 1_000L
         const val RUNTIME_POLL_DELAY_MS = 2_000L
+
+        fun createRuntimeStoppingIntent(context: Context, runtimeId: String): Intent {
+            return Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_STOPPING_RUNTIME_ID, runtimeId)
+        }
     }
 }

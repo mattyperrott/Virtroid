@@ -351,12 +351,16 @@ class SessionActivity : AppCompatActivity() {
         appLogs.info("Session shutdown requested: $reason", "session")
 
         binding.sessionSubtitleText.text = getString(R.string.session_secure_saving)
+        binding.sessionStreamStatusText.text = getString(R.string.session_shutdown_status)
+        binding.sessionStreamProgress.isVisible = true
+        binding.sessionStreamStatusOverlay.isVisible = true
+        binding.sessionRetryButton.isVisible = false
         setSessionActionsEnabled(false)
 
         if (runtimeId.isBlank() || accountId.isBlank() || deviceId.isBlank() || baseUrl.isBlank()) {
             appSettings.lastSessionEndReason = reason
             activeSessionStore.clear()
-            finish()
+            finishToRuntimeList(markRuntimeStopping = false)
             return
         }
 
@@ -388,14 +392,14 @@ class SessionActivity : AppCompatActivity() {
                 }
                 appLogs.info("Session ended: $reason", "session")
                 toast(getString(R.string.session_ended))
-                finish()
+                finishToRuntimeList(markRuntimeStopping = true)
             }.onFailure { error ->
                 if (error is StopTimeoutException) {
                     appSettings.lastSessionEndReason = reason
                     activeSessionStore.clear()
                     appLogs.warn("Session shutdown still pending after timeout", "session")
                     toast(getString(R.string.session_stop_pending))
-                    finish()
+                    finishToRuntimeList(markRuntimeStopping = true)
                 } else {
                     endingSession = false
                     setSessionActionsEnabled(true)
@@ -403,6 +407,18 @@ class SessionActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun finishToRuntimeList(markRuntimeStopping: Boolean) {
+        val intent = if (markRuntimeStopping && runtimeId.isNotBlank()) {
+            MainActivity.createRuntimeStoppingIntent(this, runtimeId)
+        } else {
+            Intent(this, MainActivity::class.java)
+        }
+        startActivity(
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        )
+        finish()
     }
 
     private fun navigateBackToApp() {
@@ -434,6 +450,7 @@ class SessionActivity : AppCompatActivity() {
                 runtime.connectionStatus.ifBlank { "offline" },
             )
             binding.sessionSubtitleText.text = status
+            binding.sessionStreamStatusText.text = status
 
             if (attempt < STOP_WAIT_ATTEMPTS - 1) {
                 delay(STOP_WAIT_DELAY_MS)
