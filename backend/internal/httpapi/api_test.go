@@ -93,12 +93,12 @@ func TestInternalRoutesRejectLegacySharedSecretWithoutNodeSignature(t *testing.T
 
 func TestActiveBlobKeyVaultExpires(t *testing.T) {
 	vault := newActiveBlobKeyVault()
-	expiresAt := vault.put(activeBlobKeyHandoff{
+	expiresAt := vault.putLease(activeBlobKeyLease{
 		AccountID: "account-1",
 		RuntimeID: "runtime-1",
 		HostID:    "host-1",
 		Operation: "start",
-		Key:       "key-1",
+		LeaseID:   "lease-1",
 	})
 	if !expiresAt.After(time.Now().UTC()) {
 		t.Fatal("vault returned non-future expiry")
@@ -107,55 +107,94 @@ func TestActiveBlobKeyVaultExpires(t *testing.T) {
 		t.Fatalf("vault expiry = %s, want roughly two minutes", expiresAt)
 	}
 
-	key, _, ok := vault.get("runtime-1", "host-1")
-	if !ok || key != "key-1" {
-		t.Fatalf("vault get = %q, %v; want key-1, true", key, ok)
+	envelope := testBlobKeyEnvelope("runtime-1", "host-1", "start", "lease-1")
+	if _, err := vault.activate(activeBlobKeyHandoff{
+		AccountID: "account-1",
+		RuntimeID: "runtime-1",
+		HostID:    "host-1",
+		Operation: "start",
+		LeaseID:   "lease-1",
+		Envelope:  envelope,
+	}); err != nil {
+		t.Fatalf("activate envelope: %v", err)
+	}
+
+	gotEnvelope, _, ok := vault.get("runtime-1", "host-1")
+	if !ok || gotEnvelope.Ciphertext != envelope.Ciphertext {
+		t.Fatalf("vault get = %+v, %v; want encrypted envelope", gotEnvelope, ok)
 	}
 	if _, _, ok := vault.get("runtime-1", "host-2"); ok {
-		t.Fatal("vault returned key for the wrong host")
+		t.Fatal("vault returned envelope for the wrong host")
 	}
 
 	vault.mu.Lock()
 	vault.keys["runtime-1"] = activeBlobKeyEntry{
-		accountID: "account-1",
-		runtimeID: "runtime-1",
-		hostID:    "host-1",
-		operation: "start",
-		key:       "key-1",
-		expiresAt: time.Now().UTC().Add(-time.Second),
+		accountID:   "account-1",
+		runtimeID:   "runtime-1",
+		hostID:      "host-1",
+		operation:   "start",
+		leaseID:     "lease-1",
+		envelope:    envelope,
+		hasEnvelope: true,
+		expiresAt:   time.Now().UTC().Add(-time.Second),
 	}
 	vault.mu.Unlock()
 
 	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
-		t.Fatal("vault returned expired active blob key")
+		t.Fatal("vault returned expired active blob key envelope")
 	}
 }
 
 func TestActiveBlobKeyVaultClearAccount(t *testing.T) {
 	vault := newActiveBlobKeyVault()
-	vault.put(activeBlobKeyHandoff{
+	vault.putLease(activeBlobKeyLease{
 		AccountID: "account-1",
 		RuntimeID: "runtime-1",
 		HostID:    "host-1",
 		Operation: "session",
-		Key:       "key-1",
+		LeaseID:   "lease-1",
 	})
-	vault.put(activeBlobKeyHandoff{
+	vault.putLease(activeBlobKeyLease{
 		AccountID: "account-2",
 		RuntimeID: "runtime-2",
 		HostID:    "host-1",
 		Operation: "session",
-		Key:       "key-2",
+		LeaseID:   "lease-2",
 	})
+	envelope := testBlobKeyEnvelope("runtime-2", "host-1", "session", "lease-2")
+	if _, err := vault.activate(activeBlobKeyHandoff{
+		AccountID: "account-2",
+		RuntimeID: "runtime-2",
+		HostID:    "host-1",
+		Operation: "session",
+		LeaseID:   "lease-2",
+		Envelope:  envelope,
+	}); err != nil {
+		t.Fatalf("activate envelope: %v", err)
+	}
 
 	vault.clearAccount("account-1")
 
 	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
-		t.Fatal("vault returned a key for the erased account")
+		t.Fatal("vault returned an envelope for the erased account")
 	}
-	key, _, ok := vault.get("runtime-2", "host-1")
-	if !ok || key != "key-2" {
-		t.Fatalf("vault get for other account = %q, %v; want key-2, true", key, ok)
+	gotEnvelope, _, ok := vault.get("runtime-2", "host-1")
+	if !ok || gotEnvelope.Ciphertext != envelope.Ciphertext {
+		t.Fatalf("vault get for other account = %+v, %v; want encrypted envelope", gotEnvelope, ok)
+	}
+}
+
+func testBlobKeyEnvelope(runtimeID, hostID, operation, leaseID string) blobKeyEnvelope {
+	return blobKeyEnvelope{
+		Version:            1,
+		Algorithm:          blobKeyEnvelopeAlgorithm,
+		LeaseID:            leaseID,
+		Operation:          operation,
+		RuntimeID:          runtimeID,
+		HostID:             hostID,
+		EphemeralPublicKey: "ephemeral-public-key",
+		IV:                 "iv",
+		Ciphertext:         "ciphertext",
 	}
 }
 

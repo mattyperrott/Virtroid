@@ -414,6 +414,9 @@ class ControlsActivity : AppCompatActivity() {
                 val deviceId = sessionStore.deviceId ?: return@setPositiveButton
                 lifecycleScope.launch {
                     runCatching {
+                        val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                        api.wipeRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                        identityPasswordStore.saveConfigured(accountId, deviceId)
                         activeSessionStore.loadForRuntime(current.id)?.let {
                             activeSessionStore.clear()
                         }

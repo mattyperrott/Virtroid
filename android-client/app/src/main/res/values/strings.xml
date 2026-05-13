@@ -104,7 +104,6 @@
 
     <string name="home_secure_client">VIRTROID CLIENT</string>
     <string name="home_title">My Runtimes</string>
-    <string name="home_subtitle">Development runtime nodes are not confidentially attested yet.</string>
     <string name="home_refresh">Refresh</string>
     <string name="home_access">Access</string>
     <string name="home_empty_title">No runtimes yet</string>
@@ -271,18 +270,18 @@
     <string name="controls_display_body">%1$dx%2$d • %3$ddpi</string>
     <string name="controls_logs_title">Console Logs</string>
     <string name="controls_logs_body">Boot &amp; network events</string>
-    <string name="controls_wipe_title">Wipe</string>
-    <string name="controls_wipe_body">Erase saved state and session data</string>
-    <string name="controls_destroy_title">Destroy</string>
-    <string name="controls_destroy_body">Irreversibly delete runtime</string>
+    <string name="controls_wipe_title">Wipe Runtime</string>
+    <string name="controls_wipe_body">Clear saved state, keep runtime</string>
+    <string name="controls_destroy_title">Wipe &amp; Delete Runtime</string>
+    <string name="controls_destroy_body">Clear saved state, then permanently delete runtime</string>
     <string name="controls_connect">Connect</string>
     <string name="controls_start">Start Runtime</string>
     <string name="controls_show_logs">Show Logs</string>
     <string name="controls_hide_logs">Hide Logs</string>
     <string name="controls_wipe_confirm_title">Wipe runtime?</string>
     <string name="controls_wipe_confirm_body">This removes the saved runtime state but keeps the runtime entry itself.</string>
-    <string name="controls_delete_confirm_title">Delete runtime?</string>
-    <string name="controls_delete_confirm_body">This permanently removes the runtime from your account.</string>
+    <string name="controls_delete_confirm_title">Wipe and delete runtime?</string>
+    <string name="controls_delete_confirm_body">This clears saved state, stops any active session, and permanently removes the runtime from your account.</string>
     <string name="controls_confirm">Confirm</string>
     <string name="controls_cancel">Cancel</string>
     <string name="controls_display_dialog_title">Display &amp; Output</string>
@@ -316,7 +315,7 @@
     <string name="session_back">Back</string>
     <string name="session_home">Home</string>
     <string name="session_apps">Apps</string>
-    <string name="session_disconnect">Disconnect</string>
+    <string name="session_disconnect">Shutdown runtime</string>
     <string name="session_back_to_app">Back to app</string>
     <string name="session_secure_online">Connected</string>
     <string name="session_camera">Camera</string>

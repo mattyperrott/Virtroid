@@ -363,6 +363,54 @@ func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentKey(t *testing.T) {
 	}
 }
 
+func TestVerifyDeviceBlobKeyVerifierAcceptsStoredVerifierWithoutRawKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	verifier := blobVerifierForTest(0x66)
+
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(verifier))
+
+	if err := st.VerifyDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, verifier); err != nil {
+		t.Fatalf("VerifyDeviceBlobKeyVerifier returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestVerifyDeviceBlobKeyVerifierRejectsWrongVerifier(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(blobVerifierForTest(0x77)))
+
+	err = st.VerifyDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, blobVerifierForTest(0x88))
+	if !errors.Is(err, ErrIdentityAuthFailed) {
+		t.Fatalf("VerifyDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityAuthFailed)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func blobAccessKeyForTest(fill byte) string {
 	raw := make([]byte, 32)
 	for i := range raw {

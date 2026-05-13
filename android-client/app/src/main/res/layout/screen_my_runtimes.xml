@@ -51,14 +51,6 @@
                     android:layout_height="wrap_content"
                     android:text="@string/home_title" />
 
-                <TextView
-                    android:id="@+id/trustModeText"
-                    style="@style/VirtroidText.Body.Compact"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="@string/home_subtitle"
-                    android:textColor="@color/v_text_muted" />
             </LinearLayout>
 
             <FrameLayout
