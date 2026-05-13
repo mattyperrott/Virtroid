@@ -70,6 +70,7 @@ class SessionActivity : AppCompatActivity() {
     private var inactivityJob: Job? = null
     private var heartbeatJob: Job? = null
     private var sessionUnavailable = false
+    private var heartbeatFailureCount = 0
 
     private val sessionCallback = object : ScrcpySessionHost.Callback {
         override fun onConnected(remoteWidth: Int, remoteHeight: Int) {
@@ -117,6 +118,7 @@ class SessionActivity : AppCompatActivity() {
                     sessionHost = null
                     failedHost?.destroy()
                     toast(getString(R.string.session_failed))
+                    checkSessionAfterStreamDisconnect(message)
                 }
             }
         }
@@ -335,6 +337,37 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionStreamStatusOverlay.isVisible = true
         binding.sessionRetryButton.isVisible = false
         connectViewer(surface)
+    }
+
+    private fun checkSessionAfterStreamDisconnect(message: String) {
+        if (sessionUnavailable ||
+            sessionId.isBlank() ||
+            baseUrl.isBlank() ||
+            accountId.isBlank() ||
+            deviceId.isBlank()
+        ) {
+            return
+        }
+
+        lifecycleScope.launch {
+            runCatching {
+                api.heartbeatSession(baseUrl, accountId, deviceId, sessionId)
+            }.onSuccess {
+                heartbeatFailureCount = 0
+                activeSessionStore.touch(sessionId)
+                markHeartbeatHealthy()
+            }.onFailure { error ->
+                if (error.isGoneSessionResponse()) {
+                    appLogs.warn("Session stream disconnected and backend session is gone: ${error.message}", "session")
+                    activeSessionStore.clear()
+                    relayToken = ""
+                    markSessionUnavailable()
+                    disconnectViewer()
+                } else {
+                    appLogs.warn("Session stream disconnected; backend session check will retry: $message / ${error.message}", "session")
+                }
+            }
+        }
     }
 
     private fun endSessionAndFinish() {
@@ -573,6 +606,7 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun markHeartbeatHealthy() {
+        heartbeatFailureCount = 0
         val heartbeatAt = LocalTime.now().format(HEARTBEAT_TIME_FORMAT)
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_accent)
         binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_ok, heartbeatAt)
@@ -605,6 +639,7 @@ class SessionActivity : AppCompatActivity() {
                 runCatching {
                     api.heartbeatSession(baseUrl, accountId, deviceId, sessionId)
                 }.onSuccess {
+                    heartbeatFailureCount = 0
                     activeSessionStore.touch(sessionId)
                     markHeartbeatHealthy()
                 }.onFailure { error ->
@@ -616,8 +651,11 @@ class SessionActivity : AppCompatActivity() {
                         disconnectViewer()
                         return@launch
                     }
+                    heartbeatFailureCount += 1
                     appLogs.warn("Active session heartbeat failed; keeping session handle for retry: ${error.message}", "session")
-                    markHeartbeatRetrying()
+                    if (heartbeatFailureCount >= HEARTBEAT_RETRY_VISIBLE_THRESHOLD) {
+                        markHeartbeatRetrying()
+                    }
                 }
                 delay(SESSION_HEARTBEAT_INTERVAL_MS)
             }
@@ -683,6 +721,7 @@ class SessionActivity : AppCompatActivity() {
         private const val STOP_WAIT_ATTEMPTS = 30
         private const val STOP_WAIT_DELAY_MS = 1_000L
         private const val SESSION_HEARTBEAT_INTERVAL_MS = 20_000L
+        private const val HEARTBEAT_RETRY_VISIBLE_THRESHOLD = 2
         private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182
         private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 

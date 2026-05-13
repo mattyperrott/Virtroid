@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -304,7 +305,7 @@ func TestRegisterDeviceBlobKeyVerifierAllowsInitialSetupWithoutCurrentKey(t *tes
 	}
 }
 
-func TestRegisterDeviceBlobKeyVerifierRequiresCurrentKeyForOverwrite(t *testing.T) {
+func TestRegisterDeviceBlobKeyVerifierRequiresCurrentVerifierForOverwrite(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -332,7 +333,7 @@ func TestRegisterDeviceBlobKeyVerifierRequiresCurrentKeyForOverwrite(t *testing.
 	}
 }
 
-func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentKey(t *testing.T) {
+func TestRegisterDeviceBlobKeyVerifierRejectsWrongCurrentVerifier(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -342,8 +343,36 @@ func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentKey(t *testing.T) {
 	st := &Store{db: db}
 	accountID := "11111111-1111-1111-1111-111111111111"
 	deviceID := "22222222-2222-2222-2222-222222222222"
-	oldAccessKey := blobAccessKeyForTest(0x44)
-	oldVerifier := blobVerifierFromAccessKeyForTest(t, oldAccessKey)
+	oldVerifier := blobVerifierForTest(0x44)
+	newVerifier := blobVerifierForTest(0x55)
+	wrongVerifier := blobVerifierForTest(0x99)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(oldVerifier))
+	mock.ExpectRollback()
+
+	err = st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, wrongVerifier)
+	if !errors.Is(err, ErrIdentityAuthFailed) {
+		t.Fatalf("RegisterDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityAuthFailed)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentVerifier(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	oldVerifier := blobVerifierForTest(0x44)
 	newVerifier := blobVerifierForTest(0x55)
 
 	mock.ExpectBegin()
@@ -355,7 +384,7 @@ func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentKey(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, oldAccessKey); err != nil {
+	if err := st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, oldVerifier); err != nil {
 		t.Fatalf("RegisterDeviceBlobKeyVerifier overwrite returned error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -424,14 +453,21 @@ func blobVerifierForTest(fill byte) string {
 }
 
 func blobVerifierFromAccessKeyForTest(t *testing.T, accessKey string) string {
-	_, raw, err := normalizeBlobAccessKey(accessKey)
+	raw, err := base64.RawURLEncoding.DecodeString(accessKey)
 	if err != nil {
 		if t == nil {
 			panic(err)
 		}
-		t.Fatalf("normalizeBlobAccessKey: %v", err)
+		t.Fatalf("decode blob access key: %v", err)
 	}
-	return blobKeyVerifier(raw)
+	if len(raw) != 32 {
+		if t == nil {
+			panic("blob access key has invalid length")
+		}
+		t.Fatalf("blob access key length = %d, want 32", len(raw))
+	}
+	sum := sha256.Sum256(append([]byte("virtroid-blob-verifier-v1:"), raw...))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func TestDeleteAccountReportsMissingAccount(t *testing.T) {

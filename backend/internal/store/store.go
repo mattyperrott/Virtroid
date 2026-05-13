@@ -1020,11 +1020,11 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(
 	accountID string,
 	deviceID string,
 	blobKeyVerifier string,
-	currentBlobAccessKey string,
+	currentBlobKeyVerifier string,
 ) error {
-	verifier := strings.TrimSpace(blobKeyVerifier)
-	if verifier == "" {
-		return ErrIdentityKeyRequired
+	verifier, err := normalizeBlobKeyVerifier(blobKeyVerifier)
+	if err != nil {
+		return err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1050,8 +1050,16 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(
 	}
 
 	if storedVerifier.Valid && strings.TrimSpace(storedVerifier.String) != "" {
-		if _, err := verifyBlobAccessKeyAgainstVerifier(currentBlobAccessKey, storedVerifier.String); err != nil {
+		stored, err := normalizeBlobKeyVerifier(storedVerifier.String)
+		if err != nil {
+			return ErrIdentityAuthFailed
+		}
+		current, err := normalizeBlobKeyVerifier(currentBlobKeyVerifier)
+		if err != nil {
 			return err
+		}
+		if subtle.ConstantTimeCompare([]byte(current), []byte(stored)) != 1 {
+			return ErrIdentityAuthFailed
 		}
 	}
 
@@ -1353,28 +1361,6 @@ func (s *Store) RememberNodeRequestNonce(ctx context.Context, nodeID, nonce stri
 	return tx.Commit()
 }
 
-func (s *Store) VerifyDeviceBlobAccessKey(ctx context.Context, accountID, deviceID, blobAccessKeyB64 string) (string, error) {
-	var storedVerifier sql.NullString
-	err := s.db.QueryRowContext(ctx,
-		`SELECT blob_key_verifier
-		 FROM devices
-		 WHERE account_id = $1 AND id = $2 AND revoked_at IS NULL`,
-		accountID,
-		deviceID,
-	).Scan(&storedVerifier)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrDeviceNotFound
-		}
-		return "", err
-	}
-	if !storedVerifier.Valid || strings.TrimSpace(storedVerifier.String) == "" {
-		return "", ErrIdentityNotFound
-	}
-
-	return verifyBlobAccessKeyAgainstVerifier(blobAccessKeyB64, storedVerifier.String)
-}
-
 func (s *Store) VerifyDeviceBlobKeyVerifier(ctx context.Context, accountID, deviceID, blobKeyVerifier string) error {
 	var storedVerifier sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -1393,11 +1379,15 @@ func (s *Store) VerifyDeviceBlobKeyVerifier(ctx context.Context, accountID, devi
 	if !storedVerifier.Valid || strings.TrimSpace(storedVerifier.String) == "" {
 		return ErrIdentityNotFound
 	}
-	verifier := strings.TrimSpace(blobKeyVerifier)
-	if verifier == "" {
-		return ErrIdentityKeyRequired
+	stored, err := normalizeBlobKeyVerifier(storedVerifier.String)
+	if err != nil {
+		return ErrIdentityAuthFailed
 	}
-	if subtle.ConstantTimeCompare([]byte(verifier), []byte(strings.TrimSpace(storedVerifier.String))) != 1 {
+	verifier, err := normalizeBlobKeyVerifier(blobKeyVerifier)
+	if err != nil {
+		return err
+	}
+	if subtle.ConstantTimeCompare([]byte(verifier), []byte(stored)) != 1 {
 		return ErrIdentityAuthFailed
 	}
 	return nil
@@ -3026,34 +3016,17 @@ func hashRelayToken(relayToken string) string {
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
-func normalizeBlobAccessKey(blobAccessKeyB64 string) (string, []byte, error) {
-	trimmed := strings.TrimSpace(blobAccessKeyB64)
+func normalizeBlobKeyVerifier(blobKeyVerifier string) (string, error) {
+	trimmed := strings.TrimSpace(blobKeyVerifier)
 	if trimmed == "" {
-		return "", nil, ErrIdentityKeyRequired
+		return "", ErrIdentityKeyRequired
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(trimmed)
 	if err != nil {
-		return "", nil, ErrIdentityAuthFailed
-	}
-	if len(raw) != 32 {
-		return "", nil, ErrIdentityAuthFailed
-	}
-	return base64.RawURLEncoding.EncodeToString(raw), raw, nil
-}
-
-func blobKeyVerifier(rawKey []byte) string {
-	sum := sha256.Sum256(append([]byte("virtroid-blob-verifier-v1:"), rawKey...))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-func verifyBlobAccessKeyAgainstVerifier(blobAccessKeyB64 string, verifier string) (string, error) {
-	canonicalKey, rawKey, err := normalizeBlobAccessKey(blobAccessKeyB64)
-	if err != nil {
-		return "", err
-	}
-	expected := blobKeyVerifier(rawKey)
-	if subtle.ConstantTimeCompare([]byte(expected), []byte(strings.TrimSpace(verifier))) != 1 {
 		return "", ErrIdentityAuthFailed
 	}
-	return canonicalKey, nil
+	if len(raw) != 32 {
+		return "", ErrIdentityAuthFailed
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }

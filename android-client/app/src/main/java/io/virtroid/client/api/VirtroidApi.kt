@@ -149,14 +149,14 @@ class VirtroidApi(
         accountId: String,
         deviceId: String,
         blobKeyVerifier: String,
-        currentBlobAccessKey: String? = null,
+        currentBlobKeyVerifier: String? = null,
     ) = withContext(Dispatchers.IO) {
         val requestJson = JSONObject()
             .put("account_id", accountId)
             .put("device_id", deviceId)
             .put("blob_key_verifier", blobKeyVerifier)
-        if (!currentBlobAccessKey.isNullOrBlank()) {
-            requestJson.put("current_blob_access_key", currentBlobAccessKey)
+        if (!currentBlobKeyVerifier.isNullOrBlank()) {
+            requestJson.put("current_blob_key_verifier", currentBlobKeyVerifier)
         }
         val requestBody = requestJson.toString()
 

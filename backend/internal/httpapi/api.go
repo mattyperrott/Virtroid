@@ -510,10 +510,10 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID            string `json:"account_id"`
-		DeviceID             string `json:"device_id"`
-		BlobKeyVerifier      string `json:"blob_key_verifier"`
-		CurrentBlobAccessKey string `json:"current_blob_access_key"`
+		AccountID              string `json:"account_id"`
+		DeviceID               string `json:"device_id"`
+		BlobKeyVerifier        string `json:"blob_key_verifier"`
+		CurrentBlobKeyVerifier string `json:"current_blob_key_verifier"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -534,7 +534,7 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 		accountID,
 		deviceID,
 		req.BlobKeyVerifier,
-		req.CurrentBlobAccessKey,
+		req.CurrentBlobKeyVerifier,
 	); err != nil {
 		switch err {
 		case store.ErrDeviceNotFound:

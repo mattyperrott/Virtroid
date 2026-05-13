@@ -330,7 +330,7 @@
     <string name="session_stream_receiving">Receiving live Android display...</string>
     <string name="session_heartbeat_pending">Relay heartbeat pending</string>
     <string name="session_heartbeat_ok">Relay OK • %1$s</string>
-    <string name="session_heartbeat_retrying">Relay heartbeat retrying</string>
+    <string name="session_heartbeat_retrying">Relay sync delayed</string>
     <string name="session_heartbeat_stale">Session no longer active</string>
     <string name="viewer_service_channel_name">Viewer sessions</string>
     <string name="viewer_service_notification_title">Virtroid viewer active</string>
