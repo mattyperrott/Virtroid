@@ -318,7 +318,7 @@ class AccountIdentityActivity : AppCompatActivity() {
     private fun resetIdentityPassword(accountId: String, deviceId: String) {
         lifecycleScope.launch {
             val configured = identityPasswordStore.isConfigured(accountId, deviceId)
-            val currentBlobAccessKey = if (configured) {
+            val currentBlobKeyVerifier = if (configured) {
                 val currentPassword = promptIdentityPassword(
                     title = getString(R.string.identity_password_title),
                     hint = getString(R.string.identity_password_current_prompt),
@@ -329,7 +329,9 @@ class AccountIdentityActivity : AppCompatActivity() {
                         toast(getString(R.string.identity_password_required))
                         return@launch
                     }
-                    else -> IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, currentPassword)
+                    else -> IdentityCrypto.blobKeyVerifier(
+                        IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, currentPassword),
+                    )
                 }
             } else {
                 null
@@ -356,7 +358,7 @@ class AccountIdentityActivity : AppCompatActivity() {
                     accountId = accountId,
                     deviceId = deviceId,
                     blobKeyVerifier = verifier,
-                    currentBlobAccessKey = currentBlobAccessKey,
+                    currentBlobKeyVerifier = currentBlobKeyVerifier,
                 )
                 identityPasswordStore.unlock(accountId, deviceId, password)
                 identityPasswordStore.saveConfigured(accountId, deviceId)

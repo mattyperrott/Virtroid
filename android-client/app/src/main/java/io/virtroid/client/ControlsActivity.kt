@@ -463,6 +463,7 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun RuntimeSummary.isReadyForSession(): Boolean {
         return status.equals("running", ignoreCase = true) &&
+            desiredState.equals("running", ignoreCase = true) &&
             connectionStatus.equals("online", ignoreCase = true) &&
             !hostId.isNullOrBlank()
     }
@@ -488,6 +489,7 @@ class ControlsActivity : AppCompatActivity() {
             status.equals("deleting", ignoreCase = true) ||
             status.equals("wiping", ignoreCase = true) ||
             status.equals("stopping", ignoreCase = true) ||
+            desiredState.equals("stopped", ignoreCase = true) && connectionStatus.equals("online", ignoreCase = true) ||
             status.equals("starting", ignoreCase = true) ||
             status.equals("provisioning", ignoreCase = true) ||
             connectionStatus.equals("connecting", ignoreCase = true) ||

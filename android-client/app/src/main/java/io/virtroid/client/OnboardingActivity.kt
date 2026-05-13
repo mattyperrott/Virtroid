@@ -175,8 +175,8 @@ class OnboardingActivity : AppCompatActivity() {
             showProvisioningLog()
             runCatching {
                 updateActiveMilestone(
-                    title = "Generating Encrypted Blob Key ...",
-                    command = "> derive blob_access_key",
+                    title = "Preparing Identity Verifier ...",
+                    command = "> derive identity verifier",
                     detail = "... using local identity password_",
                 )
                 registerBlobIdentity(

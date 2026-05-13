@@ -811,6 +811,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun RuntimeSummary.isReadyForSession(): Boolean {
         return status.equals("running", ignoreCase = true) &&
+            desiredState.equals("running", ignoreCase = true) &&
             connectionStatus.equals("online", ignoreCase = true) &&
             !hostId.isNullOrBlank()
     }
