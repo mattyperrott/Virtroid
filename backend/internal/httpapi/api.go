@@ -263,6 +263,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/me/devices", api.listMyDevices)
 	mux.HandleFunc("DELETE /api/v1/me/devices/{device_id}", api.revokeMyDevice)
 	mux.HandleFunc("POST /api/v1/me/identity/register", api.registerMyIdentity)
+	mux.HandleFunc("POST /api/v1/me/identity/change-password", api.changeMyIdentityPassword)
 	mux.HandleFunc("POST /api/v1/me/runtimes", api.createMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}", api.getMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/state", api.getMyRuntimeState)
@@ -528,10 +529,9 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID              string `json:"account_id"`
-		DeviceID               string `json:"device_id"`
-		BlobKeyVerifier        string `json:"blob_key_verifier"`
-		CurrentBlobKeyVerifier string `json:"current_blob_key_verifier"`
+		AccountID       string `json:"account_id"`
+		DeviceID        string `json:"device_id"`
+		BlobKeyVerifier string `json:"blob_key_verifier"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -552,6 +552,54 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 		accountID,
 		deviceID,
 		req.BlobKeyVerifier,
+	); err != nil {
+		switch err {
+		case store.ErrDeviceNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		case store.ErrIdentityKeyRequired:
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		case store.ErrIdentityAlreadySet:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (a *API) changeMyIdentityPassword(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		AccountID              string `json:"account_id"`
+		DeviceID               string `json:"device_id"`
+		BlobKeyVerifier        string `json:"blob_key_verifier"`
+		CurrentBlobKeyVerifier string `json:"current_blob_key_verifier"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if strings.TrimSpace(req.AccountID) != "" && strings.TrimSpace(req.AccountID) != accountID {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed account does not match request body"})
+		return
+	}
+	if strings.TrimSpace(req.DeviceID) != "" && strings.TrimSpace(req.DeviceID) != deviceID {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed device does not match request body"})
+		return
+	}
+
+	if err := a.store.ChangeDeviceBlobKeyVerifier(
+		r.Context(),
+		accountID,
+		deviceID,
+		req.BlobKeyVerifier,
 		req.CurrentBlobKeyVerifier,
 	); err != nil {
 		switch err {
@@ -559,7 +607,7 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		case store.ErrIdentityKeyRequired:
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		case store.ErrIdentityAuthFailed:
+		case store.ErrIdentityNotFound, store.ErrIdentityAuthFailed:
 			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		default:
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

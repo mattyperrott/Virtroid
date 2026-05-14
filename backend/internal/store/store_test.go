@@ -298,7 +298,7 @@ func TestRegisterDeviceBlobKeyVerifierAllowsInitialSetupWithoutCurrentKey(t *tes
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, verifier, ""); err != nil {
+	if err := st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, verifier); err != nil {
 		t.Fatalf("RegisterDeviceBlobKeyVerifier initial setup returned error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -306,7 +306,7 @@ func TestRegisterDeviceBlobKeyVerifierAllowsInitialSetupWithoutCurrentKey(t *tes
 	}
 }
 
-func TestRegisterDeviceBlobKeyVerifierRequiresCurrentVerifierForOverwrite(t *testing.T) {
+func TestRegisterDeviceBlobKeyVerifierRejectsOverwrite(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -325,16 +325,72 @@ func TestRegisterDeviceBlobKeyVerifierRequiresCurrentVerifierForOverwrite(t *tes
 		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(oldVerifier))
 	mock.ExpectRollback()
 
-	err = st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, "")
-	if !errors.Is(err, ErrIdentityKeyRequired) {
-		t.Fatalf("RegisterDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityKeyRequired)
+	err = st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier)
+	if !errors.Is(err, ErrIdentityAlreadySet) {
+		t.Fatalf("RegisterDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityAlreadySet)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
-func TestRegisterDeviceBlobKeyVerifierRejectsWrongCurrentVerifier(t *testing.T) {
+func TestChangeDeviceBlobKeyVerifierRequiresCurrentVerifier(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	oldVerifier := blobVerifierForTest(0x22)
+	newVerifier := blobVerifierForTest(0x33)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(oldVerifier))
+	mock.ExpectRollback()
+
+	err = st.ChangeDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, "")
+	if !errors.Is(err, ErrIdentityKeyRequired) {
+		t.Fatalf("ChangeDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityKeyRequired)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestChangeDeviceBlobKeyVerifierRejectsUnconfiguredIdentity(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	newVerifier := blobVerifierForTest(0x33)
+	currentVerifier := blobVerifierForTest(0x22)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(nil))
+	mock.ExpectRollback()
+
+	err = st.ChangeDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, currentVerifier)
+	if !errors.Is(err, ErrIdentityNotFound) {
+		t.Fatalf("ChangeDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityNotFound)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestChangeDeviceBlobKeyVerifierRejectsWrongCurrentVerifier(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -354,16 +410,16 @@ func TestRegisterDeviceBlobKeyVerifierRejectsWrongCurrentVerifier(t *testing.T) 
 		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(oldVerifier))
 	mock.ExpectRollback()
 
-	err = st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, wrongVerifier)
+	err = st.ChangeDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, wrongVerifier)
 	if !errors.Is(err, ErrIdentityAuthFailed) {
-		t.Fatalf("RegisterDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityAuthFailed)
+		t.Fatalf("ChangeDeviceBlobKeyVerifier error = %v, want %v", err, ErrIdentityAuthFailed)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
-func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentVerifier(t *testing.T) {
+func TestChangeDeviceBlobKeyVerifierOverwritesWithCurrentVerifier(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -385,8 +441,8 @@ func TestRegisterDeviceBlobKeyVerifierOverwritesWithCurrentVerifier(t *testing.T
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := st.RegisterDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, oldVerifier); err != nil {
-		t.Fatalf("RegisterDeviceBlobKeyVerifier overwrite returned error: %v", err)
+	if err := st.ChangeDeviceBlobKeyVerifier(context.Background(), accountID, deviceID, newVerifier, oldVerifier); err != nil {
+		t.Fatalf("ChangeDeviceBlobKeyVerifier overwrite returned error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
