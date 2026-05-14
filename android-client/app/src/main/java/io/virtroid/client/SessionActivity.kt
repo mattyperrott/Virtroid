@@ -351,11 +351,19 @@ class SessionActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             runCatching {
-                api.heartbeatSession(baseUrl, accountId, deviceId, sessionId)
+                api.getSessionState(baseUrl, accountId, deviceId, sessionId)
             }.onSuccess {
-                heartbeatFailureCount = 0
-                activeSessionStore.touch(sessionId)
-                markHeartbeatHealthy()
+                if (it.canResumeRuntime(runtimeId)) {
+                    heartbeatFailureCount = 0
+                    activeSessionStore.touch(sessionId)
+                    markHeartbeatHealthy()
+                } else {
+                    appLogs.warn("Session stream disconnected and backend state is ${it.effectiveStatus}", "session")
+                    activeSessionStore.clear()
+                    relayToken = ""
+                    markSessionUnavailable()
+                    disconnectViewer()
+                }
             }.onFailure { error ->
                 if (error.isGoneSessionResponse()) {
                     appLogs.warn("Session stream disconnected and backend session is gone: ${error.message}", "session")

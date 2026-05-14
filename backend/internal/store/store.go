@@ -291,6 +291,15 @@ type Session struct {
 	ExpiresAt             time.Time  `json:"expires_at"`
 }
 
+type SessionState struct {
+	Session         Session `json:"session"`
+	Runtime         Runtime `json:"runtime"`
+	EffectiveStatus string  `json:"effective_status"`
+	IsExpired       bool    `json:"is_expired"`
+	RuntimeReady    bool    `json:"runtime_ready"`
+	CanResume       bool    `json:"can_resume"`
+}
+
 type SessionRelayTarget struct {
 	SessionID  string `json:"session_id"`
 	RuntimeID  string `json:"runtime_id"`
@@ -1957,6 +1966,71 @@ func (s *Store) CloseSession(ctx context.Context, accountID, deviceID, sessionID
 	return nil
 }
 
+func (s *Store) GetSessionState(ctx context.Context, accountID, deviceID, sessionID string) (SessionState, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	sessionID = strings.TrimSpace(sessionID)
+	if accountID == "" || deviceID == "" || sessionID == "" {
+		return SessionState{}, ErrSessionNotFound
+	}
+
+	var session Session
+	var runtime Runtime
+	dest := []any{
+		&session.ID,
+		&session.RuntimeID,
+		&session.DeviceID,
+		&session.Status,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
+		&session.ExpiresAt,
+	}
+	dest = append(dest, scanRuntimeDest(&runtime)...)
+
+	err := s.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT s.id, s.runtime_id, s.device_id, s.status, s.created_at, s.updated_at,
+		                   s.last_client_heartbeat_at, s.ended_at, s.end_reason, s.expires_at,
+		                   %s
+		    FROM sessions AS s
+		    JOIN runtimes AS r ON r.id = s.runtime_id
+		   WHERE s.id = $1
+		     AND s.device_id = $2
+		     AND r.account_id = $3`,
+			runtimeColumnsWithAlias("r"),
+		),
+		sessionID,
+		deviceID,
+		accountID,
+	).Scan(dest...)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionState{}, ErrSessionNotFound
+		}
+		return SessionState{}, err
+	}
+
+	now := time.Now().UTC()
+	effectiveStatus, expired := effectiveSessionStatus(session, now)
+	runtimeReady := runtime.Status == "running" &&
+		runtime.DesiredState == "running" &&
+		runtime.ConnectionStatus == "online" &&
+		runtime.HostID != nil &&
+		runtime.ViewerPort != nil &&
+		runtime.DeletedAt == nil
+	canResume := runtimeReady && !expired && (effectiveStatus == "pending" || effectiveStatus == "active")
+	return SessionState{
+		Session:         session,
+		Runtime:         runtime,
+		EffectiveStatus: effectiveStatus,
+		IsExpired:       expired,
+		RuntimeReady:    runtimeReady,
+		CanResume:       canResume,
+	}, nil
+}
+
 func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceID, sessionID string) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -3014,6 +3088,26 @@ func generateRelayToken() (string, error) {
 func hashRelayToken(relayToken string) string {
 	digest := sha256.Sum256([]byte("virtroid-relay-token-v1:" + strings.TrimSpace(relayToken)))
 	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func effectiveSessionStatus(session Session, now time.Time) (string, bool) {
+	status := strings.ToLower(strings.TrimSpace(session.Status))
+	if status == "" {
+		status = "unknown"
+	}
+	expired := (status == "pending" || status == "active") && !session.ExpiresAt.After(now.UTC())
+	if expired {
+		return "expired", true
+	}
+	return status, false
+}
+
+func runtimeColumnsWithAlias(alias string) string {
+	parts := strings.Split(runtimeColumns, ", ")
+	for i, column := range parts {
+		parts[i] = alias + "." + column
+	}
+	return strings.Join(parts, ", ")
 }
 
 func normalizeBlobKeyVerifier(blobKeyVerifier string) (string, error) {

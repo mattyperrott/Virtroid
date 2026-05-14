@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/base64"
 	"errors"
 	"testing"
@@ -712,6 +713,100 @@ func TestHashRelayTokenDoesNotStoreBearerToken(t *testing.T) {
 	}
 }
 
+func TestGetSessionStateReturnsResumableActiveSession(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	sessionID := "55555555-5555-5555-5555-555555555555"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	hostID := "host-1"
+
+	mock.ExpectQuery("SELECT s.id, s.runtime_id").
+		WithArgs(sessionID, deviceID, accountID).
+		WillReturnRows(sessionStateRows(
+			now,
+			sessionID,
+			runtimeID,
+			deviceID,
+			"active",
+			now.Add(2*time.Minute),
+			accountID,
+			"running",
+			"running",
+			"online",
+			hostID,
+			46000,
+		))
+
+	state, err := st.GetSessionState(context.Background(), accountID, deviceID, sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionState returned error: %v", err)
+	}
+	if state.EffectiveStatus != "active" || state.IsExpired || !state.RuntimeReady || !state.CanResume {
+		t.Fatalf("state = %+v, want resumable active session", state)
+	}
+	if state.Runtime.ID != runtimeID || state.Session.ID != sessionID {
+		t.Fatalf("state IDs = session %s runtime %s", state.Session.ID, state.Runtime.ID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestGetSessionStateMarksExpiredSessionNotResumable(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	sessionID := "55555555-5555-5555-5555-555555555555"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	hostID := "host-1"
+
+	mock.ExpectQuery("SELECT s.id, s.runtime_id").
+		WithArgs(sessionID, deviceID, accountID).
+		WillReturnRows(sessionStateRows(
+			now,
+			sessionID,
+			runtimeID,
+			deviceID,
+			"active",
+			now.Add(-time.Second),
+			accountID,
+			"running",
+			"running",
+			"online",
+			hostID,
+			46000,
+		))
+
+	state, err := st.GetSessionState(context.Background(), accountID, deviceID, sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionState returned error: %v", err)
+	}
+	if state.EffectiveStatus != "expired" || !state.IsExpired || state.CanResume {
+		t.Fatalf("state = %+v, want expired non-resumable session", state)
+	}
+	if !state.RuntimeReady {
+		t.Fatal("runtime should still be reported ready even though session expired")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -928,40 +1023,16 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 }
 
 func runtimeRows(now time.Time, viewerPort any) *sqlmock.Rows {
-	return sqlmock.NewRows(runtimeColumnNames()).AddRow(
+	return sqlmock.NewRows(runtimeColumnNames()).AddRow(runtimeRowValues(
+		now,
 		"33333333-3333-3333-3333-333333333333",
 		"11111111-1111-1111-1111-111111111111",
-		"Primary runtime",
 		"stopped",
 		"stopped",
 		"offline",
 		nil,
-		1,
-		nil,
-		defaultAndroidImage,
-		"android-14",
-		720,
-		1600,
-		320,
-		true,
-		"disabled",
-		"upload-only",
-		true,
-		7,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
 		viewerPort,
-		false,
-		nil,
-		nil,
-		now,
-		now,
-	)
+	)...)
 }
 
 func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, personaVersion int, viewerPort int) *sqlmock.Rows {
@@ -999,6 +1070,106 @@ func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, person
 		now,
 		now,
 	)
+}
+
+func sessionStateRows(
+	now time.Time,
+	sessionID string,
+	runtimeID string,
+	deviceID string,
+	sessionStatus string,
+	expiresAt time.Time,
+	accountID string,
+	runtimeStatus string,
+	desiredState string,
+	connectionStatus string,
+	hostID any,
+	viewerPort any,
+) *sqlmock.Rows {
+	columns := append(
+		[]string{
+			"id",
+			"runtime_id",
+			"device_id",
+			"status",
+			"created_at",
+			"updated_at",
+			"last_client_heartbeat_at",
+			"ended_at",
+			"end_reason",
+			"expires_at",
+		},
+		runtimeColumnNames()...,
+	)
+	values := []driver.Value{
+		sessionID,
+		runtimeID,
+		deviceID,
+		sessionStatus,
+		now,
+		now,
+		now,
+		nil,
+		nil,
+		expiresAt,
+	}
+	values = append(values, runtimeRowValues(
+		now,
+		runtimeID,
+		accountID,
+		runtimeStatus,
+		desiredState,
+		connectionStatus,
+		hostID,
+		viewerPort,
+	)...)
+	return sqlmock.NewRows(columns).AddRow(values...)
+}
+
+func runtimeRowValues(
+	now time.Time,
+	runtimeID string,
+	accountID string,
+	status string,
+	desiredState string,
+	connectionStatus string,
+	hostID any,
+	viewerPort any,
+) []driver.Value {
+	return []driver.Value{
+		runtimeID,
+		accountID,
+		"Primary runtime",
+		status,
+		desiredState,
+		connectionStatus,
+		hostID,
+		1,
+		nil,
+		defaultAndroidImage,
+		"android-14",
+		720,
+		1600,
+		320,
+		true,
+		"disabled",
+		"upload-only",
+		true,
+		7,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		viewerPort,
+		false,
+		nil,
+		nil,
+		now,
+		now,
+	}
 }
 
 func entitlementRows(accountID string, now time.Time) *sqlmock.Rows {

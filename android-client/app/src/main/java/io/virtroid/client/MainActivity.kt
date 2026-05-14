@@ -162,7 +162,7 @@ class MainActivity : AppCompatActivity() {
                 appLogs.info("Refreshing runtime list", "runtime")
                 val entitlement = api.getEntitlement(baseUrl, accountId, deviceId)
                 val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
-                reconcileStoredActiveSession(baseUrl, accountId, deviceId, runtimes)
+                reconcileStoredActiveSession(baseUrl, accountId, deviceId)
                 updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes)
                 RuntimeListState(runtimes, entitlement)
             }.onSuccess { state ->
@@ -189,7 +189,6 @@ class MainActivity : AppCompatActivity() {
         baseUrl: String,
         accountId: String,
         deviceId: String,
-        runtimes: List<RuntimeSummary>,
     ) {
         val activeSession = activeSessionStore.load() ?: return
         if (
@@ -203,17 +202,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val runtime = runtimes.firstOrNull { it.id == activeSession.runtimeId }
-        if (runtime == null || !runtime.isReadyForSession()) {
-            activeSessionStore.clear()
-            appLogs.warn("Cleared stale active session for unavailable runtime", "session")
-            return
-        }
-
         runCatching {
-            api.heartbeatSession(baseUrl, accountId, deviceId, activeSession.sessionId)
+            api.getSessionState(baseUrl, accountId, deviceId, activeSession.sessionId)
         }.onSuccess {
-            activeSessionStore.touch(activeSession.sessionId)
+            if (it.canResumeRuntime(activeSession.runtimeId)) {
+                activeSessionStore.touch(activeSession.sessionId)
+            } else {
+                activeSessionStore.clear()
+                appLogs.warn("Cleared active session because backend state is ${it.effectiveStatus}", "session")
+            }
         }.onFailure { error ->
             if (error.isGoneSessionResponse()) {
                 activeSessionStore.clear()
@@ -398,11 +395,17 @@ class MainActivity : AppCompatActivity() {
         activeSessionStore.loadForRuntime(runtime.id)?.let { session ->
             lifecycleScope.launch {
                 runCatching {
-                    api.heartbeatSession(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
+                    api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
                 }.onSuccess {
-                    activeSessionStore.touch(session.sessionId)
-                    appLogs.info("Returning to active session for ${runtime.name}", "session")
-                    startActivity(SessionActivity.createIntent(this@MainActivity, session).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                    if (it.canResumeRuntime(runtime.id)) {
+                        activeSessionStore.touch(session.sessionId)
+                        appLogs.info("Returning to active session for ${runtime.name}", "session")
+                        startActivity(SessionActivity.createIntent(this@MainActivity, session).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                    } else {
+                        activeSessionStore.clear()
+                        appLogs.warn("Stored active session is ${it.effectiveStatus}; creating a fresh session", "session")
+                        connectRuntime(runtime)
+                    }
                 }.onFailure { error ->
                     if (error.isGoneSessionResponse()) {
                         activeSessionStore.clear()

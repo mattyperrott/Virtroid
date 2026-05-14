@@ -58,6 +58,29 @@ data class SessionLaunch(
     val viewerAddress: String,
 )
 
+data class SessionState(
+    val sessionId: String,
+    val runtimeId: String,
+    val status: String,
+    val effectiveStatus: String,
+    val canResume: Boolean,
+    val runtimeReady: Boolean,
+    val isExpired: Boolean,
+    val endedAt: String?,
+    val endReason: String?,
+    val runtime: RuntimeSummary?,
+) {
+    fun canResumeRuntime(expectedRuntimeId: String): Boolean {
+        val currentRuntime = runtime ?: return false
+        return canResume &&
+            runtimeId == expectedRuntimeId &&
+            currentRuntime.status.equals("running", ignoreCase = true) &&
+            currentRuntime.desiredState.equals("running", ignoreCase = true) &&
+            currentRuntime.connectionStatus.equals("online", ignoreCase = true) &&
+            !currentRuntime.hostId.isNullOrBlank()
+    }
+}
+
 data class RuntimeUpdate(
     val name: String,
     val androidImage: String,
@@ -570,6 +593,24 @@ class VirtroidApi(
         )
     }
 
+    suspend fun getSessionState(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        sessionId: String,
+    ): SessionState = withContext(Dispatchers.IO) {
+        val payload = executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/sessions/$sessionId?account_id=$accountId&device_id=$deviceId",
+                method = "GET",
+                accountId = accountId,
+                deviceId = deviceId,
+            ),
+        )
+        payload.toSessionState()
+    }
+
     suspend fun endSession(
         baseUrl: String,
         accountId: String,
@@ -770,6 +811,23 @@ class VirtroidApi(
             personaManufacturer = persona?.optString("manufacturer")?.ifBlank { null },
             personaRelease = persona?.optString("release")?.ifBlank { null },
             personaFingerprint = persona?.optString("fingerprint")?.ifBlank { null },
+        )
+    }
+
+    private fun JSONObject.toSessionState(): SessionState {
+        val session = getJSONObject("session")
+        val runtime = optJSONObject("runtime")?.toRuntimeSummary()
+        return SessionState(
+            sessionId = session.getString("id"),
+            runtimeId = session.getString("runtime_id"),
+            status = session.optString("status", ""),
+            effectiveStatus = optString("effective_status").ifBlank { session.optString("status", "") },
+            canResume = optBoolean("can_resume", false),
+            runtimeReady = optBoolean("runtime_ready", false),
+            isExpired = optBoolean("is_expired", false),
+            endedAt = session.optString("ended_at").ifBlank { null },
+            endReason = session.optString("end_reason").ifBlank { null },
+            runtime = runtime,
         )
     }
 
