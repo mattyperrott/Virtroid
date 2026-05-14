@@ -300,6 +300,22 @@ type SessionState struct {
 	CanResume       bool    `json:"can_resume"`
 }
 
+type RuntimeState struct {
+	Runtime                 Runtime `json:"runtime"`
+	CurrentDeviceSessionID  *string `json:"current_device_session_id,omitempty"`
+	EffectiveState          string  `json:"effective_state"`
+	RuntimeReady            bool    `json:"runtime_ready"`
+	HasActiveSession        bool    `json:"has_active_session"`
+	HasCurrentDeviceSession bool    `json:"has_current_device_session"`
+	CanConnect              bool    `json:"can_connect"`
+	CanStart                bool    `json:"can_start"`
+	CanStop                 bool    `json:"can_stop"`
+	CanWipe                 bool    `json:"can_wipe"`
+	CanDelete               bool    `json:"can_delete"`
+	IsBusy                  bool    `json:"is_busy"`
+	BlockedReason           string  `json:"blocked_reason,omitempty"`
+}
+
 type SessionRelayTarget struct {
 	SessionID  string `json:"session_id"`
 	RuntimeID  string `json:"runtime_id"`
@@ -834,7 +850,7 @@ func (s *Store) GetRuntime(ctx context.Context, accountID, runtimeID string) (Ru
 	var runtime Runtime
 	err := s.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT %s FROM runtimes
-		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL`, runtimeColumns),
+			 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL`, runtimeColumns),
 		accountID,
 		runtimeID,
 	).Scan(scanRuntimeDest(&runtime)...)
@@ -842,6 +858,63 @@ func (s *Store) GetRuntime(ctx context.Context, accountID, runtimeID string) (Ru
 		return Runtime{}, ErrRuntimeNotFound
 	}
 	return runtime, err
+}
+
+func (s *Store) GetRuntimeState(ctx context.Context, accountID, deviceID, runtimeID string) (RuntimeState, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	if accountID == "" || deviceID == "" || runtimeID == "" {
+		return RuntimeState{}, ErrRuntimeNotFound
+	}
+
+	var runtime Runtime
+	err := s.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM runtimes
+			 WHERE account_id = $1 AND id = $2`, runtimeColumns),
+		accountID,
+		runtimeID,
+	).Scan(scanRuntimeDest(&runtime)...)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RuntimeState{}, ErrRuntimeNotFound
+		}
+		return RuntimeState{}, err
+	}
+
+	var currentDeviceSessionID sql.NullString
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id
+		   FROM sessions
+		  WHERE runtime_id = $1
+		    AND device_id = $2
+		    AND status IN ('pending', 'active')
+		    AND expires_at > NOW()
+		  ORDER BY updated_at DESC
+		  LIMIT 1`,
+		runtimeID,
+		deviceID,
+	).Scan(&currentDeviceSessionID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return RuntimeState{}, err
+	}
+
+	var hasActiveSession bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+		     SELECT 1
+		       FROM sessions
+		      WHERE runtime_id = $1
+		        AND status IN ('pending', 'active')
+		        AND expires_at > NOW()
+		 )`,
+		runtimeID,
+	).Scan(&hasActiveSession); err != nil {
+		return RuntimeState{}, err
+	}
+
+	state := buildRuntimeState(runtime, hasActiveSession, currentDeviceSessionID)
+	return state, nil
 }
 
 func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID string, input UpdateRuntimeInput) (Runtime, error) {
@@ -2014,12 +2087,7 @@ func (s *Store) GetSessionState(ctx context.Context, accountID, deviceID, sessio
 
 	now := time.Now().UTC()
 	effectiveStatus, expired := effectiveSessionStatus(session, now)
-	runtimeReady := runtime.Status == "running" &&
-		runtime.DesiredState == "running" &&
-		runtime.ConnectionStatus == "online" &&
-		runtime.HostID != nil &&
-		runtime.ViewerPort != nil &&
-		runtime.DeletedAt == nil
+	runtimeReady := runtimeReadyForSession(runtime)
 	canResume := runtimeReady && !expired && (effectiveStatus == "pending" || effectiveStatus == "active")
 	return SessionState{
 		Session:         session,
@@ -3100,6 +3168,113 @@ func effectiveSessionStatus(session Session, now time.Time) (string, bool) {
 		return "expired", true
 	}
 	return status, false
+}
+
+func buildRuntimeState(runtime Runtime, hasActiveSession bool, currentDeviceSessionID sql.NullString) RuntimeState {
+	effectiveState := effectiveRuntimeState(runtime)
+	runtimeReady := runtimeReadyForSession(runtime)
+	isBusy := effectiveState == "starting" ||
+		effectiveState == "stopping" ||
+		effectiveState == "wiping" ||
+		effectiveState == "deleting"
+	deleted := effectiveState == "deleted" || runtime.DeletedAt != nil
+	hostAssigned := valueOrEmpty(runtime.HostID) != ""
+
+	canConnect := runtimeReady && !deleted
+	canStart := !deleted && !runtimeReady && !isBusy
+	canStop := !deleted && hostAssigned && !runtimeStoppedForSession(runtime) &&
+		effectiveState != "stopping" &&
+		effectiveState != "wiping" &&
+		effectiveState != "deleting"
+	canWipe := !deleted && !isBusy
+	canDelete := !deleted && effectiveState != "deleting"
+
+	blockedReason := ""
+	switch {
+	case deleted:
+		blockedReason = "runtime deleted"
+	case isBusy:
+		blockedReason = "runtime lifecycle operation is already in progress"
+	case runtime.Status == "error" && runtime.LastError != nil:
+		blockedReason = strings.TrimSpace(*runtime.LastError)
+	case !runtimeReady && !canStart:
+		blockedReason = "runtime is not ready"
+	}
+
+	var sessionID *string
+	if currentDeviceSessionID.Valid {
+		value := currentDeviceSessionID.String
+		sessionID = &value
+	}
+
+	return RuntimeState{
+		Runtime:                 runtime,
+		CurrentDeviceSessionID:  sessionID,
+		EffectiveState:          effectiveState,
+		RuntimeReady:            runtimeReady,
+		HasActiveSession:        hasActiveSession,
+		HasCurrentDeviceSession: currentDeviceSessionID.Valid,
+		CanConnect:              canConnect,
+		CanStart:                canStart,
+		CanStop:                 canStop,
+		CanWipe:                 canWipe,
+		CanDelete:               canDelete,
+		IsBusy:                  isBusy,
+		BlockedReason:           blockedReason,
+	}
+}
+
+func effectiveRuntimeState(runtime Runtime) string {
+	status := strings.ToLower(strings.TrimSpace(runtime.Status))
+	desiredState := strings.ToLower(strings.TrimSpace(runtime.DesiredState))
+	connectionStatus := strings.ToLower(strings.TrimSpace(runtime.ConnectionStatus))
+	switch {
+	case runtime.DeletedAt != nil || status == "deleted":
+		return "deleted"
+	case desiredState == "deleted" || status == "deleting":
+		return "deleting"
+	case status == "wiping" || runtime.WipeRequested:
+		return "wiping"
+	case status == "stopping" ||
+		connectionStatus == "disconnecting" ||
+		desiredState == "stopped" && connectionStatus == "online":
+		return "stopping"
+	case runtimeReadyForSession(runtime):
+		return "running"
+	case status == "error":
+		return "error"
+	case desiredState == "running" ||
+		status == "starting" ||
+		status == "provisioning" ||
+		connectionStatus == "connecting" ||
+		connectionStatus == "preparing":
+		return "starting"
+	case runtimeStoppedForSession(runtime) || status == "provisioned":
+		return "stopped"
+	case status != "":
+		return status
+	default:
+		return "unknown"
+	}
+}
+
+func runtimeReadyForSession(runtime Runtime) bool {
+	return runtime.Status == "running" &&
+		runtime.DesiredState == "running" &&
+		runtime.ConnectionStatus == "online" &&
+		runtime.HostID != nil &&
+		runtime.ViewerPort != nil &&
+		runtime.DeletedAt == nil
+}
+
+func runtimeStoppedForSession(runtime Runtime) bool {
+	stopped := strings.EqualFold(runtime.Status, "stopped") || strings.EqualFold(runtime.Status, "provisioned")
+	desiredStopped := strings.EqualFold(runtime.DesiredState, "stopped")
+	connectionStatus := strings.TrimSpace(runtime.ConnectionStatus)
+	offline := connectionStatus == "" ||
+		strings.EqualFold(connectionStatus, "offline") ||
+		strings.EqualFold(connectionStatus, "disconnected")
+	return stopped && desiredStopped && offline
 }
 
 func runtimeColumnsWithAlias(alias string) string {

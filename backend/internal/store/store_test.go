@@ -807,6 +807,88 @@ func TestGetSessionStateMarksExpiredSessionNotResumable(t *testing.T) {
 	}
 }
 
+func TestGetRuntimeStateReportsConnectableRuntimeAndCurrentSession(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	sessionID := "55555555-5555-5555-5555-555555555555"
+	hostID := "host-1"
+
+	mock.ExpectQuery("SELECT id, account_id").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "running", "running", "online", hostID, 46000))
+	mock.ExpectQuery("SELECT id").
+		WithArgs(runtimeID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(sessionID))
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs(runtimeID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	state, err := st.GetRuntimeState(context.Background(), accountID, deviceID, runtimeID)
+	if err != nil {
+		t.Fatalf("GetRuntimeState returned error: %v", err)
+	}
+	if state.EffectiveState != "running" || !state.RuntimeReady || !state.CanConnect || state.IsBusy {
+		t.Fatalf("state = %+v, want connectable running runtime", state)
+	}
+	if !state.HasActiveSession || !state.HasCurrentDeviceSession || state.CurrentDeviceSessionID == nil || *state.CurrentDeviceSessionID != sessionID {
+		t.Fatalf("session state = %+v, want current active session %s", state, sessionID)
+	}
+	if state.CanStart {
+		t.Fatal("running runtime should not report can_start")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestGetRuntimeStateReportsDeletingRuntimeAsBusy(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	hostID := "host-1"
+
+	mock.ExpectQuery("SELECT id, account_id").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "deleting", "deleted", "offline", hostID, 46000))
+	mock.ExpectQuery("SELECT id").
+		WithArgs(runtimeID, deviceID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs(runtimeID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	state, err := st.GetRuntimeState(context.Background(), accountID, deviceID, runtimeID)
+	if err != nil {
+		t.Fatalf("GetRuntimeState returned error: %v", err)
+	}
+	if state.EffectiveState != "deleting" || !state.IsBusy || state.CanConnect || state.CanStart || state.CanDelete {
+		t.Fatalf("state = %+v, want busy deleting runtime with actions blocked", state)
+	}
+	if state.HasActiveSession || state.HasCurrentDeviceSession {
+		t.Fatalf("session state = %+v, want no active sessions", state)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1031,6 +1113,28 @@ func runtimeRows(now time.Time, viewerPort any) *sqlmock.Rows {
 		"stopped",
 		"offline",
 		nil,
+		viewerPort,
+	)...)
+}
+
+func runtimeStateRows(
+	now time.Time,
+	runtimeID string,
+	accountID string,
+	status string,
+	desiredState string,
+	connectionStatus string,
+	hostID any,
+	viewerPort any,
+) *sqlmock.Rows {
+	return sqlmock.NewRows(runtimeColumnNames()).AddRow(runtimeRowValues(
+		now,
+		runtimeID,
+		accountID,
+		status,
+		desiredState,
+		connectionStatus,
+		hostID,
 		viewerPort,
 	)...)
 }

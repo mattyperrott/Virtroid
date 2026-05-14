@@ -17,6 +17,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
+import io.virtroid.client.api.RuntimeState
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.RuntimeUpdate
 import io.virtroid.client.api.VirtroidApi
@@ -244,6 +245,26 @@ class MainActivity : AppCompatActivity() {
             binding.runtimeListContainer.addView(cardBinding.root)
         }
         updateRuntimePolling(runtimes)
+    }
+
+    private fun mergeRuntimeSnapshot(runtime: RuntimeSummary) {
+        if (latestRuntimes.isEmpty()) {
+            latestRuntimes = listOf(runtime)
+        } else {
+            var replaced = false
+            latestRuntimes = latestRuntimes.map {
+                if (it.id == runtime.id) {
+                    replaced = true
+                    runtime
+                } else {
+                    it
+                }
+            }
+            if (!replaced) {
+                latestRuntimes = listOf(runtime) + latestRuntimes
+            }
+        }
+        renderRuntimes(latestRuntimes)
     }
 
     private fun renderEntitlement(entitlement: EntitlementSummary?) {
@@ -478,12 +499,19 @@ class MainActivity : AppCompatActivity() {
         runtime: RuntimeSummary,
         blobAccessKey: String,
     ): RuntimeSummary {
-        val currentRuntime = latestRuntimeSnapshot(baseUrl, accountId, deviceId, runtime.id)
+        val currentState = latestRuntimeState(baseUrl, accountId, deviceId, runtime.id)
+        val currentRuntime = currentState.runtime
         if (currentRuntime.id in locallyStoppingRuntimeIds && !currentRuntime.isStoppedForSession()) {
             throw IOException(getString(R.string.runtime_shutdown_in_progress))
         }
-        if (currentRuntime.isReadyForSession()) {
+        if (currentState.canConnectRuntime(runtime.id)) {
             return currentRuntime
+        }
+        if (currentState.effectiveState.equals("starting", ignoreCase = true)) {
+            return waitForRuntimeReady(baseUrl, accountId, deviceId, currentRuntime.id)
+        }
+        if (currentState.isBusy || currentState.effectiveState in setOf("stopping", "wiping", "deleting", "deleted")) {
+            throw IOException(currentState.blockedReason ?: getString(R.string.runtime_shutdown_in_progress))
         }
         latestEntitlement?.startRuntimeBlockedMessage(this)?.let { message ->
             throw IOException(message)
@@ -495,17 +523,16 @@ class MainActivity : AppCompatActivity() {
         return waitForRuntimeReady(baseUrl, accountId, deviceId, profiledRuntime.id)
     }
 
-    private suspend fun latestRuntimeSnapshot(
+    private suspend fun latestRuntimeState(
         baseUrl: String,
         accountId: String,
         deviceId: String,
         runtimeId: String,
-    ): RuntimeSummary {
-        val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
-        updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes)
-        renderRuntimes(runtimes)
-        return runtimes.firstOrNull { it.id == runtimeId }
-            ?: throw IOException(getString(R.string.runtime_missing_for_session))
+    ): RuntimeState {
+        val state = api.getRuntimeState(baseUrl, accountId, deviceId, runtimeId)
+        mergeRuntimeSnapshot(state.runtime)
+        updateProvisioningMetadata(baseUrl, accountId, deviceId, latestRuntimes)
+        return state
     }
 
     private suspend fun updateRuntimeForViewerAspect(
@@ -556,13 +583,10 @@ class MainActivity : AppCompatActivity() {
         runtimeId: String,
     ): RuntimeSummary {
         repeat(CONNECT_WAIT_ATTEMPTS) { attempt ->
-            val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
-            updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes)
-            renderRuntimes(runtimes)
-            val runtime = runtimes.firstOrNull { it.id == runtimeId }
-                ?: throw IOException(getString(R.string.runtime_missing_for_session))
+            val state = latestRuntimeState(baseUrl, accountId, deviceId, runtimeId)
+            val runtime = state.runtime
 
-            if (runtime.isReadyForSession()) {
+            if (state.canConnectRuntime(runtimeId)) {
                 return runtime
             }
 
@@ -576,7 +600,7 @@ class MainActivity : AppCompatActivity() {
                 true,
                 getString(
                     R.string.status_waiting_runtime_ready,
-                    runtime.status.ifBlank { "starting" },
+                    state.effectiveState.ifBlank { runtime.status.ifBlank { "starting" } },
                     runtime.connectionStatus.ifBlank { "offline" },
                 ),
             )

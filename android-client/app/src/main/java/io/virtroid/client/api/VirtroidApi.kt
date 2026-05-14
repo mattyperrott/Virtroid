@@ -81,6 +81,26 @@ data class SessionState(
     }
 }
 
+data class RuntimeState(
+    val runtime: RuntimeSummary,
+    val effectiveState: String,
+    val runtimeReady: Boolean,
+    val hasActiveSession: Boolean,
+    val hasCurrentDeviceSession: Boolean,
+    val currentDeviceSessionId: String?,
+    val canConnect: Boolean,
+    val canStart: Boolean,
+    val canStop: Boolean,
+    val canWipe: Boolean,
+    val canDelete: Boolean,
+    val isBusy: Boolean,
+    val blockedReason: String?,
+) {
+    fun canConnectRuntime(expectedRuntimeId: String): Boolean {
+        return canConnect && runtimeReady && runtime.id == expectedRuntimeId
+    }
+}
+
 data class RuntimeUpdate(
     val name: String,
     val androidImage: String,
@@ -430,6 +450,25 @@ class VirtroidApi(
 
             payload.toRuntimeSummary()
         }
+
+    suspend fun getRuntimeState(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+    ): RuntimeState = withContext(Dispatchers.IO) {
+        val payload = executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/state?account_id=$accountId&device_id=$deviceId",
+                method = "GET",
+                accountId = accountId,
+                deviceId = deviceId,
+            ),
+        )
+
+        payload.toRuntimeState()
+    }
 
     suspend fun listRuntimeLogs(
         baseUrl: String,
@@ -828,6 +867,24 @@ class VirtroidApi(
             endedAt = session.optString("ended_at").ifBlank { null },
             endReason = session.optString("end_reason").ifBlank { null },
             runtime = runtime,
+        )
+    }
+
+    private fun JSONObject.toRuntimeState(): RuntimeState {
+        return RuntimeState(
+            runtime = getJSONObject("runtime").toRuntimeSummary(),
+            effectiveState = optString("effective_state", "unknown"),
+            runtimeReady = optBoolean("runtime_ready", false),
+            hasActiveSession = optBoolean("has_active_session", false),
+            hasCurrentDeviceSession = optBoolean("has_current_device_session", false),
+            currentDeviceSessionId = optString("current_device_session_id").ifBlank { null },
+            canConnect = optBoolean("can_connect", false),
+            canStart = optBoolean("can_start", false),
+            canStop = optBoolean("can_stop", false),
+            canWipe = optBoolean("can_wipe", false),
+            canDelete = optBoolean("can_delete", false),
+            isBusy = optBoolean("is_busy", false),
+            blockedReason = optString("blocked_reason").ifBlank { null },
         )
     }
 

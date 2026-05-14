@@ -18,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeLogEntry
+import io.virtroid.client.api.RuntimeState
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.RuntimeUpdate
 import io.virtroid.client.api.VirtroidApi
@@ -42,6 +43,7 @@ class ControlsActivity : AppCompatActivity() {
     private lateinit var appLogs: AppLogStore
     private var runtimeId: String = ""
     private var runtime: RuntimeSummary? = null
+    private var runtimeState: RuntimeState? = null
     private var entitlement: EntitlementSummary? = null
     private var logsExpanded = false
     private val displayBodyText by lazy { findViewById<android.widget.TextView>(R.id.controlsDisplayBodyText) }
@@ -96,14 +98,13 @@ class ControlsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching {
                 val entitlement = api.getEntitlement(sessionStore.baseUrl, accountId, deviceId)
-                val runtime = api.listRuntimes(sessionStore.baseUrl, accountId, deviceId)
-                    .firstOrNull { it.id == runtimeId }
-                    ?: throw IOException(getString(R.string.runtime_missing_for_session))
-                ControlsState(runtime, entitlement)
+                val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
+                ControlsState(state.runtime, entitlement, state)
             }.onSuccess { loaded ->
                 runtime = loaded.runtime
+                runtimeState = loaded.runtimeState
                 entitlement = loaded.entitlement
-                bindRuntime(loaded.runtime)
+                bindRuntime(loaded.runtime, loaded.runtimeState)
             }.onFailure {
                 toast(it.virtroidDisplayMessage(this@ControlsActivity))
                 finish()
@@ -111,7 +112,7 @@ class ControlsActivity : AppCompatActivity() {
         }
     }
 
-    private fun bindRuntime(runtime: RuntimeSummary) {
+    private fun bindRuntime(runtime: RuntimeSummary, state: RuntimeState? = runtimeState) {
         binding.controlsRuntimeNameText.text = runtime.name
         binding.controlsRuntimeSubtitleText.text = getString(R.string.controls_runtime_subtitle, runtime.id)
         binding.controlsStateValue.text = runtime.lifecycleLabel()
@@ -133,10 +134,12 @@ class ControlsActivity : AppCompatActivity() {
             runtime.heightPx,
             runtime.densityDpi,
         )
-        val lifecycleBusy = runtime.isLifecycleBusy()
-        binding.controlsConnectButton.isEnabled = !lifecycleBusy || runtime.isReadyForSession()
-        binding.wipeRow.isEnabled = !lifecycleBusy
-        binding.destroyRow.isEnabled = !lifecycleBusy
+        val lifecycleBusy = state?.isBusy ?: runtime.isLifecycleBusy()
+        binding.controlsConnectButton.isEnabled = state?.let {
+            it.canConnect || it.canStart || it.effectiveState.equals("starting", ignoreCase = true)
+        } ?: (!lifecycleBusy || runtime.isReadyForSession())
+        binding.wipeRow.isEnabled = state?.canWipe ?: !lifecycleBusy
+        binding.destroyRow.isEnabled = state?.canDelete ?: !lifecycleBusy
         binding.displayOutputRow.isEnabled = !lifecycleBusy
     }
 
@@ -220,6 +223,7 @@ class ControlsActivity : AppCompatActivity() {
                 )
             }.onSuccess {
                 runtime = it
+                runtimeState = null
                 bindRuntime(it)
                 toast(getString(R.string.runtime_saved))
             }.onFailure {
@@ -268,6 +272,7 @@ class ControlsActivity : AppCompatActivity() {
                         updated
                     }.onSuccess {
                         runtime = it
+                        runtimeState = null
                         bindRuntime(it)
                         toast(getString(R.string.status_wiping_runtime))
                     }.onFailure {
@@ -285,25 +290,33 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun connectOrStart() {
         val current = runtime ?: return
-        if (current.isReadyForSession()) {
-            connectRuntime(current)
-            return
-        }
-        entitlement?.startRuntimeBlockedMessage(this)?.let {
-            toast(it)
-            return
-        }
-
         lifecycleScope.launch {
             runCatching {
                 val accountId = sessionStore.accountId ?: throw IOException(getString(R.string.account_missing))
                 val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
+                val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, current.id)
+                runtime = state.runtime
+                runtimeState = state
+                bindRuntime(state.runtime, state)
+                if (state.canConnectRuntime(current.id)) {
+                    return@runCatching state.runtime
+                }
+                if (state.effectiveState.equals("starting", ignoreCase = true)) {
+                    return@runCatching waitForRuntimeReady(accountId, deviceId, state.runtime.id)
+                }
+                if (!state.canStart) {
+                    throw IOException(state.blockedReason ?: state.effectiveState.ifBlank { getString(R.string.runtime_missing_for_session) })
+                }
+                entitlement?.startRuntimeBlockedMessage(this@ControlsActivity)?.let {
+                    throw IOException(it)
+                }
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                api.startRuntime(sessionStore.baseUrl, accountId, deviceId, state.runtime.id, blobAccessKey)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
-                waitForRuntimeReady(accountId, deviceId, current.id)
+                waitForRuntimeReady(accountId, deviceId, state.runtime.id)
             }.onSuccess {
                 runtime = it
+                runtimeState = null
                 bindRuntime(it)
                 connectRuntime(it)
             }.onFailure {
@@ -314,11 +327,12 @@ class ControlsActivity : AppCompatActivity() {
 
     private suspend fun waitForRuntimeReady(accountId: String, deviceId: String, runtimeId: String): RuntimeSummary {
         repeat(CONNECT_WAIT_ATTEMPTS) { attempt ->
-            val loaded = api.listRuntimes(sessionStore.baseUrl, accountId, deviceId)
-                .firstOrNull { it.id == runtimeId }
-                ?: throw IOException(getString(R.string.runtime_missing_for_session))
-            if (loaded.isReadyForSession()) {
-                return loaded
+            val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
+            runtime = state.runtime
+            runtimeState = state
+            bindRuntime(state.runtime, state)
+            if (state.canConnectRuntime(runtimeId)) {
+                return state.runtime
             }
             if (attempt < CONNECT_WAIT_ATTEMPTS - 1) {
                 delay(CONNECT_WAIT_DELAY_MS)
@@ -367,25 +381,33 @@ class ControlsActivity : AppCompatActivity() {
         binding.controlsStateValue.text = getString(R.string.controls_state_preparing_viewer)
         lifecycleScope.launch {
             runCatching {
+                val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtime.id)
+                runtimeState = state
+                this@ControlsActivity.runtime = state.runtime
+                bindRuntime(state.runtime, state)
+                binding.controlsConnectButton.isEnabled = false
+                if (!state.canConnectRuntime(runtime.id)) {
+                    throw IOException(state.blockedReason ?: getString(R.string.runtime_start_timeout))
+                }
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                 val session = api.createSession(
                     baseUrl = sessionStore.baseUrl,
                     accountId = accountId,
                     deviceId = deviceId,
-                    runtimeId = runtime.id,
+                    runtimeId = state.runtime.id,
                     maxSize = sessionMaxSize(),
                     bitRate = DEFAULT_SESSION_BIT_RATE,
                     blobAccessKey = blobAccessKey,
                 )
                 identityPasswordStore.saveConfigured(accountId, deviceId)
-                session
-            }.onSuccess { session ->
+                Pair(session, state.runtime)
+            }.onSuccess { (session, readyRuntime) ->
                 val activeSession = ActiveSessionStore.ActiveSession(
                     accountId = accountId,
                     deviceId = deviceId,
                     baseUrl = sessionStore.baseUrl,
-                    runtimeId = runtime.id,
-                    runtimeName = runtime.name,
+                    runtimeId = readyRuntime.id,
+                    runtimeName = readyRuntime.name,
                     viewerAddress = session.viewerAddress,
                     relayHost = session.relayHost,
                     relayPort = session.relayPort,
@@ -396,7 +418,7 @@ class ControlsActivity : AppCompatActivity() {
                     viewerPublicKey = session.viewerPublicKey,
                 )
                 activeSessionStore.save(activeSession)
-                appLogs.info("Session created from controls for ${runtime.name}", "session")
+                appLogs.info("Session created from controls for ${readyRuntime.name}", "session")
                 startActivity(
                     SessionActivity.createIntent(this@ControlsActivity, activeSession),
                 )
@@ -527,5 +549,6 @@ class ControlsActivity : AppCompatActivity() {
     private data class ControlsState(
         val runtime: RuntimeSummary,
         val entitlement: EntitlementSummary,
+        val runtimeState: RuntimeState,
     )
 }

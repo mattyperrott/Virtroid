@@ -477,17 +477,23 @@ class SessionActivity : AppCompatActivity() {
 
     private suspend fun waitForRuntimeStopped() {
         repeat(STOP_WAIT_ATTEMPTS) { attempt ->
-            val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
-            val runtime = runtimes.firstOrNull { it.id == runtimeId }
-                ?: return
+            val state = runCatching {
+                api.getRuntimeState(baseUrl, accountId, deviceId, runtimeId)
+            }.getOrElse { error ->
+                if (error.isGoneSessionResponse()) {
+                    return
+                }
+                throw error
+            }
+            val runtime = state.runtime
 
-            if (runtime.isStoppedForSession()) {
+            if (runtime.isStoppedForSession() || state.effectiveState.equals("deleted", ignoreCase = true)) {
                 return
             }
 
             val status = getString(
                 R.string.status_waiting_runtime_stop,
-                runtime.status.ifBlank { "stopping" },
+                state.effectiveState.ifBlank { runtime.status.ifBlank { "stopping" } },
                 runtime.connectionStatus.ifBlank { "offline" },
             )
             binding.sessionSubtitleText.text = status
