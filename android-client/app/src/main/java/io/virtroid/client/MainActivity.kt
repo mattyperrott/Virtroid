@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private val locallyStoppingRuntimeIds = mutableSetOf<String>()
     private var latestEntitlement: EntitlementSummary? = null
     private var latestRuntimes: List<RuntimeSummary> = emptyList()
+    private var latestRuntimeStates: Map<String, RuntimeState> = emptyMap()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -162,16 +163,22 @@ class MainActivity : AppCompatActivity() {
             runCatching {
                 appLogs.info("Refreshing runtime list", "runtime")
                 val entitlement = api.getEntitlement(baseUrl, accountId, deviceId)
-                val runtimes = api.listRuntimes(baseUrl, accountId, deviceId)
+                val runtimeStates = api.listRuntimeStates(baseUrl, accountId, deviceId)
+                val runtimes = runtimeStates.map { it.runtime }
+                val stateByRuntimeId = runtimeStates.associateBy { it.runtime.id }
                 reconcileStoredActiveSession(baseUrl, accountId, deviceId)
-                updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes)
-                RuntimeListState(runtimes, entitlement)
+                updateProvisioningMetadata(baseUrl, accountId, deviceId, runtimes, stateByRuntimeId)
+                RuntimeListState(runtimeStates, entitlement)
             }.onSuccess { state ->
                 latestEntitlement = state.entitlement
-                state.runtimes
-                    .filter { it.isStoppedForSession() }
+                state.runtimeStates
+                    .map { it.runtime }
+                    .filter { runtime ->
+                        val runtimeState = state.runtimeStates.firstOrNull { it.runtime.id == runtime.id }
+                        runtime.isStoppedForSession() || runtimeState?.effectiveState.equals("stopped", ignoreCase = true)
+                    }
                     .forEach { locallyStoppingRuntimeIds.remove(it.id) }
-                renderRuntimes(state.runtimes, state.entitlement)
+                renderRuntimeStates(state.runtimeStates, state.entitlement)
                 if (showBusy) {
                     setBusy(false)
                 }
@@ -222,9 +229,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderRuntimes(runtimes: List<RuntimeSummary>, entitlement: EntitlementSummary? = latestEntitlement) {
+    private fun renderRuntimeStates(runtimeStates: List<RuntimeState>, entitlement: EntitlementSummary? = latestEntitlement) {
+        renderRuntimes(
+            runtimes = runtimeStates.map { it.runtime },
+            entitlement = entitlement,
+            stateByRuntimeId = runtimeStates.associateBy { it.runtime.id },
+        )
+    }
+
+    private fun renderRuntimes(
+        runtimes: List<RuntimeSummary>,
+        entitlement: EntitlementSummary? = latestEntitlement,
+        stateByRuntimeId: Map<String, RuntimeState> = latestRuntimeStates,
+    ) {
         latestEntitlement = entitlement
         latestRuntimes = runtimes
+        latestRuntimeStates = stateByRuntimeId
         renderEntitlement(entitlement)
         binding.runtimeListContainer.removeAllViews()
         binding.runtimeEmptyText.isVisible = runtimes.isEmpty()
@@ -241,10 +261,15 @@ class MainActivity : AppCompatActivity() {
         val inflater = LayoutInflater.from(this)
         runtimes.forEach { runtime ->
             val cardBinding = RuntimeCardBinding.inflate(inflater, binding.runtimeListContainer, false)
-            bindRuntimeCard(cardBinding, runtime)
+            bindRuntimeCard(cardBinding, runtime, stateByRuntimeId[runtime.id])
             binding.runtimeListContainer.addView(cardBinding.root)
         }
         updateRuntimePolling(runtimes)
+    }
+
+    private fun mergeRuntimeState(state: RuntimeState) {
+        latestRuntimeStates = latestRuntimeStates + (state.runtime.id to state)
+        mergeRuntimeSnapshot(state.runtime)
     }
 
     private fun mergeRuntimeSnapshot(runtime: RuntimeSummary) {
@@ -296,13 +321,15 @@ class MainActivity : AppCompatActivity() {
         binding.createRuntimeButton.isEnabled = !binding.progressIndicator.isVisible && entitlement.canCreateRuntime
     }
 
-    private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary) {
-        if (runtime.isStoppedForSession()) {
+    private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary, state: RuntimeState?) {
+        val effectiveState = state?.effectiveState.orEmpty()
+        if (runtime.isStoppedForSession() || effectiveState.equals("stopped", ignoreCase = true)) {
             locallyStoppingRuntimeIds.remove(runtime.id)
         }
         val isLocallyStopping = runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()
-        val isLive = runtime.isReadyForSession() && !isLocallyStopping
-        if (runtime.isTransitioning() || isLocallyStopping) {
+        val isLive = (state?.canConnectRuntime(runtime.id) ?: runtime.isReadyForSession()) && !isLocallyStopping
+        val isBusy = state?.needsRuntimePolling() ?: runtime.isTransitioning()
+        if (isBusy || isLocallyStopping) {
             runtimeProvisioningStartedAtMs.putIfAbsent(runtime.id, System.currentTimeMillis())
         } else {
             runtimeProvisioningStartedAtMs.remove(runtime.id)
@@ -313,13 +340,13 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeSubtitleText.text = if (isLocallyStopping) {
             getString(R.string.runtime_connectivity_stopping)
         } else {
-            runtime.connectivityLabel(isLive)
+            state?.connectivityLabel(isLive) ?: runtime.connectivityLabel(isLive)
         }
         cardBinding.runtimeStatusDot.setBackgroundResource(
             when {
                 isLive -> R.drawable.bg_dot_accent
                 isLocallyStopping -> R.drawable.bg_dot_amber
-                runtime.isStartingForSession() -> R.drawable.bg_dot_amber
+                isBusy -> R.drawable.bg_dot_amber
                 else -> R.drawable.bg_dot_muted
             },
         )
@@ -345,7 +372,7 @@ class MainActivity : AppCompatActivity() {
         val provisioningMilestone = if (isLocallyStopping) {
             runtime.stoppingMilestone()
         } else {
-            runtime.provisioningMilestone()
+            runtime.provisioningMilestone(effectiveState)
         }
         if (provisioningMilestone != null) {
             showRuntimeProvisioning(cardBinding, provisioningMilestone, animate = false)
@@ -353,9 +380,11 @@ class MainActivity : AppCompatActivity() {
             hideRuntimeProvisioning(cardBinding)
         }
         val actionsEnabled = provisioningMilestone == null && !isLocallyStopping
-        cardBinding.startRuntimeButton.isEnabled = actionsEnabled && (latestEntitlement?.canStartRuntime ?: true)
+        cardBinding.startRuntimeButton.isEnabled = actionsEnabled &&
+            (state?.canStart ?: true) &&
+            (latestEntitlement?.canStartRuntime ?: true)
         cardBinding.actionControlsButton.isEnabled = actionsEnabled
-        cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled
+        cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
 
         cardBinding.connectRuntimeButton.setOnClickListener {
             if (isLocallyStopping) {
@@ -530,7 +559,7 @@ class MainActivity : AppCompatActivity() {
         runtimeId: String,
     ): RuntimeState {
         val state = api.getRuntimeState(baseUrl, accountId, deviceId, runtimeId)
-        mergeRuntimeSnapshot(state.runtime)
+        mergeRuntimeState(state)
         updateProvisioningMetadata(baseUrl, accountId, deviceId, latestRuntimes)
         return state
     }
@@ -659,7 +688,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateRuntimePolling(runtimes: List<RuntimeSummary>) {
-        val shouldPoll = runtimes.any { it.isTransitioning() || it.id in locallyStoppingRuntimeIds }
+        val shouldPoll = runtimes.any {
+            latestRuntimeStates[it.id]?.needsRuntimePolling() == true ||
+                it.isTransitioning() ||
+                it.id in locallyStoppingRuntimeIds
+        }
         if (!shouldPoll) {
             runtimePollJob?.cancel()
             runtimePollJob = null
@@ -701,9 +734,14 @@ class MainActivity : AppCompatActivity() {
         accountId: String,
         deviceId: String,
         runtimes: List<RuntimeSummary>,
+        stateByRuntimeId: Map<String, RuntimeState> = latestRuntimeStates,
     ) {
         val transitioningIds = runtimes
-            .filter { it.isTransitioning() || it.id in locallyStoppingRuntimeIds }
+            .filter {
+                stateByRuntimeId[it.id]?.needsRuntimePolling() == true ||
+                    it.isTransitioning() ||
+                    it.id in locallyStoppingRuntimeIds
+            }
             .map { it.id }
             .toSet()
         runtimeProvisioningStartedAtMs.keys.removeAll { it !in transitioningIds }
@@ -852,6 +890,21 @@ class MainActivity : AppCompatActivity() {
         return stopped && desiredStopped && offline
     }
 
+    private fun RuntimeState.connectivityLabel(isLive: Boolean): String {
+        return when (effectiveState.lowercase(Locale.US)) {
+            "running" -> if (isLive) getString(R.string.runtime_connectivity_online) else getString(R.string.runtime_connectivity_offline)
+            "starting" -> getString(R.string.runtime_connectivity_starting)
+            "stopping" -> getString(R.string.runtime_connectivity_stopping)
+            "wiping" -> getString(R.string.runtime_connectivity_wiping)
+            "deleting" -> getString(R.string.runtime_connectivity_deleting)
+            else -> getString(R.string.runtime_connectivity_offline)
+        }
+    }
+
+    private fun RuntimeState.needsRuntimePolling(): Boolean {
+        return isBusy || effectiveState.equals("starting", ignoreCase = true)
+    }
+
     private fun RuntimeSummary.connectivityLabel(isLive: Boolean): String {
         return when {
             isLive -> getString(R.string.runtime_connectivity_online)
@@ -887,8 +940,10 @@ class MainActivity : AppCompatActivity() {
             connectionStatus.equals("preparing", ignoreCase = true)
     }
 
-    private fun RuntimeSummary.provisioningMilestone(): RuntimeProvisioningMilestone? {
-        if (isReadyForSession() || !isTransitioning()) {
+    private fun RuntimeSummary.provisioningMilestone(effectiveState: String = ""): RuntimeProvisioningMilestone? {
+        val backendState = effectiveState.lowercase(Locale.US)
+        val backendBusy = backendState in setOf("starting", "stopping", "wiping", "deleting")
+        if (!backendBusy && (isReadyForSession() || !isTransitioning())) {
             return null
         }
         if (!lastError.isNullOrBlank()) {
@@ -912,19 +967,22 @@ class MainActivity : AppCompatActivity() {
         }
 
         return when {
-            desiredState.equals("deleted", ignoreCase = true) || status.equals("deleting", ignoreCase = true) -> RuntimeProvisioningMilestone(
+            backendState == "deleting" ||
+                desiredState.equals("deleted", ignoreCase = true) ||
+                status.equals("deleting", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_lifecycle_title_deleting),
                 command = getString(R.string.runtime_lifecycle_command_deleting),
                 detail = detail(getString(R.string.runtime_lifecycle_detail_deleting)),
                 events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
-            status.equals("wiping", ignoreCase = true) -> RuntimeProvisioningMilestone(
+            backendState == "wiping" || status.equals("wiping", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_lifecycle_title_wiping),
                 command = getString(R.string.runtime_lifecycle_command_wiping),
                 detail = detail(getString(R.string.runtime_lifecycle_detail_wiping)),
                 events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
             )
-            status.equals("stopping", ignoreCase = true) ||
+            backendState == "stopping" ||
+                status.equals("stopping", ignoreCase = true) ||
                 desiredState.equals("stopped", ignoreCase = true) && connectionStatus.equals("online", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_lifecycle_title_stopping),
                 command = getString(R.string.runtime_lifecycle_command_stopping),
@@ -1062,7 +1120,7 @@ class MainActivity : AppCompatActivity() {
     )
 
     private data class RuntimeListState(
-        val runtimes: List<RuntimeSummary>,
+        val runtimeStates: List<RuntimeState>,
         val entitlement: EntitlementSummary,
     )
 

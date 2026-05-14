@@ -265,6 +265,22 @@ class VirtroidApi(
             List(items.length()) { index -> items.getJSONObject(index).toRuntimeSummary() }
         }
 
+    suspend fun listRuntimeStates(baseUrl: String, accountId: String, deviceId: String): List<RuntimeState> =
+        withContext(Dispatchers.IO) {
+            val payload = executeJson(
+                signedJsonRequest(
+                    baseUrl = baseUrl,
+                    pathAndQuery = "/api/v1/me/runtimes/state?account_id=$accountId&device_id=$deviceId",
+                    method = "GET",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                ),
+            )
+
+            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
+            List(items.length()) { index -> items.getJSONObject(index).toRuntimeState() }
+        }
+
     suspend fun getEntitlement(baseUrl: String, accountId: String, deviceId: String): EntitlementSummary =
         withContext(Dispatchers.IO) {
             val payload = executeJson(
