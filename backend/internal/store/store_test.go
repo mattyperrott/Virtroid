@@ -889,6 +889,72 @@ func TestGetRuntimeStateReportsDeletingRuntimeAsBusy(t *testing.T) {
 	}
 }
 
+func TestListRuntimeStatesReturnsBackendLifecycleSnapshot(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runningRuntimeID := "33333333-3333-3333-3333-333333333333"
+	stoppingRuntimeID := "44444444-4444-4444-4444-444444444444"
+	sessionID := "55555555-5555-5555-5555-555555555555"
+	hostID := "host-1"
+
+	rows := runtimeStateListRows()
+	rows.AddRow(runtimeStateListRowValues(
+		now,
+		runningRuntimeID,
+		accountID,
+		"running",
+		"running",
+		"online",
+		hostID,
+		46000,
+		sessionID,
+		true,
+	)...)
+	rows.AddRow(runtimeStateListRowValues(
+		now,
+		stoppingRuntimeID,
+		accountID,
+		"stopping",
+		"stopped",
+		"disconnecting",
+		hostID,
+		46001,
+		nil,
+		false,
+	)...)
+	mock.ExpectQuery("SELECT r.id, r.account_id").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(rows)
+
+	states, err := st.ListRuntimeStates(context.Background(), accountID, deviceID)
+	if err != nil {
+		t.Fatalf("ListRuntimeStates returned error: %v", err)
+	}
+	if len(states) != 2 {
+		t.Fatalf("len(states) = %d, want 2", len(states))
+	}
+	if states[0].Runtime.ID != runningRuntimeID || states[0].EffectiveState != "running" || !states[0].CanConnect {
+		t.Fatalf("first state = %+v, want connectable running runtime", states[0])
+	}
+	if states[0].CurrentDeviceSessionID == nil || *states[0].CurrentDeviceSessionID != sessionID {
+		t.Fatalf("current session id = %v, want %s", states[0].CurrentDeviceSessionID, sessionID)
+	}
+	if states[1].Runtime.ID != stoppingRuntimeID || states[1].EffectiveState != "stopping" || !states[1].IsBusy || states[1].CanStart {
+		t.Fatalf("second state = %+v, want busy stopping runtime", states[1])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1137,6 +1203,37 @@ func runtimeStateRows(
 		hostID,
 		viewerPort,
 	)...)
+}
+
+func runtimeStateListRows() *sqlmock.Rows {
+	columns := append(runtimeColumnNames(), "current_device_session_id", "has_active_session")
+	return sqlmock.NewRows(columns)
+}
+
+func runtimeStateListRowValues(
+	now time.Time,
+	runtimeID string,
+	accountID string,
+	status string,
+	desiredState string,
+	connectionStatus string,
+	hostID any,
+	viewerPort any,
+	currentDeviceSessionID any,
+	hasActiveSession bool,
+) []driver.Value {
+	values := runtimeRowValues(
+		now,
+		runtimeID,
+		accountID,
+		status,
+		desiredState,
+		connectionStatus,
+		hostID,
+		viewerPort,
+	)
+	values = append(values, currentDeviceSessionID, hasActiveSession)
+	return values
 }
 
 func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, personaVersion int, viewerPort int) *sqlmock.Rows {

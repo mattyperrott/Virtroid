@@ -255,6 +255,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/bootstrap", api.bootstrap)
 
 	mux.HandleFunc("GET /api/v1/me/runtimes", api.listMyRuntimes)
+	mux.HandleFunc("GET /api/v1/me/runtimes/state", api.listMyRuntimeStates)
 	mux.HandleFunc("GET /api/v1/me/entitlement", api.getMyEntitlement)
 	mux.HandleFunc("GET /api/v1/me/storage", api.getMyStorage)
 	mux.HandleFunc("PUT /api/v1/me/storage", api.updateMyStorage)
@@ -433,6 +434,21 @@ func (a *API) listMyRuntimes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": runtimes})
+}
+
+func (a *API) listMyRuntimeStates(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	states, err := a.store.ListRuntimeStates(r.Context(), accountID, deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"items": states})
 }
 
 func (a *API) getMyEntitlement(w http.ResponseWriter, r *http.Request) {

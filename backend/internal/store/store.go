@@ -846,6 +846,65 @@ func (s *Store) ListRuntimes(ctx context.Context, accountID string) ([]Runtime, 
 	return runtimes, nil
 }
 
+func (s *Store) ListRuntimeStates(ctx context.Context, accountID, deviceID string) ([]RuntimeState, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	if accountID == "" || deviceID == "" {
+		return []RuntimeState{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT %s,
+		           (
+		               SELECT s.id
+		                 FROM sessions AS s
+		                WHERE s.runtime_id = r.id
+		                  AND s.device_id = $2
+		                  AND s.status IN ('pending', 'active')
+		                  AND s.expires_at > NOW()
+		                ORDER BY s.updated_at DESC
+		                LIMIT 1
+		           ) AS current_device_session_id,
+		           EXISTS (
+		               SELECT 1
+		                 FROM sessions AS live
+		                WHERE live.runtime_id = r.id
+		                  AND live.status IN ('pending', 'active')
+		                  AND live.expires_at > NOW()
+		           ) AS has_active_session
+		      FROM runtimes AS r
+		     WHERE r.account_id = $1
+		       AND r.deleted_at IS NULL
+		     ORDER BY r.created_at DESC`, runtimeColumnsWithAlias("r")),
+		accountID,
+		deviceID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var states []RuntimeState
+	for rows.Next() {
+		var runtime Runtime
+		var currentDeviceSessionID sql.NullString
+		var hasActiveSession bool
+		dest := scanRuntimeDest(&runtime)
+		dest = append(dest, &currentDeviceSessionID, &hasActiveSession)
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		states = append(states, buildRuntimeState(runtime, hasActiveSession, currentDeviceSessionID))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if states == nil {
+		return []RuntimeState{}, nil
+	}
+	return states, nil
+}
+
 func (s *Store) GetRuntime(ctx context.Context, accountID, runtimeID string) (Runtime, error) {
 	var runtime Runtime
 	err := s.db.QueryRowContext(ctx,

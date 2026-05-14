@@ -156,6 +156,8 @@
     <string name="runtime_connectivity_online">Online</string>
     <string name="runtime_connectivity_starting">Starting</string>
     <string name="runtime_connectivity_stopping">Stopping</string>
+    <string name="runtime_connectivity_wiping">Wiping</string>
+    <string name="runtime_connectivity_deleting">Deleting</string>
     <string name="runtime_connectivity_offline">Offline</string>
     <string name="runtime_shutdown_in_progress">Runtime is still shutting down.</string>
     <string name="runtime_provisioning_title_request">Requesting Runtime Start ...</string>
