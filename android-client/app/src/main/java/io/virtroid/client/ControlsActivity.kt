@@ -331,16 +331,22 @@ class ControlsActivity : AppCompatActivity() {
         activeSessionStore.loadForRuntime(runtime.id)?.let { storedSession ->
             lifecycleScope.launch {
                 runCatching {
-                    api.heartbeatSession(
+                    api.getSessionState(
                         baseUrl = storedSession.baseUrl,
                         accountId = storedSession.accountId,
                         deviceId = storedSession.deviceId,
                         sessionId = storedSession.sessionId,
                     )
                 }.onSuccess {
-                    activeSessionStore.touch(storedSession.sessionId)
-                    appLogs.info("Returning to active session from controls for ${runtime.name}", "session")
-                    startActivity(SessionActivity.createIntent(this@ControlsActivity, storedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                    if (it.canResumeRuntime(runtime.id)) {
+                        activeSessionStore.touch(storedSession.sessionId)
+                        appLogs.info("Returning to active session from controls for ${runtime.name}", "session")
+                        startActivity(SessionActivity.createIntent(this@ControlsActivity, storedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                    } else {
+                        activeSessionStore.clear()
+                        appLogs.warn("Stored active session from controls is ${it.effectiveStatus}; creating a fresh session", "session")
+                        connectRuntime(runtime)
+                    }
                 }.onFailure { error ->
                     if (error.isGoneSessionResponse()) {
                         activeSessionStore.clear()

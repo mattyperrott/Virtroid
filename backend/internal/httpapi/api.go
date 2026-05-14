@@ -272,6 +272,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/wipe", api.wipeMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/session", api.createMyRuntimeSession)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/logs", api.runtimeLogs)
+	mux.HandleFunc("GET /api/v1/me/sessions/{id}", api.getMySession)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/heartbeat", api.heartbeatMySession)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/end", api.endMySession)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/close", api.closeMySession)
@@ -1131,6 +1132,25 @@ func (a *API) closeMySession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (a *API) getMySession(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	state, err := a.store.GetSessionState(r.Context(), accountID, deviceID, r.PathValue("id"))
+	if err != nil {
+		if err == store.ErrSessionNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (a *API) heartbeatMySession(w http.ResponseWriter, r *http.Request) {
