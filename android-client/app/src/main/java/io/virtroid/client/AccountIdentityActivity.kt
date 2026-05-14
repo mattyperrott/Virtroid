@@ -295,7 +295,7 @@ class AccountIdentityActivity : AppCompatActivity() {
             .setTitle(getString(R.string.identity_password_title))
             .setMessage(
                 if (configured) {
-                    getString(R.string.identity_password_reset_body)
+                    getString(R.string.identity_password_change_body)
                 } else {
                     getString(R.string.identity_password_setup_body)
                 },
@@ -307,15 +307,15 @@ class AccountIdentityActivity : AppCompatActivity() {
                 toast(getString(R.string.identity_password_cache_cleared))
             }
             .setPositiveButton(
-                if (configured) getString(R.string.identity_password_reset_action)
+                if (configured) getString(R.string.identity_password_change_action)
                 else getString(R.string.identity_password_set_action),
             ) { _, _ ->
-                resetIdentityPassword(accountId, deviceId)
+                updateIdentityPassword(accountId, deviceId)
             }
             .show()
     }
 
-    private fun resetIdentityPassword(accountId: String, deviceId: String) {
+    private fun updateIdentityPassword(accountId: String, deviceId: String) {
         lifecycleScope.launch {
             val configured = identityPasswordStore.isConfigured(accountId, deviceId)
             val currentBlobKeyVerifier = if (configured) {
@@ -353,13 +353,23 @@ class AccountIdentityActivity : AppCompatActivity() {
             runCatching {
                 val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, password)
                 val verifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
-                api.registerIdentity(
-                    baseUrl = sessionStore.baseUrl,
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    blobKeyVerifier = verifier,
-                    currentBlobKeyVerifier = currentBlobKeyVerifier,
-                )
+                if (configured) {
+                    api.changeIdentityPassword(
+                        baseUrl = sessionStore.baseUrl,
+                        accountId = accountId,
+                        deviceId = deviceId,
+                        blobKeyVerifier = verifier,
+                        currentBlobKeyVerifier = currentBlobKeyVerifier
+                            ?: throw IllegalStateException("current identity verifier required"),
+                    )
+                } else {
+                    api.registerIdentity(
+                        baseUrl = sessionStore.baseUrl,
+                        accountId = accountId,
+                        deviceId = deviceId,
+                        blobKeyVerifier = verifier,
+                    )
+                }
                 identityPasswordStore.unlock(accountId, deviceId, password)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
             }.onSuccess {

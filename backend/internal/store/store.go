@@ -45,6 +45,7 @@ var (
 	ErrRuntimeNotReady        = errors.New("runtime is not ready for sessions")
 	ErrSessionNotFound        = errors.New("session not found")
 	ErrIdentityNotFound       = errors.New("identity password is not configured for this device")
+	ErrIdentityAlreadySet     = errors.New("identity password is already configured for this device")
 	ErrIdentityAuthFailed     = errors.New("identity authentication failed")
 	ErrIdentityKeyRequired    = errors.New("blob access key is required")
 	ErrDeviceRequestReplay    = errors.New("device request nonce has already been used")
@@ -1161,7 +1162,27 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(
 	accountID string,
 	deviceID string,
 	blobKeyVerifier string,
+) error {
+	return s.setDeviceBlobKeyVerifier(ctx, accountID, deviceID, blobKeyVerifier, "", false)
+}
+
+func (s *Store) ChangeDeviceBlobKeyVerifier(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	blobKeyVerifier string,
 	currentBlobKeyVerifier string,
+) error {
+	return s.setDeviceBlobKeyVerifier(ctx, accountID, deviceID, blobKeyVerifier, currentBlobKeyVerifier, true)
+}
+
+func (s *Store) setDeviceBlobKeyVerifier(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	blobKeyVerifier string,
+	currentBlobKeyVerifier string,
+	requireCurrentVerifier bool,
 ) error {
 	verifier, err := normalizeBlobKeyVerifier(blobKeyVerifier)
 	if err != nil {
@@ -1191,6 +1212,9 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(
 	}
 
 	if storedVerifier.Valid && strings.TrimSpace(storedVerifier.String) != "" {
+		if !requireCurrentVerifier {
+			return ErrIdentityAlreadySet
+		}
 		stored, err := normalizeBlobKeyVerifier(storedVerifier.String)
 		if err != nil {
 			return ErrIdentityAuthFailed
@@ -1202,6 +1226,8 @@ func (s *Store) RegisterDeviceBlobKeyVerifier(
 		if subtle.ConstantTimeCompare([]byte(current), []byte(stored)) != 1 {
 			return ErrIdentityAuthFailed
 		}
+	} else if requireCurrentVerifier {
+		return ErrIdentityNotFound
 	}
 
 	result, err := tx.ExecContext(ctx,

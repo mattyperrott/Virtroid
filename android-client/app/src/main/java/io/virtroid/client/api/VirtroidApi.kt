@@ -192,21 +192,43 @@ class VirtroidApi(
         accountId: String,
         deviceId: String,
         blobKeyVerifier: String,
-        currentBlobKeyVerifier: String? = null,
     ) = withContext(Dispatchers.IO) {
-        val requestJson = JSONObject()
+        val requestBody = JSONObject()
             .put("account_id", accountId)
             .put("device_id", deviceId)
             .put("blob_key_verifier", blobKeyVerifier)
-        if (!currentBlobKeyVerifier.isNullOrBlank()) {
-            requestJson.put("current_blob_key_verifier", currentBlobKeyVerifier)
-        }
-        val requestBody = requestJson.toString()
+            .toString()
 
         executeJson(
             signedJsonRequest(
                 baseUrl = baseUrl,
                 pathAndQuery = "/api/v1/me/identity/register",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = requestBody,
+            ),
+        )
+    }
+
+    suspend fun changeIdentityPassword(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        blobKeyVerifier: String,
+        currentBlobKeyVerifier: String,
+    ) = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject()
+            .put("account_id", accountId)
+            .put("device_id", deviceId)
+            .put("blob_key_verifier", blobKeyVerifier)
+            .put("current_blob_key_verifier", currentBlobKeyVerifier)
+            .toString()
+
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/identity/change-password",
                 method = "POST",
                 accountId = accountId,
                 deviceId = deviceId,
