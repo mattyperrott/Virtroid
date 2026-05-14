@@ -264,6 +264,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/identity/register", api.registerMyIdentity)
 	mux.HandleFunc("POST /api/v1/me/runtimes", api.createMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}", api.getMyRuntime)
+	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/state", api.getMyRuntimeState)
 	mux.HandleFunc("PATCH /api/v1/me/runtimes/{id}", api.updateMyRuntime)
 	mux.HandleFunc("DELETE /api/v1/me/runtimes/{id}", api.deleteMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/blob-key-lease", api.createRuntimeBlobKeyLease)
@@ -627,6 +628,25 @@ func (a *API) getMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, runtime)
+}
+
+func (a *API) getMyRuntimeState(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	state, err := a.store.GetRuntimeState(r.Context(), accountID, deviceID, r.PathValue("id"))
+	if err != nil {
+		if err == store.ErrRuntimeNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
