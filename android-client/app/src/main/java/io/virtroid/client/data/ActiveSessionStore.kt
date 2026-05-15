@@ -189,7 +189,11 @@ class ActiveSessionStore(context: Context) {
         val savedAtMs: Long = System.currentTimeMillis(),
     ) {
         fun hasEndpoint(): Boolean {
-            return relayHost.isNotBlank() &&
+            return accountId.isNotBlank() &&
+                deviceId.isNotBlank() &&
+                baseUrl.isNotBlank() &&
+                runtimeId.isNotBlank() &&
+                relayHost.isNotBlank() &&
                 relayPort > 0 &&
                 relayTls &&
                 relayPath.isNotBlank() &&
