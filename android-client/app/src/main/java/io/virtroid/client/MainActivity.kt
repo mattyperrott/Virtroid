@@ -633,7 +633,7 @@ class MainActivity : AppCompatActivity() {
         deviceId: String,
         runtimeId: String,
     ): RuntimeSummary {
-        repeat(CONNECT_WAIT_ATTEMPTS) { attempt ->
+        while (true) {
             val state = latestRuntimeState(baseUrl, accountId, deviceId, runtimeId)
             val runtime = state.runtime
 
@@ -641,11 +641,7 @@ class MainActivity : AppCompatActivity() {
                 return runtime
             }
 
-            if (!runtime.lastError.isNullOrBlank() &&
-                !runtime.status.equals("running", ignoreCase = true)
-            ) {
-                throw IOException(runtime.lastError)
-            }
+            terminalRuntimeStartReason(state)?.let { throw IOException(it) }
 
             setBusy(
                 true,
@@ -656,12 +652,33 @@ class MainActivity : AppCompatActivity() {
                 ),
             )
 
-            if (attempt < CONNECT_WAIT_ATTEMPTS - 1) {
-                delay(CONNECT_WAIT_DELAY_MS)
-            }
+            delay(CONNECT_WAIT_DELAY_MS)
         }
+    }
 
-        throw IOException(getString(R.string.runtime_start_timeout))
+    private fun terminalRuntimeStartReason(state: RuntimeState): String? {
+        val runtime = state.runtime
+        val runtimeError = runtime.lastError?.takeIf { it.isNotBlank() }
+        val blockedReason = state.blockedReason?.takeIf { it.isNotBlank() }
+
+        return when {
+            runtimeError != null && !runtime.status.equals("running", ignoreCase = true) -> runtimeError
+            state.effectiveState.equals("error", ignoreCase = true) -> {
+                runtimeError ?: blockedReason ?: getString(R.string.status_error)
+            }
+            state.effectiveState.equals("deleted", ignoreCase = true) ||
+                state.effectiveState.equals("deleting", ignoreCase = true) -> {
+                blockedReason ?: getString(R.string.runtime_deleted)
+            }
+            state.effectiveState.equals("stopping", ignoreCase = true) ||
+                state.effectiveState.equals("wiping", ignoreCase = true) -> {
+                blockedReason ?: getString(R.string.runtime_shutdown_in_progress)
+            }
+            state.effectiveState.equals("stopped", ignoreCase = true) -> {
+                blockedReason ?: getString(R.string.runtime_missing_for_session)
+            }
+            else -> null
+        }
     }
 
     private fun mutateRuntime(
@@ -1149,7 +1166,6 @@ class MainActivity : AppCompatActivity() {
         val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
         private const val EXTRA_STOPPING_RUNTIME_ID = "io.virtroid.client.extra.STOPPING_RUNTIME_ID"
         const val DEFAULT_SESSION_BIT_RATE = 4_000_000
-        const val CONNECT_WAIT_ATTEMPTS = 45
         const val CONNECT_WAIT_DELAY_MS = 1_000L
         const val RUNTIME_POLL_DELAY_MS = 2_000L
 

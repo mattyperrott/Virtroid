@@ -159,7 +159,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         runtimeId: String,
     ): RuntimeSummary {
         val startedAt = System.currentTimeMillis()
-        repeat(PROVISION_WAIT_ATTEMPTS) { attempt ->
+        while (true) {
             val runtime = api.listRuntimes(baseUrl, accountId, deviceId)
                 .firstOrNull { it.id == runtimeId }
                 ?: throw java.io.IOException(getString(R.string.runtime_missing_for_session))
@@ -176,11 +176,8 @@ class NewRuntimeActivity : AppCompatActivity() {
             if (runtime.status.equals("error", ignoreCase = true)) {
                 throw java.io.IOException(runtime.lastError ?: getString(R.string.status_error))
             }
-            if (attempt < PROVISION_WAIT_ATTEMPTS - 1) {
-                delay(PROVISION_WAIT_DELAY_MS)
-            }
+            delay(PROVISION_WAIT_DELAY_MS)
         }
-        throw java.io.IOException(getString(R.string.runtime_start_timeout))
     }
 
     private fun provisionMilestoneForRuntime(runtime: RuntimeSummary, elapsedMs: Long, latestLog: String?): ProvisionMilestone {
@@ -250,7 +247,6 @@ class NewRuntimeActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val PROVISION_WAIT_ATTEMPTS = 90
         private const val PROVISION_WAIT_DELAY_MS = 1_000L
 
         fun createIntent(context: Context): Intent = Intent(context, NewRuntimeActivity::class.java)

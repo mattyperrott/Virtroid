@@ -327,7 +327,7 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private suspend fun waitForRuntimeReady(accountId: String, deviceId: String, runtimeId: String): RuntimeSummary {
-        repeat(CONNECT_WAIT_ATTEMPTS) { attempt ->
+        while (true) {
             val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
             runtime = state.runtime
             runtimeState = state
@@ -335,11 +335,34 @@ class ControlsActivity : AppCompatActivity() {
             if (state.canConnectRuntime(runtimeId)) {
                 return state.runtime
             }
-            if (attempt < CONNECT_WAIT_ATTEMPTS - 1) {
-                delay(CONNECT_WAIT_DELAY_MS)
-            }
+            terminalRuntimeStartReason(state)?.let { throw IOException(it) }
+            delay(CONNECT_WAIT_DELAY_MS)
         }
-        throw IOException(getString(R.string.runtime_start_timeout))
+    }
+
+    private fun terminalRuntimeStartReason(state: RuntimeState): String? {
+        val runtime = state.runtime
+        val runtimeError = runtime.lastError?.takeIf { it.isNotBlank() }
+        val blockedReason = state.blockedReason?.takeIf { it.isNotBlank() }
+
+        return when {
+            runtimeError != null && !runtime.status.equals("running", ignoreCase = true) -> runtimeError
+            state.effectiveState.equals("error", ignoreCase = true) -> {
+                runtimeError ?: blockedReason ?: getString(R.string.status_error)
+            }
+            state.effectiveState.equals("deleted", ignoreCase = true) ||
+                state.effectiveState.equals("deleting", ignoreCase = true) -> {
+                blockedReason ?: getString(R.string.runtime_deleted)
+            }
+            state.effectiveState.equals("stopping", ignoreCase = true) ||
+                state.effectiveState.equals("wiping", ignoreCase = true) -> {
+                blockedReason ?: getString(R.string.runtime_shutdown_in_progress)
+            }
+            state.effectiveState.equals("stopped", ignoreCase = true) -> {
+                blockedReason ?: getString(R.string.runtime_missing_for_session)
+            }
+            else -> null
+        }
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {
@@ -560,7 +583,6 @@ class ControlsActivity : AppCompatActivity() {
     companion object {
         private const val EXTRA_RUNTIME_ID = "extra_runtime_id"
         private const val DEFAULT_SESSION_BIT_RATE = 4_000_000
-        private const val CONNECT_WAIT_ATTEMPTS = 45
         private const val CONNECT_WAIT_DELAY_MS = 1_000L
 
         fun createIntent(context: Context, runtimeId: String): Intent =
