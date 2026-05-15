@@ -2,6 +2,7 @@
 <FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/accountIdentityRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/v_bg_alt">
@@ -12,13 +13,13 @@
         <LinearLayout
             android:id="@+id/top_app_bar"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="112dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingStart="24dp"
             android:paddingEnd="24dp"
-            android:paddingTop="54dp"
-            android:paddingBottom="8dp">
+            android:paddingTop="48dp"
+            android:paddingBottom="16dp">
             <ImageButton
                 android:id="@+id/button_back"
                 android:layout_width="44dp"
@@ -32,16 +33,14 @@
                 android:layout_width="0dp"
                 android:layout_height="1dp"
                 android:layout_weight="1" />
-            <ImageButton
-                android:id="@+id/button_settings"
+            <Space
                 android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:background="@drawable/bg_surface_circle"
-                android:contentDescription="@string/bottom_settings"
-                android:padding="13dp"
-                android:src="@drawable/ic_tune"
-                app:tint="@color/v_text_primary" />
+                android:layout_height="44dp" />
         </LinearLayout>
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/v_border" />
         <ScrollView
             android:id="@+id/account_identity_scroll"
             android:layout_width="match_parent"

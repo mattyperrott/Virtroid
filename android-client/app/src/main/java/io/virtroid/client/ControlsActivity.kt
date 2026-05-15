@@ -271,10 +271,11 @@ class ControlsActivity : AppCompatActivity() {
                         identityPasswordStore.saveConfigured(accountId, deviceId)
                         updated
                     }.onSuccess {
-                        runtime = it
-                        runtimeState = null
-                        bindRuntime(it)
+                        activeSessionStore.loadForRuntime(current.id)?.let {
+                            activeSessionStore.clear()
+                        }
                         toast(getString(R.string.status_wiping_runtime))
+                        finishToRuntimeList()
                     }.onFailure {
                         toast(it.virtroidDisplayMessage(this@ControlsActivity))
                     }
@@ -464,7 +465,7 @@ class ControlsActivity : AppCompatActivity() {
                         api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
                     }.onSuccess {
                         toast(getString(R.string.runtime_delete_queued))
-                        finish()
+                        finishToRuntimeList()
                     }.onFailure {
                         toast(it.virtroidDisplayMessage(this@ControlsActivity))
                     }
@@ -479,6 +480,14 @@ class ControlsActivity : AppCompatActivity() {
             .removePrefix("Android ")
             .replace('-', ' ')
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+
+    private fun finishToRuntimeList() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        )
+        finish()
     }
 
     private fun sessionMaxSize(): Int {

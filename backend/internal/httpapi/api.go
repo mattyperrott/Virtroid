@@ -862,7 +862,7 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.DeleteRuntime(r.Context(), accountID, runtimeID)
+	runtime, err := a.store.DeleteRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		if err == store.ErrRuntimeNotFound {
@@ -1053,7 +1053,7 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.WipeRuntime(r.Context(), accountID, runtimeID)
+	runtime, err := a.store.WipeRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		switch err {

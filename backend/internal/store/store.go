@@ -1103,6 +1103,14 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 }
 
 func (s *Store) DeleteRuntime(ctx context.Context, accountID, runtimeID string) (Runtime, error) {
+	return s.deleteRuntime(ctx, accountID, runtimeID, "")
+}
+
+func (s *Store) DeleteRuntimeOnHost(ctx context.Context, accountID, runtimeID, hostID string) (Runtime, error) {
+	return s.deleteRuntime(ctx, accountID, runtimeID, strings.TrimSpace(hostID))
+}
+
+func (s *Store) deleteRuntime(ctx context.Context, accountID, runtimeID, hostID string) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Runtime{}, err
@@ -1112,15 +1120,52 @@ func (s *Store) DeleteRuntime(ctx context.Context, accountID, runtimeID string) 
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
-		 SET status = 'deleting',
+		 SET host_id = COALESCE(host_id, NULLIF($3, '')),
+		     status = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN 'deleted'
+		         ELSE 'deleting'
+		     END,
 		     desired_state = 'deleted',
 		     connection_status = 'offline',
 		     started_at = NULL,
+		     active_persona_json = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+		         ELSE active_persona_json
+		     END,
+		     blob_store_kind = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+		         ELSE blob_store_kind
+		     END,
+		     blob_manifest_json = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+		         ELSE blob_manifest_json
+		     END,
+		     wipe_requested = FALSE,
+		     container_name = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+		         ELSE container_name
+		     END,
+		     adb_port = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+		         ELSE adb_port
+		     END,
+		     viewer_port = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+		         ELSE viewer_port
+		     END,
+		     deleted_at = CASE
+		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NOW()
+		         ELSE deleted_at
+		     END,
 		     updated_at = NOW()
-		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL
+		 WHERE account_id = $1
+		   AND id = $2
+		   AND deleted_at IS NULL
+		   AND ($3 = '' OR host_id IS NULL OR host_id = $3)
 		 RETURNING %s`, runtimeColumns),
 		accountID,
 		runtimeID,
+		hostID,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
@@ -1144,6 +1189,10 @@ func (s *Store) DeleteRuntime(ctx context.Context, accountID, runtimeID string) 
 		).Scan(scanRuntimeDest(&runtime)...); err != nil {
 			return Runtime{}, err
 		}
+	}
+
+	if err := closeRuntimeSessionsTX(ctx, tx, runtime.ID, "runtime deleted"); err != nil {
+		return Runtime{}, err
 	}
 
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "warn", "Runtime scheduled for deletion."); err != nil {
@@ -1704,6 +1753,14 @@ func (s *Store) StopRuntime(ctx context.Context, accountID, runtimeID string) (R
 }
 
 func (s *Store) WipeRuntime(ctx context.Context, accountID, runtimeID string) (Runtime, error) {
+	return s.wipeRuntime(ctx, accountID, runtimeID, "")
+}
+
+func (s *Store) WipeRuntimeOnHost(ctx context.Context, accountID, runtimeID, hostID string) (Runtime, error) {
+	return s.wipeRuntime(ctx, accountID, runtimeID, strings.TrimSpace(hostID))
+}
+
+func (s *Store) wipeRuntime(ctx context.Context, accountID, runtimeID, hostID string) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Runtime{}, err
@@ -1713,21 +1770,31 @@ func (s *Store) WipeRuntime(ctx context.Context, accountID, runtimeID string) (R
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
-		 SET status = 'wiping',
+		 SET host_id = COALESCE(host_id, NULLIF($3, '')),
+		     status = 'wiping',
 		     desired_state = 'stopped',
 		     connection_status = 'offline',
 		     started_at = NULL,
 		     wipe_requested = TRUE,
 		     last_error = NULL,
 		     updated_at = NOW()
-		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
+		 WHERE account_id = $1
+		   AND id = $2
+		   AND deleted_at IS NULL
+		   AND desired_state <> 'deleted'
+		   AND ($3 = '' OR host_id IS NULL OR host_id = $3)
 		 RETURNING %s`, runtimeColumns),
 		accountID,
 		runtimeID,
+		hostID,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
 		}
+		return Runtime{}, err
+	}
+
+	if err := closeRuntimeSessionsTX(ctx, tx, runtime.ID, "runtime wiped"); err != nil {
 		return Runtime{}, err
 	}
 
@@ -1986,10 +2053,18 @@ func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, 
 		if err != nil {
 			return Runtime{}, Host{}, err
 		}
-	case "stop", "wipe":
+	case "stop":
 		hostID = valueOrEmpty(runtime.HostID)
 		if hostID == "" {
 			return Runtime{}, Host{}, ErrRuntimeNotReady
+		}
+	case "wipe":
+		hostID = valueOrEmpty(runtime.HostID)
+		if hostID == "" {
+			hostID, err = pickReadyHostTX(ctx, tx, "")
+			if err != nil {
+				return Runtime{}, Host{}, err
+			}
 		}
 	case "delete":
 		hostID = valueOrEmpty(runtime.HostID)
@@ -2219,12 +2294,13 @@ func (s *Store) IssueSessionRelayToken(ctx context.Context, accountID, deviceID,
 		     relay_token_consumed_at = NULL,
 		     updated_at = NOW(),
 		     expires_at = NOW() + INTERVAL '2 minutes'
-		 FROM runtimes AS r
-		 JOIN devices AS d ON d.id = s.device_id AND d.account_id = r.account_id
+		 FROM runtimes AS r, devices AS d
 		 WHERE s.id = $1
 		   AND s.device_id = $2
 		   AND r.id = s.runtime_id
 		   AND r.account_id = $3
+		   AND d.id = s.device_id
+		   AND d.account_id = r.account_id
 		   AND d.revoked_at IS NULL
 		   AND s.status IN ('pending', 'active')
 		   AND s.expires_at > NOW()
@@ -3037,6 +3113,21 @@ func appendRuntimeLogTX(ctx context.Context, tx *sql.Tx, runtimeID, source, leve
 		defaultString(source, "system"),
 		defaultString(level, "info"),
 		strings.TrimSpace(message),
+	)
+	return err
+}
+
+func closeRuntimeSessionsTX(ctx context.Context, tx *sql.Tx, runtimeID, reason string) error {
+	_, err := tx.ExecContext(ctx,
+		`UPDATE sessions
+		 SET status = 'closed',
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = $2
+		 WHERE runtime_id = $1
+		   AND status IN ('pending', 'active')`,
+		runtimeID,
+		strings.TrimSpace(reason),
 	)
 	return err
 }

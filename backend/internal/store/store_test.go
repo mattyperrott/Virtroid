@@ -970,6 +970,80 @@ func TestGetRuntimeStateRejectsSoftDeletedRuntime(t *testing.T) {
 	}
 }
 
+func TestWipeRuntimeOnHostAssignsStoppedRuntimeForNodeCleanup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	hostID := "host-1"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(accountID, runtimeID, hostID).
+		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "wiping", "stopped", "offline", hostID, nil))
+	mock.ExpectExec("UPDATE sessions").
+		WithArgs(runtimeID, "runtime wiped").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(runtimeID, "user", "warn", "Runtime wipe requested. User data will be removed.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	runtime, err := st.WipeRuntimeOnHost(context.Background(), accountID, runtimeID, hostID)
+	if err != nil {
+		t.Fatalf("WipeRuntimeOnHost returned error: %v", err)
+	}
+	if runtime.HostID == nil || *runtime.HostID != hostID || runtime.Status != "wiping" {
+		t.Fatalf("runtime = %+v, want host-assigned wiping runtime", runtime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestDeleteRuntimeOnHostAssignsStoppedRuntimeForNodeCleanup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	hostID := "host-1"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(accountID, runtimeID, hostID).
+		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "deleting", "deleted", "offline", hostID, nil))
+	mock.ExpectExec("UPDATE sessions").
+		WithArgs(runtimeID, "runtime deleted").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(runtimeID, "user", "warn", "Runtime scheduled for deletion.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	runtime, err := st.DeleteRuntimeOnHost(context.Background(), accountID, runtimeID, hostID)
+	if err != nil {
+		t.Fatalf("DeleteRuntimeOnHost returned error: %v", err)
+	}
+	if runtime.HostID == nil || *runtime.HostID != hostID || runtime.Status != "deleting" {
+		t.Fatalf("runtime = %+v, want host-assigned deleting runtime", runtime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestListRuntimeStatesReturnsBackendLifecycleSnapshot(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

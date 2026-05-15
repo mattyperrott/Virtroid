@@ -57,16 +57,13 @@ class AccountIdentityActivity : AppCompatActivity() {
         appLockStore = AppLockStore(this)
         appLogs = AppLogStore.get(this)
 
-        ViewCompat.setOnApplyWindowInsetsListener(binding.topAppBar) { view, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(binding.accountIdentityRoot) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = 24 + bars.top)
+            view.updatePadding(top = bars.top, bottom = bars.bottom)
             insets
         }
 
         binding.buttonBack.setOnClickListener { finish() }
-        binding.buttonSettings.setOnClickListener {
-            startActivity(PrivacySecurityActivity.createIntent(this))
-        }
         binding.itemAccountId.setOnClickListener {
             copy("account_id", sessionStore.accountId.orEmpty(), getString(R.string.onboarding_account_copied))
         }
