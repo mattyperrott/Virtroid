@@ -878,7 +878,7 @@ func TestGetRuntimeStateReportsConnectableRuntimeAndCurrentSession(t *testing.T)
 	sessionID := "55555555-5555-5555-5555-555555555555"
 	hostID := "host-1"
 
-	mock.ExpectQuery("SELECT id, account_id").
+	mock.ExpectQuery("deleted_at IS NULL").
 		WithArgs(accountID, runtimeID).
 		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "running", "running", "online", hostID, 46000))
 	mock.ExpectQuery("SELECT id").
@@ -920,7 +920,7 @@ func TestGetRuntimeStateReportsDeletingRuntimeAsBusy(t *testing.T) {
 	runtimeID := "33333333-3333-3333-3333-333333333333"
 	hostID := "host-1"
 
-	mock.ExpectQuery("SELECT id, account_id").
+	mock.ExpectQuery("deleted_at IS NULL").
 		WithArgs(accountID, runtimeID).
 		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "deleting", "deleted", "offline", hostID, 46000))
 	mock.ExpectQuery("SELECT id").
@@ -939,6 +939,31 @@ func TestGetRuntimeStateReportsDeletingRuntimeAsBusy(t *testing.T) {
 	}
 	if state.HasActiveSession || state.HasCurrentDeviceSession {
 		t.Fatalf("session state = %+v, want no active sessions", state)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestGetRuntimeStateRejectsSoftDeletedRuntime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectQuery("deleted_at IS NULL").
+		WithArgs(accountID, runtimeID).
+		WillReturnError(sql.ErrNoRows)
+
+	_, err = st.GetRuntimeState(context.Background(), accountID, deviceID, runtimeID)
+	if !errors.Is(err, ErrRuntimeNotFound) {
+		t.Fatalf("GetRuntimeState error = %v, want %v", err, ErrRuntimeNotFound)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -1107,6 +1132,133 @@ func TestHeartbeatSessionExtendsLease(t *testing.T) {
 	}
 	if session.LastClientHeartbeatAt == nil || !session.LastClientHeartbeatAt.Equal(heartbeatAt) {
 		t.Fatalf("last heartbeat = %v, want %v", session.LastClientHeartbeatAt, heartbeatAt)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestResolveSessionRelayTargetConsumesRelayToken(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	sessionID := "33333333-3333-3333-3333-333333333333"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	hostID := "host-1"
+
+	mock.ExpectQuery("relay_token_consumed_at IS NULL").
+		WithArgs(sessionID, hashRelayToken("relay-token")).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "device_id", "host_id", "viewer_port",
+		}).AddRow(
+			sessionID,
+			runtimeID,
+			deviceID,
+			hostID,
+			46000,
+		))
+
+	target, err := st.ResolveSessionRelayTarget(context.Background(), sessionID, "relay-token")
+	if err != nil {
+		t.Fatalf("ResolveSessionRelayTarget returned error: %v", err)
+	}
+	if target.SessionID != sessionID || target.RuntimeID != runtimeID || target.HostID != hostID || target.ViewerPort != 46000 {
+		t.Fatalf("target = %+v, want resolved relay target", target)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestIssueSessionRelayTokenRequiresUnrevokedDevice(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	sessionID := "33333333-3333-3333-3333-333333333333"
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+
+	mock.ExpectQuery("d.revoked_at IS NULL").
+		WithArgs(sessionID, deviceID, accountID, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "device_id", "status", "created_at", "updated_at",
+			"last_client_heartbeat_at", "ended_at", "end_reason", "expires_at",
+		}).AddRow(
+			sessionID,
+			runtimeID,
+			deviceID,
+			"active",
+			now,
+			now,
+			now,
+			nil,
+			nil,
+			now.Add(2*time.Minute),
+		))
+
+	session, err := st.IssueSessionRelayToken(context.Background(), accountID, deviceID, sessionID)
+	if err != nil {
+		t.Fatalf("IssueSessionRelayToken returned error: %v", err)
+	}
+	if session.RelayToken == "" {
+		t.Fatal("IssueSessionRelayToken did not return a fresh relay token")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestCreateSessionRequiresUnrevokedDevice(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+
+	mock.ExpectQuery("d.revoked_at IS NULL").
+		WithArgs(runtimeID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
+			AddRow("running", "running", "online"))
+	mock.ExpectQuery("INSERT INTO sessions").
+		WithArgs(sqlmock.AnyArg(), runtimeID, deviceID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "device_id", "status", "created_at", "updated_at",
+			"last_client_heartbeat_at", "ended_at", "end_reason", "expires_at",
+		}).AddRow(
+			"33333333-3333-3333-3333-333333333333",
+			runtimeID,
+			deviceID,
+			"pending",
+			now,
+			now,
+			now,
+			nil,
+			nil,
+			now.Add(2*time.Minute),
+		))
+
+	session, err := st.CreateSession(context.Background(), deviceID, runtimeID)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if session.RelayToken == "" {
+		t.Fatal("CreateSession did not return an initial attach relay token")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

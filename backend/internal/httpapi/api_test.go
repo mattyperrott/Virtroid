@@ -109,38 +109,40 @@ func TestActiveBlobKeyVaultExpires(t *testing.T) {
 
 	envelope := testBlobKeyEnvelope("runtime-1", "host-1", "start", "lease-1")
 	if _, err := vault.activate(activeBlobKeyHandoff{
-		AccountID: "account-1",
-		RuntimeID: "runtime-1",
-		HostID:    "host-1",
-		Operation: "start",
-		LeaseID:   "lease-1",
-		Envelope:  envelope,
+		AccountID:       "account-1",
+		RuntimeID:       "runtime-1",
+		HostID:          "host-1",
+		Operation:       "start",
+		LeaseID:         "lease-1",
+		Envelope:        envelope,
+		BlobKeyVerifier: "verifier-1",
 	}); err != nil {
 		t.Fatalf("activate envelope: %v", err)
 	}
 
-	gotEnvelope, _, ok := vault.get("runtime-1", "host-1")
-	if !ok || gotEnvelope.Ciphertext != envelope.Ciphertext {
-		t.Fatalf("vault get = %+v, %v; want encrypted envelope", gotEnvelope, ok)
+	gotEnvelope, gotVerifier, _, ok := vault.get("runtime-1", "host-1")
+	if !ok || gotEnvelope.Ciphertext != envelope.Ciphertext || gotVerifier != "verifier-1" {
+		t.Fatalf("vault get = %+v, %q, %v; want encrypted envelope and verifier", gotEnvelope, gotVerifier, ok)
 	}
-	if _, _, ok := vault.get("runtime-1", "host-2"); ok {
+	if _, _, _, ok := vault.get("runtime-1", "host-2"); ok {
 		t.Fatal("vault returned envelope for the wrong host")
 	}
 
 	vault.mu.Lock()
 	vault.keys["runtime-1"] = activeBlobKeyEntry{
-		accountID:   "account-1",
-		runtimeID:   "runtime-1",
-		hostID:      "host-1",
-		operation:   "start",
-		leaseID:     "lease-1",
-		envelope:    envelope,
-		hasEnvelope: true,
-		expiresAt:   time.Now().UTC().Add(-time.Second),
+		accountID:       "account-1",
+		runtimeID:       "runtime-1",
+		hostID:          "host-1",
+		operation:       "start",
+		leaseID:         "lease-1",
+		envelope:        envelope,
+		blobKeyVerifier: "verifier-1",
+		hasEnvelope:     true,
+		expiresAt:       time.Now().UTC().Add(-time.Second),
 	}
 	vault.mu.Unlock()
 
-	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
+	if _, _, _, ok := vault.get("runtime-1", "host-1"); ok {
 		t.Fatal("vault returned expired active blob key envelope")
 	}
 }
@@ -163,24 +165,48 @@ func TestActiveBlobKeyVaultClearAccount(t *testing.T) {
 	})
 	envelope := testBlobKeyEnvelope("runtime-2", "host-1", "session", "lease-2")
 	if _, err := vault.activate(activeBlobKeyHandoff{
-		AccountID: "account-2",
-		RuntimeID: "runtime-2",
-		HostID:    "host-1",
-		Operation: "session",
-		LeaseID:   "lease-2",
-		Envelope:  envelope,
+		AccountID:       "account-2",
+		RuntimeID:       "runtime-2",
+		HostID:          "host-1",
+		Operation:       "session",
+		LeaseID:         "lease-2",
+		Envelope:        envelope,
+		BlobKeyVerifier: "verifier-2",
 	}); err != nil {
 		t.Fatalf("activate envelope: %v", err)
 	}
 
 	vault.clearAccount("account-1")
 
-	if _, _, ok := vault.get("runtime-1", "host-1"); ok {
+	if _, _, _, ok := vault.get("runtime-1", "host-1"); ok {
 		t.Fatal("vault returned an envelope for the erased account")
 	}
-	gotEnvelope, _, ok := vault.get("runtime-2", "host-1")
-	if !ok || gotEnvelope.Ciphertext != envelope.Ciphertext {
-		t.Fatalf("vault get for other account = %+v, %v; want encrypted envelope", gotEnvelope, ok)
+	gotEnvelope, gotVerifier, _, ok := vault.get("runtime-2", "host-1")
+	if !ok || gotEnvelope.Ciphertext != envelope.Ciphertext || gotVerifier != "verifier-2" {
+		t.Fatalf("vault get for other account = %+v, %q, %v; want encrypted envelope and verifier", gotEnvelope, gotVerifier, ok)
+	}
+}
+
+func TestActiveBlobKeyVaultRejectsEnvelopeWithoutVerifier(t *testing.T) {
+	vault := newActiveBlobKeyVault()
+	vault.putLease(activeBlobKeyLease{
+		AccountID: "account-1",
+		RuntimeID: "runtime-1",
+		HostID:    "host-1",
+		Operation: "start",
+		LeaseID:   "lease-1",
+	})
+
+	_, err := vault.activate(activeBlobKeyHandoff{
+		AccountID: "account-1",
+		RuntimeID: "runtime-1",
+		HostID:    "host-1",
+		Operation: "start",
+		LeaseID:   "lease-1",
+		Envelope:  testBlobKeyEnvelope("runtime-1", "host-1", "start", "lease-1"),
+	})
+	if err == nil {
+		t.Fatal("activate accepted a blob-key envelope without the expected verifier")
 	}
 }
 

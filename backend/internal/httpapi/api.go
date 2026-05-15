@@ -39,14 +39,15 @@ type activeBlobKeyVault struct {
 }
 
 type activeBlobKeyEntry struct {
-	accountID   string
-	runtimeID   string
-	hostID      string
-	operation   string
-	leaseID     string
-	envelope    blobKeyEnvelope
-	hasEnvelope bool
-	expiresAt   time.Time
+	accountID       string
+	runtimeID       string
+	hostID          string
+	operation       string
+	leaseID         string
+	envelope        blobKeyEnvelope
+	blobKeyVerifier string
+	hasEnvelope     bool
+	expiresAt       time.Time
 }
 
 type activeBlobKeyLease struct {
@@ -58,12 +59,13 @@ type activeBlobKeyLease struct {
 }
 
 type activeBlobKeyHandoff struct {
-	AccountID string
-	RuntimeID string
-	HostID    string
-	Operation string
-	LeaseID   string
-	Envelope  blobKeyEnvelope
+	AccountID       string
+	RuntimeID       string
+	HostID          string
+	Operation       string
+	LeaseID         string
+	Envelope        blobKeyEnvelope
+	BlobKeyVerifier string
 }
 
 type blobKeyEnvelope struct {
@@ -190,14 +192,19 @@ func (v *activeBlobKeyVault) activate(handoff activeBlobKeyHandoff) (activeBlobK
 	if err := validateBlobKeyEnvelope(handoff.Envelope, entry); err != nil {
 		return activeBlobKeyEntry{}, err
 	}
+	blobKeyVerifier := strings.TrimSpace(handoff.BlobKeyVerifier)
+	if blobKeyVerifier == "" {
+		return activeBlobKeyEntry{}, errors.New("runtime blob-key verifier is required")
+	}
 
 	entry.envelope = handoff.Envelope
+	entry.blobKeyVerifier = blobKeyVerifier
 	entry.hasEnvelope = true
 	v.keys[runtimeID] = entry
 	return entry, nil
 }
 
-func (v *activeBlobKeyVault) get(runtimeID string, hostID string) (blobKeyEnvelope, time.Time, bool) {
+func (v *activeBlobKeyVault) get(runtimeID string, hostID string) (blobKeyEnvelope, string, time.Time, bool) {
 	now := time.Now().UTC()
 	runtimeID = strings.TrimSpace(runtimeID)
 	hostID = strings.TrimSpace(hostID)
@@ -205,16 +212,21 @@ func (v *activeBlobKeyVault) get(runtimeID string, hostID string) (blobKeyEnvelo
 	defer v.mu.Unlock()
 	entry, ok := v.keys[runtimeID]
 	if !ok {
-		return blobKeyEnvelope{}, time.Time{}, false
+		return blobKeyEnvelope{}, "", time.Time{}, false
 	}
 	if !entry.expiresAt.After(now) {
 		delete(v.keys, runtimeID)
-		return blobKeyEnvelope{}, time.Time{}, false
+		return blobKeyEnvelope{}, "", time.Time{}, false
 	}
-	if entry.runtimeID != runtimeID || entry.hostID != hostID || entry.accountID == "" || entry.operation == "" || !entry.hasEnvelope {
-		return blobKeyEnvelope{}, time.Time{}, false
+	if entry.runtimeID != runtimeID ||
+		entry.hostID != hostID ||
+		entry.accountID == "" ||
+		entry.operation == "" ||
+		strings.TrimSpace(entry.blobKeyVerifier) == "" ||
+		!entry.hasEnvelope {
+		return blobKeyEnvelope{}, "", time.Time{}, false
 	}
-	return entry.envelope, entry.expiresAt, true
+	return entry.envelope, entry.blobKeyVerifier, entry.expiresAt, true
 }
 
 func (v *activeBlobKeyVault) clear(runtimeID string) {
@@ -269,6 +281,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/state", api.getMyRuntimeState)
 	mux.HandleFunc("PATCH /api/v1/me/runtimes/{id}", api.updateMyRuntime)
 	mux.HandleFunc("DELETE /api/v1/me/runtimes/{id}", api.deleteMyRuntime)
+	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/delete", api.deleteMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/blob-key-lease", api.createRuntimeBlobKeyLease)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/start", api.startMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/stop", api.stopMyRuntime)
@@ -276,6 +289,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/session", api.createMyRuntimeSession)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/logs", api.runtimeLogs)
 	mux.HandleFunc("GET /api/v1/me/sessions/{id}", api.getMySession)
+	mux.HandleFunc("POST /api/v1/me/sessions/{id}/relay-token", api.issueMySessionRelayToken)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/heartbeat", api.heartbeatMySession)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/end", api.endMySession)
 	mux.HandleFunc("POST /api/v1/me/sessions/{id}/close", api.closeMySession)
@@ -820,13 +834,37 @@ func (a *API) updateMyRuntime(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
-	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
 	if !ok {
 		return
 	}
 
-	runtime, err := a.store.DeleteRuntime(r.Context(), accountID, r.PathValue("id"))
+	var req struct {
+		AccountID       string          `json:"account_id"`
+		DeviceID        string          `json:"device_id"`
+		BlobKeyVerifier string          `json:"blob_key_verifier"`
+		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "runtime deletion requires a blob-key envelope"})
+		return
+	}
+	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+		return
+	}
+
+	runtimeID := r.PathValue("id")
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "delete", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	if !ok {
+		return
+	}
+	if !a.verifyActiveBlobKeyEnvelope(w, r, lease) {
+		return
+	}
+
+	runtime, err := a.store.DeleteRuntime(r.Context(), accountID, runtimeID)
 	if err != nil {
+		a.activeBlobKeys.clear(runtimeID)
 		if err == store.ErrRuntimeNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
@@ -928,6 +966,9 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !a.verifyActiveBlobKeyEnvelope(w, r, lease) {
+		return
+	}
 
 	runtime, err := a.store.StartRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
 	if err != nil {
@@ -960,7 +1001,11 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtimeID := r.PathValue("id")
-	if _, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope); !ok {
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	if !ok {
+		return
+	}
+	if !a.verifyActiveBlobKeyEnvelope(w, r, lease) {
 		return
 	}
 
@@ -1000,7 +1045,11 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtimeID := r.PathValue("id")
-	if _, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "wipe", req.BlobKeyVerifier, req.BlobKeyEnvelope); !ok {
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "wipe", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	if !ok {
+		return
+	}
+	if !a.verifyActiveBlobKeyEnvelope(w, r, lease) {
 		return
 	}
 
@@ -1065,6 +1114,9 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	runtimeID := r.PathValue("id")
 	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "session", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
+		return
+	}
+	if !a.verifyActiveBlobKeyEnvelope(w, r, lease) {
 		return
 	}
 
@@ -1177,6 +1229,9 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !a.verifyActiveBlobKeyEnvelope(w, r, lease) {
+		return
+	}
 
 	runtime, err := a.store.EndSessionAndStopRuntime(r.Context(), accountID, deviceID, r.PathValue("id"))
 	if err != nil {
@@ -1235,6 +1290,25 @@ func (a *API) getMySession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, state)
+}
+
+func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	session, err := a.store.IssueSessionRelayToken(r.Context(), accountID, deviceID, r.PathValue("id"))
+	if err != nil {
+		if err == store.ErrSessionNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{"session": session})
 }
 
 func (a *API) heartbeatMySession(w http.ResponseWriter, r *http.Request) {
@@ -1408,7 +1482,7 @@ func (a *API) runtimeBlobKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	envelope, expiresAt, ok := a.activeBlobKeys.get(runtimeID, hostID)
+	envelope, blobKeyVerifier, expiresAt, ok := a.activeBlobKeys.get(runtimeID, hostID)
 	if !ok {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime active blob key envelope is not available"})
 		return
@@ -1416,6 +1490,7 @@ func (a *API) runtimeBlobKey(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"blob_key_envelope":   envelope,
+		"blob_key_verifier":   blobKeyVerifier,
 		"blob_key_expires_at": expiresAt,
 	})
 }
@@ -1430,23 +1505,79 @@ func (a *API) activateRuntimeBlobKeyEnvelope(
 	blobKeyVerifier string,
 	envelope blobKeyEnvelope,
 ) (activeBlobKeyEntry, bool) {
-	if err := a.store.VerifyDeviceBlobKeyVerifier(r.Context(), accountID, deviceID, blobKeyVerifier); err != nil {
+	verifiedBlobKeyVerifier, err := a.store.VerifiedDeviceBlobKeyVerifier(r.Context(), accountID, deviceID, blobKeyVerifier)
+	if err != nil {
 		writeIdentityAuthError(w, err)
 		return activeBlobKeyEntry{}, false
 	}
 	entry, err := a.activeBlobKeys.activate(activeBlobKeyHandoff{
-		AccountID: accountID,
-		RuntimeID: runtimeID,
-		HostID:    envelope.HostID,
-		Operation: operation,
-		LeaseID:   envelope.LeaseID,
-		Envelope:  envelope,
+		AccountID:       accountID,
+		RuntimeID:       runtimeID,
+		HostID:          envelope.HostID,
+		Operation:       operation,
+		LeaseID:         envelope.LeaseID,
+		Envelope:        envelope,
+		BlobKeyVerifier: verifiedBlobKeyVerifier,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return activeBlobKeyEntry{}, false
 	}
 	return entry, true
+}
+
+func (a *API) verifyActiveBlobKeyEnvelope(w http.ResponseWriter, r *http.Request, entry activeBlobKeyEntry) bool {
+	host, err := a.store.GetHost(r.Context(), entry.hostID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return false
+	}
+	if err := a.verifyBlobKeyEnvelopeWithNode(r.Context(), host, entry); err != nil {
+		a.activeBlobKeys.clear(entry.runtimeID)
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
+func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host, entry activeBlobKeyEntry) error {
+	relayPort := host.RelayPort
+	if relayPort <= 0 {
+		relayPort = 8090
+	}
+	body, err := json.Marshal(map[string]any{
+		"blob_key_envelope":   entry.envelope,
+		"blob_key_verifier":   entry.blobKeyVerifier,
+		"blob_key_expires_at": entry.expiresAt,
+	})
+	if err != nil {
+		return err
+	}
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(
+		verifyCtx,
+		http.MethodPost,
+		fmt.Sprintf("http://%s:%d/api/v1/internal/blob-key/verify", host.AdvertiseAddr, relayPort),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if a.cfg.NodeSharedSecret != "" {
+		req.Header.Set("X-Virtroid-Node-Secret", a.cfg.NodeSharedSecret)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("verify blob key envelope: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+	return nil
 }
 
 func (a *API) validateSignedDeviceBody(w http.ResponseWriter, signedAccountID, signedDeviceID, bodyAccountID, bodyDeviceID string) bool {
@@ -1474,7 +1605,7 @@ func writeIdentityAuthError(w http.ResponseWriter, err error) {
 
 func normalizeBlobKeyOperation(operation string) string {
 	switch strings.ToLower(strings.TrimSpace(operation)) {
-	case "start", "stop", "wipe", "session":
+	case "start", "stop", "wipe", "delete", "session":
 		return strings.ToLower(strings.TrimSpace(operation))
 	default:
 		return ""

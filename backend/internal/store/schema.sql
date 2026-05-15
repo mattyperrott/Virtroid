@@ -177,12 +177,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_client_heartbeat_at TIMESTAMPTZ,
     ended_at TIMESTAMPTZ,
     end_reason TEXT,
-    expires_at TIMESTAMPTZ NOT NULL
+    expires_at TIMESTAMPTZ NOT NULL,
+    relay_token_consumed_at TIMESTAMPTZ
 );
 
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_client_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS end_reason TEXT;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS relay_token_consumed_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS device_request_nonces (
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

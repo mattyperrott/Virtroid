@@ -240,12 +240,49 @@ func TestExtractTarRejectsWriteThroughExistingSymlink(t *testing.T) {
 func TestRuntimeBlobKeyRejectsExpiredKey(t *testing.T) {
 	expiredAt := time.Now().UTC().Add(-time.Second)
 
-	_, err := (&nodeAgent{}).decryptBlobKeyEnvelope(blobKeyEnvelopePayload{}, expiredAt)
+	_, err := (&nodeAgent{}).decryptBlobKeyEnvelope(blobKeyEnvelopePayload{}, blobKeyVerifierForPlaintext(testBlobKey(1)), expiredAt)
 	if err == nil {
 		t.Fatal("runtimeBlobKey accepted expired envelope")
 	}
 	if !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("runtimeBlobKey error = %q, want expired", err.Error())
+	}
+}
+
+func TestRuntimeBlobKeyRejectsVerifierMismatch(t *testing.T) {
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	nodePrivateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	envelope := testBlobKeyEnvelope(t, nodePrivateKey, runtimeID, "host-1", "stop", "lease-1", testBlobKey(1))
+	node := &nodeAgent{nodePrivateKey: nodePrivateKey}
+
+	_, err = node.decryptBlobKeyEnvelope(envelope, blobKeyVerifierForPlaintext(testBlobKey(2)), time.Now().UTC().Add(time.Minute))
+	if err == nil {
+		t.Fatal("decryptBlobKeyEnvelope accepted a plaintext key that did not match the expected verifier")
+	}
+	if !strings.Contains(err.Error(), "does not match expected verifier") {
+		t.Fatalf("decryptBlobKeyEnvelope error = %q, want verifier mismatch", err.Error())
+	}
+}
+
+func TestRuntimeBlobKeyAcceptsVerifierMatch(t *testing.T) {
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	blobKey := testBlobKey(1)
+	nodePrivateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	envelope := testBlobKeyEnvelope(t, nodePrivateKey, runtimeID, "host-1", "stop", "lease-1", blobKey)
+	node := &nodeAgent{nodePrivateKey: nodePrivateKey}
+
+	got, err := node.decryptBlobKeyEnvelope(envelope, blobKeyVerifierForPlaintext(blobKey), time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("decryptBlobKeyEnvelope returned error: %v", err)
+	}
+	if !bytes.Equal(got, blobKey) {
+		t.Fatalf("decryptBlobKeyEnvelope returned %x, want %x", got, blobKey)
 	}
 }
 
@@ -360,6 +397,7 @@ func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
 			blobKeyFetches++
 			writeJSONForTest(t, w, map[string]any{
 				"blob_key_envelope":   envelope,
+				"blob_key_verifier":   blobKeyVerifierForPlaintext(testBlobKey(1)),
 				"blob_key_expires_at": time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
 			})
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/status"):

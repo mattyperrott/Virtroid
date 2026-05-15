@@ -372,14 +372,14 @@ func (n *nodeAgent) clearManifestChunks(runtime runtimeAssignment) error {
 }
 
 func (n *nodeAgent) runtimeBlobKey(runtime runtimeAssignment) ([]byte, error) {
-	envelope, expiresAt, err := n.fetchActiveBlobKey(context.Background(), runtime.ID)
+	envelope, verifier, expiresAt, err := n.fetchActiveBlobKey(context.Background(), runtime.ID)
 	if err != nil {
 		return nil, err
 	}
-	return n.decryptBlobKeyEnvelope(envelope, expiresAt)
+	return n.decryptBlobKeyEnvelope(envelope, verifier, expiresAt)
 }
 
-func (n *nodeAgent) fetchActiveBlobKey(ctx context.Context, runtimeID string) (blobKeyEnvelopePayload, time.Time, error) {
+func (n *nodeAgent) fetchActiveBlobKey(ctx context.Context, runtimeID string) (blobKeyEnvelopePayload, string, time.Time, error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
@@ -387,34 +387,37 @@ func (n *nodeAgent) fetchActiveBlobKey(ctx context.Context, runtimeID string) (b
 		nil,
 	)
 	if err != nil {
-		return blobKeyEnvelopePayload{}, time.Time{}, err
+		return blobKeyEnvelopePayload{}, "", time.Time{}, err
 	}
 	if err := n.signControlPlaneRequest(req, nil, false); err != nil {
-		return blobKeyEnvelopePayload{}, time.Time{}, err
+		return blobKeyEnvelopePayload{}, "", time.Time{}, err
 	}
 
 	resp, err := n.controlPlane.Do(req)
 	if err != nil {
-		return blobKeyEnvelopePayload{}, time.Time{}, err
+		return blobKeyEnvelopePayload{}, "", time.Time{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return blobKeyEnvelopePayload{}, time.Time{}, fmt.Errorf("fetch active blob key envelope: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return blobKeyEnvelopePayload{}, "", time.Time{}, fmt.Errorf("fetch active blob key envelope: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
 	var payload struct {
 		BlobKeyEnvelope blobKeyEnvelopePayload `json:"blob_key_envelope"`
+		BlobKeyVerifier string                 `json:"blob_key_verifier"`
 		BlobKeyExpires  time.Time              `json:"blob_key_expires_at"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return blobKeyEnvelopePayload{}, time.Time{}, err
+		return blobKeyEnvelopePayload{}, "", time.Time{}, err
 	}
-	if strings.TrimSpace(payload.BlobKeyEnvelope.Ciphertext) == "" || payload.BlobKeyExpires.IsZero() {
-		return blobKeyEnvelopePayload{}, time.Time{}, errors.New("blob key envelope handoff response is incomplete")
+	if strings.TrimSpace(payload.BlobKeyEnvelope.Ciphertext) == "" ||
+		strings.TrimSpace(payload.BlobKeyVerifier) == "" ||
+		payload.BlobKeyExpires.IsZero() {
+		return blobKeyEnvelopePayload{}, "", time.Time{}, errors.New("blob key envelope handoff response is incomplete")
 	}
-	return payload.BlobKeyEnvelope, payload.BlobKeyExpires, nil
+	return payload.BlobKeyEnvelope, strings.TrimSpace(payload.BlobKeyVerifier), payload.BlobKeyExpires, nil
 }
 
 func parseBlobManifest(raw *string) (*blobManifest, error) {
