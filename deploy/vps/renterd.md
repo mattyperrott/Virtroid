@@ -39,7 +39,7 @@ For user-funded Sia storage, use:
 
 ## 1. Configure renterd secrets
 
-Edit `/mnt/stash/virtroid/deploy/vps/.env` on the VPS:
+Edit `/opt/virtroid/deploy/vps/.env` on the VPS:
 
 ```dotenv
 RENTERD_API_PASSWORD=<long random API password>
@@ -56,7 +56,7 @@ back it up outside this repository before funding it.
 ## 2. Start renterd only
 
 ```bash
-cd /mnt/stash/virtroid/deploy/vps
+cd /opt/virtroid/deploy/vps
 sudo docker compose --env-file .env --profile renterd up -d renterd
 sudo docker logs -f virtroid-renterd
 ```
@@ -80,7 +80,7 @@ contracts before enabling runtime snapshots.
 After renterd has contracts, run the preflight first:
 
 ```bash
-cd /mnt/stash/virtroid/deploy/vps
+cd /opt/virtroid/deploy/vps
 sudo docker compose --env-file .env --profile renterd run --rm --no-deps \
   -e NODE_BLOB_PREFLIGHT=1 \
   -e NODE_BLOB_STORE_KIND=sia-renterd \
@@ -98,7 +98,7 @@ The preflight checks:
 Then run the full encrypted write/restore smoke test:
 
 ```bash
-cd /mnt/stash/virtroid/deploy/vps
+cd /opt/virtroid/deploy/vps
 sudo docker compose --env-file .env --profile renterd run --rm \
   -e NODE_BLOB_SMOKE_TEST=1 \
   -e NODE_BLOB_STORE_KIND=sia-renterd \
@@ -126,7 +126,7 @@ NODE_BLOB_STORE_KIND=sia-renterd
 Then roll `virtnoded`:
 
 ```bash
-cd /mnt/stash/virtroid/deploy/vps
+cd /opt/virtroid/deploy/vps
 sudo docker compose --env-file .env up -d virtnoded
 sudo docker logs -f virtnoded
 ```
