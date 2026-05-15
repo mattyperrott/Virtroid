@@ -8,6 +8,7 @@ import (
 	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -31,9 +32,13 @@ type blobKeyEnvelopePayload struct {
 	Ciphertext         string `json:"ciphertext"`
 }
 
-func (n *nodeAgent) decryptBlobKeyEnvelope(envelope blobKeyEnvelopePayload, expiresAt time.Time) ([]byte, error) {
+func (n *nodeAgent) decryptBlobKeyEnvelope(envelope blobKeyEnvelopePayload, expectedVerifier string, expiresAt time.Time) ([]byte, error) {
 	if expiresAt.IsZero() || time.Now().UTC().After(expiresAt.UTC()) {
 		return nil, errors.New("runtime blob key envelope has expired")
+	}
+	expectedVerifier = strings.TrimSpace(expectedVerifier)
+	if expectedVerifier == "" {
+		return nil, errors.New("blob key envelope verifier is required")
 	}
 	if envelope.Version != 1 {
 		return nil, errors.New("unsupported blob key envelope version")
@@ -73,7 +78,16 @@ func (n *nodeAgent) decryptBlobKeyEnvelope(envelope blobKeyEnvelopePayload, expi
 	if len(plaintext) != 32 {
 		return nil, errors.New("blob key envelope plaintext has invalid length")
 	}
+	actualVerifier := blobKeyVerifierForPlaintext(plaintext)
+	if subtle.ConstantTimeCompare([]byte(actualVerifier), []byte(expectedVerifier)) != 1 {
+		return nil, errors.New("blob key envelope plaintext does not match expected verifier")
+	}
 	return plaintext, nil
+}
+
+func blobKeyVerifierForPlaintext(blobKey []byte) string {
+	digest := sha256.Sum256(append([]byte("virtroid-blob-verifier-v1:"), blobKey...))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func (n *nodeAgent) blobKeyEnvelopeSharedSecret(ephemeralPublicKey string) ([]byte, error) {

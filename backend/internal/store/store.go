@@ -931,7 +931,7 @@ func (s *Store) GetRuntimeState(ctx context.Context, accountID, deviceID, runtim
 	var runtime Runtime
 	err := s.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT %s FROM runtimes
-			 WHERE account_id = $1 AND id = $2`, runtimeColumns),
+			 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL`, runtimeColumns),
 		accountID,
 		runtimeID,
 	).Scan(scanRuntimeDest(&runtime)...)
@@ -1529,6 +1529,11 @@ func (s *Store) RememberNodeRequestNonce(ctx context.Context, nodeID, nonce stri
 }
 
 func (s *Store) VerifyDeviceBlobKeyVerifier(ctx context.Context, accountID, deviceID, blobKeyVerifier string) error {
+	_, err := s.VerifiedDeviceBlobKeyVerifier(ctx, accountID, deviceID, blobKeyVerifier)
+	return err
+}
+
+func (s *Store) VerifiedDeviceBlobKeyVerifier(ctx context.Context, accountID, deviceID, blobKeyVerifier string) (string, error) {
 	var storedVerifier sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT blob_key_verifier
@@ -1539,25 +1544,25 @@ func (s *Store) VerifyDeviceBlobKeyVerifier(ctx context.Context, accountID, devi
 	).Scan(&storedVerifier)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrDeviceNotFound
+			return "", ErrDeviceNotFound
 		}
-		return err
+		return "", err
 	}
 	if !storedVerifier.Valid || strings.TrimSpace(storedVerifier.String) == "" {
-		return ErrIdentityNotFound
+		return "", ErrIdentityNotFound
 	}
 	stored, err := normalizeBlobKeyVerifier(storedVerifier.String)
 	if err != nil {
-		return ErrIdentityAuthFailed
+		return "", ErrIdentityAuthFailed
 	}
 	verifier, err := normalizeBlobKeyVerifier(blobKeyVerifier)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if subtle.ConstantTimeCompare([]byte(verifier), []byte(stored)) != 1 {
-		return ErrIdentityAuthFailed
+		return "", ErrIdentityAuthFailed
 	}
-	return nil
+	return stored, nil
 }
 
 func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (Runtime, error) {
@@ -1986,6 +1991,14 @@ func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, 
 		if hostID == "" {
 			return Runtime{}, Host{}, ErrRuntimeNotReady
 		}
+	case "delete":
+		hostID = valueOrEmpty(runtime.HostID)
+		if hostID == "" {
+			hostID, err = pickReadyHostTX(ctx, tx, "")
+			if err != nil {
+				return Runtime{}, Host{}, err
+			}
+		}
 	case "session":
 		if runtime.Status != "running" || runtime.DesiredState != "running" || runtime.ConnectionStatus != "online" {
 			return Runtime{}, Host{}, ErrRuntimeNotReady
@@ -2064,10 +2077,12 @@ func (s *Store) ResolveSessionRelayTarget(ctx context.Context, sessionID, relayT
 		 SET status = 'active',
 		     updated_at = NOW(),
 		     last_client_heartbeat_at = NOW(),
-		     expires_at = NOW() + INTERVAL '2 minutes'
+		     expires_at = NOW() + INTERVAL '2 minutes',
+		     relay_token_consumed_at = NOW()
 		 FROM runtimes AS r
 		 WHERE s.id = $1
 		   AND s.relay_token = $2
+		   AND s.relay_token_consumed_at IS NULL
 		   AND s.expires_at > NOW()
 		   AND s.status IN ('pending', 'active')
 		   AND r.id = s.runtime_id
@@ -2182,6 +2197,69 @@ func (s *Store) GetSessionState(ctx context.Context, accountID, deviceID, sessio
 		RuntimeReady:    runtimeReady,
 		CanResume:       canResume,
 	}, nil
+}
+
+func (s *Store) IssueSessionRelayToken(ctx context.Context, accountID, deviceID, sessionID string) (Session, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	sessionID = strings.TrimSpace(sessionID)
+	if accountID == "" || deviceID == "" || sessionID == "" {
+		return Session{}, ErrSessionNotFound
+	}
+	relayToken, err := generateRelayToken()
+	if err != nil {
+		return Session{}, err
+	}
+	relayTokenHash := hashRelayToken(relayToken)
+
+	var session Session
+	err = s.db.QueryRowContext(ctx,
+		`UPDATE sessions AS s
+		 SET relay_token = $4,
+		     relay_token_consumed_at = NULL,
+		     updated_at = NOW(),
+		     expires_at = NOW() + INTERVAL '2 minutes'
+		 FROM runtimes AS r
+		 JOIN devices AS d ON d.id = s.device_id AND d.account_id = r.account_id
+		 WHERE s.id = $1
+		   AND s.device_id = $2
+		   AND r.id = s.runtime_id
+		   AND r.account_id = $3
+		   AND d.revoked_at IS NULL
+		   AND s.status IN ('pending', 'active')
+		   AND s.expires_at > NOW()
+		   AND r.deleted_at IS NULL
+		   AND r.desired_state = 'running'
+		   AND r.status = 'running'
+		   AND r.connection_status = 'online'
+		   AND r.host_id IS NOT NULL
+		   AND r.viewer_port IS NOT NULL
+		 RETURNING s.id, s.runtime_id, s.device_id, s.status, s.created_at, s.updated_at,
+		           s.last_client_heartbeat_at, s.ended_at, s.end_reason, s.expires_at`,
+		sessionID,
+		deviceID,
+		accountID,
+		relayTokenHash,
+	).Scan(
+		&session.ID,
+		&session.RuntimeID,
+		&session.DeviceID,
+		&session.Status,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
+		&session.ExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrSessionNotFound
+		}
+		return Session{}, err
+	}
+	session.RelayToken = relayToken
+	return session, nil
 }
 
 func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceID, sessionID string) (Runtime, error) {
@@ -2661,6 +2739,7 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 		 JOIN devices d ON d.account_id = r.account_id
 		 WHERE r.id = $1
 		   AND d.id = $2
+		   AND d.revoked_at IS NULL
 		   AND r.deleted_at IS NULL
 		   AND r.desired_state <> 'deleted'`,
 		runtimeID,

@@ -36,6 +36,10 @@ public final class TlsPins {
 
     public static void checkPeerCertificates(String host, Certificate[] peerCertificates) throws SSLPeerUnverifiedException {
         Set<String> pins = HOST_PINS.get(canonicalHost(host));
+        checkPeerCertificates(host, peerCertificates, pins);
+    }
+
+    static void checkPeerCertificates(String host, Certificate[] peerCertificates, Set<String> pins) throws SSLPeerUnverifiedException {
         if (pins == null || pins.isEmpty()) {
             return;
         }
@@ -43,12 +47,11 @@ public final class TlsPins {
             throw new SSLPeerUnverifiedException("pinned TLS host did not present certificates");
         }
 
-        for (Certificate certificate : peerCertificates) {
-            if (certificate instanceof X509Certificate) {
-                String pin = spkiPin((X509Certificate) certificate);
-                if (pins.contains(pin)) {
-                    return;
-                }
+        Certificate leaf = peerCertificates[0];
+        if (leaf instanceof X509Certificate) {
+            String pin = spkiPin((X509Certificate) leaf);
+            if (pins.contains(pin)) {
+                return;
             }
         }
         throw new SSLPeerUnverifiedException("TLS certificate pin mismatch for " + canonicalHost(host));

@@ -474,20 +474,14 @@ class VirtroidApi(
     ): RuntimeSummary =
         mutateRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey, "wipe")
 
-    suspend fun deleteRuntime(baseUrl: String, accountId: String, deviceId: String, runtimeId: String): RuntimeSummary =
-        withContext(Dispatchers.IO) {
-            val payload = executeJson(
-                signedJsonRequest(
-                    baseUrl = baseUrl,
-                    pathAndQuery = "/api/v1/me/runtimes/$runtimeId?account_id=$accountId&device_id=$deviceId",
-                    method = "DELETE",
-                    accountId = accountId,
-                    deviceId = deviceId,
-                ),
-            )
-
-            payload.toRuntimeSummary()
-        }
+    suspend fun deleteRuntime(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        blobAccessKey: String,
+    ): RuntimeSummary =
+        mutateRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey, "delete")
 
     suspend fun getRuntimeState(
         baseUrl: String,
@@ -686,6 +680,24 @@ class VirtroidApi(
             ),
         )
         payload.toSessionState()
+    }
+
+    suspend fun issueSessionRelayToken(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        sessionId: String,
+    ): String = withContext(Dispatchers.IO) {
+        val payload = executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/sessions/$sessionId/relay-token",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+            ),
+        )
+        payload.getJSONObject("session").getString("relay_token")
     }
 
     suspend fun endSession(

@@ -175,7 +175,9 @@ class MainActivity : AppCompatActivity() {
                     .map { it.runtime }
                     .filter { runtime ->
                         val runtimeState = state.runtimeStates.firstOrNull { it.runtime.id == runtime.id }
-                        runtime.isStoppedForSession() || runtimeState?.effectiveState.equals("stopped", ignoreCase = true)
+                        runtime.isStoppedForSession() ||
+                            runtimeState?.effectiveState.equals("stopped", ignoreCase = true) ||
+                            runtimeState?.canConnectRuntime(runtime.id) == true
                     }
                     .forEach { locallyStoppingRuntimeIds.remove(it.id) }
                 renderRuntimeStates(state.runtimeStates, state.entitlement)
@@ -323,11 +325,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary, state: RuntimeState?) {
         val effectiveState = state?.effectiveState.orEmpty()
-        if (runtime.isStoppedForSession() || effectiveState.equals("stopped", ignoreCase = true)) {
+        val backendConnectable = state?.canConnectRuntime(runtime.id) == true
+        if (runtime.isStoppedForSession() || effectiveState.equals("stopped", ignoreCase = true) || backendConnectable) {
             locallyStoppingRuntimeIds.remove(runtime.id)
         }
-        val isLocallyStopping = runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()
-        val isLive = (state?.canConnectRuntime(runtime.id) ?: runtime.isReadyForSession()) && !isLocallyStopping
+        val isLocallyStopping = runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession() && !backendConnectable
+        val isLive = (backendConnectable || runtime.isReadyForSession()) && !isLocallyStopping
         val isBusy = state?.needsRuntimePolling() ?: runtime.isTransitioning()
         if (isBusy || isLocallyStopping) {
             runtimeProvisioningStartedAtMs.putIfAbsent(runtime.id, System.currentTimeMillis())
@@ -408,15 +411,26 @@ class MainActivity : AppCompatActivity() {
         }
         cardBinding.deleteRuntimeButton.setOnClickListener {
             mutateRuntime(getString(R.string.status_deleting_runtime)) {
+                val accountId = requireAccountId() ?: return@mutateRuntime
+                val deviceId = requireDeviceId() ?: return@mutateRuntime
+                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                val state = runCatching {
+                    api.getRuntimeState(currentBaseUrl(), accountId, deviceId, runtime.id)
+                }.getOrNull()
+                if (state?.canWipe != false) {
+                    api.wipeRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
+                }
                 activeSessionStore.loadForRuntime(runtime.id)?.let {
                     activeSessionStore.clear()
                 }
                 api.deleteRuntime(
                     currentBaseUrl(),
-                    requireAccountId() ?: return@mutateRuntime,
-                    requireDeviceId() ?: return@mutateRuntime,
+                    accountId,
+                    deviceId,
                     runtime.id,
+                    blobAccessKey,
                 )
+                identityPasswordStore.saveConfigured(accountId, deviceId)
             }
         }
         cardBinding.runtimeControlsButton.setOnClickListener {
@@ -436,6 +450,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {
+        if (latestRuntimeStates[runtime.id]?.canConnectRuntime(runtime.id) == true) {
+            locallyStoppingRuntimeIds.remove(runtime.id)
+        }
         if (runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()) {
             toast(getString(R.string.runtime_shutdown_in_progress))
             refreshRuntimes(showBusy = false)
@@ -445,15 +462,23 @@ class MainActivity : AppCompatActivity() {
         activeSessionStore.loadForRuntime(runtime.id)?.let { session ->
             lifecycleScope.launch {
                 runCatching {
-                    api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
+                    val state = api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
+                    val relayToken = if (state.canResumeRuntime(runtime.id)) {
+                        api.issueSessionRelayToken(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
+                    } else {
+                        ""
+                    }
+                    state to relayToken
                 }.onSuccess {
-                    if (it.canResumeRuntime(runtime.id)) {
-                        activeSessionStore.touch(session.sessionId)
+                    val (state, relayToken) = it
+                    if (state.canResumeRuntime(runtime.id) && relayToken.isNotBlank()) {
+                        val updatedSession = session.copy(relayToken = relayToken)
+                        activeSessionStore.save(updatedSession)
                         appLogs.info("Returning to active session for ${runtime.name}", "session")
-                        startActivity(SessionActivity.createIntent(this@MainActivity, session).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                        startActivity(SessionActivity.createIntent(this@MainActivity, updatedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
                     } else {
                         activeSessionStore.clear()
-                        appLogs.warn("Stored active session is ${it.effectiveStatus}; creating a fresh session", "session")
+                        appLogs.warn("Stored active session is ${state.effectiveStatus}; creating a fresh session", "session")
                         connectRuntime(runtime)
                     }
                 }.onFailure { error ->
@@ -530,6 +555,9 @@ class MainActivity : AppCompatActivity() {
     ): RuntimeSummary {
         val currentState = latestRuntimeState(baseUrl, accountId, deviceId, runtime.id)
         val currentRuntime = currentState.runtime
+        if (currentState.canConnectRuntime(runtime.id) || currentRuntime.isStoppedForSession()) {
+            locallyStoppingRuntimeIds.remove(currentRuntime.id)
+        }
         if (currentRuntime.id in locallyStoppingRuntimeIds && !currentRuntime.isStoppedForSession()) {
             throw IOException(getString(R.string.runtime_shutdown_in_progress))
         }

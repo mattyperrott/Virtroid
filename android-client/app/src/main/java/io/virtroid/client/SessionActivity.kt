@@ -336,7 +336,21 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionStreamProgress.isVisible = true
         binding.sessionStreamStatusOverlay.isVisible = true
         binding.sessionRetryButton.isVisible = false
-        connectViewer(surface)
+        lifecycleScope.launch {
+            runCatching {
+                api.issueSessionRelayToken(baseUrl, accountId, deviceId, sessionId)
+            }.onSuccess { freshRelayToken ->
+                relayToken = freshRelayToken
+                persistActiveSession()
+                connectViewer(surface)
+            }.onFailure { error ->
+                appLogs.warn("Session relay token refresh failed: ${error.message}", "session")
+                binding.sessionStreamProgress.isVisible = false
+                binding.sessionStreamStatusOverlay.isVisible = true
+                binding.sessionRetryButton.isVisible = true
+                toast(error.virtroidDisplayMessage(this@SessionActivity))
+            }
+        }
     }
 
     private fun checkSessionAfterStreamDisconnect(message: String) {

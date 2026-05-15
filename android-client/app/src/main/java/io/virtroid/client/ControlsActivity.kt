@@ -345,20 +345,33 @@ class ControlsActivity : AppCompatActivity() {
         activeSessionStore.loadForRuntime(runtime.id)?.let { storedSession ->
             lifecycleScope.launch {
                 runCatching {
-                    api.getSessionState(
+                    val state = api.getSessionState(
                         baseUrl = storedSession.baseUrl,
                         accountId = storedSession.accountId,
                         deviceId = storedSession.deviceId,
                         sessionId = storedSession.sessionId,
                     )
+                    val relayToken = if (state.canResumeRuntime(runtime.id)) {
+                        api.issueSessionRelayToken(
+                            storedSession.baseUrl,
+                            storedSession.accountId,
+                            storedSession.deviceId,
+                            storedSession.sessionId,
+                        )
+                    } else {
+                        ""
+                    }
+                    state to relayToken
                 }.onSuccess {
-                    if (it.canResumeRuntime(runtime.id)) {
-                        activeSessionStore.touch(storedSession.sessionId)
+                    val (state, relayToken) = it
+                    if (state.canResumeRuntime(runtime.id) && relayToken.isNotBlank()) {
+                        val updatedSession = storedSession.copy(relayToken = relayToken)
+                        activeSessionStore.save(updatedSession)
                         appLogs.info("Returning to active session from controls for ${runtime.name}", "session")
-                        startActivity(SessionActivity.createIntent(this@ControlsActivity, storedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                        startActivity(SessionActivity.createIntent(this@ControlsActivity, updatedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
                     } else {
                         activeSessionStore.clear()
-                        appLogs.warn("Stored active session from controls is ${it.effectiveStatus}; creating a fresh session", "session")
+                        appLogs.warn("Stored active session from controls is ${state.effectiveStatus}; creating a fresh session", "session")
                         connectRuntime(runtime)
                     }
                 }.onFailure { error ->
@@ -448,7 +461,7 @@ class ControlsActivity : AppCompatActivity() {
                         activeSessionStore.loadForRuntime(current.id)?.let {
                             activeSessionStore.clear()
                         }
-                        api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id)
+                        api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
                     }.onSuccess {
                         toast(getString(R.string.runtime_delete_queued))
                         finish()

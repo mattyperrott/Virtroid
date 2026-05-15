@@ -230,6 +230,7 @@ func main() {
 		writeJSON(w, http.StatusOK, node.capabilities())
 	})
 	mux.HandleFunc("POST /api/v1/internal/viewer/prepare", node.handlePrepareViewer)
+	mux.HandleFunc("POST /api/v1/internal/blob-key/verify", node.handleVerifyBlobKeyEnvelope)
 	mux.HandleFunc("CONNECT /api/v1/relay/{id}", node.handleRelaySession)
 	mux.HandleFunc("GET /api/v1/relay/{id}", node.handleRelaySession)
 
@@ -560,6 +561,28 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 		"viewer_port":       runtime.ViewerPort,
 		"viewer_public_key": viewerPublicKey,
 	})
+}
+
+func (n *nodeAgent) handleVerifyBlobKeyEnvelope(w http.ResponseWriter, r *http.Request) {
+	if n.cfg.SharedSecret != "" && r.Header.Get("X-Virtroid-Node-Secret") != n.cfg.SharedSecret {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node secret"})
+		return
+	}
+
+	var req struct {
+		BlobKeyEnvelope blobKeyEnvelopePayload `json:"blob_key_envelope"`
+		BlobKeyVerifier string                 `json:"blob_key_verifier"`
+		BlobKeyExpires  time.Time              `json:"blob_key_expires_at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if _, err := n.decryptBlobKeyEnvelope(req.BlobKeyEnvelope, req.BlobKeyVerifier, req.BlobKeyExpires); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
@@ -963,6 +986,9 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 }
 
 func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) error {
+	if _, err := n.runtimeBlobKey(runtime); err != nil {
+		return fmt.Errorf("verify runtime blob key before wipe: %w", err)
+	}
 	if err := n.ensureRuntimeStopped(ctx, runtime, false); err != nil {
 		return err
 	}
