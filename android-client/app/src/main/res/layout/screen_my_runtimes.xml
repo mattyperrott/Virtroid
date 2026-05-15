@@ -55,8 +55,7 @@
 
             <FrameLayout
                 android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:layout_marginEnd="12dp">
+                android:layout_height="52dp">
 
                 <ImageButton
                     android:id="@+id/notificationButton"
@@ -85,15 +84,6 @@
                     android:visibility="gone" />
             </FrameLayout>
 
-            <ImageButton
-                android:id="@+id/accessToggleButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="@drawable/bg_surface_circle"
-                android:contentDescription="@string/home_access"
-                android:padding="13dp"
-                android:src="@drawable/ic_fingerprint"
-                app:tint="@color/v_accent" />
         </LinearLayout>
 
         <LinearLayout

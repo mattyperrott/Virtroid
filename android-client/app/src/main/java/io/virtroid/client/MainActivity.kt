@@ -90,9 +90,6 @@ class MainActivity : AppCompatActivity() {
         binding.notificationButton.setOnClickListener {
             startActivity(SystemLogsActivity.createIntent(this, errorsOnly = true))
         }
-        binding.accessToggleButton.setOnClickListener {
-            startActivity(AccountIdentityActivity.createIntent(this))
-        }
         binding.createRuntimeButton.setOnClickListener {
             openNewRuntime()
         }
@@ -433,9 +430,6 @@ class MainActivity : AppCompatActivity() {
                 identityPasswordStore.saveConfigured(accountId, deviceId)
             }
         }
-        cardBinding.runtimeControlsButton.setOnClickListener {
-            startActivity(ControlsActivity.createIntent(this, runtime.id))
-        }
         cardBinding.actionControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtime.id))
         }
@@ -748,7 +742,6 @@ class MainActivity : AppCompatActivity() {
         binding.statusText.text = getString(R.string.home_secure_client)
         binding.notificationButton.isEnabled = !isBusy
         binding.createRuntimeButton.isEnabled = !isBusy && (latestEntitlement?.canCreateRuntime ?: true)
-        binding.accessToggleButton.isEnabled = !isBusy
     }
 
     private fun updateNotificationBadge() {
