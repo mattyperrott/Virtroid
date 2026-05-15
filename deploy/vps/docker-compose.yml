@@ -71,7 +71,7 @@ services:
       NODE_SIA_RENTERD_CONTRACT_SET: ${NODE_SIA_RENTERD_CONTRACT_SET:-}
       NODE_HEARTBEAT_INTERVAL: 30s
       NODE_RECONCILE_INTERVAL: 10s
-      NODE_DOCKER_NETWORK: vps_default
+      NODE_DOCKER_NETWORK: ${NODE_DOCKER_NETWORK:-virtroid_default}
       NODE_RUNTIME_ROOT: /srv/virtroid/runtimes
     ports:
       - "${HOST_RELAY_BIND:-127.0.0.1}:8090:8090"

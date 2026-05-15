@@ -6,6 +6,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+export DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}"
+
 current_kernel="$(uname -r)"
 next_kernel=""
 
@@ -15,7 +17,16 @@ if [ -e /vmlinuz ]; then
 fi
 
 apt-get update
-apt-get install -y "linux-modules-extra-${current_kernel}"
+apt-get install -y \
+  adb \
+  ca-certificates \
+  curl \
+  docker-compose-v2 \
+  docker.io \
+  gnupg \
+  python3 \
+  rsync \
+  "linux-modules-extra-${current_kernel}"
 
 if [ -n "${next_kernel}" ] && [ "${next_kernel}" != "${current_kernel}" ]; then
   if apt-cache show "linux-modules-extra-${next_kernel}" >/dev/null 2>&1; then
@@ -23,10 +34,13 @@ if [ -n "${next_kernel}" ] && [ "${next_kernel}" != "${current_kernel}" ]; then
   fi
 fi
 
-install -m 0755 /mnt/stash/virtroid/deploy/vps/virtroid-binderfs-setup.sh /usr/local/sbin/virtroid-binderfs-setup.sh
-install -m 0644 /mnt/stash/virtroid/deploy/vps/redroid-binderfs.service /etc/systemd/system/redroid-binderfs.service
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+install -m 0755 "${script_dir}/virtroid-binderfs-setup.sh" /usr/local/sbin/virtroid-binderfs-setup.sh
+install -m 0644 "${script_dir}/redroid-binderfs.service" /etc/systemd/system/redroid-binderfs.service
 
 systemctl daemon-reload
+systemctl enable --now docker
 systemctl enable --now redroid-binderfs.service
 
 if ! mountpoint -q /dev/binderfs; then
@@ -34,8 +48,15 @@ if ! mountpoint -q /dev/binderfs; then
   exit 1
 fi
 
-install -d -m 0750 -o 1000 -g 1000 /srv/virtroid /srv/virtroid/assets /srv/virtroid/runtimes
-chown -R 1000:1000 /srv/virtroid
+host_uid="${VIRTROID_HOST_UID:-${SUDO_UID:-1000}}"
+host_gid="${VIRTROID_HOST_GID:-${SUDO_GID:-1000}}"
+
+install -d -m 0750 -o "${host_uid}" -g "${host_gid}" \
+  /srv/virtroid \
+  /srv/virtroid/assets \
+  /srv/virtroid/runtimes \
+  /srv/virtroid/tls
+chown -R "${host_uid}:${host_gid}" /srv/virtroid
 
 ls -la /dev/binderfs
 printf 'docker group id: '
