@@ -29,6 +29,7 @@ import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
+import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionViewerBinding
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
@@ -64,6 +65,7 @@ class SessionActivity : AppCompatActivity() {
     private var viewerSurface: Surface? = null
     private lateinit var identityPasswordStore: IdentityPasswordStore
     private lateinit var activeSessionStore: ActiveSessionStore
+    private lateinit var sessionStore: SessionStore
     private lateinit var appSettings: AppSettingsStore
     private lateinit var appLogs: AppLogStore
     private var lastInteractionAtMs = System.currentTimeMillis()
@@ -145,6 +147,16 @@ class SessionActivity : AppCompatActivity() {
         accountId = intent.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
         deviceId = intent.getStringExtra(EXTRA_DEVICE_ID).orEmpty()
         baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty()
+        sessionStore = SessionStore(this)
+        if (accountId.isBlank()) {
+            accountId = sessionStore.accountId.orEmpty()
+        }
+        if (deviceId.isBlank()) {
+            deviceId = sessionStore.deviceId.orEmpty()
+        }
+        if (baseUrl.isBlank()) {
+            baseUrl = sessionStore.baseUrl
+        }
         identityPasswordStore = IdentityPasswordStore(this)
         activeSessionStore = ActiveSessionStore(this)
         appSettings = AppSettingsStore(this)
@@ -412,32 +424,19 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionRetryButton.isVisible = false
         setSessionActionsEnabled(false)
 
-        if (runtimeId.isBlank() || accountId.isBlank() || deviceId.isBlank() || baseUrl.isBlank()) {
-            appSettings.lastSessionEndReason = reason
-            activeSessionStore.clear()
-            finishToRuntimeList(markRuntimeStopping = false)
+        val missingContext = missingShutdownContext()
+        if (missingContext != null) {
+            endingSession = false
+            setSessionActionsEnabled(true)
+            showEndingError(IOException(missingContext))
             return
         }
 
         lifecycleScope.launch {
             runCatching {
                 val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                if (sessionId.isNotBlank()) {
-                    val endResult = runCatching {
-                        api.endSession(baseUrl, accountId, deviceId, runtimeId, sessionId, blobAccessKey)
-                    }
-                    endResult.onFailure { error ->
-                        if (!error.isGoneSessionResponse()) {
-                            throw error
-                        }
-                        api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
-                    }
-                    relayToken = ""
-                } else {
-                    api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
-                }
+                queueRuntimeStop(blobAccessKey)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
-                waitForRuntimeStopped()
             }.onSuccess {
                 appSettings.lastSessionEndReason = reason
                 activeSessionStore.clear()
@@ -445,23 +444,47 @@ class SessionActivity : AppCompatActivity() {
                     appSettings.clearClipboard()
                     appLogs.info("Clipboard cleared after session end", "privacy")
                 }
-                appLogs.info("Session ended: $reason", "session")
-                toast(getString(R.string.session_ended))
+                appLogs.info("Session shutdown queued: $reason", "session")
+                toast(getString(R.string.session_stop_pending))
                 finishToRuntimeList(markRuntimeStopping = true)
             }.onFailure { error ->
-                if (error is StopTimeoutException) {
-                    appSettings.lastSessionEndReason = reason
-                    activeSessionStore.clear()
-                    appLogs.warn("Session shutdown still pending after timeout", "session")
-                    toast(getString(R.string.session_stop_pending))
-                    finishToRuntimeList(markRuntimeStopping = true)
-                } else {
-                    endingSession = false
-                    setSessionActionsEnabled(true)
-                    showEndingError(error)
-                }
+                endingSession = false
+                setSessionActionsEnabled(true)
+                showEndingError(error)
             }
         }
+    }
+
+    private fun missingShutdownContext(): String? {
+        val missing = buildList {
+            if (runtimeId.isBlank()) add("runtime")
+            if (accountId.isBlank()) add("account")
+            if (deviceId.isBlank()) add("device")
+            if (baseUrl.isBlank()) add("server")
+        }
+        if (missing.isEmpty()) {
+            return null
+        }
+        return getString(R.string.session_shutdown_missing_context, missing.joinToString(", "))
+    }
+
+    private suspend fun queueRuntimeStop(blobAccessKey: String) {
+        if (sessionId.isNotBlank()) {
+            val endResult = runCatching {
+                api.endSession(baseUrl, accountId, deviceId, runtimeId, sessionId, blobAccessKey)
+            }
+            endResult.onFailure { error ->
+                if (!error.isGoneSessionResponse()) {
+                    throw error
+                }
+                appLogs.warn("Session was already gone; queueing runtime stop directly", "session")
+                api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
+            }
+            relayToken = ""
+            return
+        }
+
+        api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
     }
 
     private fun finishToRuntimeList(markRuntimeStopping: Boolean) {
@@ -487,38 +510,6 @@ class SessionActivity : AppCompatActivity() {
 
     private fun sendSystemKey(keyCode: Int) {
         sessionHost?.sendKey(keyCode)
-    }
-
-    private suspend fun waitForRuntimeStopped() {
-        repeat(STOP_WAIT_ATTEMPTS) { attempt ->
-            val state = runCatching {
-                api.getRuntimeState(baseUrl, accountId, deviceId, runtimeId)
-            }.getOrElse { error ->
-                if (error.isGoneSessionResponse()) {
-                    return
-                }
-                throw error
-            }
-            val runtime = state.runtime
-
-            if (runtime.isStoppedForSession() || state.effectiveState.equals("deleted", ignoreCase = true)) {
-                return
-            }
-
-            val status = getString(
-                R.string.status_waiting_runtime_stop,
-                state.effectiveState.ifBlank { runtime.status.ifBlank { "stopping" } },
-                runtime.connectionStatus.ifBlank { "offline" },
-            )
-            binding.sessionSubtitleText.text = status
-            binding.sessionStreamStatusText.text = status
-
-            if (attempt < STOP_WAIT_ATTEMPTS - 1) {
-                delay(STOP_WAIT_DELAY_MS)
-            }
-        }
-
-        throw StopTimeoutException()
     }
 
     private fun applyRemoteSurfaceBounds(remoteWidth: Int, remoteHeight: Int) {
@@ -730,8 +721,6 @@ class SessionActivity : AppCompatActivity() {
         return stopped && desiredStopped && offline
     }
 
-    private class StopTimeoutException : IOException()
-
     companion object {
         private const val EXTRA_RUNTIME_NAME = "runtime_name"
         private const val EXTRA_VIEWER_ADDRESS = "viewer_address"
@@ -746,8 +735,6 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_ACCOUNT_ID = "account_id"
         private const val EXTRA_DEVICE_ID = "device_id"
         private const val EXTRA_BASE_URL = "base_url"
-        private const val STOP_WAIT_ATTEMPTS = 30
-        private const val STOP_WAIT_DELAY_MS = 1_000L
         private const val SESSION_HEARTBEAT_INTERVAL_MS = 20_000L
         private const val HEARTBEAT_RETRY_VISIBLE_THRESHOLD = 2
         private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182

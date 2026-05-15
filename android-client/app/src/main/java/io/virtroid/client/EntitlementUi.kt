@@ -50,9 +50,6 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
 
 internal fun Throwable.isGoneSessionResponse(): Boolean {
     val apiError = this as? VirtroidApiException
-    if (apiError?.statusCode == 404) {
-        return true
-    }
     return apiError?.code == "session_not_found" ||
         message.orEmpty().contains("session not found", ignoreCase = true)
 }

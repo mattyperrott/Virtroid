@@ -302,6 +302,7 @@
     <string name="session_failed_message_inline">Disconnected • %1$s</string>
     <string name="session_ended">Session ended</string>
     <string name="session_stop_pending">Session close requested. Runtime is still saving state.</string>
+    <string name="session_shutdown_missing_context">Cannot shut down runtime because session context is missing: %1$s.</string>
     <string name="session_missing_endpoint">Viewer session details are missing.</string>
     <string name="session_prepare_failed_title">Viewer not ready yet</string>
     <string name="session_prepare_retry_message">The runtime is online, but the viewer bridge is still preparing. Try connecting again.</string>
