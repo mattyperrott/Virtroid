@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS runtimes (
     blob_retain_days INTEGER NOT NULL DEFAULT 7,
     blob_store_kind TEXT,
     blob_manifest_json TEXT,
+    blob_host_id TEXT,
     blob_last_snapshot_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
     load_average DOUBLE PRECISION,
@@ -149,6 +150,13 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_auto_snapshot BOOLEAN NOT NUL
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_retain_days INTEGER NOT NULL DEFAULT 7;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_store_kind TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_manifest_json TEXT;
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_host_id TEXT;
+UPDATE runtimes
+SET blob_host_id = host_id
+WHERE blob_host_id IS NULL
+  AND host_id IS NOT NULL
+  AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL
+  AND COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk') = 'local-disk';
 ALTER TABLE runtimes DROP COLUMN IF EXISTS active_blob_key_b64;
 ALTER TABLE runtimes DROP COLUMN IF EXISTS active_blob_key_expires_at;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_last_snapshot_at TIMESTAMPTZ;
@@ -253,6 +261,7 @@ CREATE INDEX IF NOT EXISTS idx_account_entitlements_status ON account_entitlemen
 CREATE INDEX IF NOT EXISTS idx_hosts_last_heartbeat_at ON hosts (last_heartbeat_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runtimes_account_id ON runtimes (account_id);
 CREATE INDEX IF NOT EXISTS idx_runtimes_host_id ON runtimes (host_id);
+CREATE INDEX IF NOT EXISTS idx_runtimes_blob_host_id ON runtimes (blob_host_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runtimes_viewer_port_unique ON runtimes (viewer_port) WHERE viewer_port IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_device_request_nonces_expires_at ON device_request_nonces (expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_runtime_id ON sessions (runtime_id);

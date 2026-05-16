@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.US)
     private var runtimePollJob: Job? = null
     private var refreshJob: Job? = null
+    private var connectJob: Job? = null
     private val runtimeProvisioningStartedAtMs = mutableMapOf<String, Long>()
     private val runtimeProvisioningLogMessages = mutableMapOf<String, List<String>>()
     private val reportedRuntimeErrors = mutableMapOf<String, String>()
@@ -136,6 +137,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         runtimePollJob?.cancel()
         refreshJob?.cancel()
+        connectJob?.cancel()
         super.onDestroy()
     }
 
@@ -492,50 +494,58 @@ class MainActivity : AppCompatActivity() {
         val accountId = requireAccountId() ?: return
         val deviceId = requireDeviceId() ?: return
         val baseUrl = currentBaseUrl()
+        if (connectJob?.isActive == true) {
+            toast(getString(R.string.status_preparing_session))
+            return
+        }
         setBusy(true, getString(R.string.status_preparing_session))
         appLogs.info("Preparing session for ${runtime.name}", "session")
 
-        lifecycleScope.launch {
-            runCatching {
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                val readyRuntime = ensureRuntimeReady(baseUrl, accountId, deviceId, runtime, blobAccessKey)
-                val session = api.createSession(
-                    baseUrl = baseUrl,
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    runtimeId = readyRuntime.id,
-                    maxSize = sessionMaxSize(),
-                    bitRate = DEFAULT_SESSION_BIT_RATE,
-                    blobAccessKey = blobAccessKey,
-                )
-                identityPasswordStore.saveConfigured(accountId, deviceId)
-                Pair(session, readyRuntime)
-            }.onSuccess { (session, readyRuntime) ->
-                setBusy(false)
-                val activeSession = ActiveSessionStore.ActiveSession(
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    baseUrl = baseUrl,
-                    runtimeId = readyRuntime.id,
-                    runtimeName = readyRuntime.name,
-                    viewerAddress = session.viewerAddress,
-                    relayHost = session.relayHost,
-                    relayPort = session.relayPort,
-                    relayTls = session.relayTls,
-                    relayPath = session.relayPath,
-                    relayToken = session.relayToken,
-                    sessionId = session.sessionId,
-                    viewerPublicKey = session.viewerPublicKey,
-                )
-                activeSessionStore.save(activeSession)
-                appLogs.info("Session created for ${readyRuntime.name}", "session")
-                startActivity(
-                    SessionActivity.createIntent(this@MainActivity, activeSession),
-                )
-            }.onFailure { error ->
-                setBusy(false)
-                appLogs.error(error.message ?: getString(R.string.status_error), "session")
-                showSessionPrepareError(error, runtime)
+        connectJob = lifecycleScope.launch {
+            try {
+                runCatching {
+                    val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                    val readyRuntime = ensureRuntimeReady(baseUrl, accountId, deviceId, runtime, blobAccessKey)
+                    val session = api.createSession(
+                        baseUrl = baseUrl,
+                        accountId = accountId,
+                        deviceId = deviceId,
+                        runtimeId = readyRuntime.id,
+                        maxSize = sessionMaxSize(),
+                        bitRate = DEFAULT_SESSION_BIT_RATE,
+                        blobAccessKey = blobAccessKey,
+                    )
+                    identityPasswordStore.saveConfigured(accountId, deviceId)
+                    Pair(session, readyRuntime)
+                }.onSuccess { (session, readyRuntime) ->
+                    setBusy(false)
+                    val activeSession = ActiveSessionStore.ActiveSession(
+                        accountId = accountId,
+                        deviceId = deviceId,
+                        baseUrl = baseUrl,
+                        runtimeId = readyRuntime.id,
+                        runtimeName = readyRuntime.name,
+                        viewerAddress = session.viewerAddress,
+                        relayHost = session.relayHost,
+                        relayPort = session.relayPort,
+                        relayTls = session.relayTls,
+                        relayPath = session.relayPath,
+                        relayToken = session.relayToken,
+                        sessionId = session.sessionId,
+                        viewerPublicKey = session.viewerPublicKey,
+                    )
+                    activeSessionStore.save(activeSession)
+                    appLogs.info("Session created for ${readyRuntime.name}", "session")
+                    startActivity(
+                        SessionActivity.createIntent(this@MainActivity, activeSession),
+                    )
+                }.onFailure { error ->
+                    setBusy(false)
+                    appLogs.error(error.message ?: getString(R.string.status_error), "session")
+                    showSessionPrepareError(error, runtime)
+                }
+            } finally {
+                connectJob = null
             }
         }
     }
@@ -633,6 +643,7 @@ class MainActivity : AppCompatActivity() {
         deviceId: String,
         runtimeId: String,
     ): RuntimeSummary {
+        val startedAtMs = System.currentTimeMillis()
         while (true) {
             val state = latestRuntimeState(baseUrl, accountId, deviceId, runtimeId)
             val runtime = state.runtime
@@ -652,7 +663,19 @@ class MainActivity : AppCompatActivity() {
                 ),
             )
 
-            delay(CONNECT_WAIT_DELAY_MS)
+            if (System.currentTimeMillis() - startedAtMs >= CONNECT_WAIT_MAX_MS) {
+                throw IOException(getString(R.string.runtime_start_timeout))
+            }
+            delay(runtimeWaitDelayMs(startedAtMs))
+        }
+    }
+
+    private fun runtimeWaitDelayMs(startedAtMs: Long): Long {
+        val elapsedMs = System.currentTimeMillis() - startedAtMs
+        return when {
+            elapsedMs < 30_000L -> 1_000L
+            elapsedMs < 120_000L -> 2_000L
+            else -> 5_000L
         }
     }
 
@@ -1111,7 +1134,7 @@ class MainActivity : AppCompatActivity() {
         val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
         private const val EXTRA_STOPPING_RUNTIME_ID = "io.virtroid.client.extra.STOPPING_RUNTIME_ID"
         const val DEFAULT_SESSION_BIT_RATE = 4_000_000
-        const val CONNECT_WAIT_DELAY_MS = 1_000L
+        private const val CONNECT_WAIT_MAX_MS = 10 * 60 * 1_000L
         const val RUNTIME_POLL_DELAY_MS = 2_000L
 
         fun createRuntimeStoppingIntent(context: Context, runtimeId: String): Intent {

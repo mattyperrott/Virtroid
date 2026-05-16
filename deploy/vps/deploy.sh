@@ -55,10 +55,24 @@ compose() {
 }
 
 load_env() {
-  set -a
-  # shellcheck disable=SC1090
-  . "${env_file}"
-  set +a
+  local line key value
+  while IFS= read -r line || [ -n "${line}" ]; do
+    line="${line%$'\r'}"
+    if [[ -z "${line}" || "${line}" == \#* ]]; then
+      continue
+    fi
+    if [[ "${line}" != *=* ]]; then
+      echo "invalid env line in ${env_file}: ${line}" >&2
+      exit 1
+    fi
+    key="${line%%=*}"
+    value="${line#*=}"
+    if [[ ! "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "invalid env key in ${env_file}: ${key}" >&2
+      exit 1
+    fi
+    export "${key}=${value}"
+  done < "${env_file}"
 }
 
 require_env() {

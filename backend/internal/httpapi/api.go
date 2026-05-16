@@ -865,11 +865,7 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 	runtime, err := a.store.DeleteRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
-		if err == store.ErrRuntimeNotFound {
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeRuntimeMutationError(w, err)
 		return
 	}
 
@@ -1056,12 +1052,7 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 	runtime, err := a.store.WipeRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
-		switch err {
-		case store.ErrRuntimeNotFound:
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
+		writeRuntimeMutationError(w, err)
 		return
 	}
 
@@ -2095,6 +2086,8 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusNotFound, "runtime_not_found", err.Error())
 	case store.ErrNoReadyHost:
 		writeAPIError(w, http.StatusConflict, store.NoReadyHostCode, err.Error())
+	case store.ErrRuntimeBlobOwner:
+		writeAPIError(w, http.StatusConflict, store.RuntimeBlobOwnerCode, err.Error())
 	case store.ErrRuntimeEntitlement:
 		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeEntitlementRequiredCode, err.Error())
 	case store.ErrRuntimeQuota:
