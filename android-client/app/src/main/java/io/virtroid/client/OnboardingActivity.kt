@@ -46,6 +46,7 @@ class OnboardingActivity : AppCompatActivity() {
     private var accountScrambleJob: Job? = null
     private var deviceScrambleJob: Job? = null
     private var identityPreviewJob: Job? = null
+    private val provisioningEvents = mutableListOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,17 +105,17 @@ class OnboardingActivity : AppCompatActivity() {
 
         runCatching {
             updateActiveMilestone(
-                title = "Generating Local Signing Key ...",
-                command = "> android-keystore create EC signing key",
-                detail = "... exporting public verification material_",
+                title = "Preparing Local Signing Key ...",
+                command = "> android-keystore load signing key",
+                detail = "... loading public verification material_",
             )
             val publicKey = deviceIdentityStore.publicKeyMaterial()
-            delay(STEP_VISUAL_DELAY_MS)
+            markPreviousMilestone("Local signing key ready", deviceIdentityStore.defaultDeviceName())
 
             updateActiveMilestone(
-                title = "Registering Account ID ...",
+                title = "Registering Account And Device ...",
                 command = "> POST /api/v1/bootstrap",
-                detail = "... requesting account and trusted-device registration_",
+                detail = "... waiting for control plane registration_",
             )
             val result = api.bootstrap(
                 baseUrl = sessionStore.baseUrl,
@@ -127,18 +128,16 @@ class OnboardingActivity : AppCompatActivity() {
             sessionStore.saveBootstrap(result.accountId, result.deviceId)
             pendingAccountId = result.accountId
             pendingDeviceId = result.deviceId
-            renderProvisionedAccount(result.accountId)
-            markPreviousMilestone("Account ID created", shortDescriptor(result.accountId))
-            delay(STEP_VISUAL_DELAY_MS)
+            renderProvisionedAccount(result.accountId, registered = true)
+            markPreviousMilestone("Account registered", shortDescriptor(result.accountId))
 
             updateActiveMilestone(
-                title = "Generating Device ID ...",
+                title = "Binding Device Identity ...",
                 command = "> bind device public key",
-                detail = "... creating resettable device identity handle_",
+                detail = "... confirming signed device registration_",
             )
-            renderProvisionedDevice(result.deviceId)
+            renderProvisionedDevice(result.deviceId, registered = true)
             markPreviousMilestone("Device ID registered", shortDescriptor(result.deviceId))
-            delay(STEP_VISUAL_DELAY_MS)
 
             registerBlobIdentity(result, password)
             markPreviousMilestone("Encrypted blob key sealed", "local password verifier registered")
@@ -171,18 +170,18 @@ class OnboardingActivity : AppCompatActivity() {
 
         if (!identityPasswordStore.isConfigured(accountId, deviceId)) {
             val password = pendingIdentityPassword ?: return
-            binding.continueSetupButton.isEnabled = false
-            showProvisioningLog()
-            runCatching {
-                updateActiveMilestone(
-                    title = "Preparing Identity Verifier ...",
+                binding.continueSetupButton.isEnabled = false
+                showProvisioningLog()
+                runCatching {
+                    updateActiveMilestone(
+                        title = "Preparing Identity Verifier ...",
                     command = "> derive identity verifier",
                     detail = "... using local identity password_",
                 )
-                registerBlobIdentity(
-                    BootstrapResult(accountId = accountId, deviceId = deviceId, runtimeId = ""),
-                    password,
-                )
+                    registerBlobIdentity(
+                        BootstrapResult(accountId = accountId, deviceId = deviceId, runtimeId = ""),
+                        password,
+                    )
                 markPreviousMilestone("Encrypted blob key sealed", "local password verifier registered")
                 updateActiveMilestone(
                     title = "Identity Ready",
@@ -213,7 +212,7 @@ class OnboardingActivity : AppCompatActivity() {
         )
         val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(result.accountId, result.deviceId, password)
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
-        delay(STEP_VISUAL_DELAY_MS)
+        markPreviousMilestone("Blob key verifier derived", "raw password remains local")
 
         updateActiveMilestone(
             title = "Registering Blob Verifier ...",
@@ -261,11 +260,11 @@ class OnboardingActivity : AppCompatActivity() {
         if (sessionStore.hasAccess()) {
             pendingAccountId = sessionStore.accountId
             pendingDeviceId = sessionStore.deviceId
-            renderProvisionedAccount(sessionStore.accountId)
-            renderProvisionedDevice(sessionStore.deviceId)
+            renderProvisionedAccount(sessionStore.accountId, registered = true)
+            renderProvisionedDevice(sessionStore.deviceId, registered = true)
         } else {
-            renderProvisionedAccount(pendingAccountId)
-            renderProvisionedDevice(pendingDeviceId)
+            renderProvisionedAccount(pendingAccountId, registered = false)
+            renderProvisionedDevice(pendingDeviceId, registered = false)
             startIdentityPreviewSequence()
         }
         renderPasswordRequirement()
@@ -279,11 +278,11 @@ class OnboardingActivity : AppCompatActivity() {
         identityPreviewJob?.cancel()
         val accountId = pendingAccountId ?: newAccountId().also {
             pendingAccountId = it
-            renderProvisionedAccount(it)
+            renderProvisionedAccount(it, registered = false)
         }
         val deviceId = pendingDeviceId ?: deriveDeviceId(accountId).also {
             pendingDeviceId = it
-            renderProvisionedDevice(it)
+            renderProvisionedDevice(it, registered = false)
         }
         return PendingIdentity(accountId, deviceId)
     }
@@ -302,7 +301,7 @@ class OnboardingActivity : AppCompatActivity() {
                     return@launch
                 }
                 pendingAccountId = newAccountId()
-                renderProvisionedAccount(pendingAccountId)
+                renderProvisionedAccount(pendingAccountId, registered = false)
             }
 
             if (pendingDeviceId.isNullOrBlank()) {
@@ -311,7 +310,7 @@ class OnboardingActivity : AppCompatActivity() {
                     return@launch
                 }
                 pendingDeviceId = deriveDeviceId(pendingAccountId.orEmpty())
-                renderProvisionedDevice(pendingDeviceId)
+                renderProvisionedDevice(pendingDeviceId, registered = false)
             }
         }
     }
@@ -321,7 +320,7 @@ class OnboardingActivity : AppCompatActivity() {
             deviceIdentityStore.deviceFingerprint(this@OnboardingActivity, accountId)
         }
 
-    private fun renderProvisionedAccount(accountId: String?) {
+    private fun renderProvisionedAccount(accountId: String?, registered: Boolean) {
         if (accountId.isNullOrBlank()) {
             binding.onboardingAccountIdText.setTextColor(getColor(R.color.v_text_primary))
             setStatusIndicator(binding.accountStatusIndicator, binding.accountStatusCheck, provisioned = false)
@@ -331,11 +330,11 @@ class OnboardingActivity : AppCompatActivity() {
 
         accountScrambleJob?.cancel()
         binding.onboardingAccountIdText.text = accountId
-        binding.onboardingAccountIdText.setTextColor(getColor(R.color.v_accent))
-        setStatusIndicator(binding.accountStatusIndicator, binding.accountStatusCheck, provisioned = true)
+        binding.onboardingAccountIdText.setTextColor(getColor(if (registered) R.color.v_accent else R.color.v_text_primary))
+        setStatusIndicator(binding.accountStatusIndicator, binding.accountStatusCheck, provisioned = registered)
     }
 
-    private fun renderProvisionedDevice(deviceId: String?) {
+    private fun renderProvisionedDevice(deviceId: String?, registered: Boolean) {
         if (deviceId.isNullOrBlank()) {
             binding.onboardingDeviceIdText.setTextColor(getColor(R.color.v_text_primary))
             setStatusIndicator(binding.deviceFingerprintStatusIndicator, binding.deviceFingerprintStatusCheck, provisioned = false)
@@ -345,8 +344,8 @@ class OnboardingActivity : AppCompatActivity() {
 
         deviceScrambleJob?.cancel()
         binding.onboardingDeviceIdText.text = deviceId
-        binding.onboardingDeviceIdText.setTextColor(getColor(R.color.v_accent))
-        setStatusIndicator(binding.deviceFingerprintStatusIndicator, binding.deviceFingerprintStatusCheck, provisioned = true)
+        binding.onboardingDeviceIdText.setTextColor(getColor(if (registered) R.color.v_accent else R.color.v_text_primary))
+        setStatusIndicator(binding.deviceFingerprintStatusIndicator, binding.deviceFingerprintStatusCheck, provisioned = registered)
     }
 
     private fun renderPasswordRequirement() {
@@ -397,6 +396,8 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun showProvisioningLog() {
+        provisioningEvents.clear()
+        binding.activeMilestoneEventTrailText.text = getString(R.string.runtime_progress_event_submitting)
         if (!binding.provisioningLogContainer.isVisible) {
             binding.iconIdentityShield.animate()
                 .alpha(0f)
@@ -422,7 +423,8 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun markPreviousMilestone(title: String, descriptor: String) {
-        binding.activeMilestoneEventTrailText.text = "[ok] $title - $descriptor"
+        provisioningEvents += "[done] $title - $descriptor"
+        binding.activeMilestoneEventTrailText.text = provisioningEvents.takeLast(3).joinToString("\n")
     }
 
     private fun updateActiveMilestone(title: String, command: String, detail: String) {
@@ -461,7 +463,6 @@ class OnboardingActivity : AppCompatActivity() {
         const val SCRAMBLE_FRAME_MS = 90L
         const val PREVIEW_ACCOUNT_DELAY_MS = 2_000L
         const val PREVIEW_DEVICE_DELAY_MS = 1_500L
-        const val STEP_VISUAL_DELAY_MS = 420L
         const val FINAL_VISUAL_DELAY_MS = 680L
     }
 }

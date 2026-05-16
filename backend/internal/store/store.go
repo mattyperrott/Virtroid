@@ -1700,7 +1700,7 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 		return Runtime{}, err
 	}
 
-	logMessage := fmt.Sprintf("Runtime start requested on host %s. persona_version=%d.", hostID, runtime.PersonaVersion)
+	logMessage := fmt.Sprintf("Runtime start requested. persona_version=%d.", runtime.PersonaVersion)
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", logMessage); err != nil {
 		return Runtime{}, err
 	}

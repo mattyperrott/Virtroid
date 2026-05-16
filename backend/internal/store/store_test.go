@@ -717,7 +717,7 @@ func TestStartRuntimeRotatesPersonaForStoppedRuntime(t *testing.T) {
 		WithArgs(accountID, runtimeID, hostID, sql.NullInt32{Int32: 46000, Valid: true}, true).
 		WillReturnRows(runtimeStartRows(now, runtimeID, accountID, hostID, 2, 46000))
 	mock.ExpectExec("INSERT INTO runtime_logs").
-		WithArgs(runtimeID, "user", "info", "Runtime start requested on host host-1. persona_version=2.").
+		WithArgs(runtimeID, "user", "info", "Runtime start requested. persona_version=2.").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO runtime_start_events").
 		WithArgs(accountID, runtimeID).

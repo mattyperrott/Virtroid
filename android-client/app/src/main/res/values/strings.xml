@@ -92,6 +92,10 @@
     <string name="status_waiting_runtime_ready">Waiting for runtime: %1$s / %2$s</string>
     <string name="status_waiting_runtime_stop">Waiting for runtime to stop: %1$s / %2$s</string>
     <string name="status_error">Something went wrong</string>
+    <string name="runtime_progress_command_state">&gt; backend state: %1$s / %2$s</string>
+    <string name="runtime_progress_event_waiting">[wait] Waiting for backend runtime update</string>
+    <string name="runtime_progress_event_submitting">[wait] Request submitted to control plane</string>
+    <string name="runtime_progress_detail_waiting">... waiting for backend runtime log update_</string>
 
     <string name="bootstrap_success">Account created</string>
     <string name="runtime_created">Runtime created</string>

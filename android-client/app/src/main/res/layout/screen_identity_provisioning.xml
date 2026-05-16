@@ -329,7 +329,7 @@
                     android:fontFamily="monospace"
                     android:includeFontPadding="false"
                     android:lineSpacingExtra="3dp"
-                    android:maxLines="1"
+                    android:maxLines="3"
                     android:textColor="@color/v_text_muted"
                     android:textSize="10sp" />
             </LinearLayout>
