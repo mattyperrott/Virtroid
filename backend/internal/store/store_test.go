@@ -1044,6 +1044,67 @@ func TestDeleteRuntimeOnHostAssignsStoppedRuntimeForNodeCleanup(t *testing.T) {
 	}
 }
 
+func TestRuntimeBlobKeyTargetWipeUsesLocalBlobOwnerHost(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	blobHostID := "host-blob"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeRowsWithBlob(now, runtimeID, accountID, "stopped", "stopped", "offline", nil, nil, "local-disk", `{"store":"local-disk"}`, blobHostID))
+	mock.ExpectQuery("SELECT id, name, advertise_addr").
+		WithArgs(blobHostID).
+		WillReturnRows(hostRows(now, blobHostID, "node-public-key"))
+	mock.ExpectCommit()
+
+	_, host, err := st.RuntimeBlobKeyTarget(context.Background(), accountID, runtimeID, "wipe")
+	if err != nil {
+		t.Fatalf("RuntimeBlobKeyTarget returned error: %v", err)
+	}
+	if host.ID != blobHostID {
+		t.Fatalf("host.ID = %q, want %q", host.ID, blobHostID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRuntimeBlobKeyTargetRejectsHostlessLocalBlobWithoutOwner(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeRowsWithBlob(now, runtimeID, accountID, "stopped", "stopped", "offline", nil, nil, "local-disk", `{"store":"local-disk"}`, nil))
+	mock.ExpectRollback()
+
+	_, _, err = st.RuntimeBlobKeyTarget(context.Background(), accountID, runtimeID, "wipe")
+	if !errors.Is(err, ErrRuntimeBlobOwner) {
+		t.Fatalf("RuntimeBlobKeyTarget error = %v, want %v", err, ErrRuntimeBlobOwner)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestListRuntimeStatesReturnsBackendLifecycleSnapshot(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1487,6 +1548,35 @@ func runtimeStateRows(
 	)...)
 }
 
+func runtimeRowsWithBlob(
+	now time.Time,
+	runtimeID string,
+	accountID string,
+	status string,
+	desiredState string,
+	connectionStatus string,
+	hostID any,
+	viewerPort any,
+	blobStoreKind any,
+	blobManifestJSON any,
+	blobHostID any,
+) *sqlmock.Rows {
+	values := runtimeRowValues(
+		now,
+		runtimeID,
+		accountID,
+		status,
+		desiredState,
+		connectionStatus,
+		hostID,
+		viewerPort,
+	)
+	values[19] = blobStoreKind
+	values[20] = blobManifestJSON
+	values[21] = blobHostID
+	return sqlmock.NewRows(runtimeColumnNames()).AddRow(values...)
+}
+
 func runtimeStateListRows() *sqlmock.Rows {
 	columns := append(runtimeColumnNames(), "current_device_session_id", "has_active_session")
 	return sqlmock.NewRows(columns)
@@ -1539,6 +1629,7 @@ func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, person
 		"upload-only",
 		true,
 		7,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -1646,6 +1737,7 @@ func runtimeRowValues(
 		nil,
 		nil,
 		nil,
+		nil,
 		viewerPort,
 		false,
 		nil,
@@ -1653,6 +1745,32 @@ func runtimeRowValues(
 		now,
 		now,
 	}
+}
+
+func hostRows(now time.Time, hostID, publicKey string) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"id",
+		"name",
+		"advertise_addr",
+		"relay_port",
+		"docker_socket",
+		"binder",
+		"public_key",
+		"created_at",
+		"updated_at",
+		"last_heartbeat_at",
+	}).AddRow(
+		hostID,
+		hostID,
+		"virtnoded",
+		8090,
+		true,
+		true,
+		publicKey,
+		now,
+		now,
+		now,
+	)
 }
 
 func entitlementRows(accountID string, now time.Time) *sqlmock.Rows {
@@ -1706,6 +1824,7 @@ func runtimeColumnNames() []string {
 		"blob_retain_days",
 		"blob_store_kind",
 		"blob_manifest_json",
+		"blob_host_id",
 		"blob_last_snapshot_at",
 		"started_at",
 		"load_average",

@@ -21,7 +21,7 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, last_error, deleted_at, created_at, updated_at`
+const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, last_error, deleted_at, created_at, updated_at`
 
 const (
 	defaultAndroidImage = "redroid/redroid:14.0.0_64only-latest"
@@ -58,6 +58,7 @@ var (
 	ErrRuntimeProfile         = errors.New("runtime profile is not allowed")
 	ErrSecurityEventRateLimit = errors.New("security event rate limit exceeded")
 	ErrAccountNotFound        = errors.New("account not found")
+	ErrRuntimeBlobOwner       = errors.New("runtime local snapshot owner is unknown")
 )
 
 const (
@@ -67,6 +68,7 @@ const (
 	RuntimeStartQuotaExceededCode  = "runtime_start_quota_exceeded"
 	RuntimeProfileNotAllowedCode   = "runtime_profile_not_allowed"
 	NoReadyHostCode                = "no_ready_host"
+	RuntimeBlobOwnerCode           = "runtime_blob_owner_unknown"
 )
 
 type BootstrapResult struct {
@@ -167,6 +169,7 @@ type Runtime struct {
 	BlobRetainDays     int        `json:"blob_retain_days"`
 	BlobStoreKind      *string    `json:"blob_store_kind,omitempty"`
 	BlobManifestJSON   *string    `json:"blob_manifest_json,omitempty"`
+	BlobHostID         *string    `json:"-"`
 	BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at,omitempty"`
 	StartedAt          *time.Time `json:"started_at,omitempty"`
 	LoadAverage        *float64   `json:"load_average,omitempty"`
@@ -474,12 +477,13 @@ func (s *Store) DeleteAccount(ctx context.Context, accountID string) error {
 		`UPDATE runtimes
 		 SET status = CASE WHEN host_id IS NULL THEN 'deleted' ELSE 'deleting' END,
 		     desired_state = 'deleted',
-		     connection_status = 'offline',
-		     started_at = NULL,
-		     container_name = CASE WHEN host_id IS NULL THEN NULL ELSE container_name END,
-		     adb_port = CASE WHEN host_id IS NULL THEN NULL ELSE adb_port END,
-		     viewer_port = CASE WHEN host_id IS NULL THEN NULL ELSE viewer_port END,
-		     deleted_at = CASE WHEN host_id IS NULL THEN NOW() ELSE deleted_at END,
+			     connection_status = 'offline',
+			     started_at = NULL,
+			     container_name = CASE WHEN host_id IS NULL THEN NULL ELSE container_name END,
+			     adb_port = CASE WHEN host_id IS NULL THEN NULL ELSE adb_port END,
+			     viewer_port = CASE WHEN host_id IS NULL THEN NULL ELSE viewer_port END,
+			     blob_host_id = CASE WHEN host_id IS NULL THEN NULL ELSE blob_host_id END,
+			     deleted_at = CASE WHEN host_id IS NULL THEN NOW() ELSE deleted_at END,
 		     updated_at = NOW()
 		 WHERE account_id = $1
 		   AND deleted_at IS NULL
@@ -1136,11 +1140,15 @@ func (s *Store) deleteRuntime(ctx context.Context, accountID, runtimeID, hostID 
 		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
 		         ELSE blob_store_kind
 		     END,
-		     blob_manifest_json = CASE
-		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
-		         ELSE blob_manifest_json
-		     END,
-		     wipe_requested = FALSE,
+			     blob_manifest_json = CASE
+			         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+			         ELSE blob_manifest_json
+			     END,
+			     blob_host_id = CASE
+			         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
+			         ELSE blob_host_id
+			     END,
+			     wipe_requested = FALSE,
 		     container_name = CASE
 		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN NULL
 		         ELSE container_name
@@ -1159,10 +1167,26 @@ func (s *Store) deleteRuntime(ctx context.Context, accountID, runtimeID, hostID 
 		     END,
 		     updated_at = NOW()
 		 WHERE account_id = $1
-		   AND id = $2
-		   AND deleted_at IS NULL
-		   AND ($3 = '' OR host_id IS NULL OR host_id = $3)
-		 RETURNING %s`, runtimeColumns),
+			   AND id = $2
+			   AND deleted_at IS NULL
+			   AND (
+			       $3 = ''
+			       OR host_id = $3
+			       OR (
+			           host_id IS NULL
+			           AND (
+			               blob_host_id = $3
+			               OR (
+			                   blob_host_id IS NULL
+			                   AND (
+			                       NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NULL
+			                       OR COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk') <> 'local-disk'
+			                   )
+			               )
+			           )
+			       )
+			   )
+			 RETURNING %s`, runtimeColumns),
 		accountID,
 		runtimeID,
 		hostID,
@@ -1779,11 +1803,27 @@ func (s *Store) wipeRuntime(ctx context.Context, accountID, runtimeID, hostID st
 		     last_error = NULL,
 		     updated_at = NOW()
 		 WHERE account_id = $1
-		   AND id = $2
-		   AND deleted_at IS NULL
-		   AND desired_state <> 'deleted'
-		   AND ($3 = '' OR host_id IS NULL OR host_id = $3)
-		 RETURNING %s`, runtimeColumns),
+			   AND id = $2
+			   AND deleted_at IS NULL
+			   AND desired_state <> 'deleted'
+			   AND (
+			       $3 = ''
+			       OR host_id = $3
+			       OR (
+			           host_id IS NULL
+			           AND (
+			               blob_host_id = $3
+			               OR (
+			                   blob_host_id IS NULL
+			                   AND (
+			                       NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NULL
+			                       OR COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk') <> 'local-disk'
+			                   )
+			               )
+			           )
+			       )
+			   )
+			 RETURNING %s`, runtimeColumns),
 		accountID,
 		runtimeID,
 		hostID,
@@ -2049,31 +2089,16 @@ func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, 
 	var hostID string
 	switch operation {
 	case "start":
-		hostID, err = pickReadyHostTX(ctx, tx, valueOrEmpty(runtime.HostID))
-		if err != nil {
-			return Runtime{}, Host{}, err
-		}
+		hostID, err = runtimeStartHostTX(ctx, tx, runtime)
 	case "stop":
 		hostID = valueOrEmpty(runtime.HostID)
 		if hostID == "" {
 			return Runtime{}, Host{}, ErrRuntimeNotReady
 		}
 	case "wipe":
-		hostID = valueOrEmpty(runtime.HostID)
-		if hostID == "" {
-			hostID, err = pickReadyHostTX(ctx, tx, "")
-			if err != nil {
-				return Runtime{}, Host{}, err
-			}
-		}
+		hostID, err = runtimeCleanupHostTX(ctx, tx, runtime)
 	case "delete":
-		hostID = valueOrEmpty(runtime.HostID)
-		if hostID == "" {
-			hostID, err = pickReadyHostTX(ctx, tx, "")
-			if err != nil {
-				return Runtime{}, Host{}, err
-			}
-		}
+		hostID, err = runtimeCleanupHostTX(ctx, tx, runtime)
 	case "session":
 		if runtime.Status != "running" || runtime.DesiredState != "running" || runtime.ConnectionStatus != "online" {
 			return Runtime{}, Host{}, ErrRuntimeNotReady
@@ -2084,6 +2109,9 @@ func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, 
 		}
 	default:
 		return Runtime{}, Host{}, ErrRuntimeNotReady
+	}
+	if err != nil {
+		return Runtime{}, Host{}, err
 	}
 
 	host, err := getBlobKeyHostTX(ctx, tx, hostID)
@@ -2729,10 +2757,11 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 			     desired_state = 'deleted',
 			     connection_status = 'offline',
 			     host_id = NULL,
-			     active_persona_json = NULL,
-			     blob_store_kind = NULL,
-			     blob_manifest_json = NULL,
-			     container_name = NULL,
+				     active_persona_json = NULL,
+				     blob_store_kind = NULL,
+				     blob_manifest_json = NULL,
+				     blob_host_id = NULL,
+				     container_name = NULL,
 			     adb_port = NULL,
 			     viewer_port = NULL,
 			     started_at = NULL,
@@ -2775,10 +2804,15 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 			     last_error = $7,
 			     blob_last_snapshot_at = COALESCE($8, blob_last_snapshot_at),
 			     wipe_requested = CASE WHEN $9 THEN FALSE ELSE wipe_requested END,
-		     active_persona_json = CASE WHEN $10 THEN NULL ELSE COALESCE($11, active_persona_json) END,
-		     blob_store_kind = CASE WHEN $12 THEN NULL ELSE COALESCE($13, blob_store_kind) END,
-		     blob_manifest_json = CASE WHEN $12 THEN NULL ELSE COALESCE($14, blob_manifest_json) END,
-		     started_at = CASE
+			     active_persona_json = CASE WHEN $10 THEN NULL ELSE COALESCE($11, active_persona_json) END,
+			     blob_store_kind = CASE WHEN $12 THEN NULL ELSE COALESCE($13, blob_store_kind) END,
+			     blob_manifest_json = CASE WHEN $12 THEN NULL ELSE COALESCE($14, blob_manifest_json) END,
+			     blob_host_id = CASE
+			         WHEN $12 THEN NULL
+			         WHEN NULLIF(TRIM(COALESCE($14, '')), '') IS NOT NULL THEN $2
+			         ELSE blob_host_id
+			     END,
+			     started_at = CASE
 		         WHEN $3 = 'running' AND $4 = 'online' THEN COALESCE(started_at, NOW())
 		         WHEN $3 IN ('stopped', 'provisioned', 'deleted') OR ($3 = 'error' AND desired_state <> 'running') THEN NULL
 		         ELSE started_at
@@ -2889,6 +2923,44 @@ func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (s
 		return "", err
 	}
 	return hostID, nil
+}
+
+func runtimeStartHostTX(ctx context.Context, tx *sql.Tx, runtime Runtime) (string, error) {
+	currentHostID := valueOrEmpty(runtime.HostID)
+	if currentHostID != "" {
+		return pickReadyHostTX(ctx, tx, currentHostID)
+	}
+	if runtimeUsesNodeLocalBlob(runtime) {
+		blobHostID := valueOrEmpty(runtime.BlobHostID)
+		if blobHostID == "" {
+			return "", ErrRuntimeBlobOwner
+		}
+		return requireReadyHostTX(ctx, tx, blobHostID)
+	}
+	return pickReadyHostTX(ctx, tx, "")
+}
+
+func runtimeCleanupHostTX(ctx context.Context, tx *sql.Tx, runtime Runtime) (string, error) {
+	currentHostID := valueOrEmpty(runtime.HostID)
+	if currentHostID != "" {
+		return currentHostID, nil
+	}
+	blobHostID := valueOrEmpty(runtime.BlobHostID)
+	if blobHostID != "" {
+		return blobHostID, nil
+	}
+	if runtimeUsesNodeLocalBlob(runtime) {
+		return "", ErrRuntimeBlobOwner
+	}
+	return pickReadyHostTX(ctx, tx, "")
+}
+
+func runtimeUsesNodeLocalBlob(runtime Runtime) bool {
+	if valueOrEmpty(runtime.BlobManifestJSON) == "" {
+		return false
+	}
+	kind := strings.ToLower(valueOrEmpty(runtime.BlobStoreKind))
+	return kind == "" || kind == "local-disk"
 }
 
 func requireReadyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (string, error) {
@@ -3187,6 +3259,7 @@ func scanRuntimeDest(runtime *Runtime) []any {
 		&runtime.BlobRetainDays,
 		&runtime.BlobStoreKind,
 		&runtime.BlobManifestJSON,
+		&runtime.BlobHostID,
 		&runtime.BlobLastSnapshotAt,
 		&runtime.StartedAt,
 		&runtime.LoadAverage,

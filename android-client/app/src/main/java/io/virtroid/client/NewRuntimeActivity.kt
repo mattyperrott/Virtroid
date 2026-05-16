@@ -19,6 +19,7 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenCreateSessionBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.enableSecureWindow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -29,6 +30,7 @@ class NewRuntimeActivity : AppCompatActivity() {
     private lateinit var appLogs: AppLogStore
     private var entitlement: EntitlementSummary? = null
     private var latestProvisionRuntimeLogs: List<String> = emptyList()
+    private var provisionJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +54,11 @@ class NewRuntimeActivity : AppCompatActivity() {
         binding.cameraPassthroughSwitch.isEnabled = false
         binding.switchCameraPassthroughLabel.text = getString(R.string.new_runtime_camera_passthrough_unavailable)
         loadEntitlement()
+    }
+
+    override fun onDestroy() {
+        provisionJob?.cancel()
+        super.onDestroy()
     }
 
     private fun loadEntitlement() {
@@ -90,6 +97,9 @@ class NewRuntimeActivity : AppCompatActivity() {
     }
 
     private fun provisionRuntime() {
+        if (provisionJob?.isActive == true) {
+            return
+        }
         val accountId = sessionStore.accountId
         val deviceId = sessionStore.deviceId
         if (accountId.isNullOrBlank() || deviceId.isNullOrBlank()) {
@@ -109,55 +119,59 @@ class NewRuntimeActivity : AppCompatActivity() {
         renderProvisionMilestone(provisionMilestoneForRequest())
         appLogs.info("Runtime creation requested", "runtime")
 
-        lifecycleScope.launch {
-            runCatching {
-                val runtime = api.createRuntime(
-                    baseUrl = baseUrl,
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    name = runtimeName,
-                    runtimeProfile = runtimeProfile,
-                    audioEnabled = binding.audioPassthroughSwitch.isChecked,
-                    cameraMode = "disabled",
-                    fileMode = "upload-only",
-                    blobAutoSnapshot = true,
-                    blobRetainDays = 7,
-                )
-                waitForRuntimeProvisioned(baseUrl, accountId, deviceId, runtime.id)
-            }.onSuccess {
-                renderProvisionMilestone(
-                    ProvisionMilestone(
-                        title = getString(R.string.new_runtime_provision_title_ready),
-                        command = getString(
-                            R.string.runtime_progress_command_state,
-                            it.status.ifBlank { "stopped" },
-                            it.connectionStatus.ifBlank { "offline" },
+        provisionJob = lifecycleScope.launch {
+            try {
+                runCatching {
+                    val runtime = api.createRuntime(
+                        baseUrl = baseUrl,
+                        accountId = accountId,
+                        deviceId = deviceId,
+                        name = runtimeName,
+                        runtimeProfile = runtimeProfile,
+                        audioEnabled = binding.audioPassthroughSwitch.isChecked,
+                        cameraMode = "disabled",
+                        fileMode = "upload-only",
+                        blobAutoSnapshot = true,
+                        blobRetainDays = 7,
+                    )
+                    waitForRuntimeProvisioned(baseUrl, accountId, deviceId, runtime.id)
+                }.onSuccess {
+                    renderProvisionMilestone(
+                        ProvisionMilestone(
+                            title = getString(R.string.new_runtime_provision_title_ready),
+                            command = getString(
+                                R.string.runtime_progress_command_state,
+                                it.status.ifBlank { "stopped" },
+                                it.connectionStatus.ifBlank { "offline" },
+                            ),
+                            detail = latestProvisionRuntimeLogs.lastOrNull()?.let { message -> "... $message" }
+                                ?: getString(R.string.new_runtime_provision_detail_ready),
+                            events = runtimeProgressEvents(
+                                latestProvisionRuntimeLogs,
+                                getString(R.string.new_runtime_provision_event_ready),
+                            ),
                         ),
-                        detail = latestProvisionRuntimeLogs.lastOrNull()?.let { message -> "... $message" }
-                            ?: getString(R.string.new_runtime_provision_detail_ready),
-                        events = runtimeProgressEvents(
-                            latestProvisionRuntimeLogs,
-                            getString(R.string.new_runtime_provision_event_ready),
+                    )
+                    appLogs.info("Runtime profile created", "runtime")
+                    toast(getString(R.string.runtime_created))
+                    delay(550L)
+                    setResult(RESULT_OK)
+                    finish()
+                }.onFailure {
+                    appLogs.error(it.message ?: getString(R.string.status_error), "runtime")
+                    binding.provisionRuntimeButton.isEnabled = entitlement?.canCreateRuntime ?: false
+                    renderProvisionMilestone(
+                        ProvisionMilestone(
+                            title = getString(R.string.new_runtime_provision_title_error),
+                            command = getString(R.string.new_runtime_provision_command_error),
+                            detail = "... ${it.message ?: getString(R.string.status_error)}",
+                            events = listOf(getString(R.string.runtime_provisioning_event_error)),
                         ),
-                    ),
-                )
-                appLogs.info("Runtime profile created", "runtime")
-                toast(getString(R.string.runtime_created))
-                delay(550L)
-                setResult(RESULT_OK)
-                finish()
-            }.onFailure {
-                appLogs.error(it.message ?: getString(R.string.status_error), "runtime")
-                binding.provisionRuntimeButton.isEnabled = entitlement?.canCreateRuntime ?: false
-                renderProvisionMilestone(
-                    ProvisionMilestone(
-                        title = getString(R.string.new_runtime_provision_title_error),
-                        command = getString(R.string.new_runtime_provision_command_error),
-                        detail = "... ${it.message ?: getString(R.string.status_error)}",
-                        events = listOf(getString(R.string.runtime_provisioning_event_error)),
-                    ),
-                )
-                toast(it.virtroidDisplayMessage(this@NewRuntimeActivity))
+                    )
+                    toast(it.virtroidDisplayMessage(this@NewRuntimeActivity))
+                }
+            } finally {
+                provisionJob = null
             }
         }
     }
@@ -168,6 +182,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         deviceId: String,
         runtimeId: String,
     ): RuntimeSummary {
+        val startedAtMs = System.currentTimeMillis()
         while (true) {
             val runtime = api.listRuntimes(baseUrl, accountId, deviceId)
                 .firstOrNull { it.id == runtimeId }
@@ -187,7 +202,19 @@ class NewRuntimeActivity : AppCompatActivity() {
             if (runtime.status.equals("error", ignoreCase = true)) {
                 throw java.io.IOException(runtime.lastError ?: getString(R.string.status_error))
             }
-            delay(PROVISION_WAIT_DELAY_MS)
+            if (System.currentTimeMillis() - startedAtMs >= PROVISION_WAIT_MAX_MS) {
+                throw java.io.IOException(getString(R.string.runtime_start_timeout))
+            }
+            delay(provisionWaitDelayMs(startedAtMs))
+        }
+    }
+
+    private fun provisionWaitDelayMs(startedAtMs: Long): Long {
+        val elapsedMs = System.currentTimeMillis() - startedAtMs
+        return when {
+            elapsedMs < 30_000L -> 1_000L
+            elapsedMs < 120_000L -> 2_000L
+            else -> 5_000L
         }
     }
 
@@ -262,7 +289,7 @@ class NewRuntimeActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val PROVISION_WAIT_DELAY_MS = 1_000L
+        private const val PROVISION_WAIT_MAX_MS = 5 * 60 * 1_000L
 
         fun createIntent(context: Context): Intent = Intent(context, NewRuntimeActivity::class.java)
     }

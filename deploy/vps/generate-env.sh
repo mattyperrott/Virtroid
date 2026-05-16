@@ -22,8 +22,11 @@ if [ -z "${public_url}" ]; then
   usage
   exit 1
 fi
-if [[ "${public_url}" != https://* ]]; then
-  echo "PUBLIC_BASE_URL must be HTTPS, got: ${public_url}" >&2
+
+public_url="${public_url%/}"
+public_url_pattern='^https://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$'
+if [[ ! "${public_url}" =~ ${public_url_pattern} ]]; then
+  echo "PUBLIC_BASE_URL must be an HTTPS origin such as https://virtroid.example" >&2
   exit 1
 fi
 
@@ -60,42 +63,55 @@ node_private_key_b64() {
 
 default_node_id="$(hostname -s | tr -c '[:alnum:]-' '-' | sed -E 's/^-+|-+$//g')"
 node_id="${2:-${default_node_id:-virtroid-node}}"
+node_id_pattern='^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$'
+if [[ ! "${node_id}" =~ ${node_id_pattern} ]]; then
+  echo "node-id must be 1-63 characters using only letters, numbers, dot, underscore, or hyphen" >&2
+  exit 1
+fi
 docker_gid="$(getent group docker 2>/dev/null | cut -d: -f3 || true)"
 docker_gid="${docker_gid:-998}"
+if [[ ! "${docker_gid}" =~ ^[0-9]+$ ]]; then
+  echo "DOCKER_GID must be numeric, got: ${docker_gid}" >&2
+  exit 1
+fi
 
-cat > "${env_file}" <<EOF
-COMPOSE_PROJECT_NAME=virtroid
-POSTGRES_DB=virtroid
-POSTGRES_USER=virtroid
-POSTGRES_PASSWORD=$(random_hex)
-NODE_SHARED_SECRET=$(random_hex)
-NODE_REGISTRATION_SECRET=$(random_hex)
-NODE_PRIVATE_KEY_B64=$(node_private_key_b64)
-BOOTSTRAP_RATE_LIMIT_PER_MINUTE=5
-BOOTSTRAP_MAX_BODY_BYTES=32768
-PUBLIC_BASE_URL=${public_url}
-PUBLIC_RELAY_URL=${public_url}
-NODE_ADVERTISE_ADDR=virtnoded
-HOST_API_BIND=127.0.0.1
-HOST_RELAY_BIND=127.0.0.1
-NODE_ID=${node_id}
-NODE_NAME=${node_id}
-HAPROXY_CERT_PATH=/srv/virtroid/tls/virtroid.pem
-DOCKER_GID=${docker_gid}
-NODE_DOCKER_NETWORK=virtroid_default
+write_env_var() {
+  printf '%s=%s\n' "$1" "$2"
+}
 
-NODE_BLOB_STORE_KIND=local-disk
-NODE_SIA_RENTERD_WORKER_URL=http://renterd:9980
-NODE_SIA_RENTERD_PASSWORD=
-NODE_SIA_RENTERD_BUCKET=virtroid
-NODE_SIA_RENTERD_MIN_SHARDS=
-NODE_SIA_RENTERD_TOTAL_SHARDS=
-NODE_SIA_RENTERD_CONTRACT_SET=
+{
+  write_env_var COMPOSE_PROJECT_NAME virtroid
+  write_env_var POSTGRES_DB virtroid
+  write_env_var POSTGRES_USER virtroid
+  write_env_var POSTGRES_PASSWORD "$(random_hex)"
+  write_env_var NODE_SHARED_SECRET "$(random_hex)"
+  write_env_var NODE_REGISTRATION_SECRET "$(random_hex)"
+  write_env_var NODE_PRIVATE_KEY_B64 "$(node_private_key_b64)"
+  write_env_var BOOTSTRAP_RATE_LIMIT_PER_MINUTE 5
+  write_env_var BOOTSTRAP_MAX_BODY_BYTES 32768
+  write_env_var PUBLIC_BASE_URL "${public_url}"
+  write_env_var PUBLIC_RELAY_URL "${public_url}"
+  write_env_var NODE_ADVERTISE_ADDR virtnoded
+  write_env_var HOST_API_BIND 127.0.0.1
+  write_env_var HOST_RELAY_BIND 127.0.0.1
+  write_env_var NODE_ID "${node_id}"
+  write_env_var NODE_NAME "${node_id}"
+  write_env_var HAPROXY_CERT_PATH /srv/virtroid/tls/virtroid.pem
+  write_env_var DOCKER_GID "${docker_gid}"
+  write_env_var NODE_DOCKER_NETWORK virtroid_default
 
-RENTERD_API_PASSWORD=
-RENTERD_SEED=
-RENTERD_LOG_LEVEL=info
-EOF
+  write_env_var NODE_BLOB_STORE_KIND local-disk
+  write_env_var NODE_SIA_RENTERD_WORKER_URL http://renterd:9980
+  write_env_var NODE_SIA_RENTERD_PASSWORD ""
+  write_env_var NODE_SIA_RENTERD_BUCKET virtroid
+  write_env_var NODE_SIA_RENTERD_MIN_SHARDS ""
+  write_env_var NODE_SIA_RENTERD_TOTAL_SHARDS ""
+  write_env_var NODE_SIA_RENTERD_CONTRACT_SET ""
+
+  write_env_var RENTERD_API_PASSWORD ""
+  write_env_var RENTERD_SEED ""
+  write_env_var RENTERD_LOG_LEVEL info
+} > "${env_file}"
 
 chmod 600 "${env_file}"
 echo "Wrote ${env_file}"
