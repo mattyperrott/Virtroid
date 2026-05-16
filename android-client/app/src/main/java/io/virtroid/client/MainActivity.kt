@@ -54,7 +54,7 @@ class MainActivity : AppCompatActivity() {
     private var runtimePollJob: Job? = null
     private var refreshJob: Job? = null
     private val runtimeProvisioningStartedAtMs = mutableMapOf<String, Long>()
-    private val runtimeProvisioningLastMessage = mutableMapOf<String, String>()
+    private val runtimeProvisioningLogMessages = mutableMapOf<String, List<String>>()
     private val reportedRuntimeErrors = mutableMapOf<String, String>()
     private val locallyStoppingRuntimeIds = mutableSetOf<String>()
     private var latestEntitlement: EntitlementSummary? = null
@@ -333,7 +333,7 @@ class MainActivity : AppCompatActivity() {
             runtimeProvisioningStartedAtMs.putIfAbsent(runtime.id, System.currentTimeMillis())
         } else {
             runtimeProvisioningStartedAtMs.remove(runtime.id)
-            runtimeProvisioningLastMessage.remove(runtime.id)
+            runtimeProvisioningLogMessages.remove(runtime.id)
         }
 
         cardBinding.runtimeTitleText.text = runtime.name
@@ -783,17 +783,16 @@ class MainActivity : AppCompatActivity() {
             .map { it.id }
             .toSet()
         runtimeProvisioningStartedAtMs.keys.removeAll { it !in transitioningIds }
-        runtimeProvisioningLastMessage.keys.removeAll { it !in transitioningIds }
+        runtimeProvisioningLogMessages.keys.removeAll { it !in transitioningIds }
         transitioningIds.forEach { runtimeId ->
             runtimeProvisioningStartedAtMs.putIfAbsent(runtimeId, System.currentTimeMillis())
             runCatching {
-                api.listRuntimeLogs(baseUrl, accountId, deviceId, runtimeId, limit = 1)
-                    .firstOrNull()
-                    ?.message
-                    ?.takeIf { it.isNotBlank() }
-            }.onSuccess { message ->
-                if (!message.isNullOrBlank()) {
-                    runtimeProvisioningLastMessage[runtimeId] = message
+                api.listRuntimeLogs(baseUrl, accountId, deviceId, runtimeId, limit = 4)
+                    .asReversed()
+                    .mapNotNull { sanitizeRuntimeProgressMessage(it.message) }
+            }.onSuccess { messages ->
+                if (!messages.isNullOrEmpty()) {
+                    runtimeProvisioningLogMessages[runtimeId] = messages
                 }
             }
         }
@@ -807,7 +806,7 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeProvisioningTitleText.text = milestone.title
         cardBinding.runtimeProvisioningCommandText.text = milestone.command
         cardBinding.runtimeProvisioningDetailText.text = milestone.detail
-        cardBinding.runtimeProvisioningEventTrailText.text = milestone.events.lastOrNull().orEmpty()
+        cardBinding.runtimeProvisioningEventTrailText.text = milestone.events.joinToString("\n")
         cardBinding.runtimeInteractiveContent.alpha = 0.08f
         cardBinding.runtimeProvisioningLogContainer.isVisible = true
         if (animate) {
@@ -993,123 +992,69 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        val startedAt = runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
-        val elapsedMs = System.currentTimeMillis() - startedAt
-        fun detail(defaultValue: String): String {
-            val latest = runtimeProvisioningLastMessage[id]?.trim().orEmpty()
-            return if (latest.isNotBlank()) {
-                if (latest.startsWith("...")) latest else "... $latest"
-            } else {
-                defaultValue
-            }
-        }
+        runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
+        val logMessages = runtimeProvisioningLogMessages[id].orEmpty()
+        val latestLog = logMessages.lastOrNull()
+        fun detail(defaultValue: String): String = latestLog?.let { "... $it" } ?: defaultValue
+        fun command(): String = getString(
+            R.string.runtime_progress_command_state,
+            backendState.ifBlank { status.ifBlank { "unknown" } },
+            connectionStatus.ifBlank { "offline" },
+        )
+        fun events(fallback: String): List<String> = runtimeProgressEvents(logMessages, fallback)
 
         return when {
             backendState == "deleting" ||
                 desiredState.equals("deleted", ignoreCase = true) ||
                 status.equals("deleting", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_lifecycle_title_deleting),
-                command = getString(R.string.runtime_lifecycle_command_deleting),
+                command = command(),
                 detail = detail(getString(R.string.runtime_lifecycle_detail_deleting)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+                events = events(getString(R.string.runtime_progress_event_waiting)),
             )
             backendState == "wiping" || status.equals("wiping", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_lifecycle_title_wiping),
-                command = getString(R.string.runtime_lifecycle_command_wiping),
+                command = command(),
                 detail = detail(getString(R.string.runtime_lifecycle_detail_wiping)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+                events = events(getString(R.string.runtime_progress_event_waiting)),
             )
             backendState == "stopping" ||
                 status.equals("stopping", ignoreCase = true) ||
                 desiredState.equals("stopped", ignoreCase = true) && connectionStatus.equals("online", ignoreCase = true) -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_lifecycle_title_stopping),
-                command = getString(R.string.runtime_lifecycle_command_stopping),
+                command = command(),
                 detail = detail(getString(R.string.runtime_lifecycle_detail_stopping)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+                events = events(getString(R.string.runtime_progress_event_waiting)),
             )
             status.equals("provisioning", ignoreCase = true) || connectionStatus.equals("preparing", ignoreCase = true) -> RuntimeProvisioningMilestone(
-                title = getString(R.string.new_runtime_provision_title_container),
-                command = getString(R.string.new_runtime_provision_command_container),
-                detail = detail(getString(R.string.new_runtime_provision_detail_container)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            connectionStatus.equals("connecting", ignoreCase = true) -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_connect),
-                command = getString(R.string.runtime_provisioning_command_connect),
-                detail = detail(getString(R.string.runtime_provisioning_detail_connect)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 2_000L -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_container),
-                command = getString(R.string.runtime_provisioning_command_container),
-                detail = detail(getString(R.string.runtime_provisioning_detail_container)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 3_000L -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_request),
-                command = getString(R.string.runtime_provisioning_command_request),
-                detail = detail(getString(R.string.runtime_provisioning_detail_request)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 6_000L -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_storage),
-                command = getString(R.string.runtime_provisioning_command_storage),
-                detail = detail(getString(R.string.runtime_provisioning_detail_storage)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 9_000L -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_restore),
-                command = getString(R.string.runtime_provisioning_command_restore),
-                detail = detail(getString(R.string.runtime_provisioning_detail_restore)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 13_000L -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_network),
-                command = getString(R.string.runtime_provisioning_command_network),
-                detail = detail(getString(R.string.runtime_provisioning_detail_network)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 18_000L -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_boot),
-                command = getString(R.string.runtime_provisioning_command_boot),
-                detail = detail(getString(R.string.runtime_provisioning_detail_boot)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 28_000L -> RuntimeProvisioningMilestone(
-                title = getString(R.string.runtime_provisioning_title_android),
-                command = getString(R.string.runtime_provisioning_command_android),
-                detail = detail(getString(R.string.runtime_provisioning_detail_android)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
-            )
-            elapsedMs < 40_000L -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_viewer),
-                command = getString(R.string.runtime_provisioning_command_viewer),
+                command = command(),
                 detail = detail(getString(R.string.runtime_provisioning_detail_viewer)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+                events = events(getString(R.string.runtime_progress_event_waiting)),
             )
             else -> RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_connect),
-                command = getString(R.string.runtime_provisioning_command_connect),
+                command = command(),
                 detail = detail(getString(R.string.runtime_provisioning_detail_connect)),
-                events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+                events = events(getString(R.string.runtime_progress_event_waiting)),
             )
         }
     }
 
     private fun RuntimeSummary.stoppingMilestone(): RuntimeProvisioningMilestone {
-        val startedAt = runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
-        val elapsedMs = System.currentTimeMillis() - startedAt
-        val latest = runtimeProvisioningLastMessage[id]?.trim().orEmpty()
-        val detail = if (latest.isNotBlank()) {
-            if (latest.startsWith("...")) latest else "... $latest"
-        } else {
-            getString(R.string.runtime_lifecycle_detail_stopping)
-        }
+        runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
+        val logMessages = runtimeProvisioningLogMessages[id].orEmpty()
+        val detail = logMessages.lastOrNull()?.let { "... $it" }
+            ?: getString(R.string.runtime_lifecycle_detail_stopping)
         return RuntimeProvisioningMilestone(
             title = getString(R.string.runtime_lifecycle_title_stopping),
-            command = getString(R.string.runtime_lifecycle_command_stopping),
+            command = getString(
+                R.string.runtime_progress_command_state,
+                status.ifBlank { "stopping" },
+                connectionStatus.ifBlank { "offline" },
+            ),
             detail = detail,
-            events = provisioningEvents(elapsedMs, runtimeProvisioningLastMessage[id]),
+            events = runtimeProgressEvents(logMessages, getString(R.string.runtime_progress_event_waiting)),
         )
     }
 
@@ -1125,29 +1070,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun provisioningEvents(elapsedMs: Long, latestRuntimeLog: String? = null): List<String> {
-        val runtimeLog = latestRuntimeLog?.trim().orEmpty()
-        if (runtimeLog.isNotBlank() && !runtimeLog.startsWith("...")) {
-            return listOf(getString(R.string.runtime_provisioning_event_runtime_log, runtimeLog))
-        }
+    private fun runtimeProgressEvents(messages: List<String>, fallback: String): List<String> {
+        val events = messages
+            .mapNotNull(::sanitizeRuntimeProgressMessage)
+            .takeLast(3)
+            .map { getString(R.string.runtime_provisioning_event_runtime_log, it) }
+        return events.ifEmpty { listOf(fallback) }
+    }
 
-        val allEvents = listOf(
-            getString(R.string.runtime_provisioning_event_container),
-            getString(R.string.runtime_provisioning_event_storage),
-            getString(R.string.runtime_provisioning_event_network),
-            getString(R.string.runtime_provisioning_event_filesystem),
-            getString(R.string.runtime_provisioning_event_image),
-            getString(R.string.runtime_provisioning_event_services),
-            getString(R.string.runtime_provisioning_event_channel),
-            getString(R.string.runtime_provisioning_event_handoff),
-        )
-        val visibleCount = ((elapsedMs / 3_000L).toInt() + 2).coerceIn(2, allEvents.size)
-        val visibleEvents = allEvents.take(visibleCount)
-        return if (visibleCount >= allEvents.size) {
-            (visibleEvents + getString(R.string.runtime_provisioning_event_wait_ready)).takeLast(4)
-        } else {
-            visibleEvents.takeLast(4)
+    private fun sanitizeRuntimeProgressMessage(message: String): String? {
+        var sanitized = message.trim()
+        if (sanitized.isBlank()) {
+            return null
         }
+        sanitized = sanitized.replace(Regex(""" on host [A-Za-z0-9_.-]+"""), "")
+        sanitized = sanitized.replace(
+            Regex("""Runtime container [A-Za-z0-9_.-]+ started on port \d+ with persona"""),
+            "Runtime container started with persona",
+        )
+        sanitized = sanitized.replace(
+            Regex("""Encrypted viewer proxy prepared on guest port \d+\."""),
+            "Encrypted viewer proxy prepared.",
+        )
+        return sanitized
     }
 
     private data class RuntimeProvisioningMilestone(
