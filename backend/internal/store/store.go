@@ -1765,6 +1765,10 @@ func (s *Store) StopRuntime(ctx context.Context, accountID, runtimeID string) (R
 		return Runtime{}, err
 	}
 
+	if err := closeRuntimeSessionsTX(ctx, tx, runtime.ID, "runtime stopped"); err != nil {
+		return Runtime{}, err
+	}
+
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Runtime stop requested."); err != nil {
 		return Runtime{}, err
 	}

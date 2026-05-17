@@ -58,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private val runtimeProvisioningLogMessages = mutableMapOf<String, List<String>>()
     private val reportedRuntimeErrors = mutableMapOf<String, String>()
     private val locallyStoppingRuntimeIds = mutableSetOf<String>()
+    private val locallyStoppingRuntimeStartedAtMs = mutableMapOf<String, Long>()
     private var latestEntitlement: EntitlementSummary? = null
     private var latestRuntimes: List<RuntimeSummary> = emptyList()
     private var latestRuntimeStates: Map<String, RuntimeState> = emptyMap()
@@ -175,10 +176,9 @@ class MainActivity : AppCompatActivity() {
                     .filter { runtime ->
                         val runtimeState = state.runtimeStates.firstOrNull { it.runtime.id == runtime.id }
                         runtime.isStoppedForSession() ||
-                            runtimeState?.effectiveState.equals("stopped", ignoreCase = true) ||
-                            runtimeState?.canConnectRuntime(runtime.id) == true
+                            runtimeState?.effectiveState.equals("stopped", ignoreCase = true)
                     }
-                    .forEach { locallyStoppingRuntimeIds.remove(it.id) }
+                    .forEach { clearRuntimeLocallyStopping(it.id) }
                 renderRuntimeStates(state.runtimeStates, state.entitlement)
                 if (showBusy) {
                     setBusy(false)
@@ -325,10 +325,18 @@ class MainActivity : AppCompatActivity() {
     private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary, state: RuntimeState?) {
         val effectiveState = state?.effectiveState.orEmpty()
         val backendConnectable = state?.canConnectRuntime(runtime.id) == true
-        if (runtime.isStoppedForSession() || effectiveState.equals("stopped", ignoreCase = true) || backendConnectable) {
-            locallyStoppingRuntimeIds.remove(runtime.id)
+        if (runtime.isStoppedForSession() || effectiveState.equals("stopped", ignoreCase = true)) {
+            clearRuntimeLocallyStopping(runtime.id)
         }
-        val isLocallyStopping = runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession() && !backendConnectable
+        if (
+            runtime.id in locallyStoppingRuntimeIds &&
+            backendConnectable &&
+            localStoppingMarkerExpired(runtime.id)
+        ) {
+            clearRuntimeLocallyStopping(runtime.id)
+            appLogs.warn("Runtime ${runtime.name} still reported online after shutdown request; local stopping marker cleared", "session")
+        }
+        val isLocallyStopping = runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()
         val isLive = (backendConnectable || runtime.isReadyForSession()) && !isLocallyStopping
         val isBusy = state?.needsRuntimePolling() ?: runtime.isTransitioning()
         if (isBusy || isLocallyStopping) {
@@ -446,8 +454,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {
-        if (latestRuntimeStates[runtime.id]?.canConnectRuntime(runtime.id) == true) {
-            locallyStoppingRuntimeIds.remove(runtime.id)
+        val runtimeState = latestRuntimeStates[runtime.id]
+        if (runtime.isStoppedForSession() || runtimeState?.effectiveState.equals("stopped", ignoreCase = true)) {
+            clearRuntimeLocallyStopping(runtime.id)
+        }
+        if (
+            runtime.id in locallyStoppingRuntimeIds &&
+            runtimeState?.canConnectRuntime(runtime.id) == true &&
+            localStoppingMarkerExpired(runtime.id)
+        ) {
+            clearRuntimeLocallyStopping(runtime.id)
+            appLogs.warn("Runtime ${runtime.name} still reported online after shutdown request; allowing reconnect", "session")
         }
         if (runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()) {
             toast(getString(R.string.runtime_shutdown_in_progress))
@@ -559,8 +576,16 @@ class MainActivity : AppCompatActivity() {
     ): RuntimeSummary {
         val currentState = latestRuntimeState(baseUrl, accountId, deviceId, runtime.id)
         val currentRuntime = currentState.runtime
-        if (currentState.canConnectRuntime(runtime.id) || currentRuntime.isStoppedForSession()) {
-            locallyStoppingRuntimeIds.remove(currentRuntime.id)
+        if (currentRuntime.isStoppedForSession() || currentState.effectiveState.equals("stopped", ignoreCase = true)) {
+            clearRuntimeLocallyStopping(currentRuntime.id)
+        }
+        if (
+            currentRuntime.id in locallyStoppingRuntimeIds &&
+            currentState.canConnectRuntime(runtime.id) &&
+            localStoppingMarkerExpired(currentRuntime.id)
+        ) {
+            clearRuntimeLocallyStopping(currentRuntime.id)
+            appLogs.warn("Runtime ${currentRuntime.name} still reported online after shutdown request; allowing session start", "session")
         }
         if (currentRuntime.id in locallyStoppingRuntimeIds && !currentRuntime.isStoppedForSession()) {
             throw IOException(getString(R.string.runtime_shutdown_in_progress))
@@ -1086,11 +1111,26 @@ class MainActivity : AppCompatActivity() {
             ?.getStringExtra(EXTRA_STOPPING_RUNTIME_ID)
             ?.takeIf { it.isNotBlank() }
             ?: return
-        locallyStoppingRuntimeIds.add(stoppingRuntimeId)
+        markRuntimeLocallyStopping(stoppingRuntimeId)
         activeSessionStore.clear()
         if (latestRuntimes.isNotEmpty()) {
             renderRuntimes(latestRuntimes)
         }
+    }
+
+    private fun markRuntimeLocallyStopping(runtimeId: String) {
+        locallyStoppingRuntimeIds.add(runtimeId)
+        locallyStoppingRuntimeStartedAtMs[runtimeId] = System.currentTimeMillis()
+    }
+
+    private fun clearRuntimeLocallyStopping(runtimeId: String) {
+        locallyStoppingRuntimeIds.remove(runtimeId)
+        locallyStoppingRuntimeStartedAtMs.remove(runtimeId)
+    }
+
+    private fun localStoppingMarkerExpired(runtimeId: String): Boolean {
+        val startedAt = locallyStoppingRuntimeStartedAtMs[runtimeId] ?: return false
+        return System.currentTimeMillis() - startedAt >= LOCAL_STOPPING_MARKER_GRACE_MS
     }
 
     private fun runtimeProgressEvents(messages: List<String>, fallback: String): List<String> {
@@ -1135,6 +1175,7 @@ class MainActivity : AppCompatActivity() {
         private const val EXTRA_STOPPING_RUNTIME_ID = "io.virtroid.client.extra.STOPPING_RUNTIME_ID"
         const val DEFAULT_SESSION_BIT_RATE = 4_000_000
         private const val CONNECT_WAIT_MAX_MS = 10 * 60 * 1_000L
+        private const val LOCAL_STOPPING_MARKER_GRACE_MS = 45_000L
         const val RUNTIME_POLL_DELAY_MS = 2_000L
 
         fun createRuntimeStoppingIntent(context: Context, runtimeId: String): Intent {
