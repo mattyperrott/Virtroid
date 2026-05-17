@@ -25,6 +25,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
 import io.virtroid.client.data.AppLogStore
@@ -414,7 +415,6 @@ class SessionActivity : AppCompatActivity() {
         }
 
         endingSession = true
-        disconnectViewer()
         appLogs.info("Session shutdown requested: $reason", "session")
 
         binding.sessionSubtitleText.text = getString(R.string.session_secure_saving)
@@ -439,6 +439,7 @@ class SessionActivity : AppCompatActivity() {
                 identityPasswordStore.saveConfigured(accountId, deviceId)
             }.onSuccess {
                 appSettings.lastSessionEndReason = reason
+                disconnectViewer()
                 activeSessionStore.clear()
                 if (appSettings.autoClearClipboard) {
                     appSettings.clearClipboard()
@@ -449,6 +450,8 @@ class SessionActivity : AppCompatActivity() {
                 finishToRuntimeList(markRuntimeStopping = true)
             }.onFailure { error ->
                 endingSession = false
+                startSessionHeartbeat()
+                startInactivityWatch()
                 setSessionActionsEnabled(true)
                 showEndingError(error)
             }
@@ -469,22 +472,32 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private suspend fun queueRuntimeStop(blobAccessKey: String) {
+        var needsDirectStop = true
         if (sessionId.isNotBlank()) {
             val endResult = runCatching {
                 api.endSession(baseUrl, accountId, deviceId, runtimeId, sessionId, blobAccessKey)
+            }
+            endResult.onSuccess { runtime ->
+                needsDirectStop = !runtime.isRuntimeStopQueued()
+                if (needsDirectStop) {
+                    appLogs.warn(
+                        "Session end did not queue runtime stop (${runtime.status}/${runtime.desiredState}/${runtime.connectionStatus}); queueing direct stop",
+                        "session",
+                    )
+                }
             }
             endResult.onFailure { error ->
                 if (!error.isGoneSessionResponse()) {
                     throw error
                 }
                 appLogs.warn("Session was already gone; queueing runtime stop directly", "session")
-                api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
             }
-            relayToken = ""
-            return
         }
 
-        api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
+        if (needsDirectStop) {
+            api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
+        }
+        relayToken = ""
     }
 
     private fun finishToRuntimeList(markRuntimeStopping: Boolean) {
@@ -712,7 +725,19 @@ class SessionActivity : AppCompatActivity() {
         return identityPasswordStore.unlock(accountId, deviceId, password)
     }
 
-    private fun io.virtroid.client.api.RuntimeSummary.isStoppedForSession(): Boolean {
+    private fun RuntimeSummary.isRuntimeStopQueued(): Boolean {
+        val desiredStopped = desiredState.equals("stopped", ignoreCase = true)
+        val lifecycleStopping = status.equals("stopping", ignoreCase = true) ||
+            status.equals("stopped", ignoreCase = true) ||
+            status.equals("provisioned", ignoreCase = true)
+        val connectivityStopping = connectionStatus.equals("disconnecting", ignoreCase = true) ||
+            connectionStatus.equals("offline", ignoreCase = true) ||
+            connectionStatus.equals("disconnected", ignoreCase = true) ||
+            connectionStatus.isBlank()
+        return desiredStopped && (lifecycleStopping || connectivityStopping || isStoppedForSession())
+    }
+
+    private fun RuntimeSummary.isStoppedForSession(): Boolean {
         val stopped = status.equals("stopped", ignoreCase = true)
         val desiredStopped = desiredState.equals("stopped", ignoreCase = true)
         val offline = connectionStatus.isBlank() ||
