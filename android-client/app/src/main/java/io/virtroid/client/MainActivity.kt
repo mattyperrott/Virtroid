@@ -378,6 +378,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         cardBinding.connectRuntimeButton.isVisible = isLive
+        cardBinding.liveRuntimeControlsButton.isVisible = isLive
+        cardBinding.liveRuntimeControlsButton.isEnabled = isLive
         cardBinding.runtimeActionRow.isVisible = !isLive
         val provisioningMilestone = if (isLocallyStopping) {
             runtime.stoppingMilestone()
@@ -441,6 +443,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         cardBinding.actionControlsButton.setOnClickListener {
+            startActivity(ControlsActivity.createIntent(this, runtime.id))
+        }
+        cardBinding.liveRuntimeControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtime.id))
         }
     }
