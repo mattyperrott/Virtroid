@@ -77,6 +77,18 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <ImageButton
+                android:id="@+id/liveRuntimeControlsButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/bg_surface_light_circle"
+                android:contentDescription="@string/runtime_controls"
+                android:padding="13dp"
+                android:src="@drawable/ic_tune"
+                android:visibility="gone"
+                app:tint="@color/v_text_muted" />
+
         </LinearLayout>
 
         <FrameLayout
