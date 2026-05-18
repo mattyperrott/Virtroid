@@ -16,6 +16,7 @@ type ServerConfig struct {
 	NodeRegistrationSecret          string
 	BootstrapRateLimitPerMinute     int
 	BootstrapMaxBodyBytes           int64
+	TrustProxyHeaders               bool
 	SecurityEventRateLimitPerMinute int
 	SecurityEventRetention          time.Duration
 	SessionReaperInterval           time.Duration
@@ -77,6 +78,7 @@ func LoadServer() ServerConfig {
 		NodeRegistrationSecret:          envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
 		BootstrapRateLimitPerMinute:     bootstrapRateLimit,
 		BootstrapMaxBodyBytes:           int64(bootstrapMaxBodyBytes),
+		TrustProxyHeaders:               parseEnvBool("TRUST_PROXY_HEADERS", false),
 		SecurityEventRateLimitPerMinute: securityEventRateLimit,
 		SecurityEventRetention:          securityEventRetention,
 		SessionReaperInterval:           sessionReaperInterval,
@@ -157,6 +159,18 @@ func parseEnvInt(key string, fallback int) (int, error) {
 		return fallback, err
 	}
 	return parsed, nil
+}
+
+func parseEnvBool(key string, fallback bool) bool {
+	value := envOrDefault(key, "")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func parseEnvDuration(key string, fallback time.Duration) time.Duration {

@@ -349,7 +349,7 @@ func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
-	if ok, retryAfter := a.bootstrapLimiter.allow(bootstrapClientKey(r)); !ok {
+	if ok, retryAfter := a.bootstrapLimiter.allow(bootstrapClientKey(r, a.cfg.TrustProxyHeaders)); !ok {
 		if retryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
 		}
@@ -415,17 +415,20 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, result)
 }
 
-func bootstrapClientKey(r *http.Request) string {
+func bootstrapClientKey(r *http.Request, trustProxyHeaders bool) string {
 	remoteHost := strings.TrimSpace(r.RemoteAddr)
 	if host, _, err := net.SplitHostPort(remoteHost); err == nil {
 		remoteHost = host
 	}
-	forwardedFor := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-	if forwardedFor != "" {
-		if comma := strings.IndexByte(forwardedFor, ','); comma >= 0 {
-			forwardedFor = forwardedFor[:comma]
+	var forwardedFor string
+	if trustProxyHeaders {
+		forwardedFor = strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
+		if forwardedFor != "" {
+			if comma := strings.IndexByte(forwardedFor, ','); comma >= 0 {
+				forwardedFor = forwardedFor[:comma]
+			}
+			forwardedFor = strings.TrimSpace(forwardedFor)
 		}
-		forwardedFor = strings.TrimSpace(forwardedFor)
 	}
 	if remoteHost == "" {
 		remoteHost = "unknown"

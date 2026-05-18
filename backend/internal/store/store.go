@@ -284,7 +284,7 @@ type RuntimeObservation struct {
 type Session struct {
 	ID                    string     `json:"id"`
 	RuntimeID             string     `json:"runtime_id"`
-	DeviceID              string     `json:"device_id"`
+	DeviceID              string     `json:"-"`
 	Status                string     `json:"status"`
 	RelayToken            string     `json:"relay_token,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
@@ -323,7 +323,7 @@ type RuntimeState struct {
 type SessionRelayTarget struct {
 	SessionID  string `json:"session_id"`
 	RuntimeID  string `json:"runtime_id"`
-	DeviceID   string `json:"device_id"`
+	DeviceID   string `json:"-"`
 	HostID     string `json:"host_id"`
 	ViewerPort int    `json:"viewer_port"`
 }

@@ -57,6 +57,19 @@ func TestBootstrapRateLimitsBeforeStore(t *testing.T) {
 	}
 }
 
+func TestBootstrapClientKeyIgnoresForwardedHeadersByDefault(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(`{}`))
+	req.RemoteAddr = "10.0.0.5:42312"
+	req.Header.Set("X-Forwarded-For", "203.0.113.99")
+
+	if got := bootstrapClientKey(req, false); got != "10.0.0.5" {
+		t.Fatalf("bootstrapClientKey without trusted proxy = %q, want remote host only", got)
+	}
+	if got := bootstrapClientKey(req, true); got != "10.0.0.5|203.0.113.99" {
+		t.Fatalf("bootstrapClientKey with trusted proxy = %q, want remote and forwarded host", got)
+	}
+}
+
 func TestBootstrapRejectsOversizedBodyBeforeStore(t *testing.T) {
 	handler := New(config.ServerConfig{
 		AppEnv:                      "production",
