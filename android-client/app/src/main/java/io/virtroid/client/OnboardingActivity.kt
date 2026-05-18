@@ -110,7 +110,7 @@ class OnboardingActivity : AppCompatActivity() {
                 detail = "... loading public verification material_",
             )
             val publicKey = deviceIdentityStore.publicKeyMaterial()
-            markPreviousMilestone("Local signing key ready", deviceIdentityStore.defaultDeviceName())
+            markPreviousMilestone("Local signing key ready", deviceIdentityStore.defaultDeviceName(this@OnboardingActivity))
 
             updateActiveMilestone(
                 title = "Registering Account And Device ...",
@@ -121,7 +121,7 @@ class OnboardingActivity : AppCompatActivity() {
                 baseUrl = sessionStore.baseUrl,
                 accountId = identity.accountId,
                 deviceId = identity.deviceId,
-                deviceName = deviceIdentityStore.defaultDeviceName(),
+                deviceName = deviceIdentityStore.defaultDeviceName(this@OnboardingActivity),
                 publicKey = publicKey,
                 runtimeProfile = DeviceRuntimeProfile.from(this@OnboardingActivity),
             )

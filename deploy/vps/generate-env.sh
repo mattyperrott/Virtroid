@@ -89,6 +89,7 @@ write_env_var() {
   write_env_var NODE_PRIVATE_KEY_B64 "$(node_private_key_b64)"
   write_env_var BOOTSTRAP_RATE_LIMIT_PER_MINUTE 5
   write_env_var BOOTSTRAP_MAX_BODY_BYTES 32768
+  write_env_var TRUST_PROXY_HEADERS false
   write_env_var PUBLIC_BASE_URL "${public_url}"
   write_env_var PUBLIC_RELAY_URL "${public_url}"
   write_env_var NODE_ADVERTISE_ADDR virtnoded

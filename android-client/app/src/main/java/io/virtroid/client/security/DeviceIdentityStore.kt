@@ -1,7 +1,6 @@
 package io.virtroid.client.security
 
 import android.content.Context
-import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -48,12 +47,20 @@ class DeviceIdentityStore {
 
     fun resetInstallDeviceId(context: Context) {
         devicePrefs(context).clear(KEY_INSTALL_DEVICE_ID)
+        devicePrefs(context).clear(KEY_CLIENT_ALIAS)
     }
 
-    fun defaultDeviceName(): String {
-        return listOfNotNull(Build.MANUFACTURER, Build.MODEL)
-            .joinToString(" ")
-            .ifBlank { "Virtroid Android" }
+    fun defaultDeviceName(context: Context): String {
+        devicePrefs(context).getString(KEY_CLIENT_ALIAS, null)
+            ?.takeIf { it.matches(CLIENT_ALIAS_REGEX) }
+            ?.let { return it }
+
+        val alias = "Client " + UUID.randomUUID().toString()
+            .replace("-", "")
+            .take(6)
+            .uppercase()
+        devicePrefs(context).putString(KEY_CLIENT_ALIAS, alias)
+        return alias
     }
 
     fun deviceFingerprint(context: Context, accountId: String): String {
@@ -137,8 +144,10 @@ class DeviceIdentityStore {
         const val PREFS_NAME = "virtroid-device-identity"
         const val DEVICE_PREFS_KEYSTORE_ALIAS = "virtroid_device_identity_prefs_v1"
         const val KEY_INSTALL_DEVICE_ID = "install_device_id"
+        const val KEY_CLIENT_ALIAS = "client_alias"
         const val SIGNATURE_CONTEXT = "VIRTROID-DEVICE-SIGNATURE-V1"
         const val B64_URL_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
+        val CLIENT_ALIAS_REGEX = Regex("""Client [0-9A-F]{6}""")
         var pendingDevicePrefs: KeystorePrefs? = null
     }
 }

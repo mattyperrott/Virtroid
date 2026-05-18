@@ -132,7 +132,6 @@ type runtimeAssignment struct {
 type relayTarget struct {
 	SessionID  string `json:"session_id"`
 	RuntimeID  string `json:"runtime_id"`
-	DeviceID   string `json:"device_id"`
 	HostID     string `json:"host_id"`
 	ViewerPort int    `json:"viewer_port"`
 }
