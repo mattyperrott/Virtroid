@@ -407,6 +407,7 @@ class ControlsActivity : AppCompatActivity() {
                         baseUrl = storedSession.baseUrl,
                         accountId = storedSession.accountId,
                         deviceId = storedSession.deviceId,
+                        runtimeId = storedSession.runtimeId,
                         sessionId = storedSession.sessionId,
                     )
                     val relayToken = if (state.canResumeRuntime(runtime.id)) {
@@ -414,6 +415,7 @@ class ControlsActivity : AppCompatActivity() {
                             storedSession.baseUrl,
                             storedSession.accountId,
                             storedSession.deviceId,
+                            storedSession.runtimeId,
                             storedSession.sessionId,
                         )
                     } else {

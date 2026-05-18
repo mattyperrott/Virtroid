@@ -254,7 +254,10 @@ func TestRevokeDeviceMarksDeviceAndStopsItsLiveRuntime(t *testing.T) {
 	mock.ExpectExec("DELETE FROM device_request_nonces").
 		WithArgs(accountID, deviceID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("WITH revoked_sessions").
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("revoked_sessions AS").
 		WithArgs(accountID, deviceID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(runtimeID))
 	mock.ExpectExec("INSERT INTO runtime_logs").
@@ -1394,6 +1397,60 @@ func TestCreateSessionRequiresUnrevokedDevice(t *testing.T) {
 	}
 	if session.RelayToken == "" {
 		t.Fatal("CreateSession did not return an initial attach relay token")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestCreateSessionWithCapabilityDoesNotStoreDeviceID(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	capabilityID := "capability-1"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+
+	mock.ExpectQuery("JOIN runtime_capabilities").
+		WithArgs(runtimeID, accountID, capabilityID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
+			AddRow("running", "running", "online"))
+	mock.ExpectQuery("INSERT INTO sessions").
+		WithArgs(sqlmock.AnyArg(), runtimeID, capabilityID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "device_id", "capability_id", "status", "created_at", "updated_at",
+			"last_client_heartbeat_at", "ended_at", "end_reason", "expires_at",
+		}).AddRow(
+			"33333333-3333-3333-3333-333333333333",
+			runtimeID,
+			"",
+			capabilityID,
+			"pending",
+			now,
+			now,
+			now,
+			nil,
+			nil,
+			now.Add(2*time.Minute),
+		))
+
+	session, err := st.CreateSessionWithCapability(context.Background(), accountID, capabilityID, runtimeID)
+	if err != nil {
+		t.Fatalf("CreateSessionWithCapability returned error: %v", err)
+	}
+	if session.DeviceID != "" {
+		t.Fatalf("capability session device id = %q, want empty", session.DeviceID)
+	}
+	if session.CapabilityID == nil || *session.CapabilityID != capabilityID {
+		t.Fatalf("capability id = %#v, want %q", session.CapabilityID, capabilityID)
+	}
+	if session.RelayToken == "" {
+		t.Fatal("CreateSessionWithCapability did not return an initial attach relay token")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

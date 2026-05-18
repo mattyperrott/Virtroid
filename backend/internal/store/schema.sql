@@ -174,10 +174,38 @@ ALTER TABLE runtimes ALTER COLUMN width_px SET DEFAULT 720;
 ALTER TABLE runtimes ALTER COLUMN height_px SET DEFAULT 1600;
 ALTER TABLE runtimes ALTER COLUMN density_dpi SET DEFAULT 320;
 
+CREATE TABLE IF NOT EXISTS runtime_capabilities (
+    id TEXT PRIMARY KEY,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    runtime_id UUID NOT NULL REFERENCES runtimes(id) ON DELETE CASCADE,
+    public_key TEXT NOT NULL,
+    scopes TEXT NOT NULL DEFAULT 'runtime',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ
+);
+
+ALTER TABLE runtime_capabilities ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT 'runtime';
+ALTER TABLE runtime_capabilities ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE runtime_capabilities ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE runtime_capabilities ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE runtime_capabilities ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS runtime_capability_nonces (
+    capability_id TEXT NOT NULL REFERENCES runtime_capabilities(id) ON DELETE CASCADE,
+    nonce TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (capability_id, nonce)
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id UUID PRIMARY KEY,
     runtime_id UUID NOT NULL REFERENCES runtimes(id) ON DELETE CASCADE,
-    device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
+    capability_id TEXT REFERENCES runtime_capabilities(id) ON DELETE SET NULL,
     status TEXT NOT NULL,
     relay_token TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -189,6 +217,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     relay_token_consumed_at TIMESTAMPTZ
 );
 
+ALTER TABLE sessions ALTER COLUMN device_id DROP NOT NULL;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS capability_id TEXT REFERENCES runtime_capabilities(id) ON DELETE SET NULL;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_client_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS end_reason TEXT;
@@ -263,8 +293,12 @@ CREATE INDEX IF NOT EXISTS idx_runtimes_account_id ON runtimes (account_id);
 CREATE INDEX IF NOT EXISTS idx_runtimes_host_id ON runtimes (host_id);
 CREATE INDEX IF NOT EXISTS idx_runtimes_blob_host_id ON runtimes (blob_host_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runtimes_viewer_port_unique ON runtimes (viewer_port) WHERE viewer_port IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_runtime_capabilities_account_runtime ON runtime_capabilities (account_id, runtime_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_capabilities_expires_at ON runtime_capabilities (expires_at);
+CREATE INDEX IF NOT EXISTS idx_runtime_capability_nonces_expires_at ON runtime_capability_nonces (expires_at);
 CREATE INDEX IF NOT EXISTS idx_device_request_nonces_expires_at ON device_request_nonces (expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_runtime_id ON sessions (runtime_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_capability_id ON sessions (capability_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status_expires_at ON sessions (status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_client_heartbeat_at ON sessions (last_client_heartbeat_at);
 CREATE INDEX IF NOT EXISTS idx_runtime_logs_runtime_created_at ON runtime_logs (runtime_id, created_at DESC);

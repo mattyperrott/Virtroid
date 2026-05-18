@@ -212,7 +212,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         runCatching {
-            api.getSessionState(baseUrl, accountId, deviceId, activeSession.sessionId)
+            api.getSessionState(baseUrl, accountId, deviceId, activeSession.runtimeId, activeSession.sessionId)
         }.onSuccess {
             if (it.canResumeRuntime(activeSession.runtimeId)) {
                 activeSessionStore.touch(activeSession.sessionId)
@@ -480,9 +480,9 @@ class MainActivity : AppCompatActivity() {
         activeSessionStore.loadForRuntime(runtime.id)?.let { session ->
             lifecycleScope.launch {
                 runCatching {
-                    val state = api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
+                    val state = api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)
                     val relayToken = if (state.canResumeRuntime(runtime.id)) {
-                        api.issueSessionRelayToken(session.baseUrl, session.accountId, session.deviceId, session.sessionId)
+                        api.issueSessionRelayToken(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)
                     } else {
                         ""
                     }
