@@ -351,7 +351,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionRetryButton.isVisible = false
         lifecycleScope.launch {
             runCatching {
-                api.issueSessionRelayToken(baseUrl, accountId, deviceId, sessionId)
+                api.issueSessionRelayToken(baseUrl, accountId, deviceId, runtimeId, sessionId)
             }.onSuccess { freshRelayToken ->
                 relayToken = freshRelayToken
                 persistActiveSession()
@@ -378,7 +378,7 @@ class SessionActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             runCatching {
-                api.getSessionState(baseUrl, accountId, deviceId, sessionId)
+                api.getSessionState(baseUrl, accountId, deviceId, runtimeId, sessionId)
             }.onSuccess {
                 if (it.canResumeRuntime(runtimeId)) {
                     heartbeatFailureCount = 0
@@ -669,7 +669,7 @@ class SessionActivity : AppCompatActivity() {
         heartbeatJob = lifecycleScope.launch {
             while (isActive && !endingSession) {
                 runCatching {
-                    api.heartbeatSession(baseUrl, accountId, deviceId, sessionId)
+                    api.heartbeatSession(baseUrl, accountId, deviceId, runtimeId, sessionId)
                 }.onSuccess {
                     heartbeatFailureCount = 0
                     activeSessionStore.touch(sessionId)

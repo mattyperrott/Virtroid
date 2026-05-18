@@ -6,6 +6,7 @@ import io.virtroid.client.security.BlobKeyEnvelopeCrypto
 import io.virtroid.client.security.BlobKeyLease
 import io.virtroid.client.security.DeviceIdentityStore
 import io.virtroid.client.security.IdentityCrypto
+import io.virtroid.client.security.RuntimeCapabilityStore
 import io.virtroid.client.security.TlsPins
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -186,6 +187,7 @@ private val DEFAULT_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
 class VirtroidApi(
     private val okHttpClient: OkHttpClient = DEFAULT_HTTP_CLIENT,
     private val deviceIdentityStore: DeviceIdentityStore = DeviceIdentityStore(),
+    private val runtimeCapabilityStore: RuntimeCapabilityStore = RuntimeCapabilityStore(),
 ) {
     suspend fun registerIdentity(
         baseUrl: String,
@@ -545,8 +547,6 @@ class VirtroidApi(
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "session", blobKeyVerifier)
         val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
         val requestBody = JSONObject()
-            .put("account_id", accountId)
-            .put("device_id", deviceId)
             .put("max_size", maxSize)
             .put("bit_rate", bitRate)
             .put("blob_key_verifier", blobKeyVerifier)
@@ -554,12 +554,11 @@ class VirtroidApi(
             .toString()
 
         val payload = executeJson(
-            signedJsonRequest(
+            capabilityJsonRequest(
                 baseUrl = baseUrl,
                 pathAndQuery = "/api/v1/me/runtimes/$runtimeId/session",
                 method = "POST",
-                accountId = accountId,
-                deviceId = deviceId,
+                runtimeId = runtimeId,
                 body = requestBody,
             ),
         )
@@ -668,15 +667,15 @@ class VirtroidApi(
         baseUrl: String,
         accountId: String,
         deviceId: String,
+        runtimeId: String,
         sessionId: String,
     ): SessionState = withContext(Dispatchers.IO) {
         val payload = executeJson(
-            signedJsonRequest(
+            capabilityJsonRequest(
                 baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/sessions/$sessionId?account_id=$accountId&device_id=$deviceId",
+                pathAndQuery = "/api/v1/me/sessions/$sessionId?runtime_id=$runtimeId",
                 method = "GET",
-                accountId = accountId,
-                deviceId = deviceId,
+                runtimeId = runtimeId,
             ),
         )
         payload.toSessionState()
@@ -686,15 +685,15 @@ class VirtroidApi(
         baseUrl: String,
         accountId: String,
         deviceId: String,
+        runtimeId: String,
         sessionId: String,
     ): String = withContext(Dispatchers.IO) {
         val payload = executeJson(
-            signedJsonRequest(
+            capabilityJsonRequest(
                 baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/sessions/$sessionId/relay-token",
+                pathAndQuery = "/api/v1/me/sessions/$sessionId/relay-token?runtime_id=$runtimeId",
                 method = "POST",
-                accountId = accountId,
-                deviceId = deviceId,
+                runtimeId = runtimeId,
             ),
         )
         payload.getJSONObject("session").getString("relay_token")
@@ -712,19 +711,16 @@ class VirtroidApi(
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "stop", blobKeyVerifier)
         val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
         val requestBody = JSONObject()
-            .put("account_id", accountId)
-            .put("device_id", deviceId)
             .put("blob_key_verifier", blobKeyVerifier)
             .put("blob_key_envelope", envelope)
             .toString()
 
         executeJson(
-            signedJsonRequest(
+            capabilityJsonRequest(
                 baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/sessions/$sessionId/end",
+                pathAndQuery = "/api/v1/me/sessions/$sessionId/end?runtime_id=$runtimeId",
                 method = "POST",
-                accountId = accountId,
-                deviceId = deviceId,
+                runtimeId = runtimeId,
                 body = requestBody,
             ),
         ).toRuntimeSummary()
@@ -734,15 +730,15 @@ class VirtroidApi(
         baseUrl: String,
         accountId: String,
         deviceId: String,
+        runtimeId: String,
         sessionId: String,
     ) = withContext(Dispatchers.IO) {
         executeJson(
-            signedJsonRequest(
+            capabilityJsonRequest(
                 baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/sessions/$sessionId/heartbeat",
+                pathAndQuery = "/api/v1/me/sessions/$sessionId/heartbeat?runtime_id=$runtimeId",
                 method = "POST",
-                accountId = accountId,
-                deviceId = deviceId,
+                runtimeId = runtimeId,
             ),
         )
     }
@@ -755,20 +751,18 @@ class VirtroidApi(
         operation: String,
         blobKeyVerifier: String,
     ): BlobKeyLease {
+        ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
         val requestBody = JSONObject()
-            .put("account_id", accountId)
-            .put("device_id", deviceId)
             .put("operation", operation)
             .put("blob_key_verifier", blobKeyVerifier)
             .toString()
 
         val payload = executeJson(
-            signedJsonRequest(
+            capabilityJsonRequest(
                 baseUrl = baseUrl,
                 pathAndQuery = "/api/v1/me/runtimes/$runtimeId/blob-key-lease",
                 method = "POST",
-                accountId = accountId,
-                deviceId = deviceId,
+                runtimeId = runtimeId,
                 body = requestBody,
             ),
         )
@@ -783,6 +777,38 @@ class VirtroidApi(
         )
     }
 
+    private fun ensureRuntimeCapability(baseUrl: String, accountId: String, deviceId: String, runtimeId: String) {
+        val publicKey = runtimeCapabilityStore.publicKeyMaterial(runtimeId)
+        val capabilityId = runtimeCapabilityStore.capabilityId(runtimeId, publicKey)
+        val cacheKey = "${normalizeBaseUrl(baseUrl)}|$accountId|$runtimeId|$capabilityId"
+        synchronized(registeredRuntimeCapabilities) {
+            if (registeredRuntimeCapabilities.contains(cacheKey)) {
+                return
+            }
+        }
+
+        val requestBody = JSONObject()
+            .put("account_id", accountId)
+            .put("device_id", deviceId)
+            .put("capability_id", capabilityId)
+            .put("public_key", publicKey)
+            .toString()
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/capability",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = requestBody,
+            ),
+        )
+
+        synchronized(registeredRuntimeCapabilities) {
+            registeredRuntimeCapabilities.add(cacheKey)
+        }
+    }
+
     private suspend fun mutateRuntime(
         baseUrl: String,
         accountId: String,
@@ -795,19 +821,16 @@ class VirtroidApi(
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, action, blobKeyVerifier)
         val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
         val requestBody = JSONObject()
-            .put("account_id", accountId)
-            .put("device_id", deviceId)
             .put("blob_key_verifier", blobKeyVerifier)
             .put("blob_key_envelope", envelope)
             .toString()
 
         val payload = executeJson(
-            signedJsonRequest(
+            capabilityJsonRequest(
                 baseUrl = baseUrl,
                 pathAndQuery = "/api/v1/me/runtimes/$runtimeId/$action",
                 method = "POST",
-                accountId = accountId,
-                deviceId = deviceId,
+                runtimeId = runtimeId,
                 body = requestBody,
             ),
         )
@@ -840,6 +863,35 @@ class VirtroidApi(
             requestUri = pathAndQuery,
             accountId = accountId,
             deviceId = deviceId,
+            body = bodyBytes,
+        ).forEach { (name, value) -> builder.header(name, value) }
+
+        return builder.build()
+    }
+
+    private fun capabilityJsonRequest(
+        baseUrl: String,
+        pathAndQuery: String,
+        method: String,
+        runtimeId: String,
+        body: String = "",
+    ): Request {
+        val normalizedMethod = method.uppercase()
+        val signedBody = when {
+            body.isNotBlank() -> body
+            normalizedMethod in METHODS_REQUIRING_REQUEST_BODY -> "{}"
+            else -> ""
+        }
+        val bodyBytes = signedBody.toByteArray(Charsets.UTF_8)
+        val requestBody = if (signedBody.isBlank()) null else signedBody.toRequestBody(JSON_MEDIA_TYPE)
+        val builder = Request.Builder()
+            .url(normalizeBaseUrl(baseUrl) + pathAndQuery)
+            .method(normalizedMethod, requestBody)
+
+        runtimeCapabilityStore.signedHeaders(
+            method = method,
+            requestUri = pathAndQuery,
+            runtimeId = runtimeId,
             body = bodyBytes,
         ).forEach { (name, value) -> builder.header(name, value) }
 
@@ -982,5 +1034,6 @@ class VirtroidApi(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
+        val registeredRuntimeCapabilities = mutableSetOf<String>()
     }
 }

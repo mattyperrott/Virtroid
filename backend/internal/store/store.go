@@ -24,10 +24,11 @@ var schemaSQL string
 const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, last_error, deleted_at, created_at, updated_at`
 
 const (
-	defaultAndroidImage = "redroid/redroid:14.0.0_64only-latest"
-	viewerPortStart     = 46000
-	viewerPortEnd       = 46099
-	sessionAttachTTL    = 2 * time.Minute
+	defaultAndroidImage  = "redroid/redroid:14.0.0_64only-latest"
+	viewerPortStart      = 46000
+	viewerPortEnd        = 46099
+	sessionAttachTTL     = 2 * time.Minute
+	runtimeCapabilityTTL = 24 * time.Hour
 )
 
 var allowedAndroidImages = map[string]struct{}{
@@ -39,26 +40,28 @@ type Store struct {
 }
 
 var (
-	ErrNoReadyHost            = errors.New("no redroid-capable host available")
-	ErrDeviceNotFound         = errors.New("device not found")
-	ErrRuntimeNotFound        = errors.New("runtime not found")
-	ErrRuntimeNotReady        = errors.New("runtime is not ready for sessions")
-	ErrSessionNotFound        = errors.New("session not found")
-	ErrIdentityNotFound       = errors.New("identity password is not configured for this device")
-	ErrIdentityAlreadySet     = errors.New("identity password is already configured for this device")
-	ErrIdentityAuthFailed     = errors.New("identity authentication failed")
-	ErrIdentityKeyRequired    = errors.New("blob access key is required")
-	ErrDeviceRequestReplay    = errors.New("device request nonce has already been used")
-	ErrNodeRequestReplay      = errors.New("node request nonce has already been used")
-	ErrHostNotFound           = errors.New("host not found")
-	ErrRuntimeEntitlement     = errors.New("runtime entitlement is required")
-	ErrRuntimeQuota           = errors.New("runtime quota exceeded")
-	ErrRuntimeActiveQuota     = errors.New("active runtime quota exceeded")
-	ErrRuntimeStartQuota      = errors.New("runtime start quota exceeded")
-	ErrRuntimeProfile         = errors.New("runtime profile is not allowed")
-	ErrSecurityEventRateLimit = errors.New("security event rate limit exceeded")
-	ErrAccountNotFound        = errors.New("account not found")
-	ErrRuntimeBlobOwner       = errors.New("runtime local snapshot owner is unknown")
+	ErrNoReadyHost             = errors.New("no redroid-capable host available")
+	ErrDeviceNotFound          = errors.New("device not found")
+	ErrRuntimeNotFound         = errors.New("runtime not found")
+	ErrRuntimeNotReady         = errors.New("runtime is not ready for sessions")
+	ErrSessionNotFound         = errors.New("session not found")
+	ErrIdentityNotFound        = errors.New("identity password is not configured for this device")
+	ErrIdentityAlreadySet      = errors.New("identity password is already configured for this device")
+	ErrIdentityAuthFailed      = errors.New("identity authentication failed")
+	ErrIdentityKeyRequired     = errors.New("blob access key is required")
+	ErrDeviceRequestReplay     = errors.New("device request nonce has already been used")
+	ErrNodeRequestReplay       = errors.New("node request nonce has already been used")
+	ErrHostNotFound            = errors.New("host not found")
+	ErrRuntimeEntitlement      = errors.New("runtime entitlement is required")
+	ErrRuntimeQuota            = errors.New("runtime quota exceeded")
+	ErrRuntimeActiveQuota      = errors.New("active runtime quota exceeded")
+	ErrRuntimeStartQuota       = errors.New("runtime start quota exceeded")
+	ErrRuntimeProfile          = errors.New("runtime profile is not allowed")
+	ErrSecurityEventRateLimit  = errors.New("security event rate limit exceeded")
+	ErrAccountNotFound         = errors.New("account not found")
+	ErrRuntimeBlobOwner        = errors.New("runtime local snapshot owner is unknown")
+	ErrRuntimeCapability       = errors.New("runtime capability is invalid or expired")
+	ErrRuntimeCapabilityReplay = errors.New("runtime capability nonce has already been used")
 )
 
 const (
@@ -192,6 +195,19 @@ type RuntimeLogEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type RuntimeCapability struct {
+	ID         string     `json:"id"`
+	AccountID  string     `json:"account_id"`
+	RuntimeID  string     `json:"runtime_id"`
+	PublicKey  string     `json:"-"`
+	Scopes     string     `json:"scopes"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
 type SecurityEventInput struct {
 	NodeID    string
 	Source    string
@@ -285,6 +301,7 @@ type Session struct {
 	ID                    string     `json:"id"`
 	RuntimeID             string     `json:"runtime_id"`
 	DeviceID              string     `json:"-"`
+	CapabilityID          *string    `json:"-"`
 	Status                string     `json:"status"`
 	RelayToken            string     `json:"relay_token,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
@@ -643,15 +660,29 @@ func (s *Store) RevokeDevice(ctx context.Context, accountID, targetDeviceID stri
 		return Device{}, nil, err
 	}
 
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE runtime_capabilities
+		    SET revoked_at = NOW(),
+		        updated_at = NOW()
+		  WHERE account_id = $1
+		    AND revoked_at IS NULL`,
+		accountID,
+	); err != nil {
+		return Device{}, nil, err
+	}
+
 	rows, err := tx.QueryContext(ctx,
-		`WITH revoked_sessions AS (
+		`WITH account_caps AS (
+		     SELECT id FROM runtime_capabilities WHERE account_id = $1
+		 ),
+		 revoked_sessions AS (
 		     UPDATE sessions AS s
 		        SET status = 'revoked',
 		            updated_at = NOW(),
 		            ended_at = NOW(),
 		            end_reason = 'device revoked'
 		       FROM runtimes AS runtime_owner
-		      WHERE s.device_id = $2
+		      WHERE (s.device_id = $2 OR s.capability_id IN (SELECT id FROM account_caps))
 		        AND runtime_owner.id = s.runtime_id
 		        AND runtime_owner.account_id = $1
 		        AND s.status IN ('pending', 'active')
@@ -668,6 +699,7 @@ func (s *Store) RevokeDevice(ctx context.Context, accountID, targetDeviceID stri
 		            SELECT 1
 		              FROM sessions live
 		             WHERE live.runtime_id = r.id
+		               AND live.device_id IS NOT NULL
 		               AND live.device_id <> $2
 		               AND live.status IN ('pending', 'active')
 		               AND live.expires_at > NOW()
@@ -1601,6 +1633,145 @@ func (s *Store) RememberNodeRequestNonce(ctx context.Context, nodeID, nonce stri
 	return tx.Commit()
 }
 
+func (s *Store) UpsertRuntimeCapability(ctx context.Context, accountID, runtimeID, capabilityID, publicKey string) (RuntimeCapability, error) {
+	accountID = strings.TrimSpace(accountID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	capabilityID = strings.TrimSpace(capabilityID)
+	publicKey = strings.TrimSpace(publicKey)
+	if accountID == "" || runtimeID == "" || capabilityID == "" || publicKey == "" {
+		return RuntimeCapability{}, ErrRuntimeCapability
+	}
+
+	var capability RuntimeCapability
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO runtime_capabilities (id, account_id, runtime_id, public_key, scopes, expires_at, revoked_at, last_used_at)
+		 SELECT $3, r.account_id, r.id, $4, 'runtime', NOW() + $5::interval, NULL, NULL
+		   FROM runtimes r
+		  WHERE r.account_id = $1
+		    AND r.id = $2
+		    AND r.deleted_at IS NULL
+		    AND r.desired_state <> 'deleted'
+		 ON CONFLICT (id) DO UPDATE
+		    SET account_id = EXCLUDED.account_id,
+		        runtime_id = EXCLUDED.runtime_id,
+		        public_key = EXCLUDED.public_key,
+		        scopes = EXCLUDED.scopes,
+		        expires_at = EXCLUDED.expires_at,
+		        revoked_at = NULL,
+		        updated_at = NOW()
+		 RETURNING id, account_id, runtime_id, public_key, scopes, created_at, updated_at, expires_at, revoked_at, last_used_at`,
+		accountID,
+		runtimeID,
+		capabilityID,
+		publicKey,
+		postgresInterval(runtimeCapabilityTTL),
+	).Scan(
+		&capability.ID,
+		&capability.AccountID,
+		&capability.RuntimeID,
+		&capability.PublicKey,
+		&capability.Scopes,
+		&capability.CreatedAt,
+		&capability.UpdatedAt,
+		&capability.ExpiresAt,
+		&capability.RevokedAt,
+		&capability.LastUsedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RuntimeCapability{}, ErrRuntimeNotFound
+		}
+		return RuntimeCapability{}, err
+	}
+	return capability, nil
+}
+
+func (s *Store) RuntimeCapabilityPublicKey(ctx context.Context, runtimeID, capabilityID string) (string, string, error) {
+	runtimeID = strings.TrimSpace(runtimeID)
+	capabilityID = strings.TrimSpace(capabilityID)
+	if runtimeID == "" || capabilityID == "" {
+		return "", "", ErrRuntimeCapability
+	}
+
+	var accountID string
+	var publicKey string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT c.account_id, c.public_key
+		   FROM runtime_capabilities c
+		   JOIN runtimes r ON r.id = c.runtime_id
+		  WHERE c.id = $1
+		    AND c.runtime_id = $2
+		    AND c.account_id = r.account_id
+		    AND c.revoked_at IS NULL
+		    AND c.expires_at > NOW()
+		    AND r.deleted_at IS NULL
+		    AND r.desired_state <> 'deleted'`,
+		capabilityID,
+		runtimeID,
+	).Scan(&accountID, &publicKey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", ErrRuntimeCapability
+		}
+		return "", "", err
+	}
+	return accountID, publicKey, nil
+}
+
+func (s *Store) TouchRuntimeCapability(ctx context.Context, capabilityID string) error {
+	capabilityID = strings.TrimSpace(capabilityID)
+	if capabilityID == "" {
+		return ErrRuntimeCapability
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE runtime_capabilities
+		    SET last_used_at = NOW(),
+		        updated_at = NOW()
+		  WHERE id = $1`,
+		capabilityID,
+	)
+	return err
+}
+
+func (s *Store) RememberRuntimeCapabilityNonce(ctx context.Context, capabilityID, nonce string, expiresAt time.Time) error {
+	capabilityID = strings.TrimSpace(capabilityID)
+	nonce = strings.TrimSpace(nonce)
+	if capabilityID == "" || nonce == "" {
+		return ErrRuntimeCapabilityReplay
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_capability_nonces WHERE expires_at < NOW()`); err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO runtime_capability_nonces (capability_id, nonce, expires_at)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT DO NOTHING`,
+		capabilityID,
+		nonce,
+		expiresAt.UTC(),
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrRuntimeCapabilityReplay
+	}
+
+	return tx.Commit()
+}
+
 func (s *Store) VerifyDeviceBlobKeyVerifier(ctx context.Context, accountID, deviceID, blobKeyVerifier string) error {
 	_, err := s.VerifiedDeviceBlobKeyVerifier(ctx, accountID, deviceID, blobKeyVerifier)
 	return err
@@ -1636,6 +1807,53 @@ func (s *Store) VerifiedDeviceBlobKeyVerifier(ctx context.Context, accountID, de
 		return "", ErrIdentityAuthFailed
 	}
 	return stored, nil
+}
+
+func (s *Store) VerifiedAccountBlobKeyVerifier(ctx context.Context, accountID, blobKeyVerifier string) (string, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return "", ErrIdentityNotFound
+	}
+	verifier, err := normalizeBlobKeyVerifier(blobKeyVerifier)
+	if err != nil {
+		return "", err
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT blob_key_verifier
+		   FROM devices
+		  WHERE account_id = $1
+		    AND revoked_at IS NULL
+		    AND blob_key_verifier IS NOT NULL`,
+		accountID,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	foundVerifier := false
+	for rows.Next() {
+		var storedRaw string
+		if err := rows.Scan(&storedRaw); err != nil {
+			return "", err
+		}
+		stored, err := normalizeBlobKeyVerifier(storedRaw)
+		if err != nil {
+			continue
+		}
+		foundVerifier = true
+		if subtle.ConstantTimeCompare([]byte(verifier), []byte(stored)) == 1 {
+			return stored, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if !foundVerifier {
+		return "", ErrIdentityNotFound
+	}
+	return "", ErrIdentityAuthFailed
 }
 
 func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (Runtime, error) {
@@ -2199,7 +2417,7 @@ func (s *Store) ResolveSessionRelayTarget(ctx context.Context, sessionID, relayT
 		   AND r.connection_status = 'online'
 		   AND r.host_id IS NOT NULL
 		   AND r.viewer_port IS NOT NULL
-		 RETURNING s.id, s.runtime_id, s.device_id, r.host_id, r.viewer_port`,
+		 RETURNING s.id, s.runtime_id, COALESCE(s.device_id::text, ''), r.host_id, r.viewer_port`,
 		sessionID,
 		relayTokenHash,
 	).Scan(
@@ -2231,6 +2449,41 @@ func (s *Store) CloseSession(ctx context.Context, accountID, deviceID, sessionID
 		   AND s.status IN ('pending', 'active')`,
 		sessionID,
 		deviceID,
+		accountID,
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
+func (s *Store) CloseSessionWithCapability(ctx context.Context, accountID, capabilityID, sessionID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE sessions AS s
+		 SET status = 'closed',
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = 'client closed'
+		 FROM runtimes AS r, runtime_capabilities AS c
+		 WHERE s.id = $1
+		   AND s.capability_id = $2
+		   AND r.id = s.runtime_id
+		   AND r.account_id = $3
+		   AND c.id = s.capability_id
+		   AND c.runtime_id = r.id
+		   AND c.account_id = r.account_id
+		   AND c.revoked_at IS NULL
+		   AND c.expires_at > NOW()
+		   AND s.status IN ('pending', 'active')`,
+		sessionID,
+		capabilityID,
 		accountID,
 	)
 	if err != nil {
@@ -2290,6 +2543,74 @@ func (s *Store) GetSessionState(ctx context.Context, accountID, deviceID, sessio
 			return SessionState{}, ErrSessionNotFound
 		}
 		return SessionState{}, err
+	}
+
+	now := time.Now().UTC()
+	effectiveStatus, expired := effectiveSessionStatus(session, now)
+	runtimeReady := runtimeReadyForSession(runtime)
+	canResume := runtimeReady && !expired && (effectiveStatus == "pending" || effectiveStatus == "active")
+	return SessionState{
+		Session:         session,
+		Runtime:         runtime,
+		EffectiveStatus: effectiveStatus,
+		IsExpired:       expired,
+		RuntimeReady:    runtimeReady,
+		CanResume:       canResume,
+	}, nil
+}
+
+func (s *Store) GetSessionStateWithCapability(ctx context.Context, accountID, capabilityID, sessionID string) (SessionState, error) {
+	accountID = strings.TrimSpace(accountID)
+	capabilityID = strings.TrimSpace(capabilityID)
+	sessionID = strings.TrimSpace(sessionID)
+	if accountID == "" || capabilityID == "" || sessionID == "" {
+		return SessionState{}, ErrSessionNotFound
+	}
+
+	var session Session
+	var runtime Runtime
+	var sessionCapabilityID sql.NullString
+	dest := []any{
+		&session.ID,
+		&session.RuntimeID,
+		&session.DeviceID,
+		&sessionCapabilityID,
+		&session.Status,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
+		&session.ExpiresAt,
+	}
+	dest = append(dest, scanRuntimeDest(&runtime)...)
+
+	err := s.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT s.id, s.runtime_id, COALESCE(s.device_id::text, ''), s.capability_id, s.status, s.created_at, s.updated_at,
+		                   s.last_client_heartbeat_at, s.ended_at, s.end_reason, s.expires_at,
+		                   %s
+		    FROM sessions AS s
+		    JOIN runtimes AS r ON r.id = s.runtime_id
+		    JOIN runtime_capabilities c ON c.id = s.capability_id AND c.runtime_id = r.id AND c.account_id = r.account_id
+		   WHERE s.id = $1
+		     AND s.capability_id = $2
+		     AND r.account_id = $3
+		     AND c.revoked_at IS NULL
+		     AND c.expires_at > NOW()`,
+			runtimeColumnsWithAlias("r"),
+		),
+		sessionID,
+		capabilityID,
+		accountID,
+	).Scan(dest...)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionState{}, ErrSessionNotFound
+		}
+		return SessionState{}, err
+	}
+	if sessionCapabilityID.Valid {
+		session.CapabilityID = &sessionCapabilityID.String
 	}
 
 	now := time.Now().UTC()
@@ -2370,6 +2691,77 @@ func (s *Store) IssueSessionRelayToken(ctx context.Context, accountID, deviceID,
 	return session, nil
 }
 
+func (s *Store) IssueSessionRelayTokenWithCapability(ctx context.Context, accountID, capabilityID, sessionID string) (Session, error) {
+	accountID = strings.TrimSpace(accountID)
+	capabilityID = strings.TrimSpace(capabilityID)
+	sessionID = strings.TrimSpace(sessionID)
+	if accountID == "" || capabilityID == "" || sessionID == "" {
+		return Session{}, ErrSessionNotFound
+	}
+	relayToken, err := generateRelayToken()
+	if err != nil {
+		return Session{}, err
+	}
+	relayTokenHash := hashRelayToken(relayToken)
+
+	var session Session
+	var sessionCapabilityID sql.NullString
+	err = s.db.QueryRowContext(ctx,
+		`UPDATE sessions AS s
+		 SET relay_token = $4,
+		     relay_token_consumed_at = NULL,
+		     updated_at = NOW(),
+		     expires_at = NOW() + INTERVAL '2 minutes'
+		 FROM runtimes AS r, runtime_capabilities AS c
+		 WHERE s.id = $1
+		   AND s.capability_id = $2
+		   AND r.id = s.runtime_id
+		   AND r.account_id = $3
+		   AND c.id = s.capability_id
+		   AND c.runtime_id = r.id
+		   AND c.account_id = r.account_id
+		   AND c.revoked_at IS NULL
+		   AND c.expires_at > NOW()
+		   AND s.status IN ('pending', 'active')
+		   AND s.expires_at > NOW()
+		   AND r.deleted_at IS NULL
+		   AND r.desired_state = 'running'
+		   AND r.status = 'running'
+		   AND r.connection_status = 'online'
+		   AND r.host_id IS NOT NULL
+		   AND r.viewer_port IS NOT NULL
+		 RETURNING s.id, s.runtime_id, COALESCE(s.device_id::text, ''), s.capability_id, s.status, s.created_at, s.updated_at,
+		           s.last_client_heartbeat_at, s.ended_at, s.end_reason, s.expires_at`,
+		sessionID,
+		capabilityID,
+		accountID,
+		relayTokenHash,
+	).Scan(
+		&session.ID,
+		&session.RuntimeID,
+		&session.DeviceID,
+		&sessionCapabilityID,
+		&session.Status,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
+		&session.ExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrSessionNotFound
+		}
+		return Session{}, err
+	}
+	if sessionCapabilityID.Valid {
+		session.CapabilityID = &sessionCapabilityID.String
+	}
+	session.RelayToken = relayToken
+	return session, nil
+}
+
 func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceID, sessionID string) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2393,6 +2785,80 @@ func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceI
 		 RETURNING s.runtime_id`,
 		sessionID,
 		deviceID,
+		accountID,
+	).Scan(&runtimeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Runtime{}, ErrSessionNotFound
+		}
+		return Runtime{}, err
+	}
+
+	var runtime Runtime
+	if err := tx.QueryRowContext(ctx,
+		fmt.Sprintf(`UPDATE runtimes
+		 SET status = CASE
+		         WHEN host_id IS NULL THEN 'stopped'
+		         ELSE 'stopping'
+		     END,
+		     desired_state = 'stopped',
+		     connection_status = CASE
+		         WHEN host_id IS NULL THEN 'offline'
+		         ELSE 'disconnecting'
+		     END,
+		     started_at = NULL,
+		     last_error = NULL,
+		     updated_at = NOW()
+		 WHERE account_id = $1
+		   AND id = $2
+		   AND deleted_at IS NULL
+		   AND desired_state <> 'deleted'
+		 RETURNING %s`, runtimeColumns),
+		accountID,
+		runtimeID,
+	).Scan(scanRuntimeDest(&runtime)...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Runtime{}, ErrRuntimeNotFound
+		}
+		return Runtime{}, err
+	}
+
+	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Session closed and runtime stop queued."); err != nil {
+		return Runtime{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Runtime{}, err
+	}
+	return runtime, nil
+}
+
+func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, accountID, capabilityID, sessionID string) (Runtime, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Runtime{}, err
+	}
+	defer tx.Rollback()
+
+	var runtimeID string
+	if err := tx.QueryRowContext(ctx,
+		`UPDATE sessions AS s
+		 SET status = 'closed',
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = 'client closed'
+		 FROM runtimes AS r, runtime_capabilities AS c
+		 WHERE s.id = $1
+		   AND s.capability_id = $2
+		   AND r.id = s.runtime_id
+		   AND r.account_id = $3
+		   AND c.id = s.capability_id
+		   AND c.runtime_id = r.id
+		   AND c.account_id = r.account_id
+		   AND c.revoked_at IS NULL
+		   AND c.expires_at > NOW()
+		   AND s.status IN ('pending', 'active')
+		 RETURNING s.runtime_id`,
+		sessionID,
+		capabilityID,
 		accountID,
 	).Scan(&runtimeID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2490,6 +2956,71 @@ func (s *Store) HeartbeatSession(ctx context.Context, accountID, deviceID, sessi
 			return Session{}, ErrSessionNotFound
 		}
 		return Session{}, err
+	}
+	return session, nil
+}
+
+func (s *Store) HeartbeatSessionWithCapability(ctx context.Context, accountID, capabilityID, sessionID string) (Session, error) {
+	accountID = strings.TrimSpace(accountID)
+	capabilityID = strings.TrimSpace(capabilityID)
+	sessionID = strings.TrimSpace(sessionID)
+	if accountID == "" || capabilityID == "" || sessionID == "" {
+		return Session{}, ErrSessionNotFound
+	}
+
+	var session Session
+	var sessionCapabilityID sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE sessions AS s
+		 SET updated_at = NOW(),
+		     last_client_heartbeat_at = CASE
+		         WHEN s.status = 'active' THEN NOW()
+		         ELSE s.last_client_heartbeat_at
+		     END,
+		     expires_at = CASE
+		         WHEN s.status = 'active' THEN NOW() + INTERVAL '2 minutes'
+		         ELSE s.expires_at
+		     END
+		 FROM runtimes AS r, runtime_capabilities AS c
+		 WHERE s.id = $1
+		   AND s.capability_id = $2
+		   AND r.id = s.runtime_id
+		   AND r.account_id = $3
+		   AND c.id = s.capability_id
+		   AND c.runtime_id = r.id
+		   AND c.account_id = r.account_id
+		   AND c.revoked_at IS NULL
+		   AND c.expires_at > NOW()
+		   AND s.status IN ('pending', 'active')
+		   AND s.expires_at > NOW()
+		   AND r.deleted_at IS NULL
+		   AND r.desired_state <> 'deleted'
+		 RETURNING s.id, s.runtime_id, COALESCE(s.device_id::text, ''), s.capability_id, s.status, s.created_at, s.updated_at,
+		           s.last_client_heartbeat_at, s.ended_at, s.end_reason, s.expires_at`,
+		sessionID,
+		capabilityID,
+		accountID,
+	).Scan(
+		&session.ID,
+		&session.RuntimeID,
+		&session.DeviceID,
+		&sessionCapabilityID,
+		&session.Status,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
+		&session.ExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrSessionNotFound
+		}
+		return Session{}, err
+	}
+	if sessionCapabilityID.Valid {
+		session.CapabilityID = &sessionCapabilityID.String
 	}
 	return session, nil
 }
@@ -2897,6 +3428,77 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 		&session.ExpiresAt,
 	)
 	session.RelayToken = relayToken
+
+	return session, err
+}
+
+func (s *Store) CreateSessionWithCapability(ctx context.Context, accountID, capabilityID, runtimeID string) (Session, error) {
+	accountID = strings.TrimSpace(accountID)
+	capabilityID = strings.TrimSpace(capabilityID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	if accountID == "" || capabilityID == "" || runtimeID == "" {
+		return Session{}, ErrRuntimeCapability
+	}
+
+	var status string
+	var desiredState string
+	var connectionStatus string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT r.status, r.desired_state, r.connection_status
+		   FROM runtimes r
+		   JOIN runtime_capabilities c ON c.runtime_id = r.id AND c.account_id = r.account_id
+		  WHERE r.id = $1
+		    AND r.account_id = $2
+		    AND c.id = $3
+		    AND c.revoked_at IS NULL
+		    AND c.expires_at > NOW()
+		    AND r.deleted_at IS NULL
+		    AND r.desired_state <> 'deleted'`,
+		runtimeID,
+		accountID,
+		capabilityID,
+	).Scan(&status, &desiredState, &connectionStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrRuntimeNotFound
+		}
+		return Session{}, err
+	}
+
+	if desiredState != "running" || status != "running" || connectionStatus != "online" {
+		return Session{}, ErrRuntimeNotReady
+	}
+
+	sessionID := uuid.NewString()
+	relayToken, err := generateRelayToken()
+	if err != nil {
+		return Session{}, err
+	}
+	relayTokenHash := hashRelayToken(relayToken)
+	expiresAt := time.Now().UTC().Add(sessionAttachTTL)
+
+	var session Session
+	var sessionCapabilityID string
+	err = s.db.QueryRowContext(ctx,
+		`INSERT INTO sessions (id, runtime_id, device_id, capability_id, status, relay_token, expires_at, last_client_heartbeat_at)
+		 VALUES ($1, $2, NULL, $3, $4, $5, $6, NOW())
+		 RETURNING id, runtime_id, COALESCE(device_id::text, ''), capability_id, status, created_at, updated_at,
+		           last_client_heartbeat_at, ended_at, end_reason, expires_at`,
+		sessionID, runtimeID, capabilityID, "pending", relayTokenHash, expiresAt,
+	).Scan(
+		&session.ID,
+		&session.RuntimeID,
+		&session.DeviceID,
+		&sessionCapabilityID,
+		&session.Status,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+		&session.LastClientHeartbeatAt,
+		&session.EndedAt,
+		&session.EndReason,
+		&session.ExpiresAt,
+	)
+	session.RelayToken = relayToken
+	session.CapabilityID = &sessionCapabilityID
 
 	return session, err
 }

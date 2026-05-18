@@ -58,6 +58,13 @@ type activeBlobKeyLease struct {
 	LeaseID   string
 }
 
+type runtimeActor struct {
+	accountID    string
+	deviceID     string
+	capabilityID string
+	capability   bool
+}
+
 type activeBlobKeyHandoff struct {
 	AccountID       string
 	RuntimeID       string
@@ -279,6 +286,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes", api.createMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}", api.getMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/state", api.getMyRuntimeState)
+	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/capability", api.registerMyRuntimeCapability)
 	mux.HandleFunc("PATCH /api/v1/me/runtimes/{id}", api.updateMyRuntime)
 	mux.HandleFunc("DELETE /api/v1/me/runtimes/{id}", api.deleteMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/delete", api.deleteMyRuntime)
@@ -730,6 +738,53 @@ func (a *API) getMyRuntimeState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
+func (a *API) registerMyRuntimeCapability(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		AccountID    string `json:"account_id"`
+		DeviceID     string `json:"device_id"`
+		CapabilityID string `json:"capability_id"`
+		PublicKey    string `json:"public_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+		return
+	}
+	publicKeyMaterial := strings.TrimSpace(req.PublicKey)
+	if _, err := parseECDSAPublicKeyMaterial(publicKeyMaterial); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "runtime capability public key is invalid"})
+		return
+	}
+	expectedID := runtimeCapabilityID(r.PathValue("id"), publicKeyMaterial)
+	if strings.TrimSpace(req.CapabilityID) != expectedID {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "runtime capability id does not match public key"})
+		return
+	}
+
+	capability, err := a.store.UpsertRuntimeCapability(r.Context(), accountID, r.PathValue("id"), expectedID, publicKeyMaterial)
+	if err != nil {
+		if err == store.ErrRuntimeNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"capability_id": capability.ID,
+		"runtime_id":    capability.RuntimeID,
+		"expires_at":    capability.ExpiresAt,
+	})
+}
+
 func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
 	if !ok {
@@ -837,7 +892,8 @@ func (a *API) updateMyRuntime(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	runtimeID := r.PathValue("id")
+	actor, ok := a.requireRuntimeActor(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -852,12 +908,11 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "runtime deletion requires a blob-key envelope"})
 		return
 	}
-	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
 
-	runtimeID := r.PathValue("id")
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "delete", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "delete", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -865,7 +920,7 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.DeleteRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
+	runtime, err := a.store.DeleteRuntimeOnHost(r.Context(), actor.accountID, runtimeID, lease.hostID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		writeRuntimeMutationError(w, err)
@@ -876,7 +931,8 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	runtimeID := r.PathValue("id")
+	actor, ok := a.requireRuntimeActor(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -891,7 +947,7 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
 
@@ -900,12 +956,12 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported blob-key lease operation"})
 		return
 	}
-	if err := a.store.VerifyDeviceBlobKeyVerifier(r.Context(), accountID, deviceID, req.BlobKeyVerifier); err != nil {
+	if _, err := a.verifiedActorBlobKeyVerifier(r.Context(), actor, req.BlobKeyVerifier); err != nil {
 		writeIdentityAuthError(w, err)
 		return
 	}
 
-	runtime, host, err := a.store.RuntimeBlobKeyTarget(r.Context(), accountID, r.PathValue("id"), operation)
+	runtime, host, err := a.store.RuntimeBlobKeyTarget(r.Context(), actor.accountID, runtimeID, operation)
 	if err != nil {
 		writeRuntimeMutationError(w, err)
 		return
@@ -921,7 +977,7 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	expiresAt := a.activeBlobKeys.putLease(activeBlobKeyLease{
-		AccountID: accountID,
+		AccountID: actor.accountID,
 		RuntimeID: runtime.ID,
 		HostID:    host.ID,
 		Operation: operation,
@@ -941,7 +997,8 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	runtimeID := r.PathValue("id")
+	actor, ok := a.requireRuntimeActor(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -956,12 +1013,11 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
 
-	runtimeID := r.PathValue("id")
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "start", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "start", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -969,7 +1025,7 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.StartRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
+	runtime, err := a.store.StartRuntimeOnHost(r.Context(), actor.accountID, runtimeID, lease.hostID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		writeRuntimeMutationError(w, err)
@@ -980,7 +1036,8 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	runtimeID := r.PathValue("id")
+	actor, ok := a.requireRuntimeActor(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -995,12 +1052,11 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
 
-	runtimeID := r.PathValue("id")
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1008,7 +1064,7 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.StopRuntime(r.Context(), accountID, runtimeID)
+	runtime, err := a.store.StopRuntime(r.Context(), actor.accountID, runtimeID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		switch err {
@@ -1024,7 +1080,8 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	runtimeID := r.PathValue("id")
+	actor, ok := a.requireRuntimeActor(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -1039,12 +1096,11 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
 
-	runtimeID := r.PathValue("id")
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "wipe", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "wipe", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1052,7 +1108,7 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.WipeRuntimeOnHost(r.Context(), accountID, runtimeID, lease.hostID)
+	runtime, err := a.store.WipeRuntimeOnHost(r.Context(), actor.accountID, runtimeID, lease.hostID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		writeRuntimeMutationError(w, err)
@@ -1083,7 +1139,8 @@ func (a *API) runtimeLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	runtimeID := r.PathValue("id")
+	actor, ok := a.requireRuntimeActor(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -1101,12 +1158,11 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
 
-	runtimeID := r.PathValue("id")
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, runtimeID, "session", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "session", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1114,7 +1170,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.GetRuntime(r.Context(), accountID, runtimeID)
+	runtime, err := a.store.GetRuntime(r.Context(), actor.accountID, runtimeID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		if err == store.ErrRuntimeNotFound {
@@ -1156,16 +1212,21 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 
 	viewerPublicKey, err := a.prepareViewer(r.Context(), host.AdvertiseAddr, host.RelayPort, runtime.ID, maxSize, bitRate)
 	if err != nil {
-		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), accountID, runtime.ID); stopErr == nil {
+		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), actor.accountID, runtime.ID); stopErr == nil {
 			_ = stoppedRuntime
 		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
 
-	session, err := a.store.CreateSession(r.Context(), deviceID, runtime.ID)
+	var session store.Session
+	if actor.capability {
+		session, err = a.store.CreateSessionWithCapability(r.Context(), actor.accountID, actor.capabilityID, runtime.ID)
+	} else {
+		session, err = a.store.CreateSession(r.Context(), actor.deviceID, runtime.ID)
+	}
 	if err != nil {
-		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), accountID, runtime.ID); stopErr == nil {
+		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), actor.accountID, runtime.ID); stopErr == nil {
 			_ = stoppedRuntime
 		}
 		switch err {
@@ -1200,7 +1261,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	actor, ok := a.requireSessionActor(w, r)
 	if !ok {
 		return
 	}
@@ -1215,11 +1276,11 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, accountID, deviceID, req.BlobKeyEnvelope.RuntimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, req.BlobKeyEnvelope.RuntimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1227,7 +1288,13 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.EndSessionAndStopRuntime(r.Context(), accountID, deviceID, r.PathValue("id"))
+	var runtime store.Runtime
+	var err error
+	if actor.capability {
+		runtime, err = a.store.EndSessionAndStopRuntimeWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
+	} else {
+		runtime, err = a.store.EndSessionAndStopRuntime(r.Context(), actor.accountID, actor.deviceID, r.PathValue("id"))
+	}
 	if err != nil {
 		a.activeBlobKeys.clear(lease.runtimeID)
 		switch err {
@@ -1250,12 +1317,18 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) closeMySession(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	actor, ok := a.requireSessionActor(w, r)
 	if !ok {
 		return
 	}
 
-	if err := a.store.CloseSession(r.Context(), accountID, deviceID, r.PathValue("id")); err != nil {
+	var err error
+	if actor.capability {
+		err = a.store.CloseSessionWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
+	} else {
+		err = a.store.CloseSession(r.Context(), actor.accountID, actor.deviceID, r.PathValue("id"))
+	}
+	if err != nil {
 		if err == store.ErrSessionNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
@@ -1268,12 +1341,18 @@ func (a *API) closeMySession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getMySession(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	actor, ok := a.requireSessionActor(w, r)
 	if !ok {
 		return
 	}
 
-	state, err := a.store.GetSessionState(r.Context(), accountID, deviceID, r.PathValue("id"))
+	var state store.SessionState
+	var err error
+	if actor.capability {
+		state, err = a.store.GetSessionStateWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
+	} else {
+		state, err = a.store.GetSessionState(r.Context(), actor.accountID, actor.deviceID, r.PathValue("id"))
+	}
 	if err != nil {
 		if err == store.ErrSessionNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -1287,12 +1366,18 @@ func (a *API) getMySession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	actor, ok := a.requireSessionActor(w, r)
 	if !ok {
 		return
 	}
 
-	session, err := a.store.IssueSessionRelayToken(r.Context(), accountID, deviceID, r.PathValue("id"))
+	var session store.Session
+	var err error
+	if actor.capability {
+		session, err = a.store.IssueSessionRelayTokenWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
+	} else {
+		session, err = a.store.IssueSessionRelayToken(r.Context(), actor.accountID, actor.deviceID, r.PathValue("id"))
+	}
 	if err != nil {
 		if err == store.ErrSessionNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -1306,12 +1391,18 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) heartbeatMySession(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	actor, ok := a.requireSessionActor(w, r)
 	if !ok {
 		return
 	}
 
-	session, err := a.store.HeartbeatSession(r.Context(), accountID, deviceID, r.PathValue("id"))
+	var session store.Session
+	var err error
+	if actor.capability {
+		session, err = a.store.HeartbeatSessionWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
+	} else {
+		session, err = a.store.HeartbeatSession(r.Context(), actor.accountID, actor.deviceID, r.PathValue("id"))
+	}
 	if err != nil {
 		if err == store.ErrSessionNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -1492,20 +1583,19 @@ func (a *API) runtimeBlobKey(w http.ResponseWriter, r *http.Request) {
 func (a *API) activateRuntimeBlobKeyEnvelope(
 	w http.ResponseWriter,
 	r *http.Request,
-	accountID string,
-	deviceID string,
+	actor runtimeActor,
 	runtimeID string,
 	operation string,
 	blobKeyVerifier string,
 	envelope blobKeyEnvelope,
 ) (activeBlobKeyEntry, bool) {
-	verifiedBlobKeyVerifier, err := a.store.VerifiedDeviceBlobKeyVerifier(r.Context(), accountID, deviceID, blobKeyVerifier)
+	verifiedBlobKeyVerifier, err := a.verifiedActorBlobKeyVerifier(r.Context(), actor, blobKeyVerifier)
 	if err != nil {
 		writeIdentityAuthError(w, err)
 		return activeBlobKeyEntry{}, false
 	}
 	entry, err := a.activeBlobKeys.activate(activeBlobKeyHandoff{
-		AccountID:       accountID,
+		AccountID:       actor.accountID,
 		RuntimeID:       runtimeID,
 		HostID:          envelope.HostID,
 		Operation:       operation,
@@ -1572,6 +1662,117 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 		return fmt.Errorf("verify blob key envelope: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 	return nil
+}
+
+func (a *API) verifiedActorBlobKeyVerifier(ctx context.Context, actor runtimeActor, blobKeyVerifier string) (string, error) {
+	if actor.capability {
+		return a.store.VerifiedAccountBlobKeyVerifier(ctx, actor.accountID, blobKeyVerifier)
+	}
+	return a.store.VerifiedDeviceBlobKeyVerifier(ctx, actor.accountID, actor.deviceID, blobKeyVerifier)
+}
+
+func (a *API) requireRuntimeActor(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeActor, bool) {
+	if strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-ID")) != "" {
+		return a.requireRuntimeCapabilityRequest(w, r, runtimeID)
+	}
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return runtimeActor{}, false
+	}
+	return runtimeActor{accountID: accountID, deviceID: deviceID}, true
+}
+
+func (a *API) requireSessionActor(w http.ResponseWriter, r *http.Request) (runtimeActor, bool) {
+	if strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-ID")) == "" {
+		accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+		if !ok {
+			return runtimeActor{}, false
+		}
+		return runtimeActor{accountID: accountID, deviceID: deviceID}, true
+	}
+	runtimeID := strings.TrimSpace(r.URL.Query().Get("runtime_id"))
+	if runtimeID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "runtime_id is required for capability-authenticated session requests"})
+		return runtimeActor{}, false
+	}
+	return a.requireRuntimeCapabilityRequest(w, r, runtimeID)
+}
+
+func (a *API) requireRuntimeCapabilityRequest(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeActor, bool) {
+	capabilityID := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-ID"))
+	timestampRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-Timestamp"))
+	nonce := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-Nonce"))
+	bodyHash := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-Body-SHA256"))
+	signatureRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-Signature"))
+	if capabilityID == "" || timestampRaw == "" || nonce == "" || bodyHash == "" || signatureRaw == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature headers are required"})
+		return runtimeActor{}, false
+	}
+
+	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid runtime capability signature timestamp"})
+		return runtimeActor{}, false
+	}
+	if skew := time.Since(time.Unix(timestamp, 0)); skew > 5*time.Minute || skew < -5*time.Minute {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature timestamp is outside the allowed window"})
+		return runtimeActor{}, false
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
+		return runtimeActor{}, false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	actualBodyHashBytes := sha256.Sum256(body)
+	actualBodyHash := base64.RawURLEncoding.EncodeToString(actualBodyHashBytes[:])
+	if bodyHash != actualBodyHash {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature body hash mismatch"})
+		return runtimeActor{}, false
+	}
+
+	accountID, publicKeyMaterial, err := a.store.RuntimeCapabilityPublicKey(r.Context(), runtimeID, capabilityID)
+	if err != nil {
+		if errors.Is(err, store.ErrRuntimeCapability) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
+			return runtimeActor{}, false
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return runtimeActor{}, false
+	}
+	publicKey, err := parseECDSAPublicKeyMaterial(publicKeyMaterial)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "stored runtime capability public key is invalid"})
+		return runtimeActor{}, false
+	}
+	signatureDER, err := base64.RawURLEncoding.DecodeString(signatureRaw)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature is invalid"})
+		return runtimeActor{}, false
+	}
+	canonical := capabilityRequestCanonical(r.Method, r.URL.RequestURI(), capabilityID, timestampRaw, nonce, bodyHash)
+	digest := sha256.Sum256([]byte(canonical))
+	if !ecdsa.VerifyASN1(publicKey, digest[:], signatureDER) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature verification failed"})
+		return runtimeActor{}, false
+	}
+
+	if err := a.store.RememberRuntimeCapabilityNonce(r.Context(), capabilityID, nonce, time.Unix(timestamp, 0).Add(5*time.Minute)); err != nil {
+		if err == store.ErrRuntimeCapabilityReplay {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
+			return runtimeActor{}, false
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return runtimeActor{}, false
+	}
+	if err := a.store.TouchRuntimeCapability(r.Context(), capabilityID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return runtimeActor{}, false
+	}
+
+	return runtimeActor{accountID: accountID, capabilityID: capabilityID, capability: true}, true
 }
 
 func (a *API) validateSignedDeviceBody(w http.ResponseWriter, signedAccountID, signedDeviceID, bodyAccountID, bodyDeviceID string) bool {
@@ -1929,6 +2130,44 @@ func signedRequestCanonical(method, requestURI, accountID, deviceID, timestamp, 
 		nonce,
 		bodyHash,
 	}, "\n")
+}
+
+func capabilityRequestCanonical(method, requestURI, capabilityID, timestamp, nonce, bodyHash string) string {
+	return strings.Join([]string{
+		"VIRTROID-CAPABILITY-SIGNATURE-V1",
+		strings.ToUpper(method),
+		requestURI,
+		capabilityID,
+		timestamp,
+		nonce,
+		bodyHash,
+	}, "\n")
+}
+
+func runtimeCapabilityID(runtimeID, publicKeyMaterial string) string {
+	material := strings.Join([]string{
+		"VIRTROID-RUNTIME-CAPABILITY-ID-V1",
+		strings.TrimSpace(runtimeID),
+		strings.TrimSpace(publicKeyMaterial),
+	}, "\n")
+	digest := sha256.Sum256([]byte(material))
+	return base64.RawURLEncoding.EncodeToString(digest[:16])
+}
+
+func parseECDSAPublicKeyMaterial(publicKeyMaterial string) (*ecdsa.PublicKey, error) {
+	publicKeyDER, err := base64.StdEncoding.DecodeString(strings.TrimSpace(publicKeyMaterial))
+	if err != nil {
+		return nil, err
+	}
+	parsedPublicKey, err := x509.ParsePKIXPublicKey(publicKeyDER)
+	if err != nil {
+		return nil, err
+	}
+	publicKey, ok := parsedPublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("unsupported ECDSA public key type")
+	}
+	return publicKey, nil
 }
 
 type nodeRequestIdentity struct {
