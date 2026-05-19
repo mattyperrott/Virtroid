@@ -244,16 +244,13 @@ func (n *nodeAgent) prepareSessionData(runtime runtimeAssignment) (bool, error) 
 
 func pruneEphemeralAndroidState(dataDir string) error {
 	paths := []string{
-		filepath.Join(dataDir, "misc", "keystore", "persistent.sqlite"),
-		filepath.Join(dataDir, "misc", "keystore", "persistent.sqlite-shm"),
-		filepath.Join(dataDir, "misc", "keystore", "persistent.sqlite-wal"),
-		filepath.Join(dataDir, "misc", "keystore", "vpnprofilestore.sqlite"),
-		filepath.Join(dataDir, "misc", "keystore", "vpnprofilestore.sqlite-shm"),
-		filepath.Join(dataDir, "misc", "keystore", "vpnprofilestore.sqlite-wal"),
+		filepath.Join(dataDir, "anr"),
+		filepath.Join(dataDir, "system", "dropbox"),
+		filepath.Join(dataDir, "tombstones"),
 	}
 
 	for _, target := range paths {
-		if err := os.Remove(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.RemoveAll(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}

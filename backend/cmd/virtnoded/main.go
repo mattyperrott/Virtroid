@@ -108,6 +108,61 @@ const viewerInitContent = `service virtroid_viewer /system/bin/sh /vendor/bin/vi
     seclabel u:r:shell:s0
 `
 
+const androidInteractiveProbeScript = `PATH=/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin:/bin
+set +e
+
+not_ready() {
+  echo "virtroid_ready=0 reason=$1"
+  exit 0
+}
+
+sys_boot="$(getprop sys.boot_completed 2>/dev/null)"
+dev_boot="$(getprop dev.bootcomplete 2>/dev/null)"
+if [ "$sys_boot" != "1" ] && [ "$dev_boot" != "1" ]; then
+  not_ready booting
+fi
+
+for service_name in activity package window; do
+  service_output="$(service check "$service_name" 2>&1)"
+  echo "service_${service_name}=${service_output}"
+  echo "$service_output" | grep -q "found" || not_ready "${service_name}_service_unavailable"
+done
+
+focus_line="$(dumpsys window 2>/dev/null | grep -m 1 "mCurrentFocus=" || true)"
+awake_line="$(dumpsys window 2>/dev/null | grep -m 1 "mAwake=" || true)"
+echo "$focus_line"
+echo "$awake_line"
+if echo "$focus_line" | grep -q "mCurrentFocus=Window" && echo "$awake_line" | grep -q "mAwake=true"; then
+  echo "virtroid_ready=1 reason=focused"
+  exit 0
+fi
+
+svc power stayon true >/dev/null 2>&1 || true
+input keyevent 224 >/dev/null 2>&1 || input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+input keyevent 82 >/dev/null 2>&1 || true
+wm dismiss-keyguard >/dev/null 2>&1 || true
+
+home_output="$(am start -W -a android.intent.action.MAIN -c android.intent.category.HOME 2>&1)"
+home_status=$?
+echo "$home_output"
+echo "$home_output" | grep -qi "Too early" && not_ready activity_manager_starting
+if [ "$home_status" -ne 0 ]; then
+  not_ready home_start_failed
+fi
+
+sleep 1
+focus_line="$(dumpsys window 2>/dev/null | grep -m 1 "mCurrentFocus=" || true)"
+awake_line="$(dumpsys window 2>/dev/null | grep -m 1 "mAwake=" || true)"
+echo "$focus_line"
+echo "$awake_line"
+if echo "$focus_line" | grep -q "mCurrentFocus=Window" && echo "$awake_line" | grep -q "mAwake=true"; then
+  echo "virtroid_ready=1 reason=home_started"
+  exit 0
+fi
+
+not_ready no_focused_window
+`
+
 type runtimeAssignment struct {
 	ID               string  `json:"id"`
 	Name             string  `json:"name"`
@@ -846,6 +901,20 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			})
 		}
 		if !strings.EqualFold(runtime.Status, "running") || !strings.EqualFold(runtime.ConnectionStatus, "online") {
+			interactive, detail, interactiveErr := n.ensureAndroidInteractive(ctx, containerName)
+			if interactiveErr != nil {
+				return fmt.Errorf("probe Android interactive readiness: %w", interactiveErr)
+			}
+			if !interactive {
+				log.Printf("runtime %s Android UI not ready: %s", runtime.ID, detail)
+				return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+					Status:           "starting",
+					ConnectionStatus: "connecting",
+					ContainerName:    stringPtr(containerName),
+					ADBPort:          &adbPort,
+					LastError:        stringPtr(""),
+				})
+			}
 			prewarmMaxSize := max(runtime.WidthPx, runtime.HeightPx)
 			if prewarmMaxSize <= 0 {
 				prewarmMaxSize = viewerDefaultMaxSize
@@ -1416,6 +1485,13 @@ func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment
 	}
 	if !ready {
 		return "", errors.New("android runtime is still booting")
+	}
+	interactive, detail, interactiveErr := n.ensureAndroidInteractive(ctx, containerName)
+	if interactiveErr != nil {
+		return "", fmt.Errorf("probe Android interactive readiness: %w", interactiveErr)
+	}
+	if !interactive {
+		return "", fmt.Errorf("android runtime UI is still starting: %s", detail)
 	}
 
 	clientIP := "127.0.0.1"
@@ -2201,6 +2277,37 @@ func (n *nodeAgent) androidBootCompleted(ctx context.Context, containerName stri
 	}
 
 	return false, nil
+}
+
+func (n *nodeAgent) ensureAndroidInteractive(ctx context.Context, containerName string) (bool, string, error) {
+	output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+		{"/system/bin/sh", "-c", androidInteractiveProbeScript},
+		{"/bin/sh", "-c", androidInteractiveProbeScript},
+		{"sh", "-c", androidInteractiveProbeScript},
+	})
+	ready, detail := parseAndroidInteractiveProbe(output)
+	if err != nil {
+		return false, detail, err
+	}
+	return ready, detail, nil
+}
+
+func parseAndroidInteractiveProbe(output string) (bool, string) {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return false, "empty readiness probe output"
+	}
+	detail := summarizeLogOutput(trimmed)
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "virtroid_ready=1"):
+			return true, line
+		case strings.HasPrefix(line, "virtroid_ready=0"):
+			return false, line
+		}
+	}
+	return false, detail
 }
 
 func (n *nodeAgent) getProp(ctx context.Context, containerName string, prop string) (string, error) {
