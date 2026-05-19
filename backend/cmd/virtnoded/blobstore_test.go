@@ -14,7 +14,9 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -75,6 +77,29 @@ func TestSnapshotRestoreWrongKeyDoesNotTouchTarget(t *testing.T) {
 	assertFileContent(t, filepath.Join(restoreDir, "keep.txt"), "existing")
 	if _, statErr := os.Stat(filepath.Join(restoreDir, "app", "state.txt")); !os.IsNotExist(statErr) {
 		t.Fatalf("restored payload with wrong key, statErr=%v", statErr)
+	}
+}
+
+func TestPruneEphemeralAndroidStatePreservesKeystore(t *testing.T) {
+	dataDir := t.TempDir()
+	keystoreDB := filepath.Join(dataDir, "misc", "keystore", "persistent.sqlite")
+	writeFile(t, keystoreDB, "synthetic-password-key-material")
+	writeFile(t, filepath.Join(dataDir, "system", "dropbox", "system_server_lowmem.txt"), "dropbox")
+	writeFile(t, filepath.Join(dataDir, "anr", "trace.txt"), "trace")
+	writeFile(t, filepath.Join(dataDir, "tombstones", "tombstone_00"), "tombstone")
+
+	if err := pruneEphemeralAndroidState(dataDir); err != nil {
+		t.Fatalf("pruneEphemeralAndroidState: %v", err)
+	}
+	assertFileContent(t, keystoreDB, "synthetic-password-key-material")
+	for _, removed := range []string{
+		filepath.Join(dataDir, "system", "dropbox"),
+		filepath.Join(dataDir, "anr"),
+		filepath.Join(dataDir, "tombstones"),
+	} {
+		if _, err := os.Stat(removed); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("%s still exists after prune, err=%v", removed, err)
+		}
 	}
 }
 
