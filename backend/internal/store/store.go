@@ -346,9 +346,36 @@ type SessionRelayTarget struct {
 }
 
 type SessionReapResult struct {
-	ExpiredPendingSessions int      `json:"expired_pending_sessions"`
-	StaleActiveSessions    int      `json:"stale_active_sessions"`
-	StoppedRuntimeIDs      []string `json:"stopped_runtime_ids"`
+	ExpiredPendingSessions        int      `json:"expired_pending_sessions"`
+	StaleActiveSessions           int      `json:"stale_active_sessions"`
+	RevokedRuntimeCapabilities    int      `json:"revoked_runtime_capabilities"`
+	PrunedRuntimeCapabilityNonces int      `json:"pruned_runtime_capability_nonces"`
+	StoppedRuntimeIDs             []string `json:"stopped_runtime_ids"`
+}
+
+type ActiveRuntimeSessionSummary struct {
+	SessionID             string     `json:"session_id"`
+	RuntimeID             string     `json:"runtime_id"`
+	RuntimeName           string     `json:"runtime_name"`
+	Status                string     `json:"status"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
+	ExpiresAt             time.Time  `json:"expires_at"`
+	LastClientHeartbeatAt *time.Time `json:"last_client_heartbeat_at,omitempty"`
+	CapabilityID          *string    `json:"capability_id,omitempty"`
+	CapabilityExpiresAt   *time.Time `json:"capability_expires_at,omitempty"`
+	CapabilityLastUsedAt  *time.Time `json:"capability_last_used_at,omitempty"`
+}
+
+type ActiveRuntimeCapabilitySummary struct {
+	ID          string     `json:"id"`
+	RuntimeID   string     `json:"runtime_id"`
+	RuntimeName string     `json:"runtime_name"`
+	Scopes      string     `json:"scopes"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 }
 
 func New(ctx context.Context, databaseURL string) (*Store, error) {
@@ -1250,6 +1277,9 @@ func (s *Store) deleteRuntime(ctx context.Context, accountID, runtimeID, hostID 
 	if err := closeRuntimeSessionsTX(ctx, tx, runtime.ID, "runtime deleted"); err != nil {
 		return Runtime{}, err
 	}
+	if _, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtime.ID); err != nil {
+		return Runtime{}, err
+	}
 
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "warn", "Runtime scheduled for deletion."); err != nil {
 		return Runtime{}, err
@@ -1772,6 +1802,131 @@ func (s *Store) RememberRuntimeCapabilityNonce(ctx context.Context, capabilityID
 	return tx.Commit()
 }
 
+func (s *Store) ListActiveSessionCapabilities(ctx context.Context, accountID string) ([]ActiveRuntimeSessionSummary, []ActiveRuntimeCapabilitySummary, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, nil, ErrDeviceNotFound
+	}
+
+	sessionRows, err := s.db.QueryContext(ctx,
+		`SELECT s.id,
+		        s.runtime_id,
+		        r.name,
+		        s.status,
+		        s.created_at,
+		        s.updated_at,
+		        s.expires_at,
+		        s.last_client_heartbeat_at,
+		        s.capability_id,
+		        c.expires_at,
+		        c.last_used_at
+		   FROM sessions s
+		   JOIN runtimes r ON r.id = s.runtime_id
+		   LEFT JOIN runtime_capabilities c ON c.id = s.capability_id
+		  WHERE r.account_id = $1
+		    AND r.deleted_at IS NULL
+		    AND s.status IN ('pending', 'active')
+		    AND s.expires_at > NOW()
+		  ORDER BY s.updated_at DESC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer sessionRows.Close()
+
+	var sessions []ActiveRuntimeSessionSummary
+	for sessionRows.Next() {
+		var session ActiveRuntimeSessionSummary
+		var heartbeat sql.NullTime
+		var capabilityID sql.NullString
+		var capabilityExpiresAt sql.NullTime
+		var capabilityLastUsedAt sql.NullTime
+		if err := sessionRows.Scan(
+			&session.SessionID,
+			&session.RuntimeID,
+			&session.RuntimeName,
+			&session.Status,
+			&session.CreatedAt,
+			&session.UpdatedAt,
+			&session.ExpiresAt,
+			&heartbeat,
+			&capabilityID,
+			&capabilityExpiresAt,
+			&capabilityLastUsedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		if heartbeat.Valid {
+			session.LastClientHeartbeatAt = &heartbeat.Time
+		}
+		if capabilityID.Valid {
+			session.CapabilityID = &capabilityID.String
+		}
+		if capabilityExpiresAt.Valid {
+			session.CapabilityExpiresAt = &capabilityExpiresAt.Time
+		}
+		if capabilityLastUsedAt.Valid {
+			session.CapabilityLastUsedAt = &capabilityLastUsedAt.Time
+		}
+		sessions = append(sessions, session)
+	}
+	if err := sessionRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	capabilityRows, err := s.db.QueryContext(ctx,
+		`SELECT c.id,
+		        c.runtime_id,
+		        r.name,
+		        c.scopes,
+		        c.created_at,
+		        c.updated_at,
+		        c.expires_at,
+		        c.last_used_at
+		   FROM runtime_capabilities c
+		   JOIN runtimes r ON r.id = c.runtime_id AND r.account_id = c.account_id
+		  WHERE c.account_id = $1
+		    AND c.revoked_at IS NULL
+		    AND c.expires_at > NOW()
+		    AND r.deleted_at IS NULL
+		    AND r.desired_state <> 'deleted'
+		  ORDER BY c.updated_at DESC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer capabilityRows.Close()
+
+	var capabilities []ActiveRuntimeCapabilitySummary
+	for capabilityRows.Next() {
+		var capability ActiveRuntimeCapabilitySummary
+		var lastUsedAt sql.NullTime
+		if err := capabilityRows.Scan(
+			&capability.ID,
+			&capability.RuntimeID,
+			&capability.RuntimeName,
+			&capability.Scopes,
+			&capability.CreatedAt,
+			&capability.UpdatedAt,
+			&capability.ExpiresAt,
+			&lastUsedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		if lastUsedAt.Valid {
+			capability.LastUsedAt = &lastUsedAt.Time
+		}
+		capabilities = append(capabilities, capability)
+	}
+	if err := capabilityRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	return sessions, capabilities, nil
+}
+
 func (s *Store) VerifyDeviceBlobKeyVerifier(ctx context.Context, accountID, deviceID, blobKeyVerifier string) error {
 	_, err := s.VerifiedDeviceBlobKeyVerifier(ctx, accountID, deviceID, blobKeyVerifier)
 	return err
@@ -1986,6 +2141,9 @@ func (s *Store) StopRuntime(ctx context.Context, accountID, runtimeID string) (R
 	if err := closeRuntimeSessionsTX(ctx, tx, runtime.ID, "runtime stopped"); err != nil {
 		return Runtime{}, err
 	}
+	if _, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtime.ID); err != nil {
+		return Runtime{}, err
+	}
 
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Runtime stop requested."); err != nil {
 		return Runtime{}, err
@@ -2057,6 +2215,9 @@ func (s *Store) wipeRuntime(ctx context.Context, accountID, runtimeID, hostID st
 	}
 
 	if err := closeRuntimeSessionsTX(ctx, tx, runtime.ID, "runtime wiped"); err != nil {
+		return Runtime{}, err
+	}
+	if _, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtime.ID); err != nil {
 		return Runtime{}, err
 	}
 
@@ -2465,7 +2626,13 @@ func (s *Store) CloseSession(ctx context.Context, accountID, deviceID, sessionID
 }
 
 func (s *Store) CloseSessionWithCapability(ctx context.Context, accountID, capabilityID, sessionID string) error {
-	result, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx,
 		`UPDATE sessions AS s
 		 SET status = 'closed',
 		     updated_at = NOW(),
@@ -2496,7 +2663,10 @@ func (s *Store) CloseSessionWithCapability(ctx context.Context, accountID, capab
 	if rowsAffected == 0 {
 		return ErrSessionNotFound
 	}
-	return nil
+	if _, err := revokeRuntimeCapabilityTX(ctx, tx, accountID, capabilityID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetSessionState(ctx context.Context, accountID, deviceID, sessionID string) (SessionState, error) {
@@ -2825,6 +2995,9 @@ func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceI
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Session closed and runtime stop queued."); err != nil {
 		return Runtime{}, err
 	}
+	if _, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtime.ID); err != nil {
+		return Runtime{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Runtime{}, err
 	}
@@ -2897,6 +3070,9 @@ func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, acco
 	}
 
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Session closed and runtime stop queued."); err != nil {
+		return Runtime{}, err
+	}
+	if _, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtime.ID); err != nil {
 		return Runtime{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -3119,10 +3295,29 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		return SessionReapResult{}, err
 	}
 
+	revokedStoppedRuntimeCapabilities := 0
 	for _, runtimeID := range stoppedRuntimeIDs {
 		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because no active client session is heartbeating."); err != nil {
 			return SessionReapResult{}, err
 		}
+		revokedCount, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtimeID)
+		if err != nil {
+			return SessionReapResult{}, err
+		}
+		revokedStoppedRuntimeCapabilities += revokedCount
+	}
+
+	revokedSessionCapabilities, err := revokeEndedSessionCapabilitiesTX(ctx, tx)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
+	revokedExpiredCapabilities, err := revokeExpiredRuntimeCapabilitiesTX(ctx, tx)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
+	prunedRuntimeCapabilityNonces, err := pruneExpiredRuntimeCapabilityNoncesTX(ctx, tx)
+	if err != nil {
+		return SessionReapResult{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -3130,9 +3325,11 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 	}
 
 	return SessionReapResult{
-		ExpiredPendingSessions: len(expiredPending),
-		StaleActiveSessions:    len(staleActive),
-		StoppedRuntimeIDs:      stoppedRuntimeIDs,
+		ExpiredPendingSessions:        len(expiredPending),
+		StaleActiveSessions:           len(staleActive),
+		RevokedRuntimeCapabilities:    revokedStoppedRuntimeCapabilities + revokedSessionCapabilities + revokedExpiredCapabilities,
+		PrunedRuntimeCapabilityNonces: prunedRuntimeCapabilityNonces,
+		StoppedRuntimeIDs:             stoppedRuntimeIDs,
 	}, nil
 }
 
@@ -3808,6 +4005,107 @@ func closeRuntimeSessionsTX(ctx context.Context, tx *sql.Tx, runtimeID, reason s
 		strings.TrimSpace(reason),
 	)
 	return err
+}
+
+func revokeRuntimeCapabilityTX(ctx context.Context, tx *sql.Tx, accountID, capabilityID string) (int, error) {
+	result, err := tx.ExecContext(ctx,
+		`UPDATE runtime_capabilities
+		    SET revoked_at = COALESCE(revoked_at, NOW()),
+		        updated_at = NOW()
+		  WHERE account_id = $1
+		    AND id = $2
+		    AND revoked_at IS NULL`,
+		strings.TrimSpace(accountID),
+		strings.TrimSpace(capabilityID),
+	)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
+}
+
+func revokeRuntimeCapabilitiesForRuntimeTX(ctx context.Context, tx *sql.Tx, runtimeID string) (int, error) {
+	result, err := tx.ExecContext(ctx,
+		`UPDATE runtime_capabilities
+		    SET revoked_at = COALESCE(revoked_at, NOW()),
+		        updated_at = NOW()
+		  WHERE runtime_id = $1
+		    AND revoked_at IS NULL`,
+		strings.TrimSpace(runtimeID),
+	)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
+}
+
+func revokeEndedSessionCapabilitiesTX(ctx context.Context, tx *sql.Tx) (int, error) {
+	result, err := tx.ExecContext(ctx,
+		`UPDATE runtime_capabilities AS c
+		    SET revoked_at = COALESCE(c.revoked_at, NOW()),
+		        updated_at = NOW()
+		  WHERE c.revoked_at IS NULL
+		    AND EXISTS (
+		        SELECT 1
+		          FROM sessions ended
+		         WHERE ended.capability_id = c.id
+		           AND ended.ended_at IS NOT NULL
+		           AND ended.status IN ('closed', 'expired', 'stale', 'revoked')
+		    )
+		    AND NOT EXISTS (
+		        SELECT 1
+		          FROM sessions live
+		         WHERE live.capability_id = c.id
+		           AND live.status IN ('pending', 'active')
+		           AND live.expires_at > NOW()
+		    )`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
+}
+
+func revokeExpiredRuntimeCapabilitiesTX(ctx context.Context, tx *sql.Tx) (int, error) {
+	result, err := tx.ExecContext(ctx,
+		`UPDATE runtime_capabilities
+		    SET revoked_at = COALESCE(revoked_at, NOW()),
+		        updated_at = NOW()
+		  WHERE revoked_at IS NULL
+		    AND expires_at <= NOW()`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
+}
+
+func pruneExpiredRuntimeCapabilityNoncesTX(ctx context.Context, tx *sql.Tx) (int, error) {
+	result, err := tx.ExecContext(ctx, `DELETE FROM runtime_capability_nonces WHERE expires_at < NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
 }
 
 func queryStringColumnTX(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]string, error) {

@@ -11,6 +11,19 @@ import java.security.Signature
 import java.util.UUID
 
 class RuntimeCapabilityStore {
+    fun rotate(runtimeId: String): String {
+        clear(runtimeId)
+        return publicKeyMaterial(runtimeId)
+    }
+
+    fun clear(runtimeId: String) {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        val alias = keyAlias(runtimeId)
+        if (keyStore.containsAlias(alias)) {
+            keyStore.deleteEntry(alias)
+        }
+    }
+
     fun publicKeyMaterial(runtimeId: String): String {
         val alias = keyAlias(runtimeId)
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }

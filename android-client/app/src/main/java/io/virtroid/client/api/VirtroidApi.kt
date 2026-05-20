@@ -751,7 +751,34 @@ class VirtroidApi(
         operation: String,
         blobKeyVerifier: String,
     ): BlobKeyLease {
-        ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
+        return try {
+            requestBlobKeyLeaseOnce(baseUrl, accountId, deviceId, runtimeId, operation, blobKeyVerifier)
+        } catch (error: VirtroidApiException) {
+            if (!error.isRuntimeCapabilityInvalid()) {
+                throw error
+            }
+            requestBlobKeyLeaseOnce(
+                baseUrl = baseUrl,
+                accountId = accountId,
+                deviceId = deviceId,
+                runtimeId = runtimeId,
+                operation = operation,
+                blobKeyVerifier = blobKeyVerifier,
+                rotateCapability = true,
+            )
+        }
+    }
+
+    private fun requestBlobKeyLeaseOnce(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        operation: String,
+        blobKeyVerifier: String,
+        rotateCapability: Boolean = false,
+    ): BlobKeyLease {
+        ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId, rotateCapability = rotateCapability)
         val requestBody = JSONObject()
             .put("operation", operation)
             .put("blob_key_verifier", blobKeyVerifier)
@@ -777,10 +804,23 @@ class VirtroidApi(
         )
     }
 
-    private fun ensureRuntimeCapability(baseUrl: String, accountId: String, deviceId: String, runtimeId: String) {
-        val publicKey = runtimeCapabilityStore.publicKeyMaterial(runtimeId)
+    private fun ensureRuntimeCapability(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        rotateCapability: Boolean = false,
+    ) {
+        if (rotateCapability) {
+            forgetRuntimeCapability(baseUrl, accountId, runtimeId)
+        }
+        val publicKey = if (rotateCapability) {
+            runtimeCapabilityStore.rotate(runtimeId)
+        } else {
+            runtimeCapabilityStore.publicKeyMaterial(runtimeId)
+        }
         val capabilityId = runtimeCapabilityStore.capabilityId(runtimeId, publicKey)
-        val cacheKey = "${normalizeBaseUrl(baseUrl)}|$accountId|$runtimeId|$capabilityId"
+        val cacheKey = runtimeCapabilityCacheKey(baseUrl, accountId, runtimeId, capabilityId)
         synchronized(registeredRuntimeCapabilities) {
             if (registeredRuntimeCapabilities.contains(cacheKey)) {
                 return
@@ -808,6 +848,20 @@ class VirtroidApi(
             registeredRuntimeCapabilities.add(cacheKey)
         }
     }
+
+    private fun forgetRuntimeCapability(baseUrl: String, accountId: String, runtimeId: String) {
+        val prefix = "${normalizeBaseUrl(baseUrl)}|$accountId|$runtimeId|"
+        synchronized(registeredRuntimeCapabilities) {
+            registeredRuntimeCapabilities.removeAll { it.startsWith(prefix) }
+        }
+    }
+
+    private fun runtimeCapabilityCacheKey(
+        baseUrl: String,
+        accountId: String,
+        runtimeId: String,
+        capabilityId: String,
+    ): String = "${normalizeBaseUrl(baseUrl)}|$accountId|$runtimeId|$capabilityId"
 
     private suspend fun mutateRuntime(
         baseUrl: String,
@@ -918,6 +972,10 @@ class VirtroidApi(
             val payload = JSONObject(body)
             payload.optString("code").ifBlank { null } to payload.optString("error").ifBlank { body }
         }.getOrDefault(null to body)
+    }
+
+    private fun VirtroidApiException.isRuntimeCapabilityInvalid(): Boolean {
+        return statusCode == 401 && errorMessage.contains("runtime capability", ignoreCase = true)
     }
 
     private fun normalizeBaseUrl(baseUrl: String): String = baseUrl.trim().trimEnd('/')
