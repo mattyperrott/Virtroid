@@ -993,6 +993,9 @@ func TestWipeRuntimeOnHostAssignsStoppedRuntimeForNodeCleanup(t *testing.T) {
 	mock.ExpectExec("UPDATE sessions").
 		WithArgs(runtimeID, "runtime wiped").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WithArgs(runtimeID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO runtime_logs").
 		WithArgs(runtimeID, "user", "warn", "Runtime wipe requested. User data will be removed.").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -1029,6 +1032,9 @@ func TestDeleteRuntimeOnHostAssignsStoppedRuntimeForNodeCleanup(t *testing.T) {
 		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "deleting", "deleted", "offline", hostID, nil))
 	mock.ExpectExec("UPDATE sessions").
 		WithArgs(runtimeID, "runtime deleted").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WithArgs(runtimeID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO runtime_logs").
 		WithArgs(runtimeID, "user", "warn", "Runtime scheduled for deletion.").
@@ -1457,6 +1463,76 @@ func TestCreateSessionWithCapabilityDoesNotStoreDeviceID(t *testing.T) {
 	}
 }
 
+func TestCloseSessionWithCapabilityRevokesCapability(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	capabilityID := "capability-1"
+	sessionID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE sessions AS s").
+		WithArgs(sessionID, capabilityID, accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WithArgs(accountID, capabilityID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := st.CloseSessionWithCapability(context.Background(), accountID, capabilityID, sessionID); err != nil {
+		t.Fatalf("CloseSessionWithCapability returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestEndSessionAndStopRuntimeWithCapabilityRevokesRuntimeCapabilities(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	capabilityID := "capability-1"
+	sessionID := "33333333-3333-3333-3333-333333333333"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE sessions AS s").
+		WithArgs(sessionID, capabilityID, accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"runtime_id"}).AddRow(runtimeID))
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "stopping", "stopped", "disconnecting", "host-1", 46000))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(runtimeID, "user", "info", "Session closed and runtime stop queued.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WithArgs(runtimeID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	runtime, err := st.EndSessionAndStopRuntimeWithCapability(context.Background(), accountID, capabilityID, sessionID)
+	if err != nil {
+		t.Fatalf("EndSessionAndStopRuntimeWithCapability returned error: %v", err)
+	}
+	if runtime.ID != runtimeID || runtime.DesiredState != "stopped" {
+		t.Fatalf("runtime = %+v, want stopped runtime %s", runtime, runtimeID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestAppendSecurityEventLimitedStopsAfterNodeRateLimit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1553,6 +1629,15 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 			"Runtime stop queued because no active client session is heartbeating.",
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WithArgs(runtimeID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE runtime_capabilities AS c").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec("DELETE FROM runtime_capability_nonces").
+		WillReturnResult(sqlmock.NewResult(0, 4))
 	mock.ExpectCommit()
 
 	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute, 3*time.Minute)
@@ -1564,6 +1649,9 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 	}
 	if len(result.StoppedRuntimeIDs) != 1 || result.StoppedRuntimeIDs[0] != runtimeID {
 		t.Fatalf("stopped runtime ids = %v, want [%s]", result.StoppedRuntimeIDs, runtimeID)
+	}
+	if result.RevokedRuntimeCapabilities != 6 || result.PrunedRuntimeCapabilityNonces != 4 {
+		t.Fatalf("capability cleanup = %+v, want 6 revoked capabilities and 4 pruned nonces", result)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

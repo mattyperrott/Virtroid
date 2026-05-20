@@ -66,11 +66,17 @@ func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerCo
 			log.Printf("session reaper failed: %v", err)
 			return
 		}
-		if result.ExpiredPendingSessions > 0 || result.StaleActiveSessions > 0 || len(result.StoppedRuntimeIDs) > 0 {
+		if result.ExpiredPendingSessions > 0 ||
+			result.StaleActiveSessions > 0 ||
+			result.RevokedRuntimeCapabilities > 0 ||
+			result.PrunedRuntimeCapabilityNonces > 0 ||
+			len(result.StoppedRuntimeIDs) > 0 {
 			log.Printf(
-				"session reaper: expired_pending=%d stale_active=%d runtimes_queued_to_stop=%d",
+				"session reaper: expired_pending=%d stale_active=%d revoked_capabilities=%d pruned_capability_nonces=%d runtimes_queued_to_stop=%d",
 				result.ExpiredPendingSessions,
 				result.StaleActiveSessions,
+				result.RevokedRuntimeCapabilities,
+				result.PrunedRuntimeCapabilityNonces,
 				len(result.StoppedRuntimeIDs),
 			)
 		}
