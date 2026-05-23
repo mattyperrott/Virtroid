@@ -139,6 +139,27 @@ type AccountEntitlementSummary struct {
 	StartRuntimeBlockedReason   string     `json:"start_runtime_blocked_reason,omitempty"`
 }
 
+type AppCatalogEntry struct {
+	PackageName      string    `json:"package_name"`
+	Source           string    `json:"source"`
+	DisplayName      string    `json:"display_name"`
+	Summary          string    `json:"summary"`
+	IconURL          string    `json:"icon_url,omitempty"`
+	VersionName      string    `json:"version_name"`
+	VersionCode      int64     `json:"version_code"`
+	APKURL           string    `json:"apk_url,omitempty"`
+	APKSHA256        string    `json:"apk_sha256,omitempty"`
+	APKSizeBytes     int64     `json:"apk_size_bytes"`
+	MinSDK           int       `json:"min_sdk"`
+	NativeCode       string    `json:"native_code,omitempty"`
+	License          string    `json:"license,omitempty"`
+	CategoriesJSON   string    `json:"categories_json"`
+	AntiFeaturesJSON string    `json:"anti_features_json"`
+	Recommended      bool      `json:"recommended"`
+	Selected         bool      `json:"selected"`
+	CatalogUpdatedAt time.Time `json:"catalog_updated_at"`
+}
+
 type Device struct {
 	ID              string     `json:"id"`
 	AccountID       string     `json:"account_id"`
@@ -1425,6 +1446,131 @@ func (s *Store) GetAccountStorage(ctx context.Context, accountID string) (Accoun
 		UpdatedAt:       now,
 		LastPreflightAt: nil,
 	}, nil
+}
+
+func (s *Store) ListAppCatalog(ctx context.Context, accountID, search string) ([]AppCatalogEntry, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, errors.New("account id is required")
+	}
+	search = strings.TrimSpace(strings.ToLower(search))
+	if len(search) > 80 {
+		search = search[:80]
+	}
+	term := "%"
+	if search != "" {
+		term = "%" + search + "%"
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT c.package_name, c.source, c.display_name, c.summary, c.icon_url,
+		        c.version_name, c.version_code, c.apk_url, c.apk_sha256, c.apk_size_bytes,
+		        c.min_sdk, c.native_code, c.license, c.categories_json, c.anti_features_json,
+		        c.recommended, c.catalog_updated_at,
+		        EXISTS (
+		            SELECT 1
+		              FROM account_app_selections s
+		             WHERE s.account_id = $1
+		               AND s.package_name = c.package_name
+		        ) AS selected
+		   FROM app_catalog c
+		  WHERE c.enabled = TRUE
+		    AND ($2 = '%' OR LOWER(c.display_name) LIKE $2 OR LOWER(c.package_name) LIKE $2 OR LOWER(c.summary) LIKE $2)
+		  ORDER BY c.recommended DESC, LOWER(c.display_name), c.package_name
+		  LIMIT 200`,
+		accountID,
+		term,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []AppCatalogEntry
+	for rows.Next() {
+		var entry AppCatalogEntry
+		if err := rows.Scan(
+			&entry.PackageName,
+			&entry.Source,
+			&entry.DisplayName,
+			&entry.Summary,
+			&entry.IconURL,
+			&entry.VersionName,
+			&entry.VersionCode,
+			&entry.APKURL,
+			&entry.APKSHA256,
+			&entry.APKSizeBytes,
+			&entry.MinSDK,
+			&entry.NativeCode,
+			&entry.License,
+			&entry.CategoriesJSON,
+			&entry.AntiFeaturesJSON,
+			&entry.Recommended,
+			&entry.CatalogUpdatedAt,
+			&entry.Selected,
+		); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (s *Store) ReplaceAccountAppSelections(ctx context.Context, accountID string, packageNames []string) ([]AppCatalogEntry, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, errors.New("account id is required")
+	}
+	normalized, err := normalizeAppPackageSelections(packageNames)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	for _, packageName := range normalized {
+		var exists bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (
+			    SELECT 1 FROM app_catalog
+			     WHERE package_name = $1
+			       AND enabled = TRUE
+			)`,
+			packageName,
+		).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("app package is not available: %s", packageName)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM account_app_selections WHERE account_id = $1`, accountID); err != nil {
+		return nil, err
+	}
+	for _, packageName := range normalized {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO account_app_selections (account_id, package_name, selected_at)
+			 VALUES ($1, $2, NOW())
+			 ON CONFLICT (account_id, package_name) DO NOTHING`,
+			accountID,
+			packageName,
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.ListAppCatalog(ctx, accountID, "")
 }
 
 func (s *Store) GetAccountEntitlementSummary(ctx context.Context, accountID string) (AccountEntitlementSummary, error) {
@@ -4257,6 +4403,38 @@ func normalizeAccountStorageInput(input UpdateAccountStorageInput) (UpdateAccoun
 		return UpdateAccountStorageInput{}, errors.New("ready sia-renterd storage requires a wallet address")
 	}
 	return input, nil
+}
+
+func normalizeAppPackageSelections(packageNames []string) ([]string, error) {
+	if len(packageNames) > 50 {
+		return nil, errors.New("too many app selections")
+	}
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, len(packageNames))
+	for _, packageName := range packageNames {
+		value := strings.TrimSpace(packageName)
+		if value == "" {
+			continue
+		}
+		if len(value) > 200 {
+			return nil, errors.New("app package name is too long")
+		}
+		for _, r := range value {
+			if (r >= 'a' && r <= 'z') ||
+				(r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') ||
+				r == '.' || r == '_' {
+				continue
+			}
+			return nil, fmt.Errorf("app package name contains unsupported characters: %s", value)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized, nil
 }
 
 func normalizeAndroidImage(image string) (string, error) {

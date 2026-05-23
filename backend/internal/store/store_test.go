@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -680,6 +681,88 @@ func TestGetAccountEntitlementSummaryReportsRemainingTrialUse(t *testing.T) {
 	}
 	if !summary.CanCreateRuntime || !summary.CanStartRuntime {
 		t.Fatalf("trial summary blocked create=%v start=%v; want both allowed", summary.CanCreateRuntime, summary.CanStartRuntime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestListAppCatalogMarksSelectedApps(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+
+	mock.ExpectQuery("SELECT c.package_name").
+		WithArgs(accountID, "%").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"package_name", "source", "display_name", "summary", "icon_url",
+			"version_name", "version_code", "apk_url", "apk_sha256", "apk_size_bytes",
+			"min_sdk", "native_code", "license", "categories_json", "anti_features_json",
+			"recommended", "catalog_updated_at", "selected",
+		}).AddRow(
+			"org.videolan.vlc",
+			"fdroid",
+			"VLC",
+			"Video player",
+			"",
+			"3.7.1",
+			int64(13070108),
+			"https://f-droid.org/repo/org.videolan.vlc_13070108.apk",
+			"sha",
+			int64(49444910),
+			17,
+			"x86_64",
+			"",
+			"[]",
+			"[]",
+			true,
+			now,
+			true,
+		))
+
+	items, err := st.ListAppCatalog(context.Background(), accountID, "")
+	if err != nil {
+		t.Fatalf("ListAppCatalog returned error: %v", err)
+	}
+	if len(items) != 1 || !items[0].Selected || items[0].PackageName != "org.videolan.vlc" {
+		t.Fatalf("items = %+v, want selected VLC", items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestReplaceAccountAppSelectionsValidatesPackages(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs("org.videolan.vlc").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs("org.missing.app").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectRollback()
+
+	_, err = st.ReplaceAccountAppSelections(context.Background(), accountID, []string{
+		"org.videolan.vlc",
+		"org.missing.app",
+	})
+	if err == nil || !strings.Contains(err.Error(), "org.missing.app") {
+		t.Fatalf("ReplaceAccountAppSelections error = %v, want unavailable package error", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
