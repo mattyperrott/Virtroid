@@ -14,6 +14,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -170,6 +171,22 @@ data class EntitlementSummary(
     val startRuntimeBlockedReason: String?,
 )
 
+data class AppCatalogEntry(
+    val packageName: String,
+    val source: String,
+    val displayName: String,
+    val summary: String,
+    val iconUrl: String?,
+    val versionName: String,
+    val versionCode: Long,
+    val apkSizeBytes: Long,
+    val minSdk: Int,
+    val nativeCode: String?,
+    val recommended: Boolean,
+    val selected: Boolean,
+    val catalogUpdatedAt: String?,
+)
+
 class VirtroidApiException(
     val statusCode: Int,
     val code: String?,
@@ -318,6 +335,64 @@ class VirtroidApi(
             )
 
             payload.toEntitlementSummary()
+        }
+
+    suspend fun listAppCatalog(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        search: String = "",
+    ): List<AppCatalogEntry> =
+        withContext(Dispatchers.IO) {
+            val query = buildString {
+                append("account_id=").append(accountId)
+                append("&device_id=").append(deviceId)
+                if (search.isNotBlank()) {
+                    append("&search=").append(java.net.URLEncoder.encode(search, "UTF-8"))
+                }
+            }
+            val payload = executeJson(
+                signedJsonRequest(
+                    baseUrl = baseUrl,
+                    pathAndQuery = "/api/v1/me/apps/catalog?$query",
+                    method = "GET",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                ),
+            )
+
+            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
+            List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
+        }
+
+    suspend fun updateAppSelections(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        packageNames: Set<String>,
+    ): List<AppCatalogEntry> =
+        withContext(Dispatchers.IO) {
+            val packages = JSONArray()
+            packageNames.sorted().forEach { packages.put(it) }
+            val requestBody = JSONObject()
+                .put("account_id", accountId)
+                .put("device_id", deviceId)
+                .put("package_names", packages)
+                .toString()
+
+            val payload = executeJson(
+                signedJsonRequest(
+                    baseUrl = baseUrl,
+                    pathAndQuery = "/api/v1/me/apps/selections",
+                    method = "PUT",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    body = requestBody,
+                ),
+            )
+
+            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
+            List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
         }
 
     suspend fun getStorage(baseUrl: String, accountId: String, deviceId: String): AccountStorage =
@@ -1081,6 +1156,24 @@ class VirtroidApi(
             createRuntimeBlockedReason = optString("create_runtime_blocked_reason").ifBlank { null },
             startRuntimeBlockedCode = optString("start_runtime_blocked_code").ifBlank { null },
             startRuntimeBlockedReason = optString("start_runtime_blocked_reason").ifBlank { null },
+        )
+    }
+
+    private fun JSONObject.toAppCatalogEntry(): AppCatalogEntry {
+        return AppCatalogEntry(
+            packageName = optString("package_name"),
+            source = optString("source", "fdroid"),
+            displayName = optString("display_name").ifBlank { optString("package_name") },
+            summary = optString("summary"),
+            iconUrl = optString("icon_url").ifBlank { null },
+            versionName = optString("version_name"),
+            versionCode = optLong("version_code", 0L),
+            apkSizeBytes = optLong("apk_size_bytes", 0L),
+            minSdk = optInt("min_sdk", 0),
+            nativeCode = optString("native_code").ifBlank { null },
+            recommended = optBoolean("recommended", false),
+            selected = optBoolean("selected", false),
+            catalogUpdatedAt = optString("catalog_updated_at").ifBlank { null },
         )
     }
 

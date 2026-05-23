@@ -98,6 +98,88 @@ SET runtime_starts_per_day = 10,
 WHERE source = 'trial'
   AND runtime_starts_per_day = 5;
 
+CREATE TABLE IF NOT EXISTS app_catalog (
+    package_name TEXT PRIMARY KEY,
+    source TEXT NOT NULL DEFAULT 'fdroid',
+    display_name TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    icon_url TEXT NOT NULL DEFAULT '',
+    version_name TEXT NOT NULL DEFAULT '',
+    version_code BIGINT NOT NULL DEFAULT 0,
+    apk_url TEXT NOT NULL DEFAULT '',
+    apk_sha256 TEXT NOT NULL DEFAULT '',
+    apk_size_bytes BIGINT NOT NULL DEFAULT 0,
+    min_sdk INTEGER NOT NULL DEFAULT 0,
+    native_code TEXT NOT NULL DEFAULT '',
+    license TEXT NOT NULL DEFAULT '',
+    categories_json TEXT NOT NULL DEFAULT '[]',
+    anti_features_json TEXT NOT NULL DEFAULT '[]',
+    recommended BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    catalog_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'fdroid';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS icon_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS version_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS version_code BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS apk_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS apk_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS apk_size_bytes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS min_sdk INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS native_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS license TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS categories_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS anti_features_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS recommended BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE app_catalog ADD COLUMN IF NOT EXISTS catalog_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS account_app_selections (
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    package_name TEXT NOT NULL REFERENCES app_catalog(package_name) ON DELETE RESTRICT,
+    selected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (account_id, package_name)
+);
+
+INSERT INTO app_catalog (
+    package_name, source, display_name, summary, icon_url, version_name, version_code,
+    apk_url, apk_sha256, apk_size_bytes, min_sdk, native_code, recommended,
+    catalog_updated_at, updated_at
+) VALUES
+    ('org.videolan.vlc', 'fdroid', 'VLC', 'Video and music player for local media files.', 'https://f-droid.org/repo/org.videolan.vlc/en-US/icon_yAfSvPRJukZzMMfUzvbYqwaD1XmHXNtiPBtuPVHW-6s=.png', '3.7.1', 13070108, 'https://f-droid.org/repo/org.videolan.vlc_13070108.apk', '4a9144fadfd8606cc5c0e9db892fd24846b7b2efeb1630db5377955d1612b119', 49444910, 17, 'x86_64', TRUE, NOW(), NOW()),
+    ('org.mozilla.fennec_fdroid', 'fdroid', 'Fennec F-Droid', 'Firefox-derived browser built from open source Mozilla code.', 'https://f-droid.org/repo/org.mozilla.fennec_fdroid/en-US/icon_RCxqbONQXgoTeWvoYAQjC0nmDVTlBoCXvzZ1Rx27gRM=.png', '150.0.3', 1500310, 'https://f-droid.org/repo/org.mozilla.fennec_fdroid_1500310.apk', 'b75aad4f87bc5722ef6a6088e5b942277fc35249939dcf95a181f37438601a48', 124262555, 26, 'x86_64', TRUE, NOW(), NOW()),
+    ('com.beemdevelopment.aegis', 'fdroid', 'Aegis Authenticator', 'Encrypted two-factor authenticator for local token storage.', 'https://f-droid.org/repo/com.beemdevelopment.aegis/en-US/icon_C951ZFTL5UuK5VK6KaIOnVy5NNb0Wqe8asl4v1fSXLI=.png', '3.4.2', 81, 'https://f-droid.org/repo/com.beemdevelopment.aegis_81.apk', 'ab633d31cc0fa49e3ae29a3b816a7fcbe04033a3227f42bd30cf86fcd3be4159', 6604352, 23, 'arm64-v8a,armeabi-v7a,x86,x86_64', TRUE, NOW(), NOW()),
+    ('org.schabi.newpipe', 'fdroid', 'NewPipe', 'Lightweight video frontend without Google Play Services.', 'https://f-droid.org/repo/org.schabi.newpipe/en-US/icon_OHy4y1W-fJCNhHHOBCM9V_cxZNJJgbcNkB-x7UDTY9Q=.png', '0.28.5', 1010, 'https://f-droid.org/repo/org.schabi.newpipe_1010.apk', 'dbc8a1bb7a3db16f1d2fa9f96157171cc80453d1ff6e51108e73c007ea05cf87', 10881466, 21, 'arm64-v8a,armeabi-v7a,x86,x86_64', TRUE, NOW(), NOW()),
+    ('app.organicmaps', 'fdroid', 'Organic Maps', 'Offline maps and GPS navigation for travel.', 'https://f-droid.org/repo/app.organicmaps/en-US/icon_dE7f4P95-uKZwu7cI89Q0xSi_-gvU4DD-XnLoDG9RLg=.png', '2026.05.08-4-FDroid', 26050804, 'https://f-droid.org/repo/app.organicmaps_26050804.apk', '113a61d2c6b7e6a23cb88fcd85687a85558df9410d53fb05d8e39fb9309801f1', 71549340, 21, 'arm64-v8a,armeabi-v7a,x86,x86_64', TRUE, NOW(), NOW()),
+    ('com.nononsenseapps.feeder', 'fdroid', 'Feeder', 'Libre RSS feed reader for private news tracking.', 'https://f-droid.org/repo/com.nononsenseapps.feeder/en-US/icon_Ab31f6rFiG70NRqjyOH87znJd2y38yiEg2Tz_lY791w=.png', '2.20.0', 3978, 'https://f-droid.org/repo/com.nononsenseapps.feeder_3978.apk', '215961d5b44081930f616500aa92942d2779186212b665ec890dc163c82439a9', 62880903, 29, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW()),
+    ('org.kde.kdeconnect_tp', 'fdroid', 'KDE Connect', 'Device integration between Android and desktop systems.', 'https://f-droid.org/repo/org.kde.kdeconnect_tp/en-US/icon_XJXXjUP0BrUH-hGNaCgoKnwUsJ0c2QNgTdISfc_KivI=.png', '1.35.5', 13505, 'https://f-droid.org/repo/org.kde.kdeconnect_tp_13505.apk', '77f61f9ba58d5f6402d5b7ad6a2b2f8904e82ccdd038dbb86b6ab693bb470c4e', 6474356, 23, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW()),
+    ('net.osmand.plus', 'fdroid', 'OsmAnd~', 'Offline OpenStreetMap viewer and navigation app.', 'https://f-droid.org/repo/net.osmand.plus/en-US/icon_R5cswkpVpZLwTsPD855ukLX_czuOczFwZLn7pCxaB-k=.png', '5.3.10', 531002, 'https://f-droid.org/repo/net.osmand.plus_531002.apk', 'fdac84dead42e92096e368309ce3ab005b00afc4ee30f5f624dfc4861a714669', 184224089, 24, 'x86,x86_64', FALSE, NOW(), NOW()),
+    ('eu.faircode.email', 'fdroid', 'FairEmail', 'Privacy-focused email client with broad provider support.', 'https://f-droid.org/repo/eu.faircode.email/en-US/icon_0a2E8tt03J6IsBb7HvvI88FYOaaWLuP1Ea73naLIvxg=.png', '1.2315', 2315, 'https://f-droid.org/repo/eu.faircode.email_2315.apk', '6154673f6282c4d884d7dacb6ae5b264cc3dc4271bec449721bb2f19bfd4e602', 29257296, 21, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW()),
+    ('com.termux', 'fdroid', 'Termux', 'Terminal emulator with Linux package support.', 'https://f-droid.org/repo/com.termux/en-US/icon_7jMZ7XD80oeucmGEaTwktIRZexLtGWvJfKdVD6Wu2SI=.png', '0.119.0-beta.3', 1022, 'https://f-droid.org/repo/com.termux_1022.apk', 'fdd476982cd74f2f00aac12d3683b1fa260a0b2d146411b94e09d773be3a7b56', 114920926, 24, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW()),
+    ('com.kunzisoft.keepass.libre', 'fdroid', 'KeePassDX', 'Local password and passkey vault.', 'https://f-droid.org/repo/com.kunzisoft.keepass.libre/en-US/icon_eLwXEQD9l2URrUS3t8esDXnsKGBaH02E-ddEYhV_i7Q=.png', '4.4.2', 44200, 'https://f-droid.org/repo/com.kunzisoft.keepass.libre_44200.apk', '4a0400557acdc8e039d4721d7a0ec3a3dc202d34ba31cea29750b5ea22097934', 16549009, 19, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW()),
+    ('org.fdroid.basic', 'fdroid', 'F-Droid Basic', 'Minimal F-Droid client for open source app management.', 'https://f-droid.org/repo/org.fdroid.basic/en-US/icon_CPdcoTY7kZ3ERIZkij9504KbM1eEY05XaLvVQwHkqHI=.png', '2.0-alpha9', 2000009, 'https://f-droid.org/repo/org.fdroid.basic_2000009.apk', '1aa1931bf61e11382c2b225581d4adcd2d9803697a144a84c6eb4db04f67cafb', 11391212, 24, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW())
+ON CONFLICT (package_name) DO UPDATE
+SET source = EXCLUDED.source,
+    display_name = EXCLUDED.display_name,
+    summary = EXCLUDED.summary,
+    icon_url = EXCLUDED.icon_url,
+    version_name = EXCLUDED.version_name,
+    version_code = EXCLUDED.version_code,
+    apk_url = EXCLUDED.apk_url,
+    apk_sha256 = EXCLUDED.apk_sha256,
+    apk_size_bytes = EXCLUDED.apk_size_bytes,
+    min_sdk = EXCLUDED.min_sdk,
+    native_code = EXCLUDED.native_code,
+    recommended = EXCLUDED.recommended,
+    enabled = TRUE,
+    catalog_updated_at = EXCLUDED.catalog_updated_at,
+    updated_at = NOW();
+
 CREATE TABLE IF NOT EXISTS runtimes (
     id UUID PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -288,6 +370,8 @@ ON CONFLICT (account_id) DO NOTHING;
 CREATE INDEX IF NOT EXISTS idx_devices_account_id ON devices (account_id);
 CREATE INDEX IF NOT EXISTS idx_account_storage_provider ON account_storage (provider);
 CREATE INDEX IF NOT EXISTS idx_account_entitlements_status ON account_entitlements (status);
+CREATE INDEX IF NOT EXISTS idx_app_catalog_enabled_name ON app_catalog (enabled, display_name);
+CREATE INDEX IF NOT EXISTS idx_account_app_selections_account ON account_app_selections (account_id, selected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_hosts_last_heartbeat_at ON hosts (last_heartbeat_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runtimes_account_id ON runtimes (account_id);
 CREATE INDEX IF NOT EXISTS idx_runtimes_host_id ON runtimes (host_id);

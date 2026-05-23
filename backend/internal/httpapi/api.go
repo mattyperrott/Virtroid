@@ -276,6 +276,8 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/me/runtimes", api.listMyRuntimes)
 	mux.HandleFunc("GET /api/v1/me/runtimes/state", api.listMyRuntimeStates)
 	mux.HandleFunc("GET /api/v1/me/entitlement", api.getMyEntitlement)
+	mux.HandleFunc("GET /api/v1/me/apps/catalog", api.listMyAppCatalog)
+	mux.HandleFunc("PUT /api/v1/me/apps/selections", api.updateMyAppSelections)
 	mux.HandleFunc("GET /api/v1/me/storage", api.getMyStorage)
 	mux.HandleFunc("PUT /api/v1/me/storage", api.updateMyStorage)
 	mux.HandleFunc("DELETE /api/v1/me", api.deleteMyAccount)
@@ -491,6 +493,49 @@ func (a *API) getMyEntitlement(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, entitlement)
+}
+
+func (a *API) listMyAppCatalog(w http.ResponseWriter, r *http.Request) {
+	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	items, err := a.store.ListAppCatalog(r.Context(), accountID, r.URL.Query().Get("search"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) updateMyAppSelections(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		AccountID    string   `json:"account_id"`
+		DeviceID     string   `json:"device_id"`
+		PackageNames []string `json:"package_names"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+		return
+	}
+
+	items, err := a.store.ReplaceAccountAppSelections(r.Context(), accountID, req.PackageNames)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (a *API) getMyStorage(w http.ResponseWriter, r *http.Request) {

@@ -80,6 +80,9 @@ class AccountIdentityActivity : AppCompatActivity() {
         binding.itemLinkedDevices.setOnClickListener {
             showLinkedDevices()
         }
+        binding.itemInstallApps.setOnClickListener {
+            openAppInstaller()
+        }
         binding.itemWipeUserData.setOnClickListener {
             confirmLocalDataWipe()
         }
@@ -89,6 +92,14 @@ class AccountIdentityActivity : AppCompatActivity() {
 
         renderIdentity()
         refreshStorage()
+        refreshAppSelections()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::binding.isInitialized) {
+            refreshAppSelections()
+        }
     }
 
     private fun renderIdentity() {
@@ -122,6 +133,11 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
         binding.itemLinkedDevicesSubtitle.text = if (hasLinkedIdentity) {
             getString(R.string.account_linked_devices_subtitle)
+        } else {
+            getString(R.string.account_identity_not_linked)
+        }
+        binding.itemInstallAppsSubtitle.text = if (hasLinkedIdentity) {
+            getString(R.string.account_apps_subtitle)
         } else {
             getString(R.string.account_identity_not_linked)
         }
@@ -163,6 +179,38 @@ class AccountIdentityActivity : AppCompatActivity() {
                 binding.storageRunwayValue.text = getString(R.string.account_storage_runway_unreported)
             }
         }
+    }
+
+    private fun refreshAppSelections() {
+        val accountId = sessionStore.accountId.orEmpty()
+        val deviceId = sessionStore.deviceId.orEmpty()
+        if (accountId.isBlank() || deviceId.isBlank()) {
+            binding.itemInstallAppsSubtitle.text = getString(R.string.account_identity_not_linked)
+            return
+        }
+
+        lifecycleScope.launch {
+            runCatching {
+                api.listAppCatalog(sessionStore.baseUrl, accountId, deviceId)
+            }.onSuccess { apps ->
+                val selectedCount = apps.count { it.selected }
+                binding.itemInstallAppsSubtitle.text = if (selectedCount > 0) {
+                    getString(R.string.account_apps_selected_count, selectedCount)
+                } else {
+                    getString(R.string.account_apps_selected_none)
+                }
+            }.onFailure {
+                binding.itemInstallAppsSubtitle.text = getString(R.string.account_apps_catalog_unavailable)
+            }
+        }
+    }
+
+    private fun openAppInstaller() {
+        if (sessionStore.accountId.isNullOrBlank() || sessionStore.deviceId.isNullOrBlank()) {
+            toast(getString(R.string.account_identity_not_linked))
+            return
+        }
+        startActivity(AppInstallActivity.createIntent(this))
     }
 
     private fun showLinkedDevices() {

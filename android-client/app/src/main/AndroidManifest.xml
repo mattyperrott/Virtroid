@@ -38,6 +38,9 @@
             android:name=".AccountIdentityActivity"
             android:exported="false" />
         <activity
+            android:name=".AppInstallActivity"
+            android:exported="false" />
+        <activity
             android:name=".OnboardingActivity"
             android:exported="false" />
         <activity

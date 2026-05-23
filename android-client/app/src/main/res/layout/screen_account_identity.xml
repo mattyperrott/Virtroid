@@ -292,6 +292,63 @@
                     </LinearLayout>
                 </LinearLayout>
                 <TextView
+                    android:id="@+id/label_apps"
+                    style="@style/VirtroidText.SectionHeading"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="APPS"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="0dp"
+                    android:layout_marginBottom="12dp" />
+                <LinearLayout
+                    android:id="@+id/item_install_apps"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_surface_24"
+                    android:padding="16dp"
+                    android:layout_marginBottom="36dp">
+                    <ImageView
+                        android:id="@+id/item_install_apps_icon"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="13dp"
+                        android:src="@drawable/ic_download"
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="16dp">
+                        <TextView
+                            android:id="@+id/item_install_apps_title"
+                            style="@style/VirtroidText.CardTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/account_apps_title" />
+                        <TextView
+                            android:id="@+id/item_install_apps_subtitle"
+                            style="@style/VirtroidText.Body.Compact"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/account_apps_subtitle"
+                            android:layout_marginTop="4dp" />
+                    </LinearLayout>
+                    <TextView
+                        android:id="@+id/item_install_apps_chevron"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="&gt;"
+                        android:textColor="@color/v_text_muted"
+                        android:textSize="18sp"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:layout_marginStart="8dp" />
+                </LinearLayout>
+                <TextView
                     android:id="@+id/label_decentralized_storage"
                     style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
