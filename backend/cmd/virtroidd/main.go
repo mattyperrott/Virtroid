@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"virtroid/backend/internal/appcatalog"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/httpapi"
 	"virtroid/backend/internal/store"
@@ -30,6 +31,7 @@ func main() {
 	}
 
 	go sessionReaperLoop(ctx, pg, cfg)
+	go appCatalogSyncLoop(ctx, pg, cfg)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
@@ -51,6 +53,40 @@ func main() {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown error: %v", err)
+	}
+}
+
+func appCatalogSyncLoop(ctx context.Context, pg *store.Store, cfg config.ServerConfig) {
+	if !cfg.AppCatalogSyncEnabled {
+		log.Printf("app catalog sync disabled")
+		return
+	}
+	interval := cfg.AppCatalogSyncInterval
+	if interval <= 0 {
+		interval = 12 * time.Hour
+	}
+
+	runSync := func() {
+		syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		count, err := appcatalog.SyncFDroid(syncCtx, pg, cfg.AppCatalogSyncURL, cfg.AppCatalogSyncMaxApps)
+		if err != nil {
+			log.Printf("app catalog sync failed: %v", err)
+			return
+		}
+		log.Printf("app catalog sync: upserted=%d source=fdroid", count)
+	}
+
+	runSync()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runSync()
+		}
 	}
 }
 

@@ -365,6 +365,27 @@ class VirtroidApi(
             List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
         }
 
+    suspend fun listPublicAppCatalog(
+        baseUrl: String,
+        search: String = "",
+    ): List<AppCatalogEntry> =
+        withContext(Dispatchers.IO) {
+            val path = if (search.isBlank()) {
+                "/api/v1/apps/catalog"
+            } else {
+                "/api/v1/apps/catalog?search=${java.net.URLEncoder.encode(search, "UTF-8")}"
+            }
+            val payload = executeJson(
+                Request.Builder()
+                    .url(normalizeBaseUrl(baseUrl) + path)
+                    .get()
+                    .build(),
+            )
+
+            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
+            List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
+        }
+
     suspend fun updateAppSelections(
         baseUrl: String,
         accountId: String,

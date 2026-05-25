@@ -271,6 +271,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /healthz", api.healthz)
 	mux.HandleFunc("GET /api/v1/meta", api.meta)
 	mux.HandleFunc("GET /api/v1/hosts", api.hosts)
+	mux.HandleFunc("GET /api/v1/apps/catalog", api.listAppCatalog)
 	mux.HandleFunc("POST /api/v1/bootstrap", api.bootstrap)
 
 	mux.HandleFunc("GET /api/v1/me/runtimes", api.listMyRuntimes)
@@ -478,6 +479,16 @@ func (a *API) listMyRuntimeStates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": states})
+}
+
+func (a *API) listAppCatalog(w http.ResponseWriter, r *http.Request) {
+	items, err := a.store.ListPublicAppCatalog(r.Context(), r.URL.Query().Get("search"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (a *API) getMyEntitlement(w http.ResponseWriter, r *http.Request) {
