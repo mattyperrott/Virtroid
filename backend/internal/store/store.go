@@ -1477,7 +1477,7 @@ func (s *Store) ListAppCatalog(ctx context.Context, accountID, search string) ([
 		  WHERE c.enabled = TRUE
 		    AND ($2 = '%' OR LOWER(c.display_name) LIKE $2 OR LOWER(c.package_name) LIKE $2 OR LOWER(c.summary) LIKE $2)
 		  ORDER BY c.recommended DESC, LOWER(c.display_name), c.package_name
-		  LIMIT 200`,
+		  LIMIT 500`,
 		accountID,
 		term,
 	)
@@ -1486,34 +1486,42 @@ func (s *Store) ListAppCatalog(ctx context.Context, accountID, search string) ([
 	}
 	defer rows.Close()
 
-	var entries []AppCatalogEntry
-	for rows.Next() {
-		var entry AppCatalogEntry
-		if err := rows.Scan(
-			&entry.PackageName,
-			&entry.Source,
-			&entry.DisplayName,
-			&entry.Summary,
-			&entry.IconURL,
-			&entry.VersionName,
-			&entry.VersionCode,
-			&entry.APKURL,
-			&entry.APKSHA256,
-			&entry.APKSizeBytes,
-			&entry.MinSDK,
-			&entry.NativeCode,
-			&entry.License,
-			&entry.CategoriesJSON,
-			&entry.AntiFeaturesJSON,
-			&entry.Recommended,
-			&entry.CatalogUpdatedAt,
-			&entry.Selected,
-		); err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
+	entries, err := scanAppCatalogRows(rows)
+	if err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
+	return entries, nil
+}
+
+func (s *Store) ListPublicAppCatalog(ctx context.Context, search string) ([]AppCatalogEntry, error) {
+	search = strings.TrimSpace(strings.ToLower(search))
+	if len(search) > 80 {
+		search = search[:80]
+	}
+	term := "%"
+	if search != "" {
+		term = "%" + search + "%"
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT c.package_name, c.source, c.display_name, c.summary, c.icon_url,
+		        c.version_name, c.version_code, c.apk_url, c.apk_sha256, c.apk_size_bytes,
+		        c.min_sdk, c.native_code, c.license, c.categories_json, c.anti_features_json,
+		        c.recommended, c.catalog_updated_at, FALSE AS selected
+		   FROM app_catalog c
+		  WHERE c.enabled = TRUE
+		    AND ($1 = '%' OR LOWER(c.display_name) LIKE $1 OR LOWER(c.package_name) LIKE $1 OR LOWER(c.summary) LIKE $1)
+		  ORDER BY c.recommended DESC, LOWER(c.display_name), c.package_name
+		  LIMIT 500`,
+		term,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries, err := scanAppCatalogRows(rows)
+	if err != nil {
 		return nil, err
 	}
 	return entries, nil
@@ -1571,6 +1579,114 @@ func (s *Store) ReplaceAccountAppSelections(ctx context.Context, accountID strin
 		return nil, err
 	}
 	return s.ListAppCatalog(ctx, accountID, "")
+}
+
+func (s *Store) UpsertAppCatalogEntries(ctx context.Context, entries []AppCatalogEntry) (int, error) {
+	if len(entries) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	upserted := 0
+	for _, entry := range entries {
+		packageName := strings.TrimSpace(entry.PackageName)
+		displayName := strings.TrimSpace(entry.DisplayName)
+		if packageName == "" || displayName == "" || strings.TrimSpace(entry.APKURL) == "" || strings.TrimSpace(entry.APKSHA256) == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO app_catalog (
+			     package_name, source, display_name, summary, icon_url, version_name,
+			     version_code, apk_url, apk_sha256, apk_size_bytes, min_sdk, native_code,
+			     license, categories_json, anti_features_json, recommended, enabled,
+			     catalog_updated_at, updated_at
+			 )
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, TRUE, $17, NOW())
+			 ON CONFLICT (package_name) DO UPDATE
+			 SET source = EXCLUDED.source,
+			     display_name = EXCLUDED.display_name,
+			     summary = EXCLUDED.summary,
+			     icon_url = EXCLUDED.icon_url,
+			     version_name = EXCLUDED.version_name,
+			     version_code = EXCLUDED.version_code,
+			     apk_url = EXCLUDED.apk_url,
+			     apk_sha256 = EXCLUDED.apk_sha256,
+			     apk_size_bytes = EXCLUDED.apk_size_bytes,
+			     min_sdk = EXCLUDED.min_sdk,
+			     native_code = EXCLUDED.native_code,
+			     license = EXCLUDED.license,
+			     categories_json = EXCLUDED.categories_json,
+			     anti_features_json = EXCLUDED.anti_features_json,
+			     recommended = EXCLUDED.recommended,
+			     enabled = TRUE,
+			     catalog_updated_at = EXCLUDED.catalog_updated_at,
+			     updated_at = NOW()`,
+			packageName,
+			defaultString(entry.Source, "fdroid"),
+			displayName,
+			strings.TrimSpace(entry.Summary),
+			strings.TrimSpace(entry.IconURL),
+			strings.TrimSpace(entry.VersionName),
+			entry.VersionCode,
+			strings.TrimSpace(entry.APKURL),
+			strings.TrimSpace(entry.APKSHA256),
+			entry.APKSizeBytes,
+			entry.MinSDK,
+			strings.TrimSpace(entry.NativeCode),
+			strings.TrimSpace(entry.License),
+			defaultString(entry.CategoriesJSON, "[]"),
+			defaultString(entry.AntiFeaturesJSON, "[]"),
+			entry.Recommended,
+			entry.CatalogUpdatedAt,
+		); err != nil {
+			return 0, err
+		}
+		upserted++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return upserted, nil
+}
+
+func scanAppCatalogRows(rows *sql.Rows) ([]AppCatalogEntry, error) {
+	var entries []AppCatalogEntry
+	for rows.Next() {
+		var entry AppCatalogEntry
+		if err := rows.Scan(
+			&entry.PackageName,
+			&entry.Source,
+			&entry.DisplayName,
+			&entry.Summary,
+			&entry.IconURL,
+			&entry.VersionName,
+			&entry.VersionCode,
+			&entry.APKURL,
+			&entry.APKSHA256,
+			&entry.APKSizeBytes,
+			&entry.MinSDK,
+			&entry.NativeCode,
+			&entry.License,
+			&entry.CategoriesJSON,
+			&entry.AntiFeaturesJSON,
+			&entry.Recommended,
+			&entry.CatalogUpdatedAt,
+			&entry.Selected,
+		); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 func (s *Store) GetAccountEntitlementSummary(ctx context.Context, accountID string) (AccountEntitlementSummary, error) {

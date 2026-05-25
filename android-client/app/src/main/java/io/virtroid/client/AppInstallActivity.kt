@@ -23,10 +23,13 @@ import androidx.lifecycle.lifecycleScope
 import io.virtroid.client.api.AppCatalogEntry
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.AppLogStore
+import io.virtroid.client.data.AppSelectionStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAppInstallBinding
 import io.virtroid.client.security.enableSecureWindow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URL
@@ -36,11 +39,14 @@ import kotlin.math.roundToInt
 class AppInstallActivity : AppCompatActivity() {
     private lateinit var binding: ScreenAppInstallBinding
     private lateinit var sessionStore: SessionStore
+    private lateinit var appSelectionStore: AppSelectionStore
     private lateinit var appLogs: AppLogStore
     private val api = VirtroidApi()
     private var catalog: List<AppCatalogEntry> = emptyList()
     private val selectedPackages = linkedSetOf<String>()
     private val iconCache = mutableMapOf<String, Bitmap>()
+    private var searchJob: Job? = null
+    private var loadedInitialSelections = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,6 +56,7 @@ class AppInstallActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
+        appSelectionStore = AppSelectionStore(this)
         appLogs = AppLogStore.get(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.appInstallRoot) { view, insets ->
@@ -63,32 +70,69 @@ class AppInstallActivity : AppCompatActivity() {
         binding.appSearchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                renderCatalog()
+                scheduleCatalogSearch(s?.toString().orEmpty())
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
 
         renderLoading()
-        loadCatalog()
+        loadCatalog("")
     }
 
-    private fun loadCatalog() {
+    override fun onDestroy() {
+        searchJob?.cancel()
+        super.onDestroy()
+    }
+
+    private fun scheduleCatalogSearch(search: String) {
+        searchJob?.cancel()
+        searchJob = lifecycleScope.launch {
+            delay(260L)
+            loadCatalog(search, showLoading = false)
+        }
+    }
+
+    private fun loadCatalog(search: String, showLoading: Boolean = true) {
         val accountId = sessionStore.accountId.orEmpty()
         val deviceId = sessionStore.deviceId.orEmpty()
         if (accountId.isBlank() || deviceId.isBlank()) {
-            toast(getString(R.string.account_identity_not_linked))
-            finish()
+            binding.doneButton.isEnabled = false
+            lifecycleScope.launch {
+                runCatching {
+                    api.listPublicAppCatalog(sessionStore.baseUrl, search)
+                }.onSuccess { items ->
+                    catalog = items
+                    if (!loadedInitialSelections) {
+                        selectedPackages.clear()
+                        selectedPackages.addAll(appSelectionStore.pendingSelections())
+                        loadedInitialSelections = true
+                    }
+                    binding.doneButton.isEnabled = true
+                    renderCatalog()
+                }.onFailure { error ->
+                    binding.doneButton.isEnabled = true
+                    appLogs.error("Public app catalog load failed: ${error.message}", "apps")
+                    toast(error.virtroidDisplayMessage(this@AppInstallActivity))
+                    renderError()
+                }
+            }
             return
         }
 
         binding.doneButton.isEnabled = false
+        if (showLoading) {
+            renderLoading()
+        }
         lifecycleScope.launch {
             runCatching {
-                api.listAppCatalog(sessionStore.baseUrl, accountId, deviceId)
+                api.listAppCatalog(sessionStore.baseUrl, accountId, deviceId, search)
             }.onSuccess { items ->
                 catalog = items
-                selectedPackages.clear()
-                selectedPackages.addAll(items.filter { it.selected }.map { it.packageName })
+                if (!loadedInitialSelections) {
+                    selectedPackages.clear()
+                    selectedPackages.addAll(items.filter { it.selected }.map { it.packageName })
+                    loadedInitialSelections = true
+                }
                 binding.doneButton.isEnabled = true
                 renderCatalog()
             }.onFailure { error ->
@@ -104,7 +148,9 @@ class AppInstallActivity : AppCompatActivity() {
         val accountId = sessionStore.accountId.orEmpty()
         val deviceId = sessionStore.deviceId.orEmpty()
         if (accountId.isBlank() || deviceId.isBlank()) {
-            toast(getString(R.string.account_identity_not_linked))
+            appSelectionStore.savePendingSelections(selectedPackages)
+            toast(getString(R.string.app_install_saved))
+            finish()
             return
         }
 
@@ -187,7 +233,7 @@ class AppInstallActivity : AppCompatActivity() {
             setPadding(dp(22), dp(14), dp(22), dp(14))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(94),
+                dp(76),
             )
             isClickable = true
             isFocusable = true
@@ -197,7 +243,7 @@ class AppInstallActivity : AppCompatActivity() {
         }
 
         val iconShell = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(58), dp(58))
+            layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
             background = getDrawable(R.drawable.bg_surface_light_24)
         }
         val iconPlaceholder = TextView(this).apply {
@@ -208,7 +254,7 @@ class AppInstallActivity : AppCompatActivity() {
             gravity = android.view.Gravity.CENTER
             text = initials(app.displayName)
             setTextColor(getColor(R.color.v_accent))
-            textSize = 17f
+            textSize = 14f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             includeFontPadding = false
         }
@@ -240,7 +286,7 @@ class AppInstallActivity : AppCompatActivity() {
             )
             text = app.displayName
             setTextColor(getColor(R.color.v_text_primary))
-            textSize = 20f
+            textSize = 17f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             includeFontPadding = false
             maxLines = 1
@@ -259,7 +305,7 @@ class AppInstallActivity : AppCompatActivity() {
                 formatSize(app.apkSizeBytes),
             )
             setTextColor(getColor(R.color.v_text_muted))
-            textSize = 15f
+            textSize = 13f
             includeFontPadding = false
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -267,7 +313,7 @@ class AppInstallActivity : AppCompatActivity() {
         row.addView(textColumn)
 
         row.addView(ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
             updateSelectionIcon(this, app.packageName in selectedPackages)
         })
 
@@ -288,12 +334,12 @@ class AppInstallActivity : AppCompatActivity() {
             view.setImageResource(R.drawable.ic_check)
             view.setBackgroundResource(R.drawable.bg_accent_circle)
             view.setColorFilter(getColor(R.color.virtroid_on_primary))
-            view.setPadding(dp(11), dp(11), dp(11), dp(11))
+            view.setPadding(dp(8), dp(8), dp(8), dp(8))
         } else {
             view.setImageResource(R.drawable.ic_radio_off)
             view.setBackgroundResource(R.drawable.bg_transparent)
             view.setColorFilter(getColor(R.color.v_border))
-            view.setPadding(dp(7), dp(7), dp(7), dp(7))
+            view.setPadding(dp(5), dp(5), dp(5), dp(5))
         }
     }
 

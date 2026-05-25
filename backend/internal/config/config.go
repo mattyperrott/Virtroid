@@ -22,6 +22,10 @@ type ServerConfig struct {
 	SessionReaperInterval           time.Duration
 	ActiveSessionTimeout            time.Duration
 	RuntimeIdleTimeout              time.Duration
+	AppCatalogSyncEnabled           bool
+	AppCatalogSyncURL               string
+	AppCatalogSyncInterval          time.Duration
+	AppCatalogSyncMaxApps           int
 }
 
 type NodeConfig struct {
@@ -67,6 +71,11 @@ func LoadServer() ServerConfig {
 	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
 	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
 	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 3*time.Minute)
+	appCatalogSyncInterval := parseEnvDuration("APP_CATALOG_SYNC_INTERVAL", 12*time.Hour)
+	appCatalogSyncMaxApps, err := parseEnvInt("APP_CATALOG_SYNC_MAX_APPS", 1500)
+	if err != nil {
+		appCatalogSyncMaxApps = 1500
+	}
 
 	return ServerConfig{
 		AppEnv:                          envOrDefault("APP_ENV", "development"),
@@ -84,6 +93,10 @@ func LoadServer() ServerConfig {
 		SessionReaperInterval:           sessionReaperInterval,
 		ActiveSessionTimeout:            activeSessionTimeout,
 		RuntimeIdleTimeout:              runtimeIdleTimeout,
+		AppCatalogSyncEnabled:           parseEnvBool("APP_CATALOG_SYNC_ENABLED", true),
+		AppCatalogSyncURL:               envOrDefault("APP_CATALOG_SYNC_URL", "https://f-droid.org/repo/index-v2.json"),
+		AppCatalogSyncInterval:          appCatalogSyncInterval,
+		AppCatalogSyncMaxApps:           appCatalogSyncMaxApps,
 	}
 }
 
