@@ -1294,6 +1294,14 @@ func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 	mock.ExpectQuery("SELECT id, account_id, name").
 		WithArgs("host-1").
 		WillReturnRows(runtimeRows(now, 46000))
+	mock.ExpectQuery("SELECT c.package_name").
+		WithArgs("11111111-1111-1111-1111-111111111111").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"package_name", "source", "display_name", "summary", "icon_url",
+			"version_name", "version_code", "apk_url", "apk_sha256", "apk_size_bytes",
+			"min_sdk", "native_code", "license", "categories_json", "anti_features_json",
+			"recommended", "catalog_updated_at", "selected",
+		}))
 	mock.ExpectCommit()
 
 	runtimes, err := st.ListAssignedRuntimes(context.Background(), "host-1")

@@ -53,6 +53,7 @@ host_gid="${VIRTROID_HOST_GID:-${SUDO_GID:-1000}}"
 
 install -d -m 0750 -o "${host_uid}" -g "${host_gid}" \
   /srv/virtroid \
+  /srv/virtroid/apks \
   /srv/virtroid/assets \
   /srv/virtroid/runtimes \
   /srv/virtroid/tls

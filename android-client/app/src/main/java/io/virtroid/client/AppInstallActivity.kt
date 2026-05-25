@@ -45,6 +45,7 @@ class AppInstallActivity : AppCompatActivity() {
     private var catalog: List<AppCatalogEntry> = emptyList()
     private val selectedPackages = linkedSetOf<String>()
     private val iconCache = mutableMapOf<String, Bitmap>()
+    private val selectionIcons = mutableMapOf<String, ImageView>()
     private var searchJob: Job? = null
     private var loadedInitialSelections = false
 
@@ -214,6 +215,7 @@ class AppInstallActivity : AppCompatActivity() {
         binding.appEmptyText.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
         binding.appEmptyText.text = getString(R.string.app_install_empty)
 
+        selectionIcons.clear()
         renderAppRows(binding.recommendedList, recommended)
         renderAppRows(binding.allAvailableList, available)
     }
@@ -314,6 +316,7 @@ class AppInstallActivity : AppCompatActivity() {
 
         row.addView(ImageView(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            selectionIcons[app.packageName] = this
             updateSelectionIcon(this, app.packageName in selectedPackages)
         })
 
@@ -326,7 +329,9 @@ class AppInstallActivity : AppCompatActivity() {
         } else {
             selectedPackages.add(packageName)
         }
-        renderCatalog()
+        selectionIcons[packageName]?.let { icon ->
+            updateSelectionIcon(icon, packageName in selectedPackages)
+        }
     }
 
     private fun updateSelectionIcon(view: ImageView, selected: Boolean) {

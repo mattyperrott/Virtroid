@@ -2,11 +2,13 @@ package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +26,8 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,6 +38,21 @@ import (
 )
 
 var errContainerNotFound = errors.New("container not found")
+var appPackageNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
+
+var defaultAppCatalog = map[string]runtimeApp{
+	"org.fdroid.basic": {
+		PackageName:  "org.fdroid.basic",
+		DisplayName:  "F-Droid Basic",
+		APKURL:       "https://f-droid.org/repo/org.fdroid.basic_2000009.apk",
+		APKSHA256:    "1aa1931bf61e11382c2b225581d4adcd2d9803697a144a84c6eb4db04f67cafb",
+		APKSizeBytes: 11391212,
+	},
+	"projekt.launcher": {
+		PackageName: "projekt.launcher",
+		DisplayName: "hyperion launcher",
+	},
+}
 
 //go:embed assets/scrcpy-server.jar
 var scrcpyServerJar []byte
@@ -164,24 +183,33 @@ not_ready no_focused_window
 `
 
 type runtimeAssignment struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	Status           string  `json:"status"`
-	DesiredState     string  `json:"desired_state"`
-	ConnectionStatus string  `json:"connection_status"`
-	PersonaVersion   int     `json:"persona_version"`
-	AndroidImage     string  `json:"android_image"`
-	AndroidVersion   string  `json:"android_version"`
-	WidthPx          int     `json:"width_px"`
-	HeightPx         int     `json:"height_px"`
-	DensityDpi       int     `json:"density_dpi"`
-	BlobAutoSnapshot bool    `json:"blob_auto_snapshot"`
-	BlobStoreKind    *string `json:"blob_store_kind"`
-	BlobManifestJSON *string `json:"blob_manifest_json"`
-	ADBPort          *int    `json:"adb_port"`
-	ViewerPort       *int    `json:"viewer_port"`
-	WipeRequested    bool    `json:"wipe_requested"`
-	LastError        *string `json:"last_error"`
+	ID               string       `json:"id"`
+	Name             string       `json:"name"`
+	Status           string       `json:"status"`
+	DesiredState     string       `json:"desired_state"`
+	ConnectionStatus string       `json:"connection_status"`
+	PersonaVersion   int          `json:"persona_version"`
+	AndroidImage     string       `json:"android_image"`
+	AndroidVersion   string       `json:"android_version"`
+	WidthPx          int          `json:"width_px"`
+	HeightPx         int          `json:"height_px"`
+	DensityDpi       int          `json:"density_dpi"`
+	BlobAutoSnapshot bool         `json:"blob_auto_snapshot"`
+	BlobStoreKind    *string      `json:"blob_store_kind"`
+	BlobManifestJSON *string      `json:"blob_manifest_json"`
+	ADBPort          *int         `json:"adb_port"`
+	ViewerPort       *int         `json:"viewer_port"`
+	WipeRequested    bool         `json:"wipe_requested"`
+	LastError        *string      `json:"last_error"`
+	SelectedApps     []runtimeApp `json:"selected_apps"`
+}
+
+type runtimeApp struct {
+	PackageName  string `json:"package_name"`
+	DisplayName  string `json:"display_name"`
+	APKURL       string `json:"apk_url"`
+	APKSHA256    string `json:"apk_sha256"`
+	APKSizeBytes int64  `json:"apk_size_bytes"`
 }
 
 type relayTarget struct {
@@ -915,6 +943,9 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 					LastError:        stringPtr(""),
 				})
 			}
+			if installErr := n.ensureSelectedAppsInstalled(ctx, runtime, inspect); installErr != nil {
+				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Selected app install failed: %v.", installErr))
+			}
 			prewarmMaxSize := max(runtime.WidthPx, runtime.HeightPx)
 			if prewarmMaxSize <= 0 {
 				prewarmMaxSize = viewerDefaultMaxSize
@@ -1607,6 +1638,348 @@ func (n *nodeAgent) adbShellCapture(ctx context.Context, serial string, shellCmd
 		return trimmed, err
 	}
 	return trimmed, nil
+}
+
+func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse) error {
+	apps := n.runtimeAppsToInstall(runtime)
+	if len(apps) == 0 {
+		return nil
+	}
+	serial, err := n.adbSerialForRuntime(runtime, inspect)
+	if err != nil {
+		return err
+	}
+	if err := n.adbConnect(ctx, serial); err != nil {
+		return fmt.Errorf("connect adb for app install: %w", err)
+	}
+
+	installed := 0
+	var failures []string
+	for _, app := range apps {
+		packageName := strings.TrimSpace(app.PackageName)
+		if !appPackageNamePattern.MatchString(packageName) {
+			failures = append(failures, fmt.Sprintf("%s: invalid package name", packageName))
+			continue
+		}
+		if n.androidPackageInstalled(ctx, serial, packageName) {
+			continue
+		}
+		if err := n.installRuntimeApp(ctx, serial, app); err != nil {
+			message := fmt.Sprintf("Install selected app %s failed: %v.", packageName, err)
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
+			failures = append(failures, fmt.Sprintf("%s: %v", packageName, err))
+			continue
+		}
+		installed++
+		displayName := strings.TrimSpace(app.DisplayName)
+		if displayName == "" {
+			displayName = packageName
+		}
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", fmt.Sprintf("Installed selected app %s.", displayName))
+	}
+	if installed > 0 {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", fmt.Sprintf("Installed %d selected app package(s).", installed))
+	}
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func (n *nodeAgent) runtimeAppsToInstall(runtime runtimeAssignment) []runtimeApp {
+	seen := make(map[string]bool, len(n.cfg.DefaultAppPackages)+len(runtime.SelectedApps))
+	apps := make([]runtimeApp, 0, len(n.cfg.DefaultAppPackages)+len(runtime.SelectedApps))
+	for _, packageName := range n.cfg.DefaultAppPackages {
+		packageName = strings.TrimSpace(packageName)
+		if packageName == "" || seen[packageName] {
+			continue
+		}
+		app, ok := defaultAppCatalog[packageName]
+		if !ok {
+			app = runtimeApp{
+				PackageName: packageName,
+				DisplayName: packageName,
+			}
+		}
+		seen[packageName] = true
+		apps = append(apps, app)
+	}
+	for _, app := range runtime.SelectedApps {
+		packageName := strings.TrimSpace(app.PackageName)
+		if packageName == "" || seen[packageName] {
+			continue
+		}
+		seen[packageName] = true
+		apps = append(apps, app)
+	}
+	return apps
+}
+
+func (n *nodeAgent) androidPackageInstalled(ctx context.Context, serial, packageName string) bool {
+	out, err := n.adbShellCapture(ctx, serial, fmt.Sprintf("pm path %s >/dev/null 2>&1 && echo installed || true", shellQuote(packageName)))
+	return err == nil && strings.Contains(out, "installed")
+}
+
+func (n *nodeAgent) adbInstallAPK(ctx context.Context, serial, apkPath string) error {
+	installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(installCtx, n.cfg.ADBPath, "-s", serial, "install", "-r", "-g", apkPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if trimmed := strings.TrimSpace(string(output)); trimmed != "" && !strings.Contains(strings.ToLower(trimmed), "success") {
+		return fmt.Errorf("adb install returned unexpected output: %s", trimmed)
+	}
+	return nil
+}
+
+func (n *nodeAgent) adbInstallMultipleAPKs(ctx context.Context, serial string, apkPaths []string) error {
+	if len(apkPaths) == 0 {
+		return errors.New("no APK split files found")
+	}
+	sort.Strings(apkPaths)
+	args := append([]string{"-s", serial, "install-multiple", "-r", "-g"}, apkPaths...)
+	installCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(installCtx, n.cfg.ADBPath, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if trimmed := strings.TrimSpace(string(output)); trimmed != "" && !strings.Contains(strings.ToLower(trimmed), "success") {
+		return fmt.Errorf("adb install-multiple returned unexpected output: %s", trimmed)
+	}
+	return nil
+}
+
+func (n *nodeAgent) installRuntimeApp(ctx context.Context, serial string, app runtimeApp) error {
+	packageName := strings.TrimSpace(app.PackageName)
+	root := strings.TrimSpace(n.cfg.AppAPKDir)
+	if root == "" {
+		root = "/srv/virtroid/apks"
+	}
+
+	localAPK := filepath.Join(root, packageName+".apk")
+	if regularFileExists(localAPK) {
+		if err := verifyAPKFile(localAPK, app.APKSHA256); err != nil {
+			return err
+		}
+		return n.adbInstallAPK(ctx, serial, localAPK)
+	}
+
+	localAPKM := filepath.Join(root, packageName+".apkm")
+	if regularFileExists(localAPKM) {
+		apkPaths, err := extractAPKM(localAPKM, filepath.Join(root, "cache", packageName+"-apkm"))
+		if err != nil {
+			return err
+		}
+		return n.adbInstallMultipleAPKs(ctx, serial, apkPaths)
+	}
+
+	localSplitsDir := filepath.Join(root, packageName)
+	if dirExists(localSplitsDir) {
+		apkPaths, err := listAPKFiles(localSplitsDir)
+		if err != nil {
+			return err
+		}
+		return n.adbInstallMultipleAPKs(ctx, serial, apkPaths)
+	}
+
+	apkPath, err := n.apkPathForSelectedApp(ctx, app)
+	if err != nil {
+		return err
+	}
+	return n.adbInstallAPK(ctx, serial, apkPath)
+}
+
+func (n *nodeAgent) apkPathForSelectedApp(ctx context.Context, app runtimeApp) (string, error) {
+	packageName := strings.TrimSpace(app.PackageName)
+	if !appPackageNamePattern.MatchString(packageName) {
+		return "", fmt.Errorf("invalid package name %q", packageName)
+	}
+	root := strings.TrimSpace(n.cfg.AppAPKDir)
+	if root == "" {
+		root = "/srv/virtroid/apks"
+	}
+
+	localPath := filepath.Join(root, packageName+".apk")
+	if regularFileExists(localPath) {
+		if err := verifyAPKFile(localPath, app.APKSHA256); err != nil {
+			return "", err
+		}
+		return localPath, nil
+	}
+
+	apkURL := strings.TrimSpace(app.APKURL)
+	if apkURL == "" {
+		return "", fmt.Errorf("prepacked APK not found at %s and no fallback URL is configured", localPath)
+	}
+	parsed, err := url.Parse(apkURL)
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "f-droid.org") {
+		return "", fmt.Errorf("unsupported APK URL")
+	}
+
+	cacheKey := strings.ToLower(strings.TrimSpace(app.APKSHA256))
+	if cacheKey == "" {
+		cacheKey = strings.ReplaceAll(packageName, ".", "_")
+	}
+	cachePath := filepath.Join(root, "cache", cacheKey+".apk")
+	if regularFileExists(cachePath) {
+		if err := verifyAPKFile(cachePath, app.APKSHA256); err != nil {
+			_ = os.Remove(cachePath)
+		} else {
+			return cachePath, nil
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		return "", err
+	}
+	tmpPath := cachePath + ".tmp"
+	if err := n.downloadAPK(ctx, apkURL, tmpPath, app.APKSizeBytes); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := verifyAPKFile(tmpPath, app.APKSHA256); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := os.Rename(tmpPath, cachePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	return cachePath, nil
+}
+
+func extractAPKM(apkmPath, extractDir string) ([]string, error) {
+	reader, err := zip.OpenReader(apkmPath)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	if err := os.RemoveAll(extractDir); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(extractDir, 0o755); err != nil {
+		return nil, err
+	}
+
+	var apkPaths []string
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() || !strings.HasSuffix(strings.ToLower(file.Name), ".apk") {
+			continue
+		}
+		baseName := filepath.Base(file.Name)
+		if baseName == "." || baseName == string(filepath.Separator) {
+			continue
+		}
+		targetPath := filepath.Join(extractDir, baseName)
+		source, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+		target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			source.Close()
+			return nil, err
+		}
+		_, copyErr := io.Copy(target, source)
+		closeErr := target.Close()
+		source.Close()
+		if copyErr != nil {
+			return nil, copyErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		apkPaths = append(apkPaths, targetPath)
+	}
+	if len(apkPaths) == 0 {
+		return nil, errors.New("APKM contains no APK files")
+	}
+	sort.Strings(apkPaths)
+	return apkPaths, nil
+}
+
+func listAPKFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var apkPaths []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".apk") {
+			continue
+		}
+		apkPaths = append(apkPaths, filepath.Join(dir, entry.Name()))
+	}
+	if len(apkPaths) == 0 {
+		return nil, fmt.Errorf("no APK files found in %s", dir)
+	}
+	sort.Strings(apkPaths)
+	return apkPaths, nil
+}
+
+func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, expectedSize int64) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apkURL, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("download APK failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	limit := int64(512 * 1024 * 1024)
+	if expectedSize > 0 && expectedSize+1024*1024 < limit {
+		limit = expectedSize + 1024*1024
+	}
+	out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	written, err := io.Copy(out, io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return err
+	}
+	if written > limit {
+		return fmt.Errorf("APK exceeds configured download limit")
+	}
+	return nil
+}
+
+func verifyAPKFile(path, expectedSHA256 string) error {
+	expected := strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if expected == "" {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return err
+	}
+	actual := hex.EncodeToString(hash.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("APK hash mismatch for %s", filepath.Base(path))
+	}
+	return nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func (n *nodeAgent) adbLogcatCapture(ctx context.Context, serial string, lines int) (string, error) {
@@ -2448,6 +2821,16 @@ func binderAvailable() bool {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func regularFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func stringPtr(value string) *string {
