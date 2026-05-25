@@ -347,7 +347,7 @@ class OnboardingActivity : AppCompatActivity() {
         accountScrambleJob?.cancel()
         binding.onboardingAccountIdText.text = accountId
         binding.onboardingAccountIdText.setTextColor(getColor(if (registered) R.color.v_accent else R.color.v_text_primary))
-        setStatusIndicator(binding.accountStatusIndicator, binding.accountStatusCheck, provisioned = registered)
+        setStatusIndicator(binding.accountStatusIndicator, binding.accountStatusCheck, provisioned = true)
     }
 
     private fun renderProvisionedDevice(deviceId: String?, registered: Boolean) {
@@ -361,7 +361,7 @@ class OnboardingActivity : AppCompatActivity() {
         deviceScrambleJob?.cancel()
         binding.onboardingDeviceIdText.text = deviceId
         binding.onboardingDeviceIdText.setTextColor(getColor(if (registered) R.color.v_accent else R.color.v_text_primary))
-        setStatusIndicator(binding.deviceFingerprintStatusIndicator, binding.deviceFingerprintStatusCheck, provisioned = registered)
+        setStatusIndicator(binding.deviceFingerprintStatusIndicator, binding.deviceFingerprintStatusCheck, provisioned = true)
     }
 
     private fun renderPasswordRequirement() {
@@ -439,13 +439,13 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun randomPlaceholder(): String {
-        return List(4) {
+        return UUID_PATTERN.joinToString("-") { length ->
             buildString {
-                repeat(4) {
+                repeat(length) {
                     append(SCRAMBLE_CHARS[Random.nextInt(SCRAMBLE_CHARS.length)])
                 }
             }
-        }.joinToString("-")
+        }
     }
 
     private fun showProvisioningLog() {
@@ -512,7 +512,8 @@ class OnboardingActivity : AppCompatActivity() {
     )
 
     private companion object {
-        const val SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        const val SCRAMBLE_CHARS = "0123456789abcdef"
+        val UUID_PATTERN = intArrayOf(8, 4, 4, 4, 12)
         const val SCRAMBLE_FRAME_MS = 90L
         const val PREVIEW_ACCOUNT_DELAY_MS = 2_000L
         const val PREVIEW_DEVICE_DELAY_MS = 1_500L

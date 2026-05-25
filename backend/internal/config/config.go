@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,6 +49,8 @@ type NodeConfig struct {
 	SharedSecret       string
 	RegistrationSecret string
 	PrivateKey         string
+	AppAPKDir          string
+	DefaultAppPackages []string
 	ViewerCryptPath    string
 	HeartbeatInterval  time.Duration
 	ReconcileInterval  time.Duration
@@ -148,6 +151,8 @@ func LoadNode() NodeConfig {
 		SharedSecret:       os.Getenv("NODE_SHARED_SECRET"),
 		RegistrationSecret: envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
 		PrivateKey:         os.Getenv("NODE_PRIVATE_KEY_B64"),
+		AppAPKDir:          envOrDefault("NODE_APP_APK_DIR", "/srv/virtroid/apks"),
+		DefaultAppPackages: parseEnvCSV("NODE_DEFAULT_APP_PACKAGES", "org.fdroid.basic,projekt.launcher"),
 		ViewerCryptPath:    envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtroid-viewercrypt"),
 		HeartbeatInterval:  heartbeatInterval,
 		ReconcileInterval:  reconcileInterval,
@@ -196,4 +201,23 @@ func parseEnvDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func parseEnvCSV(key, fallback string) []string {
+	value := envOrDefault(key, fallback)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	return out
 }

@@ -172,39 +172,40 @@ type Device struct {
 }
 
 type Runtime struct {
-	ID                 string     `json:"id"`
-	AccountID          string     `json:"account_id"`
-	Name               string     `json:"name"`
-	Status             string     `json:"status"`
-	DesiredState       string     `json:"desired_state"`
-	ConnectionStatus   string     `json:"connection_status"`
-	HostID             *string    `json:"host_id,omitempty"`
-	PersonaVersion     int        `json:"persona_version"`
-	ActivePersonaJSON  *string    `json:"active_persona_json,omitempty"`
-	AndroidImage       string     `json:"android_image"`
-	AndroidVersion     string     `json:"android_version"`
-	WidthPx            int        `json:"width_px"`
-	HeightPx           int        `json:"height_px"`
-	DensityDpi         int        `json:"density_dpi"`
-	AudioEnabled       bool       `json:"audio_enabled"`
-	CameraMode         string     `json:"camera_mode"`
-	FileMode           string     `json:"file_mode"`
-	BlobAutoSnapshot   bool       `json:"blob_auto_snapshot"`
-	BlobRetainDays     int        `json:"blob_retain_days"`
-	BlobStoreKind      *string    `json:"blob_store_kind,omitempty"`
-	BlobManifestJSON   *string    `json:"blob_manifest_json,omitempty"`
-	BlobHostID         *string    `json:"-"`
-	BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at,omitempty"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
-	LoadAverage        *float64   `json:"load_average,omitempty"`
-	ContainerName      *string    `json:"container_name,omitempty"`
-	ADBPort            *int       `json:"adb_port,omitempty"`
-	ViewerPort         *int       `json:"viewer_port,omitempty"`
-	WipeRequested      bool       `json:"wipe_requested"`
-	LastError          *string    `json:"last_error,omitempty"`
-	DeletedAt          *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 string            `json:"id"`
+	AccountID          string            `json:"account_id"`
+	Name               string            `json:"name"`
+	Status             string            `json:"status"`
+	DesiredState       string            `json:"desired_state"`
+	ConnectionStatus   string            `json:"connection_status"`
+	HostID             *string           `json:"host_id,omitempty"`
+	PersonaVersion     int               `json:"persona_version"`
+	ActivePersonaJSON  *string           `json:"active_persona_json,omitempty"`
+	AndroidImage       string            `json:"android_image"`
+	AndroidVersion     string            `json:"android_version"`
+	WidthPx            int               `json:"width_px"`
+	HeightPx           int               `json:"height_px"`
+	DensityDpi         int               `json:"density_dpi"`
+	AudioEnabled       bool              `json:"audio_enabled"`
+	CameraMode         string            `json:"camera_mode"`
+	FileMode           string            `json:"file_mode"`
+	BlobAutoSnapshot   bool              `json:"blob_auto_snapshot"`
+	BlobRetainDays     int               `json:"blob_retain_days"`
+	BlobStoreKind      *string           `json:"blob_store_kind,omitempty"`
+	BlobManifestJSON   *string           `json:"blob_manifest_json,omitempty"`
+	BlobHostID         *string           `json:"-"`
+	BlobLastSnapshotAt *time.Time        `json:"blob_last_snapshot_at,omitempty"`
+	StartedAt          *time.Time        `json:"started_at,omitempty"`
+	LoadAverage        *float64          `json:"load_average,omitempty"`
+	ContainerName      *string           `json:"container_name,omitempty"`
+	ADBPort            *int              `json:"adb_port,omitempty"`
+	ViewerPort         *int              `json:"viewer_port,omitempty"`
+	WipeRequested      bool              `json:"wipe_requested"`
+	LastError          *string           `json:"last_error,omitempty"`
+	SelectedApps       []AppCatalogEntry `json:"selected_apps,omitempty"`
+	DeletedAt          *time.Time        `json:"deleted_at,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 type RuntimeLogEntry struct {
@@ -3632,6 +3633,9 @@ func (s *Store) ListAssignedRuntimes(ctx context.Context, hostID string) ([]Runt
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := attachSelectedAppsToRuntimesTX(ctx, tx, runtimes); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -3639,6 +3643,51 @@ func (s *Store) ListAssignedRuntimes(ctx context.Context, hostID string) ([]Runt
 		return []Runtime{}, nil
 	}
 	return runtimes, nil
+}
+
+func attachSelectedAppsToRuntimesTX(ctx context.Context, tx *sql.Tx, runtimes []Runtime) error {
+	if len(runtimes) == 0 {
+		return nil
+	}
+	appsByAccount := make(map[string][]AppCatalogEntry)
+	for i := range runtimes {
+		accountID := strings.TrimSpace(runtimes[i].AccountID)
+		if accountID == "" {
+			continue
+		}
+		apps, ok := appsByAccount[accountID]
+		if !ok {
+			var err error
+			apps, err = selectedAppsForAccountTX(ctx, tx, accountID)
+			if err != nil {
+				return err
+			}
+			appsByAccount[accountID] = apps
+		}
+		runtimes[i].SelectedApps = apps
+	}
+	return nil
+}
+
+func selectedAppsForAccountTX(ctx context.Context, tx *sql.Tx, accountID string) ([]AppCatalogEntry, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT c.package_name, c.source, c.display_name, c.summary, c.icon_url,
+		        c.version_name, c.version_code, c.apk_url, c.apk_sha256, c.apk_size_bytes,
+		        c.min_sdk, c.native_code, c.license, c.categories_json, c.anti_features_json,
+		        c.recommended, c.catalog_updated_at, TRUE AS selected
+		   FROM account_app_selections s
+		   JOIN app_catalog c ON c.package_name = s.package_name
+		  WHERE s.account_id = $1
+		    AND c.enabled = TRUE
+		  ORDER BY c.recommended DESC, c.display_name ASC
+		  LIMIT 32`,
+		accountID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAppCatalogRows(rows)
 }
 
 func allocateMissingViewerPortsForHostTX(ctx context.Context, tx *sql.Tx, hostID string) error {
