@@ -236,59 +236,6 @@
                         android:background="@drawable/bg_dot_accent_outline" />
                 </LinearLayout>
 
-                <LinearLayout
-                    android:id="@+id/installAppsOptionCard"
-                    android:layout_width="match_parent"
-                    android:layout_height="100dp"
-                    android:layout_marginTop="12dp"
-                    android:background="@drawable/bg_surface_stroke_24"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:paddingStart="20dp"
-                    android:paddingEnd="20dp">
-
-                    <ImageView
-                        android:id="@+id/icon_install_apps_option"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="@drawable/bg_accent_soft_circle"
-                        android:padding="13dp"
-                        android:src="@drawable/ic_download"
-                        app:tint="@color/v_accent" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="16dp"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:id="@+id/text_install_apps_title"
-                            style="@style/VirtroidText.CardTitle.Large"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/onboarding_install_apps_title" />
-
-                        <TextView
-                            android:id="@+id/text_install_apps_subtitle"
-                            style="@style/VirtroidText.Body"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="7dp"
-                            android:lineSpacingExtra="3dp"
-                            android:text="@string/onboarding_install_apps_body" />
-                    </LinearLayout>
-
-                    <View
-                        android:id="@+id/installAppsOptionIndicator"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:background="@drawable/bg_dot_accent_outline" />
-                </LinearLayout>
             </LinearLayout>
         </ScrollView>
     </LinearLayout>

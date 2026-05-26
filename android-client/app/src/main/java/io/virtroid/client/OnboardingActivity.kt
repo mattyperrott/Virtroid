@@ -16,7 +16,6 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtroid.client.api.BootstrapResult
 import io.virtroid.client.api.VirtroidApi
-import io.virtroid.client.data.AppSelectionStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenIdentityProvisioningBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
@@ -39,7 +38,6 @@ class OnboardingActivity : AppCompatActivity() {
     private lateinit var binding: ScreenIdentityProvisioningBinding
     private val api = VirtroidApi()
     private lateinit var sessionStore: SessionStore
-    private lateinit var appSelectionStore: AppSelectionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
     private val deviceIdentityStore = DeviceIdentityStore()
     private var pendingIdentityPassword: String? = null
@@ -58,7 +56,6 @@ class OnboardingActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
-        appSelectionStore = AppSelectionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.onboardingRoot) { view, insets ->
@@ -77,9 +74,6 @@ class OnboardingActivity : AppCompatActivity() {
                 collectIdentityPassword()
             }
         }
-        binding.installAppsOptionCard.setOnClickListener {
-            startActivity(AppInstallActivity.createIntent(this))
-        }
         binding.continueSetupButton.setOnClickListener {
             lifecycleScope.launch {
                 if (!ensureIdentityPasswordReady()) {
@@ -94,13 +88,6 @@ class OnboardingActivity : AppCompatActivity() {
         }
 
         refreshIdentityState()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (::binding.isInitialized && ::appSelectionStore.isInitialized) {
-            renderAppSelectionRequirement()
-        }
     }
 
     override fun onDestroy() {
@@ -154,7 +141,6 @@ class OnboardingActivity : AppCompatActivity() {
 
             registerBlobIdentity(result, password)
             markPreviousMilestone("Encrypted blob key sealed", "local password verifier registered")
-            syncPendingAppSelections(result.accountId, result.deviceId)
             updateActiveMilestone(
                 title = "Identity Ready",
                 command = "> launch secure client",
@@ -197,7 +183,6 @@ class OnboardingActivity : AppCompatActivity() {
                     password,
                 )
                 markPreviousMilestone("Encrypted blob key sealed", "local password verifier registered")
-                syncPendingAppSelections(accountId, deviceId)
                 updateActiveMilestone(
                     title = "Identity Ready",
                     command = "> launch secure client",
@@ -283,7 +268,6 @@ class OnboardingActivity : AppCompatActivity() {
             startIdentityPreviewSequence()
         }
         renderPasswordRequirement()
-        renderAppSelectionRequirement()
         binding.continueSetupButton.isEnabled = true
         binding.continueSetupButton.setText(
             if (sessionStore.hasAccess()) R.string.onboarding_continue else R.string.onboarding_create_identity,
@@ -373,43 +357,6 @@ class OnboardingActivity : AppCompatActivity() {
         binding.passphraseOptionIndicator.setBackgroundResource(
             if (configured) R.drawable.bg_dot_accent else R.drawable.bg_dot_accent_outline,
         )
-    }
-
-    private fun renderAppSelectionRequirement() {
-        val selectedCount = appSelectionStore.pendingSelections().size
-        binding.installAppsOptionCard.setBackgroundResource(
-            if (selectedCount > 0) R.drawable.bg_selected_card_24 else R.drawable.bg_surface_stroke_24,
-        )
-        binding.installAppsOptionIndicator.setBackgroundResource(
-            if (selectedCount > 0) R.drawable.bg_dot_accent else R.drawable.bg_dot_accent_outline,
-        )
-        binding.textInstallAppsSubtitle.text = if (selectedCount > 0) {
-            getString(R.string.onboarding_install_apps_selected, selectedCount)
-        } else {
-            getString(R.string.onboarding_install_apps_body)
-        }
-    }
-
-    private suspend fun syncPendingAppSelections(accountId: String, deviceId: String) {
-        val packageNames = appSelectionStore.pendingSelections()
-        if (packageNames.isEmpty()) {
-            return
-        }
-
-        updateActiveMilestone(
-            title = "Saving App Selection ...",
-            command = "> PUT /api/v1/me/apps/selections",
-            detail = "... storing selected F-Droid packages_",
-        )
-        api.updateAppSelections(
-            baseUrl = sessionStore.baseUrl,
-            accountId = accountId,
-            deviceId = deviceId,
-            packageNames = packageNames,
-        )
-        appSelectionStore.clearPendingSelections()
-        renderAppSelectionRequirement()
-        markPreviousMilestone("App selection saved", getString(R.string.onboarding_install_apps_saved))
     }
 
     private fun setStatusIndicator(container: View, check: ImageView, provisioned: Boolean) {

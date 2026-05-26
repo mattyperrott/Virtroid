@@ -376,10 +376,6 @@
     <string name="onboarding_passphrase_title">Blob Encryption Password</string>
     <string name="onboarding_passphrase_body">Required for encrypted runtime snapshots and blob recovery.</string>
     <string name="onboarding_passphrase_glyph">I**</string>
-    <string name="onboarding_install_apps_title">Install Apps</string>
-    <string name="onboarding_install_apps_body">Choose F-Droid apps to install when runtimes are created or restored.</string>
-    <string name="onboarding_install_apps_selected">%1$d apps selected</string>
-    <string name="onboarding_install_apps_saved">App selection saved to account</string>
     <string name="onboarding_not_provisioned">7f4b2a91-c8e3-4d6a-90bf-8e31c972a4d5</string>
     <string name="onboarding_password_set">Blob password set</string>
     <string name="provisioning_previous_waiting">Waiting for identity task</string>
