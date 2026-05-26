@@ -59,6 +59,50 @@ func TestBootstrapAccountDoesNotCreateRuntime(t *testing.T) {
 	}
 }
 
+func TestGetAccountStorageAppliesLatestRenterdPreflight(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+
+	mock.ExpectQuery("SELECT account_id, provider, funding_model").
+		WithArgs(accountID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT created_at FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
+	mock.ExpectQuery("SELECT storage_preflight_kind, storage_preflight_status").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"storage_preflight_kind",
+			"storage_preflight_status",
+			"storage_preflight_json",
+			"storage_preflight_at",
+			"storage_wallet_address",
+		}).AddRow("sia-renterd", "contracts_required", `{"store":"sia-renterd"}`, now, "addr:fund"))
+
+	storage, err := st.GetAccountStorage(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccountStorage returned error: %v", err)
+	}
+	if storage.Provider != "sia-renterd" || storage.FundingModel != "operator-pooled" {
+		t.Fatalf("storage provider/model = %s/%s, want sia-renterd/operator-pooled", storage.Provider, storage.FundingModel)
+	}
+	if storage.Status != "contracts_required" {
+		t.Fatalf("storage.Status = %q, want contracts_required", storage.Status)
+	}
+	if storage.FundingAddress == nil || *storage.FundingAddress != "addr:fund" {
+		t.Fatalf("storage.FundingAddress = %v, want addr:fund", storage.FundingAddress)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1992,6 +2036,12 @@ func hostRows(now time.Time, hostID, publicKey string) *sqlmock.Rows {
 		"docker_socket",
 		"binder",
 		"public_key",
+		"blob_store_kind",
+		"storage_preflight_kind",
+		"storage_preflight_status",
+		"storage_preflight_json",
+		"storage_preflight_at",
+		"storage_wallet_address",
 		"created_at",
 		"updated_at",
 		"last_heartbeat_at",
@@ -2003,6 +2053,12 @@ func hostRows(now time.Time, hostID, publicKey string) *sqlmock.Rows {
 		true,
 		true,
 		publicKey,
+		"local-disk",
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
 		now,
 		now,
 		now,

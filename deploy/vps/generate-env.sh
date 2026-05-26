@@ -105,9 +105,11 @@ write_env_var() {
   write_env_var NODE_SIA_RENTERD_WORKER_URL http://renterd:9980
   write_env_var NODE_SIA_RENTERD_PASSWORD ""
   write_env_var NODE_SIA_RENTERD_BUCKET virtroid
+  write_env_var NODE_SIA_RENTERD_WALLET_ADDRESS ""
   write_env_var NODE_SIA_RENTERD_MIN_SHARDS ""
   write_env_var NODE_SIA_RENTERD_TOTAL_SHARDS ""
   write_env_var NODE_SIA_RENTERD_CONTRACT_SET ""
+  write_env_var NODE_BLOB_PREFLIGHT_INTERVAL 5m
 
   write_env_var RENTERD_API_PASSWORD ""
   write_env_var RENTERD_SEED ""

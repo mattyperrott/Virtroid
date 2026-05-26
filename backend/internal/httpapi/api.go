@@ -1562,12 +1562,18 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ID            string `json:"id"`
-		Name          string `json:"name"`
-		AdvertiseAddr string `json:"advertise_addr"`
-		RelayPort     int    `json:"relay_port"`
-		DockerSocket  bool   `json:"docker_socket"`
-		Binder        bool   `json:"binder"`
+		ID                     string `json:"id"`
+		Name                   string `json:"name"`
+		AdvertiseAddr          string `json:"advertise_addr"`
+		RelayPort              int    `json:"relay_port"`
+		DockerSocket           bool   `json:"docker_socket"`
+		Binder                 bool   `json:"binder"`
+		BlobStoreKind          string `json:"blob_store_kind"`
+		StoragePreflightKind   string `json:"storage_preflight_kind"`
+		StoragePreflightStatus string `json:"storage_preflight_status"`
+		StoragePreflightJSON   string `json:"storage_preflight_json"`
+		StoragePreflightAt     string `json:"storage_preflight_at"`
+		StorageWalletAddress   string `json:"storage_wallet_address"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1583,15 +1589,35 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "id, name, and advertise_addr are required"})
 		return
 	}
+	if len(req.StoragePreflightJSON) > maxSecurityEventJSONRunes {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "storage_preflight_json is too large"})
+		return
+	}
+
+	var storagePreflightAt *time.Time
+	if strings.TrimSpace(req.StoragePreflightAt) != "" {
+		parsedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(req.StoragePreflightAt))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid storage_preflight_at"})
+			return
+		}
+		storagePreflightAt = &parsedAt
+	}
 
 	host, err := a.store.UpsertHostHeartbeat(r.Context(), store.HostHeartbeat{
-		ID:            node.id,
-		Name:          req.Name,
-		AdvertiseAddr: req.AdvertiseAddr,
-		RelayPort:     req.RelayPort,
-		DockerSocket:  req.DockerSocket,
-		Binder:        req.Binder,
-		PublicKey:     node.publicKey,
+		ID:                     node.id,
+		Name:                   req.Name,
+		AdvertiseAddr:          req.AdvertiseAddr,
+		RelayPort:              req.RelayPort,
+		DockerSocket:           req.DockerSocket,
+		Binder:                 req.Binder,
+		PublicKey:              node.publicKey,
+		BlobStoreKind:          req.BlobStoreKind,
+		StoragePreflightKind:   req.StoragePreflightKind,
+		StoragePreflightStatus: req.StoragePreflightStatus,
+		StoragePreflightJSON:   req.StoragePreflightJSON,
+		StoragePreflightAt:     storagePreflightAt,
+		StorageWalletAddress:   req.StorageWalletAddress,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

@@ -70,7 +70,7 @@ class FundStorageActivity : AppCompatActivity() {
         binding.buttonAmount10.setOnClickListener { selectAmount(10) }
         binding.buttonAmount25.setOnClickListener { selectAmount(25) }
         binding.buttonAmountCustom.setOnClickListener { chooseCustomAmount() }
-        binding.buttonCreateUsdtPayment.setOnClickListener { openPayment() }
+        binding.buttonCreateUsdtPayment.setOnClickListener { copyToClipboard("Sia deposit address", walletAddress) }
 
         selectAmount(selectedAmountUsd)
         setQuoteActionEnabled(false)
@@ -102,7 +102,9 @@ class FundStorageActivity : AppCompatActivity() {
     }
 
     private fun bindStorage(storage: AccountStorage) {
-        walletAddress = storage.walletAddress?.takeIf { it.isNotBlank() }.orEmpty()
+        walletAddress = storage.fundingAddress?.takeIf { it.isNotBlank() }
+            ?: storage.walletAddress?.takeIf { it.isNotBlank() }
+            ?: ""
         binding.siaAddressValue.text = walletAddress.takeIf { it.isNotBlank() }?.let(::shortenAddress)
             ?: getString(R.string.fund_storage_wallet_not_configured)
         binding.walletStatusChip.text = when (storage.status) {
@@ -110,7 +112,19 @@ class FundStorageActivity : AppCompatActivity() {
             "funding_required", "not_configured" -> getString(R.string.fund_storage_required)
             else -> storage.status.replace('_', ' ').uppercase(Locale.US)
         }
-        setQuoteActionEnabled(false)
+        binding.networkFeeValue.text = storage.lastPreflightStatus
+            ?.replace('_', ' ')
+            ?.uppercase(Locale.US)
+            ?: "--"
+        binding.contractMinimumValue.text = when (storage.status) {
+            "ready" -> "Contracts active"
+            "contracts_required" -> "Contracts needed"
+            "funding_required" -> "SC funding needed"
+            "syncing" -> "Consensus syncing"
+            else -> "--"
+        }
+        bindDeploymentStatus(storage)
+        setQuoteActionEnabled(walletAddress.isNotBlank())
     }
 
     private fun selectAmount(amountUsd: Int) {
@@ -125,10 +139,6 @@ class FundStorageActivity : AppCompatActivity() {
     private fun setAmountButton(view: TextView, selected: Boolean) {
         view.setBackgroundResource(if (selected) R.drawable.bg_amount_selected else R.drawable.bg_amount_unselected)
         view.setTextColor(getColor(if (selected) R.color.virtroid_on_primary else R.color.virtroid_on_surface_variant))
-    }
-
-    private fun openPayment() {
-        showFundingUnavailableDialog()
     }
 
     private fun chooseCustomAmount() {
@@ -156,19 +166,84 @@ class FundStorageActivity : AppCompatActivity() {
         binding.buttonCreateUsdtPayment.isEnabled = enabled
         binding.buttonCreateUsdtPayment.alpha = if (enabled) 1f else 0.55f
         binding.buttonCreateUsdtPayment.text = if (enabled) {
-            getString(R.string.fund_storage_create_payment)
+            getString(R.string.fund_storage_copy_deposit_address)
         } else {
-            getString(R.string.fund_storage_payment_unavailable)
+            getString(R.string.fund_storage_wallet_not_configured)
         }
     }
 
     private fun showFundingUnavailableDialog() {
         AlertDialog.Builder(this)
-            .setTitle(getString(R.string.fund_storage_payment_unavailable_title))
-            .setMessage(getString(R.string.fund_storage_payment_unavailable_body))
+            .setTitle(getString(R.string.fund_storage_direct_sia_title))
+            .setMessage(getString(R.string.fund_storage_direct_sia_body))
             .setPositiveButton(android.R.string.ok, null)
             .show()
-        appLogs.warn("USDT payment flow blocked because live quote backend is unavailable", "payment")
+    }
+
+    private fun bindDeploymentStatus(storage: AccountStorage) {
+        val status = storage.lastPreflightStatus?.ifBlank { null } ?: storage.status
+        val walletReady = walletAddress.isNotBlank()
+        val funded = status == "ready" || status == "contracts_required"
+        val contractsReady = status == "ready"
+
+        setStep(
+            dot = binding.stepCreateQuoteDot,
+            label = binding.stepCreateQuoteLabel,
+            text = if (walletReady) getString(R.string.fund_storage_step_wallet_address_ready) else getString(R.string.fund_storage_step_wallet_address_missing),
+            complete = walletReady,
+            active = !walletReady,
+        )
+        setStep(
+            dot = binding.stepSendUsdtDot,
+            label = binding.stepSendUsdtLabel,
+            text = if (funded) getString(R.string.fund_storage_step_funding_detected) else getString(R.string.fund_storage_step_waiting_siacoin),
+            complete = funded,
+            active = walletReady && !funded,
+        )
+        setStep(
+            dot = binding.stepReceiveSiacoinDot,
+            label = binding.stepReceiveSiacoinLabel,
+            text = when (status) {
+                "syncing" -> getString(R.string.fund_storage_step_consensus_syncing)
+                "ready", "contracts_required" -> getString(R.string.fund_storage_step_renterd_reachable)
+                else -> getString(R.string.fund_storage_step_renterd_waiting)
+            },
+            complete = status == "ready" || status == "contracts_required",
+            active = status == "syncing",
+        )
+        setStep(
+            dot = binding.stepFormContractsDot,
+            label = binding.stepFormContractsLabel,
+            text = if (contractsReady) getString(R.string.fund_storage_step_contracts_ready) else getString(R.string.fund_storage_step_contracts_required),
+            complete = contractsReady,
+            active = status == "contracts_required",
+        )
+        setStep(
+            dot = binding.stepStorageReadyDot,
+            label = binding.stepStorageReadyLabel,
+            text = if (contractsReady) getString(R.string.fund_storage_step_ready) else getString(R.string.fund_storage_step_waiting_ready),
+            complete = contractsReady,
+            active = false,
+        )
+    }
+
+    private fun setStep(
+        dot: android.view.View,
+        label: TextView,
+        text: String,
+        complete: Boolean,
+        active: Boolean,
+    ) {
+        dot.setBackgroundResource(
+            when {
+                complete -> R.drawable.bg_dot_accent
+                active -> R.drawable.bg_dot_amber_outline
+                else -> R.drawable.bg_dot_muted_outline
+            },
+        )
+        label.text = text
+        label.alpha = if (complete || active) 1f else 0.45f
+        label.setTextColor(getColor(if (active) R.color.v_amber else R.color.v_text_primary))
     }
 
     private fun shortenAddress(value: String): String {

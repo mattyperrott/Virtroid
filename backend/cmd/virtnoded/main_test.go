@@ -58,6 +58,39 @@ func TestRuntimeAppsToInstallMergesDefaultsAndSelections(t *testing.T) {
 	}
 }
 
+func TestStoragePreflightStatusKeepsUnreachableRenterdAsError(t *testing.T) {
+	status := storagePreflightStatus(blobPreflightReport{
+		Store: blobStoreRenterd,
+		OK:    false,
+		Checks: []blobPreflightCheck{
+			{Name: "worker_url", Status: "pass", Detail: "http://renterd:9980"},
+			{Name: "api_password", Status: "pass", Detail: "configured"},
+			{Name: "consensus_state", Status: "fail", Detail: "dial tcp: lookup renterd: server misbehaving"},
+			{Name: "active_contracts", Status: "fail", Detail: "dial tcp: lookup renterd: server misbehaving"},
+		},
+	})
+	if status != "error" {
+		t.Fatalf("status = %q, want error", status)
+	}
+}
+
+func TestStoragePreflightStatusReportsContractsAfterReachableConsensus(t *testing.T) {
+	status := storagePreflightStatus(blobPreflightReport{
+		Store: blobStoreRenterd,
+		OK:    false,
+		Checks: []blobPreflightCheck{
+			{Name: "worker_url", Status: "pass", Detail: "http://renterd:9980"},
+			{Name: "api_password", Status: "pass", Detail: "configured"},
+			{Name: "consensus_state", Status: "pass", Detail: "synced"},
+			{Name: "wallet", Status: "pass", Detail: "funded"},
+			{Name: "active_contracts", Status: "fail", Detail: "no active renterd contracts"},
+		},
+	})
+	if status != "contracts_required" {
+		t.Fatalf("status = %q, want contracts_required", status)
+	}
+}
+
 func TestRuntimeAppsToInstallLoadsManifestDefaults(t *testing.T) {
 	pin := strings.Repeat("a", 64)
 	root := t.TempDir()
