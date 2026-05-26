@@ -208,6 +208,8 @@ type runtimeApp struct {
 	APKSizeBytes int64  `json:"apk_size_bytes"`
 	Artifact     string `json:"-"`
 	InstallMode  string `json:"-"`
+	SetAsHome    bool   `json:"-"`
+	HomeActivity string `json:"-"`
 }
 
 type appInstallManifest struct {
@@ -225,6 +227,8 @@ type appManifestEntry struct {
 	SourceURL    string `json:"source_url"`
 	APKSizeBytes int64  `json:"apk_size_bytes"`
 	Default      bool   `json:"default"`
+	SetAsHome    bool   `json:"set_as_home"`
+	HomeActivity string `json:"home_activity"`
 }
 
 type trustedAppCatalog struct {
@@ -1682,12 +1686,23 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 			continue
 		}
 		if n.androidPackageInstalled(ctx, serial, packageName) {
+			if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
+				message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
+				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
+				failures = append(failures, fmt.Sprintf("%s policy: %v", packageName, err))
+			}
 			continue
 		}
 		if err := n.installRuntimeApp(ctx, serial, app); err != nil {
 			message := fmt.Sprintf("Install selected app %s failed: %v.", packageName, err)
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
 			failures = append(failures, fmt.Sprintf("%s: %v", packageName, err))
+			continue
+		}
+		if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
+			message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
+			failures = append(failures, fmt.Sprintf("%s policy: %v", packageName, err))
 			continue
 		}
 		installed++
@@ -1704,6 +1719,13 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 		return errors.New(strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func (n *nodeAgent) applyRuntimeAppPolicy(ctx context.Context, serial string, app runtimeApp) error {
+	if !app.SetAsHome {
+		return nil
+	}
+	return n.setDefaultHomeActivity(ctx, serial, app.HomeActivity)
 }
 
 func (n *nodeAgent) runtimeAppsToInstall(runtime runtimeAssignment) []runtimeApp {
@@ -1760,6 +1782,12 @@ func mergeRuntimeApp(selection runtimeApp, trusted runtimeApp) runtimeApp {
 	}
 	if trusted.APKSizeBytes > 0 {
 		selection.APKSizeBytes = trusted.APKSizeBytes
+	}
+	if trusted.SetAsHome {
+		selection.SetAsHome = true
+	}
+	if strings.TrimSpace(trusted.HomeActivity) != "" {
+		selection.HomeActivity = trusted.HomeActivity
 	}
 	return selection
 }
@@ -1830,6 +1858,10 @@ func runtimeAppFromManifestEntry(entry appManifestEntry) (runtimeApp, error) {
 	if displayName == "" {
 		displayName = packageName
 	}
+	homeActivity, err := normalizeHomeActivity(packageName, entry.HomeActivity, entry.SetAsHome)
+	if err != nil {
+		return runtimeApp{}, fmt.Errorf("%s: %w", packageName, err)
+	}
 	return runtimeApp{
 		PackageName:  packageName,
 		DisplayName:  displayName,
@@ -1837,12 +1869,35 @@ func runtimeAppFromManifestEntry(entry appManifestEntry) (runtimeApp, error) {
 		InstallMode:  mode,
 		APKSHA256:    pin,
 		APKSizeBytes: entry.APKSizeBytes,
+		SetAsHome:    entry.SetAsHome,
+		HomeActivity: homeActivity,
 	}, nil
 }
 
 func (n *nodeAgent) androidPackageInstalled(ctx context.Context, serial, packageName string) bool {
 	out, err := n.adbShellCapture(ctx, serial, fmt.Sprintf("pm path %s >/dev/null 2>&1 && echo installed || true", shellQuote(packageName)))
 	return err == nil && strings.Contains(out, "installed")
+}
+
+func (n *nodeAgent) setDefaultHomeActivity(ctx context.Context, serial, component string) error {
+	component = strings.TrimSpace(component)
+	if component == "" {
+		return errors.New("home activity is required")
+	}
+	commands := []string{
+		fmt.Sprintf("cmd package set-home-activity --user 0 %s", shellQuote(component)),
+		fmt.Sprintf("cmd package set-home-activity %s", shellQuote(component)),
+	}
+	var lastErr error
+	for _, command := range commands {
+		if _, err := n.adbShellCapture(ctx, serial, command); err == nil {
+			_, _ = n.adbShellCapture(ctx, serial, "am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1 || true")
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("set default home activity %s: %w", component, lastErr)
 }
 
 func (n *nodeAgent) adbInstallAPK(ctx context.Context, serial, apkPath string) error {
@@ -2005,6 +2060,35 @@ func normalizeInstallMode(mode, artifact string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported install_mode %q", mode)
 	}
+}
+
+func normalizeHomeActivity(packageName, activity string, setAsHome bool) (string, error) {
+	activity = strings.TrimSpace(activity)
+	if !setAsHome {
+		return "", nil
+	}
+	if activity == "" {
+		return "", errors.New("home_activity is required when set_as_home is true")
+	}
+	if strings.ContainsAny(activity, " \t\r\n'\"`;&|<>$\\") {
+		return "", errors.New("home_activity contains unsupported shell characters")
+	}
+	componentPackage := packageName
+	componentActivity := activity
+	if pkg, act, ok := strings.Cut(activity, "/"); ok {
+		componentPackage = strings.TrimSpace(pkg)
+		componentActivity = strings.TrimSpace(act)
+	}
+	if componentPackage != packageName {
+		return "", errors.New("home_activity package must match package_name")
+	}
+	if strings.HasPrefix(componentActivity, ".") {
+		componentActivity = packageName + componentActivity
+	}
+	if !appPackageNamePattern.MatchString(componentPackage) || !appPackageNamePattern.MatchString(componentActivity) {
+		return "", errors.New("home_activity must be an Android component")
+	}
+	return componentPackage + "/" + componentActivity, nil
 }
 
 func extractAPKM(apkmPath, extractDir string) ([]string, error) {

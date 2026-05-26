@@ -62,10 +62,12 @@ local APK or APKM, create a manifest like:
     {
       "package_name": "projekt.launcher",
       "display_name": "hyperion launcher",
-      "artifact": "projekt.launcher.apkm",
-      "install_mode": "apkm",
+      "artifact": "projekt.launcher.apk",
+      "install_mode": "single",
       "sha256": "<64 lowercase hex sha256>",
-      "default": true
+      "default": true,
+      "set_as_home": true,
+      "home_activity": "projekt.launcher.ProjektLauncher"
     }
   ]
 }
@@ -74,11 +76,13 @@ local APK or APKM, create a manifest like:
 Calculate the pin on the server before adding the manifest entry:
 
 ```bash
-sha256sum /srv/virtroid/apks/projekt.launcher.apkm
+sha256sum /srv/virtroid/apks/projekt.launcher.apk
 ```
 
 Supported install modes are `single` for `.apk` and `apkm` for `.apkm`.
 Split-directory installs are intentionally not trusted.
+`set_as_home` makes the node call Android's package manager to set the supplied
+`home_activity` as the default launcher after installation.
 
 ## Health Checks
 

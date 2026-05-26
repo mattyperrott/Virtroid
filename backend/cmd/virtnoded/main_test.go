@@ -71,6 +71,8 @@ func TestRuntimeAppsToInstallLoadsManifestDefaults(t *testing.T) {
 	      "artifact": "projekt.launcher.apkm",
 	      "install_mode": "apkm",
 	      "sha256": "` + pin + `",
+	      "set_as_home": true,
+	      "home_activity": "projekt.launcher.ProjektLauncher",
 	      "default": true
 	    }
 	  ]
@@ -91,7 +93,9 @@ func TestRuntimeAppsToInstallLoadsManifestDefaults(t *testing.T) {
 	if apps[0].PackageName != "projekt.launcher" ||
 		apps[0].Artifact != "projekt.launcher.apkm" ||
 		apps[0].InstallMode != "apkm" ||
-		apps[0].APKSHA256 != pin {
+		apps[0].APKSHA256 != pin ||
+		!apps[0].SetAsHome ||
+		apps[0].HomeActivity != "projekt.launcher/projekt.launcher.ProjektLauncher" {
 		t.Fatalf("default app = %+v, want manifest-pinned Hyperion app", apps[0])
 	}
 }
@@ -140,6 +144,23 @@ func TestAPKPathForSelectedAppDoesNotTrustImplicitLocalPackageAPK(t *testing.T) 
 	})
 	if err == nil || !strings.Contains(err.Error(), "no trusted artifact") {
 		t.Fatalf("apkPathForSelectedApp error = %v, want no trusted artifact", err)
+	}
+}
+
+func TestNormalizeHomeActivity(t *testing.T) {
+	component, err := normalizeHomeActivity("projekt.launcher", ".ProjektLauncher", true)
+	if err != nil {
+		t.Fatalf("normalizeHomeActivity returned error: %v", err)
+	}
+	if component != "projekt.launcher/projekt.launcher.ProjektLauncher" {
+		t.Fatalf("component = %q, want normalized Hyperion component", component)
+	}
+}
+
+func TestNormalizeHomeActivityRejectsWrongPackage(t *testing.T) {
+	_, err := normalizeHomeActivity("projekt.launcher", "other.launcher/other.launcher.Home", true)
+	if err == nil || !strings.Contains(err.Error(), "package must match") {
+		t.Fatalf("normalizeHomeActivity error = %v, want package mismatch", err)
 	}
 }
 
