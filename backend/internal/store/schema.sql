@@ -14,6 +14,12 @@ CREATE TABLE IF NOT EXISTS hosts (
     docker_socket BOOLEAN NOT NULL DEFAULT FALSE,
     binder BOOLEAN NOT NULL DEFAULT FALSE,
     public_key TEXT NOT NULL DEFAULT '',
+    blob_store_kind TEXT NOT NULL DEFAULT 'local-disk',
+    storage_preflight_kind TEXT,
+    storage_preflight_status TEXT,
+    storage_preflight_json TEXT,
+    storage_preflight_at TIMESTAMPTZ,
+    storage_wallet_address TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -21,6 +27,12 @@ CREATE TABLE IF NOT EXISTS hosts (
 
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS relay_port INTEGER NOT NULL DEFAULT 8090;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS public_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS blob_store_kind TEXT NOT NULL DEFAULT 'local-disk';
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_kind TEXT;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_status TEXT;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_json TEXT;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_at TIMESTAMPTZ;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_wallet_address TEXT;
 
 CREATE TABLE IF NOT EXISTS devices (
     id UUID PRIMARY KEY,

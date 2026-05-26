@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -272,11 +273,14 @@ const (
 )
 
 type nodeAgent struct {
-	cfg            config.NodeConfig
-	controlPlane   *http.Client
-	docker         *http.Client
-	nodePrivateKey *ecdsa.PrivateKey
-	nodePublicKey  string
+	cfg                 config.NodeConfig
+	controlPlane        *http.Client
+	docker              *http.Client
+	nodePrivateKey      *ecdsa.PrivateKey
+	nodePublicKey       string
+	blobPreflightMu     sync.Mutex
+	blobPreflightReport blobPreflightReport
+	blobPreflightAt     time.Time
 }
 
 func main() {
@@ -333,7 +337,7 @@ func main() {
 		})
 	})
 	mux.HandleFunc("/capabilities", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, node.capabilities())
+		writeJSON(w, http.StatusOK, node.capabilities(r.Context(), false))
 	})
 	mux.HandleFunc("POST /api/v1/internal/viewer/prepare", node.handlePrepareViewer)
 	mux.HandleFunc("POST /api/v1/internal/blob-key/verify", node.handleVerifyBlobKeyEnvelope)
@@ -583,12 +587,12 @@ func writeAssetFile(path string, payload []byte, mode fs.FileMode) error {
 	return os.Rename(tmpPath, path)
 }
 
-func (n *nodeAgent) capabilities() map[string]any {
+func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map[string]any {
 	blobStoreKind := strings.TrimSpace(n.cfg.BlobStoreKind)
 	if blobStoreKind == "" {
 		blobStoreKind = blobStoreLocal
 	}
-	return map[string]any{
+	capabilities := map[string]any{
 		"id":                  n.cfg.NodeID,
 		"name":                n.cfg.NodeName,
 		"public_key":          n.nodePublicKey,
@@ -601,6 +605,80 @@ func (n *nodeAgent) capabilities() map[string]any {
 		"renterd_bucket":      defaultBlobBucket(n.cfg.RenterdBucket),
 		"renterd_contractset": strings.TrimSpace(n.cfg.RenterdContractSet),
 	}
+	if !includePreflight {
+		return capabilities
+	}
+	report, at := n.cachedStoragePreflight(ctx)
+	if !at.IsZero() {
+		status := storagePreflightStatus(report)
+		capabilities["storage_preflight_kind"] = report.Store
+		capabilities["storage_preflight_status"] = status
+		capabilities["storage_preflight_at"] = at.Format(time.RFC3339Nano)
+		capabilities["storage_preflight_json"] = mustJSON(report)
+		if strings.TrimSpace(report.WalletAddress) != "" {
+			capabilities["storage_wallet_address"] = strings.TrimSpace(report.WalletAddress)
+		}
+	}
+	return capabilities
+}
+
+func (n *nodeAgent) cachedStoragePreflight(ctx context.Context) (blobPreflightReport, time.Time) {
+	interval := n.cfg.BlobPreflightInterval
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	n.blobPreflightMu.Lock()
+	defer n.blobPreflightMu.Unlock()
+	now := time.Now().UTC()
+	if !n.blobPreflightAt.IsZero() && now.Sub(n.blobPreflightAt) < interval {
+		return n.blobPreflightReport, n.blobPreflightAt
+	}
+	kind := strings.TrimSpace(n.cfg.BlobStoreKind)
+	if strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" {
+		kind = blobStoreRenterd
+	}
+	preflightCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	report := n.runBlobPreflightForKind(preflightCtx, kind)
+	n.blobPreflightReport = report
+	n.blobPreflightAt = now
+	return report, now
+}
+
+func storagePreflightStatus(report blobPreflightReport) string {
+	if report.OK {
+		return "ready"
+	}
+	if strings.EqualFold(report.Store, blobStoreRenterd) {
+		for _, check := range report.Checks {
+			if (check.Name == "worker_url" || check.Name == "api_password") && check.Status == "fail" {
+				return "error"
+			}
+			if check.Name == "consensus_state" && check.Status == "fail" {
+				if strings.Contains(strings.ToLower(check.Detail), "not synced") {
+					return "syncing"
+				}
+				return "error"
+			}
+		}
+		for _, check := range report.Checks {
+			if check.Name == "wallet" && check.Status == "warn" {
+				return "funding_required"
+			}
+			if check.Name == "active_contracts" && check.Status == "fail" {
+				return "contracts_required"
+			}
+		}
+	}
+	return "error"
+}
+
+func mustJSON(value any) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
 }
 
 func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) {
@@ -797,7 +875,7 @@ func (n *nodeAgent) reconcileLoop(ctx context.Context) {
 }
 
 func (n *nodeAgent) sendHeartbeat(ctx context.Context) {
-	body, err := json.Marshal(n.capabilities())
+	body, err := json.Marshal(n.capabilities(ctx, true))
 	if err != nil {
 		log.Printf("marshal heartbeat: %v", err)
 		return

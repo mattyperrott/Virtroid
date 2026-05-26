@@ -90,6 +90,7 @@ type AccountStorage struct {
 	Provider              string     `json:"provider"`
 	FundingModel          string     `json:"funding_model"`
 	WalletAddress         *string    `json:"wallet_address,omitempty"`
+	FundingAddress        *string    `json:"funding_address,omitempty"`
 	EncryptedSeedBlob     *string    `json:"encrypted_seed_blob,omitempty"`
 	SeedEncryptionHint    *string    `json:"seed_encryption_hint,omitempty"`
 	Status                string     `json:"status"`
@@ -279,26 +280,38 @@ type UpdateAccountStorageInput struct {
 }
 
 type Host struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	AdvertiseAddr   string    `json:"advertise_addr"`
-	RelayPort       int       `json:"relay_port"`
-	DockerSocket    bool      `json:"docker_socket"`
-	Binder          bool      `json:"binder"`
-	PublicKey       string    `json:"public_key,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	LastHeartbeatAt time.Time `json:"last_heartbeat_at"`
+	ID                     string     `json:"id"`
+	Name                   string     `json:"name"`
+	AdvertiseAddr          string     `json:"advertise_addr"`
+	RelayPort              int        `json:"relay_port"`
+	DockerSocket           bool       `json:"docker_socket"`
+	Binder                 bool       `json:"binder"`
+	PublicKey              string     `json:"public_key,omitempty"`
+	BlobStoreKind          string     `json:"blob_store_kind"`
+	StoragePreflightKind   *string    `json:"storage_preflight_kind,omitempty"`
+	StoragePreflightStatus *string    `json:"storage_preflight_status,omitempty"`
+	StoragePreflightJSON   *string    `json:"storage_preflight_json,omitempty"`
+	StoragePreflightAt     *time.Time `json:"storage_preflight_at,omitempty"`
+	StorageWalletAddress   *string    `json:"storage_wallet_address,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+	LastHeartbeatAt        time.Time  `json:"last_heartbeat_at"`
 }
 
 type HostHeartbeat struct {
-	ID            string
-	Name          string
-	AdvertiseAddr string
-	RelayPort     int
-	DockerSocket  bool
-	Binder        bool
-	PublicKey     string
+	ID                     string
+	Name                   string
+	AdvertiseAddr          string
+	RelayPort              int
+	DockerSocket           bool
+	Binder                 bool
+	PublicKey              string
+	BlobStoreKind          string
+	StoragePreflightKind   string
+	StoragePreflightStatus string
+	StoragePreflightJSON   string
+	StoragePreflightAt     *time.Time
+	StorageWalletAddress   string
 }
 
 type RuntimeObservation struct {
@@ -1427,6 +1440,7 @@ func (s *Store) GetAccountStorage(ctx context.Context, accountID string) (Accoun
 	).Scan(scanAccountStorageDest(&storage)...)
 	if err == nil {
 		storage.EncryptedSeedBackedUp = storage.EncryptedSeedBlob != nil && strings.TrimSpace(*storage.EncryptedSeedBlob) != ""
+		s.applyLatestStoragePreflight(ctx, &storage)
 		return storage, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -1438,7 +1452,7 @@ func (s *Store) GetAccountStorage(ctx context.Context, accountID string) (Accoun
 		return AccountStorage{}, err
 	}
 	now := time.Now().UTC()
-	return AccountStorage{
+	storage = AccountStorage{
 		AccountID:       accountID,
 		Provider:        "local-disk",
 		FundingModel:    "operator",
@@ -1446,7 +1460,56 @@ func (s *Store) GetAccountStorage(ctx context.Context, accountID string) (Accoun
 		CreatedAt:       createdAt,
 		UpdatedAt:       now,
 		LastPreflightAt: nil,
-	}, nil
+	}
+	s.applyLatestStoragePreflight(ctx, &storage)
+	return storage, nil
+}
+
+func (s *Store) applyLatestStoragePreflight(ctx context.Context, storage *AccountStorage) {
+	if storage == nil {
+		return
+	}
+	var kind sql.NullString
+	var status sql.NullString
+	var payload sql.NullString
+	var at sql.NullTime
+	var walletAddress sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT storage_preflight_kind, storage_preflight_status, storage_preflight_json,
+		        storage_preflight_at, storage_wallet_address
+		   FROM hosts
+		  WHERE storage_preflight_kind = 'sia-renterd'
+		    AND last_heartbeat_at >= NOW() - INTERVAL '5 minutes'
+		  ORDER BY CASE WHEN storage_preflight_status = 'ready' THEN 0 ELSE 1 END,
+		           last_heartbeat_at DESC
+		  LIMIT 1`,
+	).Scan(&kind, &status, &payload, &at, &walletAddress)
+	if err != nil {
+		return
+	}
+	if strings.TrimSpace(storage.Provider) == "" || storage.Provider == "local-disk" {
+		storage.Provider = "sia-renterd"
+		storage.FundingModel = "operator-pooled"
+	}
+	if status.Valid && strings.TrimSpace(storage.Status) == "not_configured" {
+		storage.Status = strings.TrimSpace(status.String)
+	}
+	if payload.Valid && strings.TrimSpace(payload.String) != "" {
+		storage.LastPreflightJSON = &payload.String
+	}
+	if status.Valid && strings.TrimSpace(status.String) != "" {
+		storage.LastPreflightStatus = &status.String
+	}
+	if at.Valid {
+		storage.LastPreflightAt = &at.Time
+	}
+	if walletAddress.Valid && strings.TrimSpace(walletAddress.String) != "" {
+		storage.FundingAddress = &walletAddress.String
+		if storage.WalletAddress == nil || strings.TrimSpace(*storage.WalletAddress) == "" {
+			storage.WalletAddress = &walletAddress.String
+		}
+	}
+	_ = kind
 }
 
 func (s *Store) ListAppCatalog(ctx context.Context, accountID, search string) ([]AppCatalogEntry, error) {
@@ -2633,7 +2696,10 @@ func (s *Store) AppendSecurityEventLimited(ctx context.Context, event SecurityEv
 
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
+		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		        created_at, updated_at, last_heartbeat_at
 		 FROM hosts ORDER BY last_heartbeat_at DESC`,
 	)
 	if err != nil {
@@ -2652,6 +2718,12 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 			&host.DockerSocket,
 			&host.Binder,
 			&host.PublicKey,
+			&host.BlobStoreKind,
+			&host.StoragePreflightKind,
+			&host.StoragePreflightStatus,
+			&host.StoragePreflightJSON,
+			&host.StoragePreflightAt,
+			&host.StorageWalletAddress,
 			&host.CreatedAt,
 			&host.UpdatedAt,
 			&host.LastHeartbeatAt,
@@ -2667,7 +2739,10 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 	var host Host
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
+		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		        created_at, updated_at, last_heartbeat_at
 		 FROM hosts WHERE id = $1`,
 		hostID,
 	).Scan(
@@ -2678,6 +2753,12 @@ func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 		&host.DockerSocket,
 		&host.Binder,
 		&host.PublicKey,
+		&host.BlobStoreKind,
+		&host.StoragePreflightKind,
+		&host.StoragePreflightStatus,
+		&host.StoragePreflightJSON,
+		&host.StoragePreflightAt,
+		&host.StorageWalletAddress,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -2776,21 +2857,34 @@ func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, 
 func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat) (Host, error) {
 	var host Host
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO hosts (id, name, advertise_addr, relay_port, docker_socket, binder, public_key)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO hosts (
+		     id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		     blob_store_kind, storage_preflight_kind, storage_preflight_status,
+		     storage_preflight_json, storage_preflight_at, storage_wallet_address
+		 )
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 ON CONFLICT (id) DO UPDATE
 		 SET name = EXCLUDED.name,
 		     advertise_addr = EXCLUDED.advertise_addr,
 		     relay_port = EXCLUDED.relay_port,
 		     docker_socket = EXCLUDED.docker_socket,
 		     binder = EXCLUDED.binder,
+		     blob_store_kind = EXCLUDED.blob_store_kind,
+		     storage_preflight_kind = EXCLUDED.storage_preflight_kind,
+		     storage_preflight_status = EXCLUDED.storage_preflight_status,
+		     storage_preflight_json = EXCLUDED.storage_preflight_json,
+		     storage_preflight_at = EXCLUDED.storage_preflight_at,
+		     storage_wallet_address = EXCLUDED.storage_wallet_address,
 		     public_key = CASE
 		         WHEN COALESCE(hosts.public_key, '') = '' THEN EXCLUDED.public_key
 		         ELSE hosts.public_key
 		     END,
 		     updated_at = NOW(),
 		     last_heartbeat_at = NOW()
-		 RETURNING id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at`,
+		 RETURNING id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		           blob_store_kind, storage_preflight_kind, storage_preflight_status,
+		           storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		           created_at, updated_at, last_heartbeat_at`,
 		heartbeat.ID,
 		heartbeat.Name,
 		heartbeat.AdvertiseAddr,
@@ -2798,6 +2892,12 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		heartbeat.DockerSocket,
 		heartbeat.Binder,
 		strings.TrimSpace(heartbeat.PublicKey),
+		normalizeChoice(heartbeat.BlobStoreKind, "local-disk", "local-disk", "sia-renterd"),
+		nullStringValue(heartbeat.StoragePreflightKind),
+		nullStringValue(heartbeat.StoragePreflightStatus),
+		nullStringValue(heartbeat.StoragePreflightJSON),
+		heartbeat.StoragePreflightAt,
+		nullStringValue(heartbeat.StorageWalletAddress),
 	).Scan(
 		&host.ID,
 		&host.Name,
@@ -2806,6 +2906,12 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		&host.DockerSocket,
 		&host.Binder,
 		&host.PublicKey,
+		&host.BlobStoreKind,
+		&host.StoragePreflightKind,
+		&host.StoragePreflightStatus,
+		&host.StoragePreflightJSON,
+		&host.StoragePreflightAt,
+		&host.StorageWalletAddress,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -4103,7 +4209,10 @@ func requireReadyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (string,
 func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, error) {
 	var host Host
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key, created_at, updated_at, last_heartbeat_at
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
+		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		        created_at, updated_at, last_heartbeat_at
 		 FROM hosts WHERE id = $1`,
 		strings.TrimSpace(hostID),
 	).Scan(
@@ -4114,6 +4223,12 @@ func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, err
 		&host.DockerSocket,
 		&host.Binder,
 		&host.PublicKey,
+		&host.BlobStoreKind,
+		&host.StoragePreflightKind,
+		&host.StoragePreflightStatus,
+		&host.StoragePreflightJSON,
+		&host.StoragePreflightAt,
+		&host.StorageWalletAddress,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -4546,14 +4661,14 @@ func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error)
 
 func normalizeAccountStorageInput(input UpdateAccountStorageInput) (UpdateAccountStorageInput, error) {
 	input.Provider = normalizeChoice(input.Provider, "local-disk", "local-disk", "sia-renterd")
-	input.FundingModel = normalizeChoice(input.FundingModel, "operator", "operator", "user-funded")
+	input.FundingModel = normalizeChoice(input.FundingModel, "operator", "operator", "operator-pooled", "user-funded")
 	input.Status = normalizeChoice(input.Status, "not_configured", "not_configured", "configured", "funding_required", "syncing", "contracts_required", "ready", "error")
 
-	if input.Provider == "sia-renterd" && input.FundingModel != "user-funded" {
-		return UpdateAccountStorageInput{}, errors.New("sia-renterd storage requires user-funded mode")
+	if input.Provider == "sia-renterd" && input.FundingModel != "user-funded" && input.FundingModel != "operator-pooled" {
+		return UpdateAccountStorageInput{}, errors.New("sia-renterd storage requires user-funded or operator-pooled mode")
 	}
-	if input.FundingModel == "user-funded" && input.Provider != "sia-renterd" {
-		return UpdateAccountStorageInput{}, errors.New("user-funded storage requires sia-renterd provider")
+	if (input.FundingModel == "user-funded" || input.FundingModel == "operator-pooled") && input.Provider != "sia-renterd" {
+		return UpdateAccountStorageInput{}, errors.New("sia-renterd funding modes require sia-renterd provider")
 	}
 	if input.WalletAddress != nil && len(strings.TrimSpace(*input.WalletAddress)) > 256 {
 		return UpdateAccountStorageInput{}, errors.New("wallet address is too long")
@@ -4693,6 +4808,14 @@ func nullString(value *string) sql.NullString {
 		return sql.NullString{}
 	}
 	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: trimmed, Valid: true}
+}
+
+func nullStringValue(value string) sql.NullString {
+	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return sql.NullString{}
 	}

@@ -72,9 +72,10 @@ type persistedBlob struct {
 }
 
 type blobPreflightReport struct {
-	Store  string               `json:"store"`
-	OK     bool                 `json:"ok"`
-	Checks []blobPreflightCheck `json:"checks"`
+	Store         string               `json:"store"`
+	OK            bool                 `json:"ok"`
+	WalletAddress string               `json:"wallet_address,omitempty"`
+	Checks        []blobPreflightCheck `json:"checks"`
 }
 
 type blobPreflightCheck struct {
@@ -89,14 +90,15 @@ type localBlobStore struct {
 }
 
 type renterdBlobStore struct {
-	workerURL   string
-	password    string
-	bucket      string
-	minShards   int
-	totalShards int
-	contractSet string
-	chunkSize   int64
-	httpClient  *http.Client
+	workerURL     string
+	password      string
+	bucket        string
+	walletAddress string
+	minShards     int
+	totalShards   int
+	contractSet   string
+	chunkSize     int64
+	httpClient    *http.Client
 }
 
 func (n *nodeAgent) blobStores() map[string]blobStore {
@@ -108,14 +110,15 @@ func (n *nodeAgent) blobStores() map[string]blobStore {
 	}
 	if strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" {
 		stores[blobStoreRenterd] = &renterdBlobStore{
-			workerURL:   strings.TrimRight(strings.TrimSpace(n.cfg.RenterdWorkerURL), "/"),
-			password:    n.cfg.RenterdPassword,
-			bucket:      defaultBlobBucket(n.cfg.RenterdBucket),
-			minShards:   n.cfg.RenterdMinShards,
-			totalShards: n.cfg.RenterdTotalShards,
-			contractSet: strings.TrimSpace(n.cfg.RenterdContractSet),
-			chunkSize:   blobChunkSize,
-			httpClient:  &http.Client{Timeout: 10 * time.Minute},
+			workerURL:     strings.TrimRight(strings.TrimSpace(n.cfg.RenterdWorkerURL), "/"),
+			password:      n.cfg.RenterdPassword,
+			bucket:        defaultBlobBucket(n.cfg.RenterdBucket),
+			walletAddress: strings.TrimSpace(n.cfg.RenterdWalletAddress),
+			minShards:     n.cfg.RenterdMinShards,
+			totalShards:   n.cfg.RenterdTotalShards,
+			contractSet:   strings.TrimSpace(n.cfg.RenterdContractSet),
+			chunkSize:     blobChunkSize,
+			httpClient:    &http.Client{Timeout: 10 * time.Minute},
 		}
 	}
 	return stores
@@ -141,8 +144,12 @@ func (n *nodeAgent) blobStoreForManifest(manifest *blobManifest) (blobStore, err
 }
 
 func (n *nodeAgent) runBlobPreflight(ctx context.Context) blobPreflightReport {
+	return n.runBlobPreflightForKind(ctx, n.cfg.BlobStoreKind)
+}
+
+func (n *nodeAgent) runBlobPreflightForKind(ctx context.Context, kind string) blobPreflightReport {
 	report := blobPreflightReport{
-		Store: strings.TrimSpace(n.cfg.BlobStoreKind),
+		Store: strings.TrimSpace(kind),
 		OK:    true,
 	}
 	if report.Store == "" {
@@ -700,6 +707,9 @@ func (s *renterdBlobStore) kind() string {
 }
 
 func (s *renterdBlobStore) preflight(ctx context.Context, report *blobPreflightReport) {
+	if address := strings.TrimSpace(s.walletAddress); address != "" {
+		report.WalletAddress = address
+	}
 	if strings.TrimSpace(s.workerURL) == "" {
 		report.addCheck("worker_url", "fail", "NODE_SIA_RENTERD_WORKER_URL is required")
 		return
@@ -726,9 +736,18 @@ func (s *renterdBlobStore) preflight(ctx context.Context, report *blobPreflightR
 	if err := s.getRenterdJSON(ctx, "/api/bus/wallet", &wallet); err != nil {
 		report.addCheck("wallet", "fail", err.Error())
 	} else if nonZeroCurrencyValue(wallet, "siacoins", "balance", "spendable") {
+		if report.WalletAddress == "" {
+			report.WalletAddress = findStringValue(wallet, "address", "walletAddress", "receiveAddress")
+		}
 		report.addCheck("wallet", "pass", "funded")
 	} else {
+		if report.WalletAddress == "" {
+			report.WalletAddress = findStringValue(wallet, "address", "walletAddress", "receiveAddress")
+		}
 		report.addCheck("wallet", "warn", "wallet endpoint reachable; non-zero balance was not detected")
+	}
+	if report.WalletAddress == "" {
+		report.WalletAddress = s.fetchWalletAddress(ctx)
 	}
 
 	var contracts []json.RawMessage
@@ -739,6 +758,14 @@ func (s *renterdBlobStore) preflight(ctx context.Context, report *blobPreflightR
 	} else {
 		report.addCheck("active_contracts", "pass", fmt.Sprintf("%d active contracts", len(contracts)))
 	}
+}
+
+func (s *renterdBlobStore) fetchWalletAddress(ctx context.Context) string {
+	var value any
+	if err := s.getRenterdJSON(ctx, "/api/bus/wallet/address", &value); err != nil {
+		return ""
+	}
+	return normalizeWalletAddress(value)
 }
 
 func (s *renterdBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDir string, masterKey []byte) (*blobManifest, error) {
@@ -1088,6 +1115,59 @@ func findBoolValue(value any, key string) (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+func findStringValue(value any, keys ...string) string {
+	wanted := map[string]struct{}{}
+	for _, key := range keys {
+		wanted[strings.ToLower(key)] = struct{}{}
+	}
+	return findStringValueByKeys(value, wanted)
+}
+
+func findStringValueByKeys(value any, wanted map[string]struct{}) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, currentValue := range typed {
+			if _, ok := wanted[strings.ToLower(key)]; ok {
+				if found := normalizeWalletAddress(currentValue); found != "" {
+					return found
+				}
+			}
+			if nested := findStringValueByKeys(currentValue, wanted); nested != "" {
+				return nested
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if nested := findStringValueByKeys(item, wanted); nested != "" {
+				return nested
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeWalletAddress(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		for _, key := range []string{"address", "walletAddress", "receiveAddress"} {
+			if found, ok := typed[key]; ok {
+				if value := normalizeWalletAddress(found); value != "" {
+					return value
+				}
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if value := normalizeWalletAddress(item); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func nonZeroCurrencyValue(value any, keys ...string) bool {

@@ -387,6 +387,18 @@ func TestRenterdPreflightPassesWhenReady(t *testing.T) {
 	assertPreflightStatus(t, report, "active_contracts", "pass")
 }
 
+func TestRenterdPreflightReportsConfiguredWalletAddress(t *testing.T) {
+	server := newRenterdPreflightServer(t, "secret", true, true)
+	cfg := configForRenterdTest(server.URL, "secret")
+	cfg.RenterdWalletAddress = "addr:configured"
+	node := &nodeAgent{cfg: cfg}
+
+	report := node.runBlobPreflight(context.Background())
+	if report.WalletAddress != "addr:configured" {
+		t.Fatalf("WalletAddress = %q, want configured address", report.WalletAddress)
+	}
+}
+
 func TestRenterdPreflightFailsWithoutContracts(t *testing.T) {
 	server := newRenterdPreflightServer(t, "secret", true, false)
 	node := &nodeAgent{

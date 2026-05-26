@@ -6,8 +6,27 @@ blob storage to `sia-renterd` before the smoke test passes.
 
 ## Funding model
 
-The current safe model is user-funded storage metadata with no backend custody of
-raw wallet seeds:
+The current production path uses an operator-pooled renterd wallet per runtime
+node. This matches how renterd forms storage contracts: the renterd daemon owns
+the wallet that pays hosts and stores encrypted runtime chunks.
+
+The account-facing API still keeps storage metadata scoped to the account, but
+it does not claim per-account renterd custody:
+
+- renterd runs with a node/operator Sia wallet seed
+- the node reports renterd wallet funding, consensus, contract status, and the
+  configured deposit address through signed host heartbeats
+- the backend exposes that status through `GET /api/v1/me/storage`
+- the Android client shows direct SC funding status and copies the Sia deposit
+  address; it does not show a fake USDT/swap quote
+- live runtime blobs stay on `local-disk` until renterd preflight and smoke
+  tests pass, then new snapshots can be switched to `sia-renterd`
+
+A future per-account wallet model is still possible, but it requires explicit
+accounting, contract allocation, and wallet custody design. Do not store raw
+account wallet seeds in the control plane.
+
+If a user-owned seed backup is later added, the safe constraint remains:
 
 - the app generates or imports a user-owned Sia seed
 - the app encrypts that seed with the user's identity password before sending any
@@ -24,15 +43,14 @@ GET /api/v1/me/storage
 PUT /api/v1/me/storage
 ```
 
-For user-funded Sia storage, use:
+For operator-pooled Sia storage, the account-facing state looks like:
 
 ```json
 {
   "provider": "sia-renterd",
-  "funding_model": "user-funded",
-  "wallet_address": "<user sia address>",
-  "encrypted_seed_blob": "<client encrypted seed backup>",
-  "seed_encryption_hint": "identity-password:v1",
+  "funding_model": "operator-pooled",
+  "funding_address": "<renterd deposit address>",
+  "wallet_address": "<renterd deposit address>",
   "status": "funding_required"
 }
 ```
@@ -43,15 +61,18 @@ Edit `/opt/virtroid/deploy/vps/.env` on the VPS:
 
 ```dotenv
 RENTERD_API_PASSWORD=<long random API password>
-RENTERD_SEED=<user-owned Sia wallet seed>
+RENTERD_SEED=<node/operator Sia wallet seed>
 
 NODE_SIA_RENTERD_WORKER_URL=http://renterd:9980
 NODE_SIA_RENTERD_PASSWORD=<same API password>
 NODE_SIA_RENTERD_BUCKET=virtroid
+NODE_SIA_RENTERD_WALLET_ADDRESS=<renterd receive address shown in the UI>
 ```
 
 The renterd seed controls the wallet used for storage contracts. Generate and
-back it up outside this repository before funding it.
+back it up outside this repository before funding it. The wallet address is
+reported to the app through `NODE_SIA_RENTERD_WALLET_ADDRESS` unless the renterd
+API exposes a receive address that the node can discover automatically.
 
 ## 2. Start renterd only
 
@@ -72,7 +93,8 @@ Use the renterd UI or API on the VPS loopback port:
 ssh -L 9980:127.0.0.1:9980 codex@176.126.70.76
 ```
 
-Then open `http://127.0.0.1:9980` locally. Fund the wallet and form storage
+Then open `http://127.0.0.1:9980` locally. Copy the renterd receive address into
+`NODE_SIA_RENTERD_WALLET_ADDRESS`, fund the wallet with SC, and form storage
 contracts before enabling runtime snapshots.
 
 ## 4. Run blob smoke test

@@ -134,8 +134,12 @@ data class AccountStorage(
     val provider: String,
     val fundingModel: String,
     val walletAddress: String?,
+    val fundingAddress: String?,
     val status: String,
     val encryptedSeedBackedUp: Boolean,
+    val lastPreflightStatus: String?,
+    val lastPreflightJson: String?,
+    val lastPreflightAt: String?,
 )
 
 data class TrustedDeviceSummary(
@@ -1149,8 +1153,12 @@ class VirtroidApi(
             provider = optString("provider", "local-disk"),
             fundingModel = optString("funding_model", "operator"),
             walletAddress = optString("wallet_address").ifBlank { null },
+            fundingAddress = optString("funding_address").ifBlank { null },
             status = optString("status", "not_configured"),
             encryptedSeedBackedUp = optBoolean("encrypted_seed_backed_up", false),
+            lastPreflightStatus = optString("last_preflight_status").ifBlank { null },
+            lastPreflightJson = optString("last_preflight_json").ifBlank { null },
+            lastPreflightAt = optString("last_preflight_at").ifBlank { null },
         )
     }
 

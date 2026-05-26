@@ -161,14 +161,21 @@ class AccountIdentityActivity : AppCompatActivity() {
                 api.getStorage(sessionStore.baseUrl, accountId, deviceId)
             }.onSuccess { storage ->
                 binding.storageBackendValue.text = storage.provider.ifBlank { "local" }
-                binding.storageReadyChip.text = storage.status.ifBlank { getString(R.string.account_storage_unavailable) }
-                binding.storageCreditValue.text = storage.walletAddress?.takeIf { it.isNotBlank() }?.let(::shortId) ?: "--"
+                binding.storageReadyChip.text = storage.lastPreflightStatus
+                    ?.ifBlank { null }
+                    ?: storage.status.ifBlank { getString(R.string.account_storage_unavailable) }
+                binding.storageCreditValue.text = storage.fundingAddress
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::shortId)
+                    ?: storage.walletAddress?.takeIf { it.isNotBlank() }?.let(::shortId)
+                    ?: "--"
                 binding.storageUsageValue.text = "--"
                 binding.storageUsageUnit.text = ""
                 binding.storageUsageSubtitle.text = getString(R.string.account_storage_usage_unreported)
                 binding.storageSnapshots.text = getString(R.string.account_storage_snapshots_unreported)
                 binding.storageRunwayIcon.text = "--"
-                binding.storageRunwayValue.text = getString(R.string.account_storage_runway_unreported)
+                binding.storageRunwayValue.text = storage.lastPreflightAt?.takeIf { it.isNotBlank() }
+                    ?: getString(R.string.account_storage_runway_unreported)
                 binding.identityLastSyncValue.text = OffsetDateTime.now().format(timestampFormatter)
             }.onFailure {
                 binding.storageReadyChip.text = getString(R.string.account_storage_unavailable)
