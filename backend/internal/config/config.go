@@ -50,6 +50,7 @@ type NodeConfig struct {
 	RegistrationSecret string
 	PrivateKey         string
 	AppAPKDir          string
+	AppManifestPath    string
 	DefaultAppPackages []string
 	ViewerCryptPath    string
 	HeartbeatInterval  time.Duration
@@ -152,7 +153,8 @@ func LoadNode() NodeConfig {
 		RegistrationSecret: envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
 		PrivateKey:         os.Getenv("NODE_PRIVATE_KEY_B64"),
 		AppAPKDir:          envOrDefault("NODE_APP_APK_DIR", "/srv/virtroid/apks"),
-		DefaultAppPackages: parseEnvCSV("NODE_DEFAULT_APP_PACKAGES", "org.fdroid.basic,projekt.launcher"),
+		AppManifestPath:    envOrDefault("NODE_APP_MANIFEST_PATH", "/srv/virtroid/apks/manifest.json"),
+		DefaultAppPackages: parseEnvCSV("NODE_DEFAULT_APP_PACKAGES", "org.fdroid.basic"),
 		ViewerCryptPath:    envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtroid-viewercrypt"),
 		HeartbeatInterval:  heartbeatInterval,
 		ReconcileInterval:  reconcileInterval,

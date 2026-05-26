@@ -40,17 +40,13 @@ import (
 var errContainerNotFound = errors.New("container not found")
 var appPackageNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
 
-var defaultAppCatalog = map[string]runtimeApp{
+var builtInTrustedAppCatalog = map[string]runtimeApp{
 	"org.fdroid.basic": {
 		PackageName:  "org.fdroid.basic",
 		DisplayName:  "F-Droid Basic",
 		APKURL:       "https://f-droid.org/repo/org.fdroid.basic_2000009.apk",
 		APKSHA256:    "1aa1931bf61e11382c2b225581d4adcd2d9803697a144a84c6eb4db04f67cafb",
 		APKSizeBytes: 11391212,
-	},
-	"projekt.launcher": {
-		PackageName: "projekt.launcher",
-		DisplayName: "hyperion launcher",
 	},
 }
 
@@ -210,6 +206,30 @@ type runtimeApp struct {
 	APKURL       string `json:"apk_url"`
 	APKSHA256    string `json:"apk_sha256"`
 	APKSizeBytes int64  `json:"apk_size_bytes"`
+	Artifact     string `json:"-"`
+	InstallMode  string `json:"-"`
+}
+
+type appInstallManifest struct {
+	Version         int                `json:"version"`
+	DefaultPackages []string           `json:"default_packages"`
+	Apps            []appManifestEntry `json:"apps"`
+}
+
+type appManifestEntry struct {
+	PackageName  string `json:"package_name"`
+	DisplayName  string `json:"display_name"`
+	Artifact     string `json:"artifact"`
+	InstallMode  string `json:"install_mode"`
+	SHA256       string `json:"sha256"`
+	SourceURL    string `json:"source_url"`
+	APKSizeBytes int64  `json:"apk_size_bytes"`
+	Default      bool   `json:"default"`
+}
+
+type trustedAppCatalog struct {
+	apps            map[string]runtimeApp
+	defaultPackages []string
 }
 
 type relayTarget struct {
@@ -1687,14 +1707,18 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 }
 
 func (n *nodeAgent) runtimeAppsToInstall(runtime runtimeAssignment) []runtimeApp {
-	seen := make(map[string]bool, len(n.cfg.DefaultAppPackages)+len(runtime.SelectedApps))
-	apps := make([]runtimeApp, 0, len(n.cfg.DefaultAppPackages)+len(runtime.SelectedApps))
-	for _, packageName := range n.cfg.DefaultAppPackages {
+	catalog := n.trustedAppCatalog()
+	defaultPackages := append([]string{}, n.cfg.DefaultAppPackages...)
+	defaultPackages = append(defaultPackages, catalog.defaultPackages...)
+
+	seen := make(map[string]bool, len(defaultPackages)+len(runtime.SelectedApps))
+	apps := make([]runtimeApp, 0, len(defaultPackages)+len(runtime.SelectedApps))
+	for _, packageName := range defaultPackages {
 		packageName = strings.TrimSpace(packageName)
 		if packageName == "" || seen[packageName] {
 			continue
 		}
-		app, ok := defaultAppCatalog[packageName]
+		app, ok := catalog.apps[packageName]
 		if !ok {
 			app = runtimeApp{
 				PackageName: packageName,
@@ -1710,9 +1734,110 @@ func (n *nodeAgent) runtimeAppsToInstall(runtime runtimeAssignment) []runtimeApp
 			continue
 		}
 		seen[packageName] = true
+		if catalogApp, ok := catalog.apps[packageName]; ok {
+			app = mergeRuntimeApp(app, catalogApp)
+		}
 		apps = append(apps, app)
 	}
 	return apps
+}
+
+func mergeRuntimeApp(selection runtimeApp, trusted runtimeApp) runtimeApp {
+	if strings.TrimSpace(trusted.PackageName) != "" {
+		selection.PackageName = trusted.PackageName
+	}
+	if strings.TrimSpace(trusted.DisplayName) != "" {
+		selection.DisplayName = trusted.DisplayName
+	}
+	if strings.TrimSpace(trusted.Artifact) != "" {
+		selection.Artifact = trusted.Artifact
+	}
+	if strings.TrimSpace(trusted.InstallMode) != "" {
+		selection.InstallMode = trusted.InstallMode
+	}
+	if strings.TrimSpace(trusted.APKSHA256) != "" {
+		selection.APKSHA256 = trusted.APKSHA256
+	}
+	if trusted.APKSizeBytes > 0 {
+		selection.APKSizeBytes = trusted.APKSizeBytes
+	}
+	return selection
+}
+
+func (n *nodeAgent) trustedAppCatalog() trustedAppCatalog {
+	catalog := trustedAppCatalog{
+		apps: make(map[string]runtimeApp, len(builtInTrustedAppCatalog)),
+	}
+	for packageName, app := range builtInTrustedAppCatalog {
+		catalog.apps[packageName] = app
+	}
+
+	manifestPath := strings.TrimSpace(n.cfg.AppManifestPath)
+	if manifestPath == "" {
+		manifestPath = filepath.Join(n.appAPKRoot(), "manifest.json")
+	}
+	file, err := os.Open(manifestPath)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("read app install manifest: %v", err)
+		}
+		return catalog
+	}
+	defer file.Close()
+
+	var manifest appInstallManifest
+	if err := json.NewDecoder(io.LimitReader(file, 2*1024*1024)).Decode(&manifest); err != nil {
+		log.Printf("parse app install manifest: %v", err)
+		return catalog
+	}
+	if manifest.Version != 0 && manifest.Version != 1 {
+		log.Printf("app install manifest has unsupported version %d", manifest.Version)
+		return catalog
+	}
+	catalog.defaultPackages = append(catalog.defaultPackages, manifest.DefaultPackages...)
+	for _, entry := range manifest.Apps {
+		app, err := runtimeAppFromManifestEntry(entry)
+		if err != nil {
+			log.Printf("skip app manifest entry: %v", err)
+			continue
+		}
+		catalog.apps[app.PackageName] = app
+		if entry.Default {
+			catalog.defaultPackages = append(catalog.defaultPackages, app.PackageName)
+		}
+	}
+	return catalog
+}
+
+func runtimeAppFromManifestEntry(entry appManifestEntry) (runtimeApp, error) {
+	packageName := strings.TrimSpace(entry.PackageName)
+	if !appPackageNamePattern.MatchString(packageName) {
+		return runtimeApp{}, fmt.Errorf("invalid app package %q", packageName)
+	}
+	pin, err := normalizeSHA256Pin(entry.SHA256)
+	if err != nil {
+		return runtimeApp{}, fmt.Errorf("%s: %w", packageName, err)
+	}
+	artifact := strings.TrimSpace(entry.Artifact)
+	if artifact == "" {
+		return runtimeApp{}, fmt.Errorf("%s: artifact is required", packageName)
+	}
+	mode, err := normalizeInstallMode(entry.InstallMode, artifact)
+	if err != nil {
+		return runtimeApp{}, fmt.Errorf("%s: %w", packageName, err)
+	}
+	displayName := strings.TrimSpace(entry.DisplayName)
+	if displayName == "" {
+		displayName = packageName
+	}
+	return runtimeApp{
+		PackageName:  packageName,
+		DisplayName:  displayName,
+		Artifact:     artifact,
+		InstallMode:  mode,
+		APKSHA256:    pin,
+		APKSizeBytes: entry.APKSizeBytes,
+	}, nil
 }
 
 func (n *nodeAgent) androidPackageInstalled(ctx context.Context, serial, packageName string) bool {
@@ -1755,35 +1880,30 @@ func (n *nodeAgent) adbInstallMultipleAPKs(ctx context.Context, serial string, a
 
 func (n *nodeAgent) installRuntimeApp(ctx context.Context, serial string, app runtimeApp) error {
 	packageName := strings.TrimSpace(app.PackageName)
-	root := strings.TrimSpace(n.cfg.AppAPKDir)
-	if root == "" {
-		root = "/srv/virtroid/apks"
-	}
-
-	localAPK := filepath.Join(root, packageName+".apk")
-	if regularFileExists(localAPK) {
-		if err := verifyAPKFile(localAPK, app.APKSHA256); err != nil {
-			return err
-		}
-		return n.adbInstallAPK(ctx, serial, localAPK)
-	}
-
-	localAPKM := filepath.Join(root, packageName+".apkm")
-	if regularFileExists(localAPKM) {
-		apkPaths, err := extractAPKM(localAPKM, filepath.Join(root, "cache", packageName+"-apkm"))
+	if strings.TrimSpace(app.Artifact) != "" {
+		artifactPath, err := n.appArtifactPath(app.Artifact)
 		if err != nil {
 			return err
 		}
-		return n.adbInstallMultipleAPKs(ctx, serial, apkPaths)
-	}
-
-	localSplitsDir := filepath.Join(root, packageName)
-	if dirExists(localSplitsDir) {
-		apkPaths, err := listAPKFiles(localSplitsDir)
+		if err := verifyAPKFile(artifactPath, app.APKSHA256); err != nil {
+			return err
+		}
+		mode, err := normalizeInstallMode(app.InstallMode, artifactPath)
 		if err != nil {
 			return err
 		}
-		return n.adbInstallMultipleAPKs(ctx, serial, apkPaths)
+		switch mode {
+		case "single":
+			return n.adbInstallAPK(ctx, serial, artifactPath)
+		case "apkm":
+			apkPaths, err := extractAPKM(artifactPath, filepath.Join(n.appAPKRoot(), "cache", packageName+"-apkm"))
+			if err != nil {
+				return err
+			}
+			return n.adbInstallMultipleAPKs(ctx, serial, apkPaths)
+		default:
+			return fmt.Errorf("unsupported install mode %q", mode)
+		}
 	}
 
 	apkPath, err := n.apkPathForSelectedApp(ctx, app)
@@ -1798,33 +1918,21 @@ func (n *nodeAgent) apkPathForSelectedApp(ctx context.Context, app runtimeApp) (
 	if !appPackageNamePattern.MatchString(packageName) {
 		return "", fmt.Errorf("invalid package name %q", packageName)
 	}
-	root := strings.TrimSpace(n.cfg.AppAPKDir)
-	if root == "" {
-		root = "/srv/virtroid/apks"
-	}
-
-	localPath := filepath.Join(root, packageName+".apk")
-	if regularFileExists(localPath) {
-		if err := verifyAPKFile(localPath, app.APKSHA256); err != nil {
-			return "", err
-		}
-		return localPath, nil
-	}
 
 	apkURL := strings.TrimSpace(app.APKURL)
 	if apkURL == "" {
-		return "", fmt.Errorf("prepacked APK not found at %s and no fallback URL is configured", localPath)
+		return "", errors.New("no trusted artifact or download URL is configured")
+	}
+	pin, err := normalizeSHA256Pin(app.APKSHA256)
+	if err != nil {
+		return "", err
 	}
 	parsed, err := url.Parse(apkURL)
 	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "f-droid.org") {
 		return "", fmt.Errorf("unsupported APK URL")
 	}
 
-	cacheKey := strings.ToLower(strings.TrimSpace(app.APKSHA256))
-	if cacheKey == "" {
-		cacheKey = strings.ReplaceAll(packageName, ".", "_")
-	}
-	cachePath := filepath.Join(root, "cache", cacheKey+".apk")
+	cachePath := filepath.Join(n.appAPKRoot(), "cache", pin+".apk")
 	if regularFileExists(cachePath) {
 		if err := verifyAPKFile(cachePath, app.APKSHA256); err != nil {
 			_ = os.Remove(cachePath)
@@ -1850,6 +1958,53 @@ func (n *nodeAgent) apkPathForSelectedApp(ctx context.Context, app runtimeApp) (
 		return "", err
 	}
 	return cachePath, nil
+}
+
+func (n *nodeAgent) appAPKRoot() string {
+	root := strings.TrimSpace(n.cfg.AppAPKDir)
+	if root == "" {
+		return "/srv/virtroid/apks"
+	}
+	return root
+}
+
+func (n *nodeAgent) appArtifactPath(artifact string) (string, error) {
+	artifact = strings.TrimSpace(artifact)
+	if artifact == "" {
+		return "", errors.New("app artifact path is required")
+	}
+	if filepath.IsAbs(artifact) {
+		return "", errors.New("app artifact path must be relative to NODE_APP_APK_DIR")
+	}
+	cleaned := filepath.Clean(artifact)
+	if cleaned == "." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) || cleaned == ".." {
+		return "", errors.New("app artifact path escapes NODE_APP_APK_DIR")
+	}
+	path := filepath.Join(n.appAPKRoot(), cleaned)
+	if !regularFileExists(path) {
+		return "", fmt.Errorf("trusted app artifact not found: %s", cleaned)
+	}
+	return path, nil
+}
+
+func normalizeInstallMode(mode, artifact string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		switch strings.ToLower(filepath.Ext(artifact)) {
+		case ".apk":
+			mode = "single"
+		case ".apkm":
+			mode = "apkm"
+		default:
+			return "", errors.New("install_mode is required for non-APK artifacts")
+		}
+	}
+	switch mode {
+	case "single", "apkm":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported install_mode %q", mode)
+	}
 }
 
 func extractAPKM(apkmPath, extractDir string) ([]string, error) {
@@ -1903,25 +2058,6 @@ func extractAPKM(apkmPath, extractDir string) ([]string, error) {
 	return apkPaths, nil
 }
 
-func listAPKFiles(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var apkPaths []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".apk") {
-			continue
-		}
-		apkPaths = append(apkPaths, filepath.Join(dir, entry.Name()))
-	}
-	if len(apkPaths) == 0 {
-		return nil, fmt.Errorf("no APK files found in %s", dir)
-	}
-	sort.Strings(apkPaths)
-	return apkPaths, nil
-}
-
 func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, expectedSize int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apkURL, nil)
 	if err != nil {
@@ -1958,9 +2094,9 @@ func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, 
 }
 
 func verifyAPKFile(path, expectedSHA256 string) error {
-	expected := strings.ToLower(strings.TrimSpace(expectedSHA256))
-	if expected == "" {
-		return nil
+	expected, err := normalizeSHA256Pin(expectedSHA256)
+	if err != nil {
+		return err
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -1976,6 +2112,20 @@ func verifyAPKFile(path, expectedSHA256 string) error {
 		return fmt.Errorf("APK hash mismatch for %s", filepath.Base(path))
 	}
 	return nil
+}
+
+func normalizeSHA256Pin(expectedSHA256 string) (string, error) {
+	expected := strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if expected == "" {
+		return "", errors.New("APK SHA-256 pin is required")
+	}
+	if len(expected) != sha256.Size*2 {
+		return "", errors.New("APK SHA-256 pin has invalid length")
+	}
+	if _, err := hex.DecodeString(expected); err != nil {
+		return "", errors.New("APK SHA-256 pin is not valid hex")
+	}
+	return expected, nil
 }
 
 func shellQuote(value string) string {
@@ -2826,11 +2976,6 @@ func fileExists(path string) bool {
 func regularFileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
-}
-
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 func stringPtr(value string) *string {

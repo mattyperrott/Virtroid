@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,7 +38,7 @@ func TestNormalizeViewerPrepareParamsRejectsOutOfRangeValues(t *testing.T) {
 func TestRuntimeAppsToInstallMergesDefaultsAndSelections(t *testing.T) {
 	node := &nodeAgent{
 		cfg: config.NodeConfig{
-			DefaultAppPackages: []string{"org.fdroid.basic", "projekt.launcher"},
+			DefaultAppPackages: []string{"org.fdroid.basic"},
 		},
 	}
 	apps := node.runtimeAppsToInstall(runtimeAssignment{
@@ -44,16 +47,118 @@ func TestRuntimeAppsToInstallMergesDefaultsAndSelections(t *testing.T) {
 			{PackageName: "org.videolan.vlc", DisplayName: "VLC"},
 		},
 	})
-	if len(apps) != 3 {
-		t.Fatalf("len(apps) = %d, want 3: %+v", len(apps), apps)
+	if len(apps) != 2 {
+		t.Fatalf("len(apps) = %d, want 2: %+v", len(apps), apps)
 	}
 	if apps[0].PackageName != "org.fdroid.basic" || apps[0].APKURL == "" || apps[0].APKSHA256 == "" {
 		t.Fatalf("first default app = %+v, want pinned F-Droid Basic metadata", apps[0])
 	}
-	if apps[1].PackageName != "projekt.launcher" {
-		t.Fatalf("second app = %+v, want hyperion launcher default", apps[1])
+	if apps[1].PackageName != "org.videolan.vlc" {
+		t.Fatalf("second app = %+v, want selected VLC after defaults", apps[1])
 	}
-	if apps[2].PackageName != "org.videolan.vlc" {
-		t.Fatalf("third app = %+v, want selected VLC after defaults", apps[2])
+}
+
+func TestRuntimeAppsToInstallLoadsManifestDefaults(t *testing.T) {
+	pin := strings.Repeat("a", 64)
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "manifest.json")
+	manifest := `{
+	  "version": 1,
+	  "apps": [
+	    {
+	      "package_name": "projekt.launcher",
+	      "display_name": "hyperion launcher",
+	      "artifact": "projekt.launcher.apkm",
+	      "install_mode": "apkm",
+	      "sha256": "` + pin + `",
+	      "default": true
+	    }
+	  ]
+	}`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	node := &nodeAgent{
+		cfg: config.NodeConfig{
+			AppAPKDir:       root,
+			AppManifestPath: manifestPath,
+		},
+	}
+	apps := node.runtimeAppsToInstall(runtimeAssignment{})
+	if len(apps) != 1 {
+		t.Fatalf("len(apps) = %d, want 1", len(apps))
+	}
+	if apps[0].PackageName != "projekt.launcher" ||
+		apps[0].Artifact != "projekt.launcher.apkm" ||
+		apps[0].InstallMode != "apkm" ||
+		apps[0].APKSHA256 != pin {
+		t.Fatalf("default app = %+v, want manifest-pinned Hyperion app", apps[0])
+	}
+}
+
+func TestRuntimeAppsToInstallSkipsManifestDefaultsWithoutPin(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "manifest.json")
+	manifest := `{
+	  "version": 1,
+	  "apps": [
+	    {
+	      "package_name": "projekt.launcher",
+	      "display_name": "hyperion launcher",
+	      "artifact": "projekt.launcher.apk",
+	      "default": true
+	    }
+	  ]
+	}`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	node := &nodeAgent{
+		cfg: config.NodeConfig{
+			AppAPKDir:       root,
+			AppManifestPath: manifestPath,
+		},
+	}
+	if apps := node.runtimeAppsToInstall(runtimeAssignment{}); len(apps) != 0 {
+		t.Fatalf("apps = %+v, want unpinned manifest default skipped", apps)
+	}
+}
+
+func TestAPKPathForSelectedAppDoesNotTrustImplicitLocalPackageAPK(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "projekt.launcher.apk"), []byte("malicious"), 0o644); err != nil {
+		t.Fatalf("write local apk: %v", err)
+	}
+	node := &nodeAgent{
+		cfg: config.NodeConfig{
+			AppAPKDir: root,
+		},
+	}
+	_, err := node.apkPathForSelectedApp(context.Background(), runtimeApp{
+		PackageName: "projekt.launcher",
+		DisplayName: "hyperion launcher",
+	})
+	if err == nil || !strings.Contains(err.Error(), "no trusted artifact") {
+		t.Fatalf("apkPathForSelectedApp error = %v, want no trusted artifact", err)
+	}
+}
+
+func TestVerifyAPKFileRequiresPin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.apk")
+	if err := os.WriteFile(path, []byte("apk"), 0o644); err != nil {
+		t.Fatalf("write apk: %v", err)
+	}
+	if err := verifyAPKFile(path, ""); err == nil || !strings.Contains(err.Error(), "pin is required") {
+		t.Fatalf("verifyAPKFile empty pin error = %v, want required pin", err)
+	}
+}
+
+func TestVerifyAPKFileRejectsHashMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.apk")
+	if err := os.WriteFile(path, []byte("apk"), 0o644); err != nil {
+		t.Fatalf("write apk: %v", err)
+	}
+	if err := verifyAPKFile(path, strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "hash mismatch") {
+		t.Fatalf("verifyAPKFile mismatch error = %v, want hash mismatch", err)
 	}
 }
