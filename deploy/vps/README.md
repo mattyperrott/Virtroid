@@ -46,6 +46,40 @@ The helper starts:
 - `virtnoded`
 - `edge` via HAProxy by default
 
+## Preinstalled Runtime Apps
+
+`virtnoded` installs only trusted app artifacts. A file copied into
+`/srv/virtroid/apks` is ignored unless it is referenced by
+`/srv/virtroid/apks/manifest.json` with a SHA-256 pin.
+
+Built-in defaults are limited to pinned entries in the node binary. To add a
+local APK or APKM, create a manifest like:
+
+```json
+{
+  "version": 1,
+  "apps": [
+    {
+      "package_name": "projekt.launcher",
+      "display_name": "hyperion launcher",
+      "artifact": "projekt.launcher.apkm",
+      "install_mode": "apkm",
+      "sha256": "<64 lowercase hex sha256>",
+      "default": true
+    }
+  ]
+}
+```
+
+Calculate the pin on the server before adding the manifest entry:
+
+```bash
+sha256sum /srv/virtroid/apks/projekt.launcher.apkm
+```
+
+Supported install modes are `single` for `.apk` and `apkm` for `.apkm`.
+Split-directory installs are intentionally not trusted.
+
 ## Health Checks
 
 Local checks:
