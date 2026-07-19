@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -45,9 +46,16 @@ var digestedImageReferencePattern = regexp.MustCompile(`^[^@[:space:]]+@sha256:[
 var dockerNetworkNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 
 const (
-	maxAPKMFiles      = 64
-	maxAPKMFileBytes  = int64(512 * 1024 * 1024)
-	maxAPKMTotalBytes = int64(1024 * 1024 * 1024)
+	maxAPKMFiles          = 64
+	maxAPKMArchiveEntries = 256
+	maxAPKMFileBytes      = int64(512 * 1024 * 1024)
+	maxAPKMTotalBytes     = int64(1024 * 1024 * 1024)
+
+	zipDirectoryHeaderSignature = 0x02014b50
+	zipDirectoryEndSignature    = 0x06054b50
+	zipDirectoryHeaderLength    = 46
+	zipDirectoryEndLength       = 22
+	zipMaximumCommentLength     = 1<<16 - 1
 )
 
 var builtInTrustedAppCatalog = map[string]runtimeApp{
@@ -2650,18 +2658,46 @@ func normalizeHomeActivity(packageName, activity string, setAsHome bool) (string
 }
 
 func extractAPKM(apkmPath, extractDir string) ([]string, error) {
-	return extractAPKMWithLimits(apkmPath, extractDir, maxAPKMFiles, maxAPKMFileBytes, maxAPKMTotalBytes)
+	return extractAPKMWithLimits(
+		apkmPath,
+		extractDir,
+		maxAPKMFiles,
+		maxAPKMArchiveEntries,
+		maxAPKMFileBytes,
+		maxAPKMTotalBytes,
+	)
 }
 
-func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles int, maxFileBytes, maxTotalBytes int64) ([]string, error) {
-	if maxFiles <= 0 || maxFileBytes <= 0 || maxTotalBytes <= 0 {
+func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles, maxEntries int, maxFileBytes, maxTotalBytes int64) ([]string, error) {
+	if maxFiles <= 0 || maxEntries <= 0 || maxFileBytes <= 0 || maxTotalBytes <= 0 {
 		return nil, errors.New("APKM extraction limits must be positive")
 	}
-	reader, err := zip.OpenReader(apkmPath)
+	if maxEntries < maxFiles {
+		return nil, errors.New("APKM archive-entry limit must be at least the APK-file limit")
+	}
+	// archive/zip materializes every central-directory entry while opening an
+	// archive. Inspect that directory with bounded memory first so an archive
+	// containing millions of empty or non-APK entries cannot exhaust the node
+	// before the post-parse len(reader.File) check runs.
+	archive, err := os.Open(apkmPath)
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer archive.Close()
+	archiveInfo, err := archive.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateZipCentralDirectoryEntryLimit(archive, archiveInfo.Size(), maxEntries); err != nil {
+		return nil, err
+	}
+	reader, err := zip.NewReader(archive, archiveInfo.Size())
+	if err != nil {
+		return nil, err
+	}
+	if len(reader.File) > maxEntries {
+		return nil, fmt.Errorf("APKM contains more than %d archive entries", maxEntries)
+	}
 
 	if err := os.RemoveAll(extractDir); err != nil {
 		return nil, err
@@ -2669,22 +2705,51 @@ func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles int, maxFileByt
 	if err := os.MkdirAll(extractDir, 0o755); err != nil {
 		return nil, err
 	}
+	extractRoot, err := os.OpenRoot(extractDir)
+	if err != nil {
+		return nil, err
+	}
 	extracted := false
 	defer func() {
+		if extractRoot != nil {
+			_ = extractRoot.Close()
+		}
 		if !extracted {
 			_ = os.RemoveAll(extractDir)
 		}
 	}()
 
-	apkFiles := make([]*zip.File, 0, min(len(reader.File), maxFiles))
+	type apkmArchiveEntry struct {
+		file *zip.File
+		name string
+	}
+	apkFiles := make([]apkmArchiveEntry, 0, min(len(reader.File), maxFiles))
 	seenNames := make(map[string]struct{})
 	var declaredTotal int64
 	for _, file := range reader.File {
-		if file.FileInfo().IsDir() || !strings.HasSuffix(strings.ToLower(file.Name), ".apk") {
+		isDirectory := file.FileInfo().IsDir()
+		entryName, err := canonicalArchiveRelativePath(file.Name, isDirectory)
+		if err != nil {
+			return nil, fmt.Errorf("APKM entry %q has an invalid path: %w", file.Name, err)
+		}
+		nameKey := entryName
+		if _, exists := seenNames[nameKey]; exists {
+			return nil, fmt.Errorf("APKM contains duplicate archive path %q", file.Name)
+		}
+		seenNames[nameKey] = struct{}{}
+
+		modeType := file.Mode() & os.ModeType
+		if isDirectory {
+			if modeType != os.ModeDir {
+				return nil, fmt.Errorf("APKM entry %q has an invalid directory type", file.Name)
+			}
 			continue
 		}
-		if file.Mode()&os.ModeType != 0 {
+		if modeType != 0 {
 			return nil, fmt.Errorf("APKM entry %q must be a regular file", file.Name)
+		}
+		if !strings.HasSuffix(strings.ToLower(entryName), ".apk") {
+			continue
 		}
 		if len(apkFiles) >= maxFiles {
 			return nil, fmt.Errorf("APKM contains more than %d APK files", maxFiles)
@@ -2697,32 +2762,25 @@ func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles int, maxFileByt
 			return nil, fmt.Errorf("APKM APK contents exceed %d-byte total limit", maxTotalBytes)
 		}
 		declaredTotal += fileBytes
-
-		baseName := path.Base(strings.ReplaceAll(file.Name, "\\", "/"))
-		if baseName == "." || baseName == "/" || baseName == "" {
-			return nil, fmt.Errorf("APKM entry %q has an invalid filename", file.Name)
-		}
-		nameKey := strings.ToLower(baseName)
-		if _, exists := seenNames[nameKey]; exists {
-			return nil, fmt.Errorf("APKM contains duplicate APK filename %q", baseName)
-		}
-		seenNames[nameKey] = struct{}{}
-		apkFiles = append(apkFiles, file)
+		apkFiles = append(apkFiles, apkmArchiveEntry{file: file, name: entryName})
 	}
 	if len(apkFiles) == 0 {
 		return nil, errors.New("APKM contains no APK files")
 	}
+	sort.Slice(apkFiles, func(left, right int) bool {
+		return apkFiles[left].name < apkFiles[right].name
+	})
 
 	apkPaths := make([]string, 0, len(apkFiles))
 	var extractedTotal int64
-	for _, file := range apkFiles {
-		baseName := path.Base(strings.ReplaceAll(file.Name, "\\", "/"))
-		targetPath := filepath.Join(extractDir, baseName)
-		source, err := file.Open()
+	for index, archiveEntry := range apkFiles {
+		outputName := fmt.Sprintf("apk-%03d.apk", index)
+		targetPath := filepath.Join(extractDir, outputName)
+		source, err := archiveEntry.file.Open()
 		if err != nil {
 			return nil, err
 		}
-		target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		target, err := extractRoot.OpenFile(outputName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {
 			source.Close()
 			return nil, err
@@ -2742,7 +2800,7 @@ func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles int, maxFileByt
 			return nil, sourceCloseErr
 		}
 		if written > maxFileBytes {
-			return nil, fmt.Errorf("APKM entry %q exceeds %d-byte limit", file.Name, maxFileBytes)
+			return nil, fmt.Errorf("APKM entry %q exceeds %d-byte limit", archiveEntry.file.Name, maxFileBytes)
 		}
 		if written > maxTotalBytes-extractedTotal {
 			return nil, fmt.Errorf("APKM APK contents exceed %d-byte total limit", maxTotalBytes)
@@ -2750,9 +2808,132 @@ func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles int, maxFileByt
 		extractedTotal += written
 		apkPaths = append(apkPaths, targetPath)
 	}
-	sort.Strings(apkPaths)
+	if err := extractRoot.Close(); err != nil {
+		extractRoot = nil
+		return nil, err
+	}
+	extractRoot = nil
 	extracted = true
 	return apkPaths, nil
+}
+
+func validateZipCentralDirectoryEntryLimit(archive io.ReaderAt, archiveSize int64, maxEntries int) error {
+	if archive == nil {
+		return errors.New("ZIP archive reader is required")
+	}
+	if maxEntries <= 0 {
+		return errors.New("ZIP archive-entry limit must be positive")
+	}
+	if archiveSize < zipDirectoryEndLength {
+		return zip.ErrFormat
+	}
+	tailLength := min(archiveSize, int64(zipDirectoryEndLength+zipMaximumCommentLength))
+	tail := make([]byte, int(tailLength))
+	if _, err := archive.ReadAt(tail, archiveSize-tailLength); err != nil {
+		return err
+	}
+
+	directoryEndIndex := -1
+	for index := len(tail) - zipDirectoryEndLength; index >= 0; index-- {
+		if binary.LittleEndian.Uint32(tail[index:index+4]) != zipDirectoryEndSignature {
+			continue
+		}
+		commentLength := int(binary.LittleEndian.Uint16(tail[index+20 : index+22]))
+		if index+zipDirectoryEndLength+commentLength <= len(tail) {
+			directoryEndIndex = index
+			break
+		}
+	}
+	if directoryEndIndex < 0 {
+		return zip.ErrFormat
+	}
+
+	directoryEndOffset := archiveSize - tailLength + int64(directoryEndIndex)
+	directoryEnd := tail[directoryEndIndex : directoryEndIndex+zipDirectoryEndLength]
+	diskNumber := uint32(binary.LittleEndian.Uint16(directoryEnd[4:6]))
+	directoryDiskNumber := uint32(binary.LittleEndian.Uint16(directoryEnd[6:8]))
+	recordsOnDisk := uint64(binary.LittleEndian.Uint16(directoryEnd[8:10]))
+	recordsTotal := uint64(binary.LittleEndian.Uint16(directoryEnd[10:12]))
+	directorySize := uint64(binary.LittleEndian.Uint32(directoryEnd[12:16]))
+	directoryOffset := uint64(binary.LittleEndian.Uint32(directoryEnd[16:20]))
+
+	// Keep this decision exactly aligned with archive/zip.readDirectoryEnd.
+	// These sentinel fields make archive/zip consult ZIP64 metadata before it
+	// allocates File records. APKM limits never require ZIP64, so rejecting it is
+	// both simpler and safer than maintaining a second, subtly divergent parser.
+	if recordsTotal == ^uint64(0)>>48 ||
+		directorySize == ^uint64(0)>>48 ||
+		directoryOffset == uint64(^uint32(0)) {
+		return errors.New("ZIP64 APKM archives are not supported")
+	}
+	if diskNumber != 0 || directoryDiskNumber != 0 || recordsOnDisk != recordsTotal {
+		return errors.New("multi-disk ZIP archives are not supported")
+	}
+	if recordsTotal > uint64(maxEntries) {
+		return fmt.Errorf("APKM contains more than %d archive entries", maxEntries)
+	}
+	if directorySize > uint64(directoryEndOffset) || directoryOffset > uint64(^uint64(0)>>1) {
+		return zip.ErrFormat
+	}
+
+	baseOffset := directoryEndOffset - int64(directorySize) - int64(directoryOffset)
+	if baseOffset < 0 {
+		return zip.ErrFormat
+	}
+	directoryStart := baseOffset + int64(directoryOffset)
+	if baseOffset > 0 && directoryOffset <= uint64(archiveSize-4) {
+		var signature [4]byte
+		if _, err := archive.ReadAt(signature[:], int64(directoryOffset)); err != nil {
+			return err
+		}
+		if binary.LittleEndian.Uint32(signature[:]) == zipDirectoryHeaderSignature {
+			// Match archive/zip's compatibility behavior for archives whose offset
+			// is already absolute. Reject a gap here because archive/zip would scan
+			// beyond the declared directory and could allocate unbounded entries.
+			if directoryOffset+directorySize != uint64(directoryEndOffset) {
+				return errors.New("ZIP central-directory bounds are inconsistent")
+			}
+			directoryStart = int64(directoryOffset)
+		}
+	}
+	if directoryStart < 0 || directoryStart+int64(directorySize) != directoryEndOffset {
+		return zip.ErrFormat
+	}
+
+	directory := io.NewSectionReader(archive, directoryStart, int64(directorySize))
+	remaining := int64(directorySize)
+	entryCount := 0
+	for remaining > 0 {
+		if remaining < zipDirectoryHeaderLength {
+			return zip.ErrFormat
+		}
+		var header [zipDirectoryHeaderLength]byte
+		if _, err := io.ReadFull(directory, header[:]); err != nil {
+			return err
+		}
+		if binary.LittleEndian.Uint32(header[0:4]) != zipDirectoryHeaderSignature {
+			return zip.ErrFormat
+		}
+		entryCount++
+		if entryCount > maxEntries {
+			return fmt.Errorf("APKM contains more than %d archive entries", maxEntries)
+		}
+		variableLength := int64(binary.LittleEndian.Uint16(header[28:30])) +
+			int64(binary.LittleEndian.Uint16(header[30:32])) +
+			int64(binary.LittleEndian.Uint16(header[32:34]))
+		remaining -= zipDirectoryHeaderLength
+		if variableLength > remaining {
+			return zip.ErrFormat
+		}
+		if _, err := directory.Seek(variableLength, io.SeekCurrent); err != nil {
+			return err
+		}
+		remaining -= variableLength
+	}
+	if uint64(entryCount) != recordsTotal {
+		return errors.New("ZIP central-directory entry count is inconsistent")
+	}
+	return nil
 }
 
 func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, expectedSize int64) error {

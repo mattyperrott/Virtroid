@@ -8,28 +8,29 @@ import (
 )
 
 type ServerConfig struct {
-	AppEnv                          string
-	BindAddr                        string
-	DatabaseURL                     string
-	PublicBaseURL                   string
-	PublicRelayURL                  string
-	NodeSharedSecret                string
-	NodeRegistrationSecret          string
-	NodeAllowedAdvertiseAddrs       []string
-	BootstrapEnabled                bool
-	BootstrapRateLimitPerMinute     int
-	BootstrapMaxBodyBytes           int64
-	TrustProxyHeaders               bool
-	SecurityEventRateLimitPerMinute int
-	SecurityEventRetention          time.Duration
-	SessionReaperInterval           time.Duration
-	ActiveSessionTimeout            time.Duration
-	RuntimeIdleTimeout              time.Duration
-	AppCatalogSyncEnabled           bool
-	AppCatalogSyncURL               string
-	AppCatalogSyncSHA256            string
-	AppCatalogSyncInterval          time.Duration
-	AppCatalogSyncMaxApps           int
+	AppEnv                           string
+	BindAddr                         string
+	DatabaseURL                      string
+	PublicBaseURL                    string
+	PublicRelayURL                   string
+	NodeSharedSecret                 string
+	NodeRegistrationSecret           string
+	NodeDevelopmentEnrollmentEnabled bool
+	NodeAllowedAdvertiseAddrs        []string
+	BootstrapEnabled                 bool
+	BootstrapRateLimitPerMinute      int
+	BootstrapMaxBodyBytes            int64
+	TrustProxyHeaders                bool
+	SecurityEventRateLimitPerMinute  int
+	SecurityEventRetention           time.Duration
+	SessionReaperInterval            time.Duration
+	ActiveSessionTimeout             time.Duration
+	RuntimeIdleTimeout               time.Duration
+	AppCatalogSyncEnabled            bool
+	AppCatalogSyncURL                string
+	AppCatalogSyncSHA256             string
+	AppCatalogSyncInterval           time.Duration
+	AppCatalogSyncMaxApps            int
 }
 
 type NodeConfig struct {
@@ -65,6 +66,12 @@ type NodeConfig struct {
 
 func LoadServer() ServerConfig {
 	appEnv := envOrDefault("APP_ENV", "development")
+	developmentEnrollmentEnabled := parseEnvBool("NODE_DEVELOPMENT_ENROLLMENT_ENABLED", strings.EqualFold(appEnv, "development"))
+	if !strings.EqualFold(appEnv, "development") {
+		// Shared-secret node enrollment is a local-development convenience only.
+		// Production authorization always comes from the approved-node registry.
+		developmentEnrollmentEnabled = false
+	}
 	bootstrapRateLimit, err := parseEnvInt("BOOTSTRAP_RATE_LIMIT_PER_MINUTE", 5)
 	if err != nil {
 		bootstrapRateLimit = 5
@@ -88,28 +95,29 @@ func LoadServer() ServerConfig {
 	}
 
 	return ServerConfig{
-		AppEnv:                          appEnv,
-		BindAddr:                        envOrDefault("BIND_ADDR", ":8080"),
-		DatabaseURL:                     envOrDefault("DATABASE_URL", "postgres://virtroid:virtroid@127.0.0.1:5432/virtroid?sslmode=disable"),
-		PublicBaseURL:                   envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
-		PublicRelayURL:                  os.Getenv("PUBLIC_RELAY_URL"),
-		NodeSharedSecret:                os.Getenv("NODE_SHARED_SECRET"),
-		NodeRegistrationSecret:          envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
-		NodeAllowedAdvertiseAddrs:       parseEnvCSV("NODE_ALLOWED_ADVERTISE_ADDRS", ""),
-		BootstrapEnabled:                parseEnvBool("BOOTSTRAP_ENABLED", appEnv == "development"),
-		BootstrapRateLimitPerMinute:     bootstrapRateLimit,
-		BootstrapMaxBodyBytes:           int64(bootstrapMaxBodyBytes),
-		TrustProxyHeaders:               parseEnvBool("TRUST_PROXY_HEADERS", false),
-		SecurityEventRateLimitPerMinute: securityEventRateLimit,
-		SecurityEventRetention:          securityEventRetention,
-		SessionReaperInterval:           sessionReaperInterval,
-		ActiveSessionTimeout:            activeSessionTimeout,
-		RuntimeIdleTimeout:              runtimeIdleTimeout,
-		AppCatalogSyncEnabled:           parseEnvBool("APP_CATALOG_SYNC_ENABLED", false),
-		AppCatalogSyncURL:               envOrDefault("APP_CATALOG_SYNC_URL", "https://f-droid.org/repo/index-v2.json"),
-		AppCatalogSyncSHA256:            strings.TrimSpace(os.Getenv("APP_CATALOG_SYNC_SHA256")),
-		AppCatalogSyncInterval:          appCatalogSyncInterval,
-		AppCatalogSyncMaxApps:           appCatalogSyncMaxApps,
+		AppEnv:                           appEnv,
+		BindAddr:                         envOrDefault("BIND_ADDR", ":8080"),
+		DatabaseURL:                      envOrDefault("DATABASE_URL", "postgres://virtroid:virtroid@127.0.0.1:5432/virtroid?sslmode=disable"),
+		PublicBaseURL:                    envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
+		PublicRelayURL:                   os.Getenv("PUBLIC_RELAY_URL"),
+		NodeSharedSecret:                 os.Getenv("NODE_SHARED_SECRET"),
+		NodeRegistrationSecret:           strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
+		NodeDevelopmentEnrollmentEnabled: developmentEnrollmentEnabled,
+		NodeAllowedAdvertiseAddrs:        parseEnvCSV("NODE_ALLOWED_ADVERTISE_ADDRS", ""),
+		BootstrapEnabled:                 parseEnvBool("BOOTSTRAP_ENABLED", appEnv == "development"),
+		BootstrapRateLimitPerMinute:      bootstrapRateLimit,
+		BootstrapMaxBodyBytes:            int64(bootstrapMaxBodyBytes),
+		TrustProxyHeaders:                parseEnvBool("TRUST_PROXY_HEADERS", false),
+		SecurityEventRateLimitPerMinute:  securityEventRateLimit,
+		SecurityEventRetention:           securityEventRetention,
+		SessionReaperInterval:            sessionReaperInterval,
+		ActiveSessionTimeout:             activeSessionTimeout,
+		RuntimeIdleTimeout:               runtimeIdleTimeout,
+		AppCatalogSyncEnabled:            parseEnvBool("APP_CATALOG_SYNC_ENABLED", false),
+		AppCatalogSyncURL:                envOrDefault("APP_CATALOG_SYNC_URL", "https://f-droid.org/repo/index-v2.json"),
+		AppCatalogSyncSHA256:             strings.TrimSpace(os.Getenv("APP_CATALOG_SYNC_SHA256")),
+		AppCatalogSyncInterval:           appCatalogSyncInterval,
+		AppCatalogSyncMaxApps:            appCatalogSyncMaxApps,
 	}
 }
 
@@ -165,7 +173,7 @@ func LoadNode() NodeConfig {
 		RenterdContractSet:    envOrDefault("NODE_SIA_RENTERD_CONTRACT_SET", ""),
 		DockerNetworkName:     envOrDefault("NODE_DOCKER_NETWORK", ""),
 		SharedSecret:          os.Getenv("NODE_SHARED_SECRET"),
-		RegistrationSecret:    envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
+		RegistrationSecret:    strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
 		PrivateKey:            os.Getenv("NODE_PRIVATE_KEY_B64"),
 		AppAPKDir:             envOrDefault("NODE_APP_APK_DIR", "/srv/virtroid/apks"),
 		AppManifestPath:       envOrDefault("NODE_APP_MANIFEST_PATH", "/srv/virtroid/apks/manifest.json"),

@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -272,28 +274,223 @@ func TestValidateBlobManifestRejectsWrongRuntimeChunkKey(t *testing.T) {
 	}
 }
 
-func TestExtractTarRejectsSymlinkEscape(t *testing.T) {
+func TestSnapshotWriterRejectsSymlinkSource(t *testing.T) {
 	root := t.TempDir()
-	var archive bytes.Buffer
-	writer := tar.NewWriter(&archive)
-	if err := writer.WriteHeader(&tar.Header{
-		Name:     "escape",
-		Typeflag: tar.TypeSymlink,
-		Linkname: "../../outside",
-		Mode:     0o777,
-	}); err != nil {
-		t.Fatalf("write symlink header: %v", err)
+	if err := os.Symlink("target", filepath.Join(root, "link")); err != nil {
+		t.Fatalf("create source symlink: %v", err)
 	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close tar writer: %v", err)
+	var archive bytes.Buffer
+	err := addDirectoryToTar(context.Background(), tar.NewWriter(&archive), root)
+	if err == nil || !strings.Contains(err.Error(), "unsupported symlink") {
+		t.Fatalf("addDirectoryToTar error = %v, want unsupported symlink", err)
+	}
+}
+
+func TestSnapshotWriterRejectsSymlinkSourceRoot(t *testing.T) {
+	base := t.TempDir()
+	realRoot := filepath.Join(base, "real")
+	linkedRoot := filepath.Join(base, "linked")
+	if err := os.Mkdir(realRoot, 0o755); err != nil {
+		t.Fatalf("create real source root: %v", err)
+	}
+	if err := os.Symlink(realRoot, linkedRoot); err != nil {
+		t.Fatalf("create source root symlink: %v", err)
+	}
+	var archive bytes.Buffer
+	err := addDirectoryToTar(context.Background(), tar.NewWriter(&archive), linkedRoot)
+	if err == nil || !strings.Contains(err.Error(), "non-symlink directory") {
+		t.Fatalf("addDirectoryToTar error = %v, want source-root symlink rejection", err)
+	}
+}
+
+func TestSnapshotWriterRejectsSpecialSourceWithoutOpeningIt(t *testing.T) {
+	root := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(root, "pipe"), 0o600); err != nil {
+		t.Fatalf("create source FIFO: %v", err)
+	}
+	var archive bytes.Buffer
+	err := addDirectoryToTar(context.Background(), tar.NewWriter(&archive), root)
+	if err == nil || !strings.Contains(err.Error(), "unsupported special file") {
+		t.Fatalf("addDirectoryToTar error = %v, want unsupported special file", err)
+	}
+}
+
+func TestSnapshotWriterRejectsEntryLimitWithBatchedTraversal(t *testing.T) {
+	root := t.TempDir()
+	for index := 0; index < 5; index++ {
+		name := fmt.Sprintf("entry-%02d", index)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
+			t.Fatalf("write source entry %d: %v", index, err)
+		}
+	}
+	sourceRoot, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("open source root: %v", err)
+	}
+	defer sourceRoot.Close()
+
+	var archive bytes.Buffer
+	err = addRootToTarWithLimits(context.Background(), tar.NewWriter(&archive), sourceRoot, 3, 2)
+	if err == nil || !strings.Contains(err.Error(), "more than 3 entries") {
+		t.Fatalf("addRootToTarWithLimits error = %v, want bounded entry-count rejection", err)
+	}
+}
+
+func TestSnapshotWriterRootHandleCannotBeRedirectedAfterOpen(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "source")
+	movedSourcePath := filepath.Join(base, "source-opened")
+	outsidePath := filepath.Join(base, "outside")
+	if err := os.Mkdir(sourcePath, 0o755); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if err := os.Mkdir(outsidePath, 0o755); err != nil {
+		t.Fatalf("create outside source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourcePath, "payload.txt"), []byte("inside"), 0o600); err != nil {
+		t.Fatalf("write source payload: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outsidePath, "payload.txt"), []byte("outside"), 0o600); err != nil {
+		t.Fatalf("write outside payload: %v", err)
 	}
 
-	err := extractTarToDir(tar.NewReader(bytes.NewReader(archive.Bytes())), root)
-	if err == nil {
-		t.Fatal("extractTarToDir accepted symlink escaping restore root")
+	sourceRoot, err := os.OpenRoot(sourcePath)
+	if err != nil {
+		t.Fatalf("open source root: %v", err)
 	}
-	if !strings.Contains(err.Error(), "escapes restore root") {
-		t.Fatalf("extractTarToDir error = %q, want symlink escape rejection", err.Error())
+	defer sourceRoot.Close()
+	if err := os.Rename(sourcePath, movedSourcePath); err != nil {
+		t.Fatalf("rename source root: %v", err)
+	}
+	if err := os.Symlink(outsidePath, sourcePath); err != nil {
+		t.Fatalf("replace source path with symlink: %v", err)
+	}
+
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := addRootToTar(context.Background(), writer, sourceRoot); err != nil {
+		t.Fatalf("addRootToTar: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close TAR writer: %v", err)
+	}
+
+	reader := tar.NewReader(bytes.NewReader(archive.Bytes()))
+	header, err := reader.Next()
+	if err != nil {
+		t.Fatalf("read TAR header: %v", err)
+	}
+	if header.Name != "payload.txt" {
+		t.Fatalf("archive entry = %q, want payload.txt", header.Name)
+	}
+	payload, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read TAR payload: %v", err)
+	}
+	if string(payload) != "inside" {
+		t.Fatalf("archive payload = %q, want pinned-root content", payload)
+	}
+}
+
+func TestSnapshotWriterRejectsSourceNameThatRestoreWouldReject(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, `unsafe\name`), []byte("payload"), 0o600); err != nil {
+		t.Fatalf("write source payload: %v", err)
+	}
+	var archive bytes.Buffer
+	err := addDirectoryToTar(context.Background(), tar.NewWriter(&archive), root)
+	if err == nil || !strings.Contains(err.Error(), "cannot be archived safely") {
+		t.Fatalf("addDirectoryToTar error = %v, want unrestorable-name rejection", err)
+	}
+}
+
+func TestExtractTarRejectsNonCanonicalAndEscapingPaths(t *testing.T) {
+	tests := []string{
+		"/absolute/payload.txt",
+		"../outside/payload.txt",
+		"../restore-evil/payload.txt",
+		`..\outside\payload.txt`,
+		"C:/absolute/payload.txt",
+		"./payload.txt",
+		"safe/../payload.txt",
+		"safe//payload.txt",
+		strings.Repeat("a", maxArchivePathBytes+1),
+	}
+	for _, archivePath := range tests {
+		t.Run(strings.ReplaceAll(archivePath, "/", "_"), func(t *testing.T) {
+			root := t.TempDir()
+			archive := writeTestTar(t, []testTarEntry{{
+				header: tar.Header{Name: archivePath, Typeflag: tar.TypeReg, Mode: 0o600},
+				body:   "payload",
+			}})
+			err := extractTarToDir(tar.NewReader(bytes.NewReader(archive)), root)
+			if err == nil || !strings.Contains(err.Error(), "invalid archive path") {
+				t.Fatalf("extractTarToDir(%q) error = %v, want invalid path rejection", archivePath, err)
+			}
+		})
+	}
+}
+
+func TestExtractTarRejectsDuplicateCanonicalPath(t *testing.T) {
+	archive := writeTestTar(t, []testTarEntry{
+		{header: tar.Header{Name: "payload.txt", Typeflag: tar.TypeReg, Mode: 0o600}, body: "first"},
+		{header: tar.Header{Name: "payload.txt", Typeflag: tar.TypeReg, Mode: 0o600}, body: "second"},
+	})
+	err := extractTarToDir(tar.NewReader(bytes.NewReader(archive)), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "duplicate archive path") {
+		t.Fatalf("extractTarToDir error = %v, want duplicate path rejection", err)
+	}
+}
+
+func TestExtractTarPreservesCaseDistinctPaths(t *testing.T) {
+	caseProbe := t.TempDir()
+	if err := os.WriteFile(filepath.Join(caseProbe, "A"), []byte("upper"), 0o600); err != nil {
+		t.Fatalf("write case-sensitivity probe: %v", err)
+	}
+	probe, err := os.OpenFile(filepath.Join(caseProbe, "a"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		t.Skip("filesystem is case-insensitive")
+	}
+	if err != nil {
+		t.Fatalf("open case-sensitivity probe: %v", err)
+	}
+	if err := probe.Close(); err != nil {
+		t.Fatalf("close case-sensitivity probe: %v", err)
+	}
+
+	archive := writeTestTar(t, []testTarEntry{
+		{header: tar.Header{Name: "A.txt", Typeflag: tar.TypeReg, Mode: 0o600}, body: "upper"},
+		{header: tar.Header{Name: "a.txt", Typeflag: tar.TypeReg, Mode: 0o600}, body: "lower"},
+	})
+	root := t.TempDir()
+	if err := extractTarToDir(tar.NewReader(bytes.NewReader(archive)), root); err != nil {
+		t.Fatalf("extractTarToDir: %v", err)
+	}
+	for name, want := range map[string]string{"A.txt": "upper", "a.txt": "lower"} {
+		payload, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if string(payload) != want {
+			t.Fatalf("%s = %q, want %q", name, payload, want)
+		}
+	}
+}
+
+func TestExtractTarRejectsLinkAndSpecialEntries(t *testing.T) {
+	tests := []tar.Header{
+		{Name: "symlink", Typeflag: tar.TypeSymlink, Linkname: "target", Mode: 0o777},
+		{Name: "hardlink", Typeflag: tar.TypeLink, Linkname: "target", Mode: 0o600},
+		{Name: "fifo", Typeflag: tar.TypeFifo, Mode: 0o600},
+	}
+	for _, header := range tests {
+		t.Run(header.Name, func(t *testing.T) {
+			archive := writeTestTar(t, []testTarEntry{{header: header}})
+			err := extractTarToDir(tar.NewReader(bytes.NewReader(archive)), t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), "not supported") && !strings.Contains(err.Error(), "unsupported type") {
+				t.Fatalf("extractTarToDir error = %v, want unsupported entry rejection", err)
+			}
+		})
 	}
 }
 
@@ -331,6 +528,77 @@ func TestExtractTarRejectsWriteThroughExistingSymlink(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(outside, "payload.txt")); !os.IsNotExist(statErr) {
 		t.Fatalf("payload escaped through symlink, statErr=%v", statErr)
 	}
+}
+
+func TestExtractTarRootHandleCannotBeRedirectedAfterOpen(t *testing.T) {
+	base := t.TempDir()
+	rootPath := filepath.Join(base, "restore")
+	movedRoot := filepath.Join(base, "restore-opened")
+	outside := filepath.Join(base, "outside")
+	if err := os.Mkdir(rootPath, 0o755); err != nil {
+		t.Fatalf("create restore root: %v", err)
+	}
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatalf("create outside root: %v", err)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatalf("open restore root: %v", err)
+	}
+	defer root.Close()
+	if err := os.Rename(rootPath, movedRoot); err != nil {
+		t.Fatalf("rename restore root: %v", err)
+	}
+	if err := os.Symlink(outside, rootPath); err != nil {
+		t.Fatalf("replace restore path with symlink: %v", err)
+	}
+
+	archive := writeTestTar(t, []testTarEntry{{
+		header: tar.Header{Name: "payload.txt", Typeflag: tar.TypeReg, Mode: 0o600},
+		body:   "payload",
+	}})
+	if err := extractTarToRoot(tar.NewReader(bytes.NewReader(archive)), root); err != nil {
+		t.Fatalf("extractTarToRoot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "payload.txt")); !os.IsNotExist(err) {
+		t.Fatalf("payload escaped through replaced root path: %v", err)
+	}
+	payload, err := os.ReadFile(filepath.Join(movedRoot, "payload.txt"))
+	if err != nil {
+		t.Fatalf("read payload under opened root: %v", err)
+	}
+	if string(payload) != "payload" {
+		t.Fatalf("payload = %q, want payload", payload)
+	}
+}
+
+type testTarEntry struct {
+	header tar.Header
+	body   string
+}
+
+func writeTestTar(t *testing.T, entries []testTarEntry) []byte {
+	t.Helper()
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	for _, entry := range entries {
+		header := entry.header
+		if header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA {
+			header.Size = int64(len(entry.body))
+		}
+		if err := writer.WriteHeader(&header); err != nil {
+			t.Fatalf("write tar header %q: %v", header.Name, err)
+		}
+		if entry.body != "" {
+			if _, err := writer.Write([]byte(entry.body)); err != nil {
+				t.Fatalf("write tar payload %q: %v", header.Name, err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	return archive.Bytes()
 }
 
 func TestRuntimeBlobKeyRejectsExpiredKey(t *testing.T) {

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -86,11 +86,13 @@ visudo -cf "${sudoers_temp}" >/dev/null
 mv "${sudoers_temp}" "${sudoers_path}"
 trap - EXIT
 
-chown -R "${deploy_user}:${deploy_group}" "${project_root}"
-chmod 0755 "${project_root}"
+chown root:root "${project_root}" "${project_root}/deploy" "${project_root}/deploy/vps"
+chown -R root:root "${project_root}/deploy/vps"
+chmod 0755 "${project_root}" "${project_root}/deploy" "${project_root}/deploy/vps"
+chmod -R go-w "${project_root}/deploy/vps"
 if [ -f "${project_root}/deploy/vps/.env" ]; then
-  chown root:"${deploy_group}" "${project_root}/deploy/vps/.env"
-  chmod 0640 "${project_root}/deploy/vps/.env"
+  chown root:root "${project_root}/deploy/vps/.env"
+  chmod 0600 "${project_root}/deploy/vps/.env"
 fi
 
 install -d -o "${deploy_user}" -g "${deploy_group}" -m 0750 \
@@ -112,4 +114,3 @@ printf 'deploy user ready: %s uid=%s groups=%s\n' \
 if [ ! -s "${deploy_home}/.ssh/authorized_keys" ]; then
   echo "warning: no SSH public key installed; do not disable current SSH access" >&2
 fi
-

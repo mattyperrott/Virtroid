@@ -45,6 +45,21 @@ func TestSensitiveAPIResponsesAreNonCacheableAndNosniff(t *testing.T) {
 	}
 }
 
+func TestSafeLogValueEscapesControlsAndBoundsLength(t *testing.T) {
+	got := safeLogValue("node\r\nforged-entry\x1b[31m" + strings.Repeat("x", 2000))
+	if strings.ContainsAny(got, "\r\n\x1b") {
+		t.Fatalf("safeLogValue retained a raw control character: %q", got)
+	}
+	for _, escaped := range []string{`\r`, `\n`, `\x1b`} {
+		if !strings.Contains(got, escaped) {
+			t.Fatalf("safeLogValue = %q, want visible escape %q", got, escaped)
+		}
+	}
+	if len(got) > 1100 {
+		t.Fatalf("safeLogValue length = %d, want bounded output", len(got))
+	}
+}
+
 func TestAPIRequestBodyLimitRejectsDeclaredOversizeBeforeHandler(t *testing.T) {
 	called := false
 	handler := withJSON(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

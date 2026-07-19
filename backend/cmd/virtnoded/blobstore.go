@@ -19,7 +19,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,6 +45,8 @@ const (
 	maxRestoredSnapshotData   = 32 << 30
 	maxRestoredFileCount      = 1_000_000
 	maxArchivePathBytes       = 4096
+	maxSnapshotDirectoryDepth = 256
+	snapshotReadDirBatchSize  = 128
 	maxRenterdListResponse    = 8 << 20
 	maxRenterdGCObjectCount   = 100_000
 )
@@ -1959,88 +1963,222 @@ func snapshotKeyForManifest(masterKey []byte, runtimeID string, manifest *blobMa
 	return append([]byte(nil), masterKey...)
 }
 
-func addDirectoryToTar(ctx context.Context, writer *tar.Writer, root string) error {
-	var sourceBytes int64
-	entryCount := 0
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == root {
-			return nil
-		}
-		entryCount++
-		if entryCount > maxRestoredFileCount {
-			return fmt.Errorf("snapshot source contains more than %d entries", maxRestoredFileCount)
-		}
+func addDirectoryToTar(ctx context.Context, writer *tar.Writer, root string) (resultErr error) {
+	rootInfo, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return fmt.Errorf("snapshot source root must be a non-symlink directory")
+	}
+	// Keep both directory traversal and every subsequent open anchored to one
+	// directory handle. Guest-controlled userdata may otherwise replace a path
+	// between inspection and os.Open and redirect a root node process elsewhere.
+	sourceRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, sourceRoot.Close())
+	}()
+	openedRootInfo, err := sourceRoot.Stat(".")
+	if err != nil {
+		return fmt.Errorf("inspect opened snapshot source root: %w", err)
+	}
+	if !openedRootInfo.IsDir() || !os.SameFile(rootInfo, openedRootInfo) {
+		return errors.New("snapshot source root changed while it was being opened")
+	}
+	return addRootToTar(ctx, writer, sourceRoot)
+}
 
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && !info.Mode().IsRegular() && entry.Type()&os.ModeSymlink == 0 {
-			return nil
-		}
-		relativePath, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		relativePath = filepath.ToSlash(relativePath)
-		if relativePath == "." || len(relativePath) > maxArchivePathBytes {
-			if len(relativePath) > maxArchivePathBytes {
-				return fmt.Errorf("snapshot source path exceeds %d bytes", maxArchivePathBytes)
-			}
-			return nil
-		}
-		if info.Mode().IsRegular() {
-			if info.Size() < 0 || info.Size() > maxRestoredSnapshotData-sourceBytes {
-				return fmt.Errorf("snapshot source exceeds maximum uncompressed size %d", maxRestoredSnapshotData)
-			}
-			sourceBytes += info.Size()
-		}
+func addRootToTar(ctx context.Context, writer *tar.Writer, sourceRoot *os.Root) error {
+	return addRootToTarWithLimits(ctx, writer, sourceRoot, maxRestoredFileCount, snapshotReadDirBatchSize)
+}
 
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		header.Name = relativePath
-		if err := populateTarOwnership(header, info); err != nil {
-			return err
-		}
+type snapshotTarWalker struct {
+	ctx         context.Context
+	writer      *tar.Writer
+	maxEntries  int
+	readBatch   int
+	entryCount  int
+	sourceBytes int64
+}
 
-		if entry.Type()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(path)
-			if err != nil {
+func addRootToTarWithLimits(ctx context.Context, writer *tar.Writer, sourceRoot *os.Root, maxEntries, readBatch int) error {
+	if ctx == nil || writer == nil || sourceRoot == nil {
+		return errors.New("snapshot creation requires an archive writer and source root")
+	}
+	if maxEntries <= 0 || readBatch <= 0 {
+		return errors.New("snapshot entry and directory-read limits must be positive")
+	}
+	walker := &snapshotTarWalker{
+		ctx:        ctx,
+		writer:     writer,
+		maxEntries: maxEntries,
+		readBatch:  readBatch,
+	}
+	return walker.walkDirectory(sourceRoot, "", 0)
+}
+
+func (w *snapshotTarWalker) walkDirectory(sourceRoot *os.Root, archivePrefix string, depth int) (resultErr error) {
+	if err := w.ctx.Err(); err != nil {
+		return err
+	}
+	if depth > maxSnapshotDirectoryDepth {
+		return fmt.Errorf("snapshot source exceeds maximum directory depth %d", maxSnapshotDirectoryDepth)
+	}
+	directory, err := sourceRoot.OpenFile(".", os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return fmt.Errorf("open snapshot source directory %q: %w", archivePrefix, err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, directory.Close())
+	}()
+
+	for {
+		entries, readErr := directory.ReadDir(w.readBatch)
+		for _, entry := range entries {
+			if err := w.addEntry(sourceRoot, archivePrefix, entry, depth); err != nil {
 				return err
 			}
-			header.Linkname = target
 		}
-
-		if info.IsDir() {
-			header.Name += "/"
-			return writer.WriteHeader(header)
-		}
-		if err := writer.WriteHeader(header); err != nil {
-			return err
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
+		if errors.Is(readErr, io.EOF) {
 			return nil
 		}
+		if readErr != nil {
+			return fmt.Errorf("read snapshot source directory %q: %w", archivePrefix, readErr)
+		}
+		if len(entries) == 0 {
+			return fmt.Errorf("read snapshot source directory %q returned no entries without EOF", archivePrefix)
+		}
+	}
+}
 
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		written, copyErr := io.CopyN(writer, file, info.Size())
-		if copyErr == nil && written != info.Size() {
-			copyErr = io.ErrUnexpectedEOF
-		}
+func (w *snapshotTarWalker) addEntry(sourceRoot *os.Root, archivePrefix string, entry fs.DirEntry, depth int) error {
+	if err := w.ctx.Err(); err != nil {
+		return err
+	}
+	w.entryCount++
+	if w.entryCount > w.maxEntries {
+		return fmt.Errorf("snapshot source contains more than %d entries", w.maxEntries)
+	}
+
+	entryName := entry.Name()
+	relativePath := entryName
+	if archivePrefix != "" {
+		relativePath = archivePrefix + "/" + entryName
+	}
+	lstatInfo, err := sourceRoot.Lstat(entryName)
+	if err != nil {
+		return fmt.Errorf("inspect snapshot source %q: %w", relativePath, err)
+	}
+	if lstatInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("snapshot source contains unsupported symlink %q", relativePath)
+	}
+	if !lstatInfo.IsDir() && !lstatInfo.Mode().IsRegular() {
+		return fmt.Errorf("snapshot source contains unsupported special file %q", relativePath)
+	}
+	if lstatInfo.IsDir() {
+		return w.addDirectoryEntry(sourceRoot, relativePath, entryName, lstatInfo, depth)
+	}
+	return w.addRegularFileEntry(sourceRoot, relativePath, entryName, lstatInfo)
+}
+
+func (w *snapshotTarWalker) addDirectoryEntry(sourceRoot *os.Root, relativePath, entryName string, lstatInfo fs.FileInfo, depth int) (resultErr error) {
+	childRoot, err := sourceRoot.OpenRoot(entryName)
+	if err != nil {
+		return fmt.Errorf("open snapshot source directory %q: %w", relativePath, err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, childRoot.Close())
+	}()
+	info, err := childRoot.Stat(".")
+	if err != nil {
+		return fmt.Errorf("inspect opened snapshot source directory %q: %w", relativePath, err)
+	}
+	if !info.IsDir() || !os.SameFile(lstatInfo, info) {
+		return fmt.Errorf("snapshot source directory %q changed between inspection and open", relativePath)
+	}
+
+	archiveName, err := canonicalArchiveRelativePath(relativePath, true)
+	if err != nil {
+		return fmt.Errorf("snapshot source path %q cannot be archived safely: %w", relativePath, err)
+	}
+	header, err := tar.FileInfoHeader(info, "")
+	if err == nil {
+		header.Name = archiveName + "/"
+		err = populateTarOwnership(header, info)
+	}
+	if err != nil {
+		return err
+	}
+	if err := w.writer.WriteHeader(header); err != nil {
+		return err
+	}
+	return w.walkDirectory(childRoot, relativePath, depth+1)
+}
+
+func (w *snapshotTarWalker) addRegularFileEntry(sourceRoot *os.Root, relativePath, entryName string, lstatInfo fs.FileInfo) error {
+	file, err := sourceRoot.OpenFile(entryName, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return fmt.Errorf("open snapshot source %q without following symlinks: %w", relativePath, err)
+	}
+	info, statErr := file.Stat()
+	if statErr == nil && !os.SameFile(lstatInfo, info) {
+		statErr = errors.New("snapshot source changed between inspection and open")
+	}
+	if statErr == nil && !info.Mode().IsRegular() {
+		statErr = errors.New("snapshot source is an unsupported special file")
+	}
+	if statErr != nil {
 		closeErr := file.Close()
-		return errors.Join(copyErr, closeErr)
-	})
+		return fmt.Errorf("validate opened snapshot source %q: %w", relativePath, errors.Join(statErr, closeErr))
+	}
+
+	archiveName, err := canonicalArchiveRelativePath(relativePath, false)
+	if err != nil {
+		closeErr := file.Close()
+		return fmt.Errorf("snapshot source path %q cannot be archived safely: %w", relativePath, errors.Join(err, closeErr))
+	}
+	if info.Size() < 0 || info.Size() > maxRestoredSnapshotData-w.sourceBytes {
+		closeErr := file.Close()
+		return errors.Join(
+			fmt.Errorf("snapshot source exceeds maximum uncompressed size %d", maxRestoredSnapshotData),
+			closeErr,
+		)
+	}
+	w.sourceBytes += info.Size()
+
+	header, err := tar.FileInfoHeader(info, "")
+	if err == nil {
+		header.Name = archiveName
+		err = populateTarOwnership(header, info)
+	}
+	if err != nil {
+		closeErr := file.Close()
+		return errors.Join(err, closeErr)
+	}
+	if err := w.writer.WriteHeader(header); err != nil {
+		closeErr := file.Close()
+		return errors.Join(err, closeErr)
+	}
+	written, copyErr := io.CopyN(w.writer, file, info.Size())
+	if copyErr == nil && written != info.Size() {
+		copyErr = io.ErrUnexpectedEOF
+	}
+	if copyErr == nil {
+		afterInfo, afterErr := file.Stat()
+		if afterErr != nil {
+			copyErr = afterErr
+		} else if !os.SameFile(info, afterInfo) || afterInfo.Size() != info.Size() || !afterInfo.ModTime().Equal(info.ModTime()) {
+			copyErr = errors.New("snapshot source changed while it was being read")
+		}
+	}
+	closeErr := file.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return fmt.Errorf("archive snapshot source %q: %w", relativePath, err)
+	}
+	return nil
 }
 
 func writeFileAndSync(path string, payload []byte, mode fs.FileMode) error {
@@ -2072,13 +2210,38 @@ func syncDirectory(path string) error {
 	return errors.Join(err, closeErr)
 }
 
-func extractTarToDir(reader *tar.Reader, root string) error {
+func extractTarToDir(reader *tar.Reader, root string) (resultErr error) {
+	rootHandle, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, rootHandle.Close())
+	}()
+	return extractTarToRoot(reader, rootHandle)
+}
+
+type extractedDirectoryMetadata struct {
+	name    string
+	uid     int
+	gid     int
+	mode    fs.FileMode
+	modTime time.Time
+}
+
+func extractTarToRoot(reader *tar.Reader, root *os.Root) error {
+	if reader == nil || root == nil {
+		return errors.New("snapshot extraction requires an archive reader and root")
+	}
+
 	var restoredBytes int64
 	fileCount := 0
+	seenPaths := make(map[string]string)
+	directories := make([]extractedDirectoryMetadata, 0)
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			break
 		}
 		if err != nil {
 			return err
@@ -2087,76 +2250,106 @@ func extractTarToDir(reader *tar.Reader, root string) error {
 		if fileCount > maxRestoredFileCount {
 			return fmt.Errorf("snapshot contains more than %d archive entries", maxRestoredFileCount)
 		}
-		if header.Name == "" || len(header.Name) > maxArchivePathBytes {
-			return fmt.Errorf("snapshot contains an invalid archive path")
-		}
-		targetPath, err := secureJoin(root, header.Name)
+		isDirectory := header.Typeflag == tar.TypeDir
+		entryName, err := canonicalArchiveRelativePath(header.Name, isDirectory)
 		if err != nil {
-			return err
+			return fmt.Errorf("snapshot contains invalid archive path %q: %w", header.Name, err)
 		}
+		collisionKey := entryName
+		if previous, exists := seenPaths[collisionKey]; exists {
+			return fmt.Errorf("snapshot contains duplicate archive path %q (previously %q)", header.Name, previous)
+		}
+		seenPaths[collisionKey] = header.Name
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := ensureNoSymlinkInPath(root, targetPath); err != nil {
+			if err := ensureRootPathHasNoSymlinks(root, entryName, true); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(targetPath, fs.FileMode(header.Mode)); err != nil {
-				return err
+			if err := root.MkdirAll(path.Dir(entryName), 0o700); err != nil {
+				return fmt.Errorf("create parent for archive directory %q: %w", header.Name, err)
 			}
-			if err := applyExtractedMetadata(targetPath, header, false); err != nil {
-				return err
+			if err := root.Mkdir(entryName, 0o700); err != nil {
+				if !errors.Is(err, fs.ErrExist) {
+					return fmt.Errorf("create archive directory %q: %w", header.Name, err)
+				}
+				info, statErr := root.Lstat(entryName)
+				if statErr != nil {
+					return fmt.Errorf("inspect archive directory %q: %w", header.Name, statErr)
+				}
+				if !info.IsDir() {
+					return fmt.Errorf("archive directory %q collides with a non-directory", header.Name)
+				}
 			}
+			directories = append(directories, extractedDirectoryMetadata{
+				name:    entryName,
+				uid:     header.Uid,
+				gid:     header.Gid,
+				mode:    fs.FileMode(header.Mode).Perm(),
+				modTime: header.ModTime,
+			})
 		case tar.TypeSymlink:
-			if len(header.Linkname) > maxArchivePathBytes {
-				return fmt.Errorf("archive symlink %q target is too long", header.Name)
-			}
-			if err := validateSymlinkTarget(root, targetPath, header.Linkname); err != nil {
-				return err
-			}
-			if err := ensureNoSymlinkInPath(root, filepath.Dir(targetPath)); err != nil {
-				return err
-			}
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return err
-			}
-			_ = os.Remove(targetPath)
-			if err := os.Symlink(header.Linkname, targetPath); err != nil {
-				return err
-			}
-			if err := applyExtractedMetadata(targetPath, header, true); err != nil {
-				return err
-			}
+			return fmt.Errorf("archive symlink %q is not supported", header.Name)
 		case tar.TypeReg, tar.TypeRegA:
 			if header.Size < 0 || header.Size > maxRestoredSnapshotData-restoredBytes {
 				return fmt.Errorf("snapshot restored data exceeds maximum %d bytes", maxRestoredSnapshotData)
 			}
-			restoredBytes += header.Size
-			if err := ensureNoSymlinkInPath(root, targetPath); err != nil {
+			if err := ensureRootPathHasNoSymlinks(root, entryName, true); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return err
+			if err := root.MkdirAll(path.Dir(entryName), 0o700); err != nil {
+				return fmt.Errorf("create parent for archive file %q: %w", header.Name, err)
 			}
-			file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, fs.FileMode(header.Mode))
+			file, err := root.OpenFile(entryName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 			if err != nil {
-				return err
+				return fmt.Errorf("create archive file %q: %w", header.Name, err)
 			}
-			if _, err := io.CopyN(file, reader, header.Size); err != nil {
-				file.Close()
-				return err
+			written, copyErr := io.CopyN(file, reader, header.Size)
+			if copyErr == nil && written != header.Size {
+				copyErr = io.ErrUnexpectedEOF
 			}
-			if err := file.Close(); err != nil {
-				return err
+			if copyErr == nil {
+				copyErr = applyExtractedMetadata(file, header)
 			}
-			if err := applyExtractedMetadata(targetPath, header, false); err != nil {
-				return err
+			closeErr := file.Close()
+			if err := errors.Join(copyErr, closeErr); err != nil {
+				return fmt.Errorf("extract archive file %q: %w", header.Name, err)
 			}
+			restoredBytes += header.Size
 		case tar.TypeLink:
 			return fmt.Errorf("archive hardlink %q is not supported", header.Name)
 		default:
 			return fmt.Errorf("archive entry %q has unsupported type %d", header.Name, header.Typeflag)
 		}
 	}
+
+	sort.SliceStable(directories, func(left, right int) bool {
+		leftDepth := strings.Count(directories[left].name, "/")
+		rightDepth := strings.Count(directories[right].name, "/")
+		if leftDepth != rightDepth {
+			return leftDepth > rightDepth
+		}
+		return directories[left].name < directories[right].name
+	})
+	for _, metadata := range directories {
+		directory, err := root.Open(metadata.name)
+		if err != nil {
+			return fmt.Errorf("open extracted archive directory %q: %w", metadata.name, err)
+		}
+		info, statErr := directory.Stat()
+		if statErr == nil && !info.IsDir() {
+			statErr = fmt.Errorf("extracted archive path is no longer a directory")
+		}
+		metadataErr := statErr
+		if metadataErr == nil {
+			metadataErr = applyFileMetadata(directory, metadata.uid, metadata.gid, metadata.mode, metadata.modTime)
+		}
+		closeErr := directory.Close()
+		if err := errors.Join(metadataErr, closeErr); err != nil {
+			return fmt.Errorf("apply archive directory metadata %q: %w", metadata.name, err)
+		}
+	}
+	return nil
 }
 
 func populateTarOwnership(header *tar.Header, info fs.FileInfo) error {
@@ -2172,28 +2365,96 @@ func populateTarOwnership(header *tar.Header, info fs.FileInfo) error {
 	return nil
 }
 
-func applyExtractedMetadata(targetPath string, header *tar.Header, isSymlink bool) error {
+func applyExtractedMetadata(file *os.File, header *tar.Header) error {
 	if header == nil {
 		return nil
 	}
-	if isSymlink {
-		if err := os.Lchown(targetPath, header.Uid, header.Gid); err != nil && !errors.Is(err, fs.ErrPermission) {
-			return err
-		}
-		return nil
+	return applyFileMetadata(file, header.Uid, header.Gid, fs.FileMode(header.Mode).Perm(), header.ModTime)
+}
+
+func applyFileMetadata(file *os.File, uid, gid int, mode fs.FileMode, modTime time.Time) error {
+	if file == nil {
+		return errors.New("cannot apply metadata to a nil file")
 	}
-	if err := os.Chown(targetPath, header.Uid, header.Gid); err != nil && !errors.Is(err, fs.ErrPermission) {
+	if err := file.Chown(uid, gid); err != nil && !errors.Is(err, fs.ErrPermission) {
 		return err
 	}
-	if err := os.Chmod(targetPath, fs.FileMode(header.Mode)); err != nil && !errors.Is(err, fs.ErrPermission) {
+	if err := file.Chmod(mode.Perm()); err != nil && !errors.Is(err, fs.ErrPermission) {
 		return err
 	}
-	modTime := header.ModTime
 	if modTime.IsZero() {
 		modTime = time.Now()
 	}
-	if err := os.Chtimes(targetPath, modTime, modTime); err != nil && !errors.Is(err, fs.ErrPermission) {
+	timestamps := []syscall.Timeval{
+		syscall.NsecToTimeval(modTime.UnixNano()),
+		syscall.NsecToTimeval(modTime.UnixNano()),
+	}
+	if err := syscall.Futimes(int(file.Fd()), timestamps); err != nil && !errors.Is(err, fs.ErrPermission) {
 		return err
+	}
+	return nil
+}
+
+func canonicalArchiveRelativePath(name string, directory bool) (string, error) {
+	if name == "" || len(name) > maxArchivePathBytes || strings.IndexByte(name, 0) >= 0 {
+		return "", errors.New("archive path is empty, too long, or contains NUL")
+	}
+	if strings.Contains(name, `\`) {
+		return "", errors.New("archive path contains a backslash")
+	}
+
+	normalized := name
+	if directory {
+		normalized = strings.TrimSuffix(normalized, "/")
+	} else if strings.HasSuffix(normalized, "/") {
+		return "", errors.New("non-directory archive path has a trailing slash")
+	}
+	if normalized == "" || path.IsAbs(normalized) || hasWindowsDrivePrefix(normalized) {
+		return "", errors.New("archive path must be relative")
+	}
+	cleaned := path.Clean(normalized)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", errors.New("archive path escapes the extraction root")
+	}
+	if cleaned != normalized {
+		return "", errors.New("archive path is not canonical")
+	}
+	return cleaned, nil
+}
+
+func hasWindowsDrivePrefix(name string) bool {
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	first := name[0]
+	return first >= 'A' && first <= 'Z' || first >= 'a' && first <= 'z'
+}
+
+func ensureRootPathHasNoSymlinks(root *os.Root, name string, includeLeaf bool) error {
+	parts := strings.Split(name, "/")
+	if !includeLeaf && len(parts) > 0 {
+		parts = parts[:len(parts)-1]
+	}
+	current := ""
+	for index, part := range parts {
+		if current == "" {
+			current = part
+		} else {
+			current = path.Join(current, part)
+		}
+		info, err := root.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect archive path %q: %w", name, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("archive path %q crosses symlink %q", name, current)
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return fmt.Errorf("archive path %q crosses non-directory %q", name, current)
+		}
 	}
 	return nil
 }
@@ -2208,54 +2469,6 @@ func secureJoin(root, relativePath string) (string, error) {
 		return "", fmt.Errorf("invalid archive path %q", relativePath)
 	}
 	return cleanPath, nil
-}
-
-func validateSymlinkTarget(root, targetPath, linkName string) error {
-	if strings.TrimSpace(linkName) == "" {
-		return errors.New("archive symlink has empty target")
-	}
-	if filepath.IsAbs(filepath.FromSlash(linkName)) {
-		return fmt.Errorf("archive symlink %q has absolute target %q", targetPath, linkName)
-	}
-	cleanRoot := filepath.Clean(root)
-	resolved := filepath.Clean(filepath.Join(filepath.Dir(targetPath), filepath.FromSlash(linkName)))
-	if resolved != cleanRoot && !strings.HasPrefix(resolved, cleanRoot+string(os.PathSeparator)) {
-		return fmt.Errorf("archive symlink %q escapes restore root", targetPath)
-	}
-	return nil
-}
-
-func ensureNoSymlinkInPath(root, targetPath string) error {
-	cleanRoot := filepath.Clean(root)
-	cleanTarget := filepath.Clean(targetPath)
-	if cleanTarget == cleanRoot {
-		return nil
-	}
-	if !strings.HasPrefix(cleanTarget, cleanRoot+string(os.PathSeparator)) {
-		return fmt.Errorf("archive path %q escapes restore root", targetPath)
-	}
-	relativePath, err := filepath.Rel(cleanRoot, cleanTarget)
-	if err != nil {
-		return err
-	}
-	current := cleanRoot
-	for _, part := range strings.Split(relativePath, string(os.PathSeparator)) {
-		if part == "." || part == "" {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("archive path %q crosses symlink %q", targetPath, current)
-		}
-	}
-	return nil
 }
 
 func directoryHasEntries(root string) bool {

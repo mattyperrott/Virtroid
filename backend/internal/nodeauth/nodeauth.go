@@ -2,10 +2,12 @@ package nodeauth
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"net/http"
@@ -45,6 +47,9 @@ func LoadPrivateKey(material string) (*ecdsa.PrivateKey, string, error) {
 	parsed, err := x509.ParsePKCS8PrivateKey(keyDER)
 	if err != nil {
 		if ecKey, ecErr := x509.ParseECPrivateKey(keyDER); ecErr == nil {
+			if !isP256PublicKey(&ecKey.PublicKey) {
+				return nil, "", ErrInvalidPrivateKey
+			}
 			publicKey, marshalErr := PublicKeyMaterial(&ecKey.PublicKey)
 			if marshalErr != nil {
 				return nil, "", marshalErr
@@ -56,6 +61,9 @@ func LoadPrivateKey(material string) (*ecdsa.PrivateKey, string, error) {
 
 	privateKey, ok := parsed.(*ecdsa.PrivateKey)
 	if !ok {
+		return nil, "", ErrInvalidPrivateKey
+	}
+	if !isP256PublicKey(&privateKey.PublicKey) {
 		return nil, "", ErrInvalidPrivateKey
 	}
 	publicKey, err := PublicKeyMaterial(&privateKey.PublicKey)
@@ -78,7 +86,33 @@ func ParsePublicKey(material string) (*ecdsa.PublicKey, error) {
 	if !ok {
 		return nil, ErrInvalidPublicKey
 	}
+	if !isP256PublicKey(publicKey) {
+		return nil, ErrInvalidPublicKey
+	}
 	return publicKey, nil
+}
+
+func isP256PublicKey(publicKey *ecdsa.PublicKey) bool {
+	return publicKey != nil &&
+		publicKey.Curve != nil &&
+		publicKey.Curve.Params() != nil &&
+		publicKey.Curve.Params().Name == elliptic.P256().Params().Name
+}
+
+// NormalizePublicKey returns the canonical base64-encoded PKIX form and its
+// SHA-256 fingerprint. Registry comparisons use the canonical DER fingerprint
+// rather than caller-controlled whitespace or PEM/base64 formatting.
+func NormalizePublicKey(material string) (string, string, error) {
+	publicKey, err := ParsePublicKey(material)
+	if err != nil {
+		return "", "", err
+	}
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return "", "", ErrInvalidPublicKey
+	}
+	fingerprint := sha256.Sum256(der)
+	return base64.StdEncoding.EncodeToString(der), hex.EncodeToString(fingerprint[:]), nil
 }
 
 func PublicKeyMaterial(publicKey *ecdsa.PublicKey) (string, error) {

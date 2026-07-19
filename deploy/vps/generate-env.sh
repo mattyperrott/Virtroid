@@ -98,7 +98,7 @@ write_env_var() {
   write_env_var POSTGRES_USER virtroid
   write_env_var POSTGRES_PASSWORD "$(random_hex)"
   write_env_var NODE_SHARED_SECRET "$(random_hex)"
-  write_env_var NODE_REGISTRATION_SECRET "$(random_hex)"
+  write_env_var NODE_DEVELOPMENT_ENROLLMENT_ENABLED false
   write_env_var NODE_PRIVATE_KEY_B64 "$(node_private_key_b64)"
   write_env_var BOOTSTRAP_ENABLED false
   write_env_var BOOTSTRAP_RATE_LIMIT_PER_MINUTE 5

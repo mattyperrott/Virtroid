@@ -1,6 +1,8 @@
 services:
   postgres:
     image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE to an immutable postgres image with @sha256 digest}
+    labels:
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     container_name: virtroid-postgres
     restart: unless-stopped
     environment:
@@ -26,12 +28,12 @@ services:
       retries: 10
 
   virtroidd:
-    build:
-      context: ../../backend
-      args:
-        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:?set GO_BUILD_IMAGE to an immutable Go 1.26.5+ image with @sha256 digest}
-        BACKEND_RUNTIME_IMAGE: ${BACKEND_RUNTIME_IMAGE:?set BACKEND_RUNTIME_IMAGE to an immutable runtime image with @sha256 digest}
+    image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
     container_name: virtroidd
+    labels:
+      com.virtroid.source-sha: ${VIRTROID_SOURCE_SHA:?set VIRTROID_SOURCE_SHA to the deployed 40-character commit SHA}
+      com.virtroid.schema-version: ${VIRTROID_SCHEMA_VERSION:?set VIRTROID_SCHEMA_VERSION to the backend schema compatibility version}
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -43,7 +45,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL, for example https://your-domain.example}
       PUBLIC_RELAY_URL: ${PUBLIC_RELAY_URL:?set PUBLIC_RELAY_URL, for example https://your-domain.example}
       NODE_SHARED_SECRET: ${NODE_SHARED_SECRET:?set NODE_SHARED_SECRET}
-      NODE_REGISTRATION_SECRET: ${NODE_REGISTRATION_SECRET:-}
+      NODE_DEVELOPMENT_ENROLLMENT_ENABLED: "false"
       BOOTSTRAP_ENABLED: ${BOOTSTRAP_ENABLED:-false}
       BOOTSTRAP_RATE_LIMIT_PER_MINUTE: ${BOOTSTRAP_RATE_LIMIT_PER_MINUTE:-5}
       BOOTSTRAP_MAX_BODY_BYTES: ${BOOTSTRAP_MAX_BODY_BYTES:-32768}
@@ -75,12 +77,12 @@ services:
       - control
 
   virtnoded:
-    build:
-      context: ../../backend
-      args:
-        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:?set GO_BUILD_IMAGE to an immutable Go 1.26.5+ image with @sha256 digest}
-        BACKEND_RUNTIME_IMAGE: ${BACKEND_RUNTIME_IMAGE:?set BACKEND_RUNTIME_IMAGE to an immutable runtime image with @sha256 digest}
+    image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
     container_name: virtnoded
+    labels:
+      com.virtroid.source-sha: ${VIRTROID_SOURCE_SHA:?set VIRTROID_SOURCE_SHA to the deployed 40-character commit SHA}
+      com.virtroid.schema-version: ${VIRTROID_SCHEMA_VERSION:?set VIRTROID_SCHEMA_VERSION to the backend schema compatibility version}
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     command: ["virtnoded"]
     user: "0:0"
     group_add:
@@ -96,7 +98,6 @@ services:
       NODE_ADVERTISE_ADDR: ${NODE_ADVERTISE_ADDR:?set NODE_ADVERTISE_ADDR}
       NODE_ADB_PATH: /usr/bin/adb
       NODE_SHARED_SECRET: ${NODE_SHARED_SECRET:?set NODE_SHARED_SECRET}
-      NODE_REGISTRATION_SECRET: ${NODE_REGISTRATION_SECRET:-}
       NODE_PRIVATE_KEY_B64: ${NODE_PRIVATE_KEY_B64:?set NODE_PRIVATE_KEY_B64 to a base64 PKCS8 P-256 private key}
       NODE_APP_APK_DIR: /srv/virtroid/apks
       NODE_APP_MANIFEST_PATH: /srv/virtroid/apks/manifest.json
@@ -143,8 +144,40 @@ services:
       - control
       - blob
 
+  virtroid-admin:
+    image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
+    labels:
+      com.virtroid.source-sha: ${VIRTROID_SOURCE_SHA:?set VIRTROID_SOURCE_SHA to the deployed 40-character commit SHA}
+      com.virtroid.schema-version: ${VIRTROID_SCHEMA_VERSION:?set VIRTROID_SCHEMA_VERSION to the backend schema compatibility version}
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
+    entrypoint: ["/usr/local/bin/virtroid-admin"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-virtroid}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtroid}?sslmode=disable
+      NODE_ID: ${NODE_ID:-mp-vps-storage}
+      NODE_PRIVATE_KEY_B64: ${NODE_PRIVATE_KEY_B64:?set NODE_PRIVATE_KEY_B64 to a base64 PKCS8 P-256 private key}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    mem_limit: 128m
+    cpus: "0.25"
+    pids_limit: 64
+    logging:
+      driver: local
+      options:
+        max-size: "1m"
+        max-file: "2"
+    networks:
+      - database
+
   renterd:
     image: ${RENTERD_IMAGE:-virtroid-renterd-profile-disabled}
+    labels:
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     container_name: virtroid-renterd
     restart: unless-stopped
     profiles:
@@ -173,6 +206,8 @@ services:
 
   edge:
     image: ${HAPROXY_IMAGE:-virtroid-edge-profile-disabled}
+    labels:
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     container_name: virtroid-edge
     group_add:
       - "${HAPROXY_CERT_GID:?set HAPROXY_CERT_GID to the host virtroid-cert group id}"
@@ -201,6 +236,8 @@ services:
 
   falco:
     image: ${FALCO_IMAGE:-virtroid-falco-profile-disabled}
+    labels:
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     container_name: virtroid-falco
     restart: unless-stopped
     profiles:
@@ -246,12 +283,12 @@ services:
       - monitoring
 
   falco-forwarder:
-    build:
-      context: ../../backend
-      args:
-        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:?set GO_BUILD_IMAGE to an immutable Go 1.26.5+ image with @sha256 digest}
-        BACKEND_RUNTIME_IMAGE: ${BACKEND_RUNTIME_IMAGE:?set BACKEND_RUNTIME_IMAGE to an immutable runtime image with @sha256 digest}
+    image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
     container_name: virtroid-falco-forwarder
+    labels:
+      com.virtroid.source-sha: ${VIRTROID_SOURCE_SHA:?set VIRTROID_SOURCE_SHA to the deployed 40-character commit SHA}
+      com.virtroid.schema-version: ${VIRTROID_SCHEMA_VERSION:?set VIRTROID_SCHEMA_VERSION to the backend schema compatibility version}
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     command: ["falco-forwarder"]
     user: "0:0"
     restart: unless-stopped

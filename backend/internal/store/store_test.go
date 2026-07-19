@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"virtroid/backend/internal/nodeauth"
 )
 
 func TestEnsureSchemaSerializesAndRecordsVersion(t *testing.T) {
@@ -69,6 +71,313 @@ func TestEnsureSchemaRejectsNewerDatabaseVersion(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestNodeRegistrySchemaIsSeparateFromHeartbeatHosts(t *testing.T) {
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS node_operators",
+		"CREATE TABLE IF NOT EXISTS approved_nodes",
+		"CREATE TABLE IF NOT EXISTS approved_node_keys",
+		"CREATE TABLE IF NOT EXISTS node_registry_audit",
+		"CREATE TABLE IF NOT EXISTS operator_registry_audit",
+		"idx_approved_node_keys_one_active",
+		"idx_approved_node_keys_one_overlap",
+		"idx_operator_registry_audit_operator_created_at",
+	} {
+		if !strings.Contains(schemaSQL, required) {
+			t.Fatalf("schema is missing node-registry control %q", required)
+		}
+	}
+	if strings.Contains(schemaSQL, "INSERT INTO approved_nodes") || strings.Contains(schemaSQL, "SELECT id, public_key FROM hosts") {
+		t.Fatal("schema auto-imports heartbeat-observed hosts into the trust registry")
+	}
+}
+
+func TestNodeRegistryRejectsInvalidInputsBeforeDatabaseMutation(t *testing.T) {
+	st := &Store{}
+	if _, err := st.ApproveOperator(context.Background(), ApproveOperatorInput{
+		OperatorID: "operator-1",
+		Actor:      "tester",
+	}); err == nil || !strings.Contains(err.Error(), "reason") {
+		t.Fatalf("ApproveOperator missing-reason error = %v", err)
+	}
+	if _, err := st.RevokeOperator(context.Background(), RevokeOperatorInput{
+		OperatorID: "bad operator id",
+		Actor:      "tester",
+		Reason:     "compromised",
+	}); err == nil || !strings.Contains(err.Error(), "unsupported character") {
+		t.Fatalf("RevokeOperator invalid-ID error = %v", err)
+	}
+	if _, err := st.ApproveNode(context.Background(), ApproveNodeInput{
+		NodeID:       "bad node id",
+		OperatorID:   "operator-1",
+		OperatorName: "Operator",
+		PublicKey:    "not-a-key",
+		Actor:        "tester",
+	}); err == nil {
+		t.Fatal("ApproveNode accepted an invalid node id")
+	}
+	if _, err := st.RotateNodeKey(context.Background(), RotateNodeKeyInput{
+		NodeID:    "node-1",
+		PublicKey: "not-a-key",
+		Overlap:   MaxNodeKeyRotationOverlap + time.Second,
+		Actor:     "tester",
+	}); !errors.Is(err, ErrNodeKeyRotationOverlap) {
+		t.Fatalf("RotateNodeKey overlap error = %v, want %v", err, ErrNodeKeyRotationOverlap)
+	}
+	if _, err := st.RevokeNode(context.Background(), RevokeNodeInput{
+		NodeID: "node-1",
+		Actor:  "tester",
+	}); err == nil || !strings.Contains(err.Error(), "reason") {
+		t.Fatalf("RevokeNode missing-reason error = %v", err)
+	}
+}
+
+func TestApproveNodeWritesExplicitRegistryAndAuditRecords(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	nodeID := "node-1"
+	operatorID := "operator-1"
+	publicKey, fingerprint, err := nodeauth.NormalizePublicKey(integrationNodePublicKey(t))
+	if err != nil {
+		t.Fatalf("NormalizePublicKey: %v", err)
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO node_operators`).
+		WithArgs(operatorID, "Test operator").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT status FROM node_operators`).
+		WithArgs(operatorID).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("approved"))
+	mock.ExpectExec(`INSERT INTO operator_registry_audit`).
+		WithArgs(operatorID, "approve", "test-actor", "out-of-band verification").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT operator_id, status, active_key_version`).
+		WithArgs(nodeID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO approved_nodes`).
+		WithArgs(nodeID, operatorID, int64(1)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO approved_node_keys`).
+		WithArgs(nodeID, int64(1), publicKey, fingerprint).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO node_registry_audit`).
+		WithArgs(nodeID, operatorID, "approve", "test-actor", "out-of-band verification", int64(1), fingerprint).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT n.node_id, n.operator_id`).
+		WithArgs(nodeID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"node_id", "operator_id", "operator_name", "operator_status", "status",
+			"active_key_version", "approved_at", "revoked_at", "created_at", "updated_at",
+		}).AddRow(nodeID, operatorID, "Test operator", "approved", "approved", int64(1), now, nil, now, now))
+	mock.ExpectQuery(`SELECT node_id, key_version, public_key`).
+		WithArgs(nodeID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"node_id", "key_version", "public_key", "fingerprint_sha256", "state",
+			"valid_from", "valid_until", "retired_at", "created_at",
+		}).AddRow(nodeID, int64(1), publicKey, fingerprint, "active", now, nil, nil, now))
+
+	node, err := st.ApproveNode(context.Background(), ApproveNodeInput{
+		NodeID:       nodeID,
+		OperatorID:   operatorID,
+		OperatorName: "Test operator",
+		PublicKey:    publicKey,
+		Actor:        "test-actor",
+		Reason:       "out-of-band verification",
+	})
+	if err != nil {
+		t.Fatalf("ApproveNode: %v", err)
+	}
+	if node.ActiveKeyVersion != 1 || len(node.Keys) != 1 || node.Keys[0].FingerprintSHA256 != fingerprint {
+		t.Fatalf("approved node = %+v, want version 1 and expected fingerprint", node)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestApproveOperatorCreatesAuditedOperator(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	operatorID := "operator-1"
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO node_operators`).
+		WithArgs(operatorID, "Test operator").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT status FROM node_operators`).
+		WithArgs(operatorID).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("approved"))
+	mock.ExpectExec(`UPDATE node_operators SET name`).
+		WithArgs(operatorID, "Test operator", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO operator_registry_audit`).
+		WithArgs(operatorID, "approve", "security-admin", "verified identity").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT id, name, status, approved_at`).
+		WithArgs(operatorID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "status", "approved_at", "revoked_at", "created_at", "updated_at",
+		}).AddRow(operatorID, "Test operator", "approved", now, nil, now, now))
+
+	operator, err := st.ApproveOperator(context.Background(), ApproveOperatorInput{
+		OperatorID: operatorID,
+		Name:       "Test operator",
+		Actor:      "security-admin",
+		Reason:     "verified identity",
+	})
+	if err != nil {
+		t.Fatalf("ApproveOperator: %v", err)
+	}
+	if operator.ID != operatorID || operator.Status != "approved" || operator.RevokedAt != nil {
+		t.Fatalf("approved operator = %+v", operator)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestApproveOperatorReactivatesWithAudit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	operatorID := "operator-1"
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO node_operators`).
+		WithArgs(operatorID, "Restored operator").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT status FROM node_operators`).
+		WithArgs(operatorID).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("revoked"))
+	mock.ExpectExec(`UPDATE node_operators[\s\S]*status = 'approved'`).
+		WithArgs(operatorID, "Restored operator", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO operator_registry_audit`).
+		WithArgs(operatorID, "reactivate", "security-admin", "incident resolved").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT id, name, status, approved_at`).
+		WithArgs(operatorID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "status", "approved_at", "revoked_at", "created_at", "updated_at",
+		}).AddRow(operatorID, "Restored operator", "approved", now, nil, now, now))
+
+	operator, err := st.ApproveOperator(context.Background(), ApproveOperatorInput{
+		OperatorID: operatorID,
+		Name:       "Restored operator",
+		Actor:      "security-admin",
+		Reason:     "incident resolved",
+	})
+	if err != nil {
+		t.Fatalf("ApproveOperator reactivate: %v", err)
+	}
+	if operator.Status != "approved" || operator.RevokedAt != nil {
+		t.Fatalf("reactivated operator = %+v", operator)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRevokeOperatorWritesAudit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	operatorID := "operator-1"
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT status FROM node_operators`).
+		WithArgs(operatorID).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("approved"))
+	mock.ExpectExec(`UPDATE node_operators[\s\S]*status = 'revoked'`).
+		WithArgs(operatorID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO operator_registry_audit`).
+		WithArgs(operatorID, "revoke", "security-admin", "operator credential compromise").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT id, name, status, approved_at`).
+		WithArgs(operatorID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "status", "approved_at", "revoked_at", "created_at", "updated_at",
+		}).AddRow(operatorID, "Test operator", "revoked", now, now, now, now))
+
+	operator, err := st.RevokeOperator(context.Background(), RevokeOperatorInput{
+		OperatorID: operatorID,
+		Actor:      "security-admin",
+		Reason:     "operator credential compromise",
+	})
+	if err != nil {
+		t.Fatalf("RevokeOperator: %v", err)
+	}
+	if operator.Status != "revoked" || operator.RevokedAt == nil {
+		t.Fatalf("revoked operator = %+v", operator)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestAuthorizedNodeKeysReturnsOnlyRegistryQueryResults(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	nodeID := "node-1"
+	activeKey, activeFingerprint, err := nodeauth.NormalizePublicKey(integrationNodePublicKey(t))
+	if err != nil {
+		t.Fatalf("NormalizePublicKey(active): %v", err)
+	}
+	overlapKey, overlapFingerprint, err := nodeauth.NormalizePublicKey(integrationNodePublicKey(t))
+	if err != nil {
+		t.Fatalf("NormalizePublicKey(overlap): %v", err)
+	}
+	mock.ExpectQuery(`FROM approved_nodes n[\s\S]*JOIN node_operators[\s\S]*JOIN approved_node_keys`).
+		WithArgs(nodeID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"node_id", "key_version", "public_key", "fingerprint_sha256", "state",
+			"valid_from", "valid_until", "retired_at", "created_at",
+		}).
+			AddRow(nodeID, int64(2), activeKey, activeFingerprint, "active", now, nil, nil, now).
+			AddRow(nodeID, int64(1), overlapKey, overlapFingerprint, "overlap", now.Add(-time.Hour), now.Add(time.Hour), nil, now.Add(-time.Hour)))
+
+	keys, err := st.AuthorizedNodeKeys(context.Background(), nodeID)
+	if err != nil {
+		t.Fatalf("AuthorizedNodeKeys: %v", err)
+	}
+	if len(keys) != 2 || keys[0].KeyVersion != 2 || keys[1].KeyVersion != 1 {
+		t.Fatalf("authorized keys = %+v, want active v2 and overlap v1", keys)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
@@ -1440,7 +1749,7 @@ func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtime_start_events").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("SELECT id FROM hosts").
+	mock.ExpectQuery("SELECT h.id FROM hosts h").
 		WithArgs(hostID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(hostID))
 	mock.ExpectQuery("UPDATE runtimes").
@@ -1904,7 +2213,7 @@ func TestRuntimeBlobKeyTargetWipeUsesLocalBlobOwnerHost(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM runtimes").
 		WithArgs(accountID, runtimeID).
 		WillReturnRows(runtimeRowsWithBlob(now, runtimeID, accountID, "stopped", "stopped", "offline", nil, nil, "local-disk", `{"store":"local-disk"}`, blobHostID))
-	mock.ExpectQuery("SELECT id, name, advertise_addr").
+	mock.ExpectQuery("SELECT h.id, h.name, h.advertise_addr").
 		WithArgs(blobHostID).
 		WillReturnRows(hostRows(now, blobHostID, "node-public-key"))
 	mock.ExpectCommit()

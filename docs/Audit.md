@@ -1,3 +1,10 @@
+> **Historical report:** This audit records an earlier repository state. Its
+> findings and line references are not the current implementation status. Use
+> [`remediation-status-2026-07-19.md`](./remediation-status-2026-07-19.md) for
+> the dated live schema-v2 snapshot, unreleased branch work, and unresolved
+> production blockers. The remaining isolation, runtime-attestation, key-release,
+> account-DEK, mTLS, and off-host recovery gaps are still material.
+
 **Overall**
 Current risk rating: **Critical**.  
 Current maturity: **alpha / pre-production**.  

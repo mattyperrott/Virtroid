@@ -267,7 +267,7 @@ func (v *activeBlobKeyVault) clear(runtimeID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := v.store.ClearRuntimeBlobKeyHandoff(ctx, runtimeID); err != nil {
-			log.Printf("clear durable runtime blob-key handoff %s: %v", runtimeID, err)
+			log.Printf("clear durable runtime blob-key handoff runtime_id=%s error=%s", safeLogValue(runtimeID), safeLogValue(err))
 		}
 	}
 }
@@ -285,7 +285,7 @@ func (v *activeBlobKeyVault) clearAccount(accountID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := v.store.ClearAccountBlobKeyHandoffs(ctx, accountID); err != nil {
-			log.Printf("clear durable account blob-key handoffs %s: %v", accountID, err)
+			log.Printf("clear durable account blob-key handoffs account_id=%s error=%s", safeLogValue(accountID), safeLogValue(err))
 		}
 	}
 }
@@ -1294,7 +1294,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		abortCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 		defer cancel()
 		if _, abortErr := a.store.AbortPendingSession(abortCtx, session.ID, session.RelayToken, reason); abortErr != nil {
-			log.Printf("abort pending session %s after setup failure: %v", session.ID, abortErr)
+			log.Printf("abort pending session after setup failure session_id=%s error=%s", safeLogValue(session.ID), safeLogValue(abortErr))
 		}
 	}
 
@@ -2478,7 +2478,7 @@ type nodeRequestIdentity struct {
 	publicKey string
 }
 
-func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRegistration bool) (nodeRequestIdentity, bool) {
+func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowDevelopmentEnrollment bool) (nodeRequestIdentity, bool) {
 	nodeID := strings.TrimSpace(r.Header.Get(nodeauth.HeaderNodeID))
 	timestampRaw := strings.TrimSpace(r.Header.Get(nodeauth.HeaderTimestamp))
 	nonce := strings.TrimSpace(r.Header.Get(nodeauth.HeaderNonce))
@@ -2515,40 +2515,63 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRe
 		return nodeRequestIdentity{}, false
 	}
 
-	publicKey, err := a.store.HostPublicKey(r.Context(), nodeID)
-	if err != nil && !errors.Is(err, store.ErrHostNotFound) {
+	approvedKeys, err := a.store.AuthorizedNodeKeys(r.Context(), nodeID)
+	developmentEnrollment := false
+	if err != nil && !errors.Is(err, store.ErrApprovedNodeNotFound) {
 		writeInternalAPIError(w, "node_key_lookup_failed", err)
 		return nodeRequestIdentity{}, false
 	}
-	if strings.TrimSpace(publicKey) == "" {
-		if !allowRegistration {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node is not registered"})
-			return nodeRequestIdentity{}, false
-		}
-		if a.cfg.NodeRegistrationSecret == "" && a.cfg.AppEnv != "development" {
-			writeServerAPIError(
-				w,
-				http.StatusServiceUnavailable,
-				"node_registration_unavailable",
-				"service unavailable",
-				errors.New("node registration secret is not configured"),
-			)
+	if len(approvedKeys) == 0 {
+		if !allowDevelopmentEnrollment ||
+			!strings.EqualFold(strings.TrimSpace(a.cfg.AppEnv), "development") ||
+			!a.cfg.NodeDevelopmentEnrollmentEnabled {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node is not approved"})
 			return nodeRequestIdentity{}, false
 		}
 		if a.cfg.NodeRegistrationSecret != "" && r.Header.Get(nodeauth.HeaderRegistrationSecret) != a.cfg.NodeRegistrationSecret {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node registration secret"})
 			return nodeRequestIdentity{}, false
 		}
-		publicKey = strings.TrimSpace(r.Header.Get(nodeauth.HeaderPublicKey))
-		if publicKey == "" {
+		publicKey, fingerprint, normalizeErr := nodeauth.NormalizePublicKey(r.Header.Get(nodeauth.HeaderPublicKey))
+		if normalizeErr != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node public key is required for registration"})
 			return nodeRequestIdentity{}, false
 		}
+		approvedKeys = []store.ApprovedNodeKey{{
+			NodeID:            nodeID,
+			KeyVersion:        1,
+			PublicKey:         publicKey,
+			FingerprintSHA256: fingerprint,
+			State:             "active",
+		}}
+		developmentEnrollment = true
 	}
 
-	if err := nodeauth.Verify(publicKey, r.Method, r.URL.RequestURI(), nodeID, timestampRaw, nonce, bodyHash, signatureRaw); err != nil {
+	verifiedPublicKey := ""
+	for _, approvedKey := range approvedKeys {
+		if err := nodeauth.Verify(
+			approvedKey.PublicKey,
+			r.Method,
+			r.URL.RequestURI(),
+			nodeID,
+			timestampRaw,
+			nonce,
+			bodyHash,
+			signatureRaw,
+		); err == nil {
+			verifiedPublicKey = approvedKey.PublicKey
+			break
+		}
+	}
+	if verifiedPublicKey == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node signature verification failed"})
 		return nodeRequestIdentity{}, false
+	}
+	if developmentEnrollment {
+		if _, err := a.store.EnrollDevelopmentNode(r.Context(), nodeID, verifiedPublicKey); err != nil {
+			writeInternalAPIError(w, "development_node_enrollment_failed", err)
+			return nodeRequestIdentity{}, false
+		}
 	}
 
 	if err := a.store.RememberNodeRequestNonce(r.Context(), nodeID, nonce, time.Unix(timestamp, 0).Add(5*time.Minute)); err != nil {
@@ -2560,7 +2583,7 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRe
 		return nodeRequestIdentity{}, false
 	}
 
-	return nodeRequestIdentity{id: nodeID, publicKey: publicKey}, true
+	return nodeRequestIdentity{id: nodeID, publicKey: verifiedPublicKey}, true
 }
 
 func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort int, runtimeID string, maxSize, bitRate int) (string, error) {
@@ -2638,9 +2661,21 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 
 func writeServerAPIError(w http.ResponseWriter, status int, code, message string, err error) {
 	if err != nil {
-		log.Printf("httpapi server error status=%d code=%s: %v", status, code, err)
+		log.Printf("httpapi server error status=%d code=%s error=%s", status, safeLogValue(code), safeLogValue(err))
 	}
 	writeAPIError(w, status, code, message)
+}
+
+func safeLogValue(value any) string {
+	const maxRunes = 1024
+	runes := []rune(fmt.Sprint(value))
+	if len(runes) > maxRunes {
+		runes = append(runes[:maxRunes], '…')
+	}
+	// QuoteToASCII makes CR, LF, terminal escapes, and every other control byte
+	// visible as an escape sequence, so one untrusted value cannot forge a new
+	// log record or terminal control sequence.
+	return strconv.QuoteToASCII(string(runes))
 }
 
 func writeInternalAPIError(w http.ResponseWriter, code string, err error) {

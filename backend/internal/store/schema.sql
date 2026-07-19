@@ -34,6 +34,76 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_json TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_at TIMESTAMPTZ;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_wallet_address TEXT;
 
+-- Heartbeats describe current host capabilities, but they are not a trust
+-- source. Approved operators, nodes, and key history live in this separate
+-- registry so an observed host can never approve itself.
+CREATE TABLE IF NOT EXISTS node_operators (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'revoked')),
+    approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS approved_nodes (
+    node_id TEXT PRIMARY KEY,
+    operator_id TEXT NOT NULL REFERENCES node_operators(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'revoked')),
+    active_key_version BIGINT NOT NULL CHECK (active_key_version > 0),
+    approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS approved_node_keys (
+    node_id TEXT NOT NULL REFERENCES approved_nodes(node_id) ON DELETE CASCADE,
+    key_version BIGINT NOT NULL CHECK (key_version > 0),
+    public_key TEXT NOT NULL,
+    fingerprint_sha256 TEXT NOT NULL CHECK (fingerprint_sha256 ~ '^[0-9a-f]{64}$'),
+    state TEXT NOT NULL CHECK (state IN ('active', 'overlap', 'retired', 'revoked')),
+    valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    valid_until TIMESTAMPTZ,
+    retired_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (node_id, key_version),
+    UNIQUE (fingerprint_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS node_registry_audit (
+    id BIGSERIAL PRIMARY KEY,
+    node_id TEXT NOT NULL,
+    operator_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('approve', 'rotate', 'revoke')),
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    key_version BIGINT,
+    fingerprint_sha256 TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS operator_registry_audit (
+    id BIGSERIAL PRIMARY KEY,
+    operator_id TEXT NOT NULL REFERENCES node_operators(id) ON DELETE RESTRICT,
+    action TEXT NOT NULL CHECK (action IN ('approve', 'reactivate', 'revoke')),
+    actor TEXT NOT NULL CHECK (BTRIM(actor) <> ''),
+    reason TEXT NOT NULL CHECK (BTRIM(reason) <> ''),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approved_node_keys_one_active
+    ON approved_node_keys (node_id) WHERE state = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approved_node_keys_one_overlap
+    ON approved_node_keys (node_id) WHERE state = 'overlap';
+CREATE INDEX IF NOT EXISTS idx_approved_nodes_operator_status
+    ON approved_nodes (operator_id, status);
+CREATE INDEX IF NOT EXISTS idx_node_registry_audit_node_created_at
+    ON node_registry_audit (node_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_registry_audit_operator_created_at
+    ON operator_registry_audit (operator_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS devices (
     id UUID PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

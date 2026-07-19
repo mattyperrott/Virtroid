@@ -1,0 +1,46 @@
+[Unit]
+Description=Copy the latest verified Virtroid backup to encrypted off-site storage
+Wants=network-online.target
+After=network-online.target virtroid-backup.service
+StartLimitIntervalSec=12h
+StartLimitBurst=6
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/virtroid-offsite-backup.sh backup
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h
+Restart=on-failure
+RestartSec=1h
+Environment=VIRTROID_RESTIC_ENV_FILE=/etc/virtroid/restic.env
+CacheDirectory=virtroid-restic
+CacheDirectoryMode=0700
+StateDirectory=virtroid-restic
+StateDirectoryMode=0700
+RuntimeDirectory=virtroid-restic
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/virtroid /var/backups/virtroid
+ReadWritePaths=/var/cache/virtroid-restic /var/lib/virtroid-restic /var/lib/virtroid-deploy /run/virtroid-restic
+ProtectHostname=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

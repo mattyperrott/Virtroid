@@ -1,5 +1,9 @@
-ARG GO_BUILD_IMAGE=golang:1.26.5-bookworm
-ARG BACKEND_RUNTIME_IMAGE=debian:bookworm-slim
+ARG GO_BUILD_IMAGE=golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651
+ARG BACKEND_RUNTIME_IMAGE=alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+ARG VCS_REF=unknown
+ARG BUILD_DATE=unknown
+ARG SCHEMA_VERSION=unknown
+ARG DEPLOYMENT_TREE_DIGEST=unknown
 
 FROM ${GO_BUILD_IMAGE} AS build
 
@@ -13,18 +17,31 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtnoded ./cmd/virtnoded
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroid-viewercrypt ./cmd/viewercrypt
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/falco-forwarder ./cmd/falco-forwarder
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroid-admin ./cmd/virtroid-admin
 
 FROM ${BACKEND_RUNTIME_IMAGE}
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends adb ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --shell /bin/bash virtroid
+ARG VCS_REF
+ARG BUILD_DATE
+ARG SCHEMA_VERSION
+ARG DEPLOYMENT_TREE_DIGEST
+
+LABEL org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="sha-${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      com.virtroid.schema-version="${SCHEMA_VERSION}" \
+      com.virtroid.deployment-tree-sha256="${DEPLOYMENT_TREE_DIGEST}"
+
+RUN apk add --no-cache \
+      android-tools=35.0.2-r23 \
+      ca-certificates=20260611-r0 \
+    && adduser -D -h /home/virtroid -s /sbin/nologin virtroid
 
 COPY --from=build /out/virtroidd /usr/local/bin/virtroidd
 COPY --from=build /out/virtnoded /usr/local/bin/virtnoded
 COPY --from=build /out/virtroid-viewercrypt /usr/local/bin/virtroid-viewercrypt
 COPY --from=build /out/falco-forwarder /usr/local/bin/falco-forwarder
+COPY --from=build /out/virtroid-admin /usr/local/bin/virtroid-admin
 
 USER virtroid
 WORKDIR /home/virtroid

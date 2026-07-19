@@ -11,16 +11,27 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 digest="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+deployment_tree_digest="$("${script_dir}/deployment-tree-digest.sh" "${script_dir}")"
 env_file="${tmp_dir}/compose.env"
+release_env_file="${tmp_dir}/release.env"
 sed \
   -e "s/REPLACE_WITH_64_HEX/${digest}/g" \
   -e 's|PUBLIC_BASE_URL=https://your-domain.example|PUBLIC_BASE_URL=https://virtroid.example|' \
   -e 's|PUBLIC_RELAY_URL=https://your-domain.example|PUBLIC_RELAY_URL=https://virtroid.example|' \
   "${script_dir}/.env.example" > "${env_file}"
+printf '%s\n' \
+  'VIRTROID_BACKEND_IMAGE=virtroid-backend:release-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  "VIRTROID_BACKEND_IMAGE_ID=sha256:${digest}" \
+  "VIRTROID_BACKEND_MANIFEST_DIGEST=sha256:${digest}" \
+  'VIRTROID_SOURCE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  'VIRTROID_SCHEMA_VERSION=2026071903' \
+  "VIRTROID_DEPLOYMENT_TREE_SHA256=${deployment_tree_digest}" \
+  > "${release_env_file}"
 
 compose_args=(
   compose
   --env-file "${env_file}"
+  --env-file "${release_env_file}"
   -f "${script_dir}/docker-compose.yml"
   --profile edge
   --profile renterd
@@ -38,14 +49,29 @@ sed \
   "${env_file}" > "${core_env_file}"
 docker compose \
   --env-file "${core_env_file}" \
+  --env-file "${release_env_file}" \
   -f "${script_dir}/docker-compose.yml" \
   config --quiet
 
 grep -q 'BOOTSTRAP_ENABLED: "false"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_ALLOWED_ADVERTISE_ADDRS: virtnoded' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_RUNTIME_NETWORK_MODE: per-runtime' "${tmp_dir}/rendered-compose.yml"
+grep -q 'image: virtroid-backend:release-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"
+grep -q 'com.virtroid.source-sha: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"
+grep -q 'com.virtroid.schema-version: "2026071903"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'virtroid-admin:' "${tmp_dir}/rendered-compose.yml"
+grep -q 'entrypoint:' "${tmp_dir}/rendered-compose.yml"
+grep -q 'no-new-privileges:true' "${tmp_dir}/rendered-compose.yml"
+if grep -q '^    build:' "${tmp_dir}/rendered-compose.yml"; then
+  echo "production Compose still contains an on-host image build" >&2
+  exit 1
+fi
 if [ "$(grep -c 'driver: local' "${tmp_dir}/rendered-compose.yml")" -lt 7 ]; then
   echo "one or more services are missing bounded local logging" >&2
+  exit 1
+fi
+if grep -Eq '^[[:space:]]+max-file:[[:space:]]+"?1"?$' "${tmp_dir}/rendered-compose.yml"; then
+  echo "the local logging driver cannot combine compression with max-file=1" >&2
   exit 1
 fi
 

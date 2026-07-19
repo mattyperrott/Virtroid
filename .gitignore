@@ -8,7 +8,11 @@
 /dist/
 /android-client/dist/
 /deploy/vps/.env
+/deploy/vps/release.env
+/deploy/vps/restic.env
+/deploy/vps/restic-password
 /backend/falco-forwarder
 /backend/virtnoded
 /backend/virtroid-viewercrypt
 /backend/virtroidd
+/backend/virtroid-admin

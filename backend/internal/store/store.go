@@ -16,6 +16,8 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"virtroid/backend/internal/nodeauth"
 )
 
 //go:embed schema.sql
@@ -27,8 +29,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey  int64 = 0x56697274726f6964
-	currentSchemaVersion    int64 = 2026071902
-	schemaVersionLabel            = "security lifecycle and durable handoff remediation 2026-07-19"
+	currentSchemaVersion    int64 = 2026071903
+	schemaVersionLabel            = "approved node and operator trust registry 2026-07-19"
 	runtimeLogRetentionRows       = 2000
 	runtimeLogSourceRunes         = 64
 	runtimeLogLevelRunes          = 32
@@ -81,7 +83,16 @@ var (
 	ErrRuntimeBlobKeyHandoff   = errors.New("runtime blob-key handoff is not available")
 	ErrRuntimeCapability       = errors.New("runtime capability is invalid or expired")
 	ErrRuntimeCapabilityReplay = errors.New("runtime capability nonce has already been used")
+	ErrApprovedNodeNotFound    = errors.New("approved node not found")
+	ErrApprovedNodeExists      = errors.New("approved node already exists with a different key")
+	ErrApprovedNodeRevoked     = errors.New("approved node is revoked")
+	ErrNodeOperatorNotFound    = errors.New("node operator not found")
+	ErrNodeOperatorRevoked     = errors.New("node operator is revoked")
+	ErrNodeKeyRotationOverlap  = errors.New("node key rotation overlap is outside the allowed range")
+	ErrNodeKeyAlreadyActive    = errors.New("node key is already active")
 )
+
+const MaxNodeKeyRotationOverlap = 24 * time.Hour
 
 const (
 	RuntimeEntitlementRequiredCode = "runtime_entitlement_required"
@@ -334,6 +345,168 @@ type HostHeartbeat struct {
 	StoragePreflightJSON   string
 	StoragePreflightAt     *time.Time
 	StorageWalletAddress   string
+}
+
+type ApprovedNodeKey struct {
+	NodeID            string     `json:"node_id"`
+	KeyVersion        int64      `json:"key_version"`
+	PublicKey         string     `json:"public_key,omitempty"`
+	FingerprintSHA256 string     `json:"fingerprint_sha256"`
+	State             string     `json:"state"`
+	ValidFrom         time.Time  `json:"valid_from"`
+	ValidUntil        *time.Time `json:"valid_until,omitempty"`
+	RetiredAt         *time.Time `json:"retired_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+}
+
+type ApprovedNode struct {
+	NodeID           string            `json:"node_id"`
+	OperatorID       string            `json:"operator_id"`
+	OperatorName     string            `json:"operator_name"`
+	OperatorStatus   string            `json:"operator_status"`
+	Status           string            `json:"status"`
+	ActiveKeyVersion int64             `json:"active_key_version"`
+	ApprovedAt       time.Time         `json:"approved_at"`
+	RevokedAt        *time.Time        `json:"revoked_at,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	Keys             []ApprovedNodeKey `json:"keys"`
+}
+
+type NodeOperator struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Status     string     `json:"status"`
+	ApprovedAt time.Time  `json:"approved_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+type ApproveOperatorInput struct {
+	OperatorID string
+	Name       string
+	Actor      string
+	Reason     string
+}
+
+type RevokeOperatorInput struct {
+	OperatorID string
+	Actor      string
+	Reason     string
+}
+
+type ApproveNodeInput struct {
+	NodeID       string
+	OperatorID   string
+	OperatorName string
+	PublicKey    string
+	Actor        string
+	Reason       string
+}
+
+type RotateNodeKeyInput struct {
+	NodeID    string
+	PublicKey string
+	Overlap   time.Duration
+	Actor     string
+	Reason    string
+}
+
+type RevokeNodeInput struct {
+	NodeID string
+	Actor  string
+	Reason string
+}
+
+// ValidateApproveOperatorInput performs every input-only operator approval
+// check without accessing the database.
+func ValidateApproveOperatorInput(input ApproveOperatorInput) error {
+	if _, err := normalizeRegistryID(input.OperatorID, "operator id"); err != nil {
+		return err
+	}
+	if boundedRegistryText(input.Actor, 256) == "" {
+		return errors.New("operator approval actor is required")
+	}
+	if boundedRegistryText(input.Reason, 1024) == "" {
+		return errors.New("operator approval reason is required")
+	}
+	return nil
+}
+
+// ValidateRevokeOperatorInput performs every input-only operator revocation
+// check without accessing the database.
+func ValidateRevokeOperatorInput(input RevokeOperatorInput) error {
+	if _, err := normalizeRegistryID(input.OperatorID, "operator id"); err != nil {
+		return err
+	}
+	if boundedRegistryText(input.Actor, 256) == "" {
+		return errors.New("operator revocation actor is required")
+	}
+	if boundedRegistryText(input.Reason, 1024) == "" {
+		return errors.New("operator revocation reason is required")
+	}
+	return nil
+}
+
+// ValidateNodeRegistryID validates a node identifier without accessing the
+// database. Administrative callers use it before opening a connection or
+// applying schema migrations.
+func ValidateNodeRegistryID(nodeID string) error {
+	_, err := normalizeRegistryID(nodeID, "node id")
+	return err
+}
+
+// ValidateApproveNodeInput performs every input-only approval check without
+// accessing the database. Store methods repeat these checks at the trust
+// boundary; this helper lets administrative tooling fail before migration.
+func ValidateApproveNodeInput(input ApproveNodeInput) error {
+	if _, err := normalizeRegistryID(input.NodeID, "node id"); err != nil {
+		return err
+	}
+	if _, err := normalizeRegistryID(input.OperatorID, "operator id"); err != nil {
+		return err
+	}
+	if boundedRegistryText(input.Actor, 256) == "" {
+		return errors.New("approval actor is required")
+	}
+	if _, _, err := nodeauth.NormalizePublicKey(input.PublicKey); err != nil {
+		return fmt.Errorf("normalize node public key: %w", err)
+	}
+	return nil
+}
+
+// ValidateRotateNodeKeyInput performs every input-only rotation check without
+// accessing the database.
+func ValidateRotateNodeKeyInput(input RotateNodeKeyInput) error {
+	if _, err := normalizeRegistryID(input.NodeID, "node id"); err != nil {
+		return err
+	}
+	if input.Overlap < 0 || input.Overlap > MaxNodeKeyRotationOverlap {
+		return ErrNodeKeyRotationOverlap
+	}
+	if boundedRegistryText(input.Actor, 256) == "" {
+		return errors.New("rotation actor is required")
+	}
+	if _, _, err := nodeauth.NormalizePublicKey(input.PublicKey); err != nil {
+		return fmt.Errorf("normalize node public key: %w", err)
+	}
+	return nil
+}
+
+// ValidateRevokeNodeInput performs every input-only revocation check without
+// accessing the database.
+func ValidateRevokeNodeInput(input RevokeNodeInput) error {
+	if _, err := normalizeRegistryID(input.NodeID, "node id"); err != nil {
+		return err
+	}
+	if boundedRegistryText(input.Actor, 256) == "" {
+		return errors.New("revocation actor is required")
+	}
+	if boundedRegistryText(input.Reason, 1024) == "" {
+		return errors.New("revocation reason is required")
+	}
+	return nil
 }
 
 type RuntimeObservation struct {
@@ -3040,6 +3213,792 @@ func (s *Store) HostPublicKey(ctx context.Context, hostID string) (string, error
 	return strings.TrimSpace(publicKey), nil
 }
 
+// ApproveOperator explicitly approves a new operator or reactivates a revoked
+// one. Reactivation preserves node/key history; the operator-status joins used
+// by authorization make those nodes usable again only after this audited act.
+func (s *Store) ApproveOperator(ctx context.Context, input ApproveOperatorInput) (NodeOperator, error) {
+	operatorID, err := normalizeRegistryID(input.OperatorID, "operator id")
+	if err != nil {
+		return NodeOperator{}, err
+	}
+	name := boundedRegistryText(input.Name, 256)
+	if name == "" {
+		name = operatorID
+	}
+	actor := boundedRegistryText(input.Actor, 256)
+	if actor == "" {
+		return NodeOperator{}, errors.New("operator approval actor is required")
+	}
+	reason := boundedRegistryText(input.Reason, 1024)
+	if reason == "" {
+		return NodeOperator{}, errors.New("operator approval reason is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return NodeOperator{}, err
+	}
+	defer tx.Rollback()
+
+	insertResult, err := tx.ExecContext(ctx,
+		`INSERT INTO node_operators (id, name)
+		 VALUES ($1, $2)
+		 ON CONFLICT (id) DO NOTHING`,
+		operatorID,
+		name,
+	)
+	if err != nil {
+		return NodeOperator{}, err
+	}
+	inserted, err := insertResult.RowsAffected()
+	if err != nil {
+		return NodeOperator{}, err
+	}
+	var status string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT status FROM node_operators WHERE id = $1 FOR UPDATE`,
+		operatorID,
+	).Scan(&status); err != nil {
+		return NodeOperator{}, err
+	}
+
+	action := "approve"
+	now := time.Now().UTC()
+	if inserted == 0 && status == "revoked" {
+		action = "reactivate"
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE node_operators
+			 SET name = $2, status = 'approved', approved_at = $3,
+			     revoked_at = NULL, updated_at = $3
+			 WHERE id = $1`,
+			operatorID,
+			name,
+			now,
+		); err != nil {
+			return NodeOperator{}, err
+		}
+	} else {
+		if status != "approved" {
+			return NodeOperator{}, fmt.Errorf("unsupported node operator status %q", status)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE node_operators SET name = $2, updated_at = $3 WHERE id = $1`,
+			operatorID,
+			name,
+			now,
+		); err != nil {
+			return NodeOperator{}, err
+		}
+	}
+	if err := appendOperatorRegistryAuditTX(ctx, tx, operatorID, action, actor, reason); err != nil {
+		return NodeOperator{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return NodeOperator{}, err
+	}
+	return s.NodeOperator(ctx, operatorID)
+}
+
+// RevokeOperator immediately removes every node owned by an operator from all
+// authorization/readiness queries without destroying node or key history.
+func (s *Store) RevokeOperator(ctx context.Context, input RevokeOperatorInput) (NodeOperator, error) {
+	operatorID, err := normalizeRegistryID(input.OperatorID, "operator id")
+	if err != nil {
+		return NodeOperator{}, err
+	}
+	actor := boundedRegistryText(input.Actor, 256)
+	if actor == "" {
+		return NodeOperator{}, errors.New("operator revocation actor is required")
+	}
+	reason := boundedRegistryText(input.Reason, 1024)
+	if reason == "" {
+		return NodeOperator{}, errors.New("operator revocation reason is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return NodeOperator{}, err
+	}
+	defer tx.Rollback()
+
+	var status string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT status FROM node_operators WHERE id = $1 FOR UPDATE`,
+		operatorID,
+	).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return NodeOperator{}, ErrNodeOperatorNotFound
+		}
+		return NodeOperator{}, err
+	}
+	if status == "revoked" {
+		if err := tx.Commit(); err != nil {
+			return NodeOperator{}, err
+		}
+		return s.NodeOperator(ctx, operatorID)
+	}
+	if status != "approved" {
+		return NodeOperator{}, fmt.Errorf("unsupported node operator status %q", status)
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE node_operators
+		 SET status = 'revoked', revoked_at = $2, updated_at = $2
+		 WHERE id = $1`,
+		operatorID,
+		now,
+	); err != nil {
+		return NodeOperator{}, err
+	}
+	if err := appendOperatorRegistryAuditTX(ctx, tx, operatorID, "revoke", actor, reason); err != nil {
+		return NodeOperator{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return NodeOperator{}, err
+	}
+	return s.NodeOperator(ctx, operatorID)
+}
+
+func (s *Store) NodeOperator(ctx context.Context, operatorID string) (NodeOperator, error) {
+	operatorID, err := normalizeRegistryID(operatorID, "operator id")
+	if err != nil {
+		return NodeOperator{}, ErrNodeOperatorNotFound
+	}
+	var operator NodeOperator
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id, name, status, approved_at, revoked_at, created_at, updated_at
+		 FROM node_operators WHERE id = $1`,
+		operatorID,
+	).Scan(
+		&operator.ID,
+		&operator.Name,
+		&operator.Status,
+		&operator.ApprovedAt,
+		&operator.RevokedAt,
+		&operator.CreatedAt,
+		&operator.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return NodeOperator{}, ErrNodeOperatorNotFound
+		}
+		return NodeOperator{}, err
+	}
+	return operator, nil
+}
+
+// ApproveNode adds a node to the explicit trust registry. Heartbeat-observed
+// host rows are deliberately not consulted or copied here: approval requires
+// an operator action with independently supplied public-key material. An
+// existing operator's display metadata is changed only through ApproveOperator.
+func (s *Store) ApproveNode(ctx context.Context, input ApproveNodeInput) (ApprovedNode, error) {
+	nodeID, err := normalizeRegistryID(input.NodeID, "node id")
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	operatorID, err := normalizeRegistryID(input.OperatorID, "operator id")
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	operatorName := boundedRegistryText(input.OperatorName, 256)
+	if operatorName == "" {
+		operatorName = operatorID
+	}
+	actor := boundedRegistryText(input.Actor, 256)
+	if actor == "" {
+		return ApprovedNode{}, errors.New("approval actor is required")
+	}
+	reason := boundedRegistryText(input.Reason, 1024)
+	publicKey, fingerprint, err := nodeauth.NormalizePublicKey(input.PublicKey)
+	if err != nil {
+		return ApprovedNode{}, fmt.Errorf("normalize node public key: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	defer tx.Rollback()
+
+	operatorInsertResult, err := tx.ExecContext(ctx,
+		`INSERT INTO node_operators (id, name)
+		 VALUES ($1, $2)
+		 ON CONFLICT (id) DO NOTHING`,
+		operatorID,
+		operatorName,
+	)
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	operatorInserted, err := operatorInsertResult.RowsAffected()
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	var operatorStatus string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT status FROM node_operators WHERE id = $1 FOR UPDATE`,
+		operatorID,
+	).Scan(&operatorStatus); err != nil {
+		return ApprovedNode{}, err
+	}
+	if operatorStatus != "approved" {
+		return ApprovedNode{}, ErrNodeOperatorRevoked
+	}
+	if operatorInserted == 1 {
+		if err := appendOperatorRegistryAuditTX(
+			ctx,
+			tx,
+			operatorID,
+			"approve",
+			actor,
+			reason,
+		); err != nil {
+			return ApprovedNode{}, err
+		}
+	}
+
+	var existingOperatorID, status string
+	var activeKeyVersion int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT operator_id, status, active_key_version
+		 FROM approved_nodes WHERE node_id = $1 FOR UPDATE`,
+		nodeID,
+	).Scan(&existingOperatorID, &status, &activeKeyVersion)
+	if err == nil {
+		if status != "approved" {
+			return ApprovedNode{}, ErrApprovedNodeRevoked
+		}
+		var activeFingerprint string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT fingerprint_sha256
+			 FROM approved_node_keys
+			 WHERE node_id = $1 AND key_version = $2 AND state = 'active'`,
+			nodeID,
+			activeKeyVersion,
+		).Scan(&activeFingerprint); err != nil {
+			return ApprovedNode{}, err
+		}
+		if existingOperatorID != operatorID || activeFingerprint != fingerprint {
+			return ApprovedNode{}, ErrApprovedNodeExists
+		}
+		if err := tx.Commit(); err != nil {
+			return ApprovedNode{}, err
+		}
+		return s.ApprovedNode(ctx, nodeID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ApprovedNode{}, err
+	}
+
+	const firstKeyVersion int64 = 1
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO approved_nodes (node_id, operator_id, active_key_version)
+		 VALUES ($1, $2, $3)`,
+		nodeID,
+		operatorID,
+		firstKeyVersion,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO approved_node_keys (
+		     node_id, key_version, public_key, fingerprint_sha256, state
+		 ) VALUES ($1, $2, $3, $4, 'active')`,
+		nodeID,
+		firstKeyVersion,
+		publicKey,
+		fingerprint,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if err := appendNodeRegistryAuditTX(
+		ctx,
+		tx,
+		nodeID,
+		operatorID,
+		"approve",
+		actor,
+		reason,
+		firstKeyVersion,
+		fingerprint,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApprovedNode{}, err
+	}
+	return s.ApprovedNode(ctx, nodeID)
+}
+
+// EnrollDevelopmentNode preserves the old one-step local-development
+// experience while keeping the resulting trust record separate from hosts.
+// Production callers must never invoke this method.
+func (s *Store) EnrollDevelopmentNode(ctx context.Context, nodeID, publicKey string) (ApprovedNode, error) {
+	return s.ApproveNode(ctx, ApproveNodeInput{
+		NodeID:       nodeID,
+		OperatorID:   "development",
+		OperatorName: "Development auto-enrollment",
+		PublicKey:    publicKey,
+		Actor:        "development-auto-enrollment",
+		Reason:       "development-only heartbeat enrollment",
+	})
+}
+
+func (s *Store) RotateNodeKey(ctx context.Context, input RotateNodeKeyInput) (ApprovedNode, error) {
+	nodeID, err := normalizeRegistryID(input.NodeID, "node id")
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	if input.Overlap < 0 || input.Overlap > MaxNodeKeyRotationOverlap {
+		return ApprovedNode{}, ErrNodeKeyRotationOverlap
+	}
+	actor := boundedRegistryText(input.Actor, 256)
+	if actor == "" {
+		return ApprovedNode{}, errors.New("rotation actor is required")
+	}
+	reason := boundedRegistryText(input.Reason, 1024)
+	publicKey, fingerprint, err := nodeauth.NormalizePublicKey(input.PublicKey)
+	if err != nil {
+		return ApprovedNode{}, fmt.Errorf("normalize node public key: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	defer tx.Rollback()
+
+	var operatorID, nodeStatus, operatorStatus string
+	var activeKeyVersion int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT n.operator_id, n.status, n.active_key_version, o.status
+		 FROM approved_nodes n
+		 JOIN node_operators o ON o.id = n.operator_id
+		 WHERE n.node_id = $1
+		 FOR UPDATE OF n, o`,
+		nodeID,
+	).Scan(&operatorID, &nodeStatus, &activeKeyVersion, &operatorStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ApprovedNode{}, ErrApprovedNodeNotFound
+		}
+		return ApprovedNode{}, err
+	}
+	if nodeStatus != "approved" {
+		return ApprovedNode{}, ErrApprovedNodeRevoked
+	}
+	if operatorStatus != "approved" {
+		return ApprovedNode{}, ErrNodeOperatorRevoked
+	}
+	var activeFingerprint string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT fingerprint_sha256
+		 FROM approved_node_keys
+		 WHERE node_id = $1 AND key_version = $2 AND state = 'active'
+		 FOR UPDATE`,
+		nodeID,
+		activeKeyVersion,
+	).Scan(&activeFingerprint); err != nil {
+		return ApprovedNode{}, err
+	}
+	if activeFingerprint == fingerprint {
+		return ApprovedNode{}, ErrNodeKeyAlreadyActive
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE approved_node_keys
+		 SET state = 'retired',
+		     valid_until = COALESCE(valid_until, $2),
+		     retired_at = COALESCE(retired_at, $2)
+		 WHERE node_id = $1 AND state = 'overlap'`,
+		nodeID,
+		now,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if input.Overlap > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE approved_node_keys
+			 SET state = 'overlap', valid_until = $3
+			 WHERE node_id = $1 AND key_version = $2 AND state = 'active'`,
+			nodeID,
+			activeKeyVersion,
+			now.Add(input.Overlap),
+		); err != nil {
+			return ApprovedNode{}, err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE approved_node_keys
+			 SET state = 'retired', valid_until = $3, retired_at = $3
+			 WHERE node_id = $1 AND key_version = $2 AND state = 'active'`,
+			nodeID,
+			activeKeyVersion,
+			now,
+		); err != nil {
+			return ApprovedNode{}, err
+		}
+	}
+
+	newKeyVersion := activeKeyVersion + 1
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO approved_node_keys (
+		     node_id, key_version, public_key, fingerprint_sha256, state, valid_from
+		 ) VALUES ($1, $2, $3, $4, 'active', $5)`,
+		nodeID,
+		newKeyVersion,
+		publicKey,
+		fingerprint,
+		now,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE approved_nodes
+		 SET active_key_version = $2, updated_at = $3
+		 WHERE node_id = $1`,
+		nodeID,
+		newKeyVersion,
+		now,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if err := appendNodeRegistryAuditTX(
+		ctx,
+		tx,
+		nodeID,
+		operatorID,
+		"rotate",
+		actor,
+		reason,
+		newKeyVersion,
+		fingerprint,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApprovedNode{}, err
+	}
+	return s.ApprovedNode(ctx, nodeID)
+}
+
+func (s *Store) RevokeNode(ctx context.Context, input RevokeNodeInput) (ApprovedNode, error) {
+	nodeID, err := normalizeRegistryID(input.NodeID, "node id")
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	actor := boundedRegistryText(input.Actor, 256)
+	if actor == "" {
+		return ApprovedNode{}, errors.New("revocation actor is required")
+	}
+	reason := boundedRegistryText(input.Reason, 1024)
+	if reason == "" {
+		return ApprovedNode{}, errors.New("revocation reason is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	defer tx.Rollback()
+
+	var operatorID, status string
+	var activeKeyVersion int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT operator_id, status, active_key_version
+		 FROM approved_nodes WHERE node_id = $1 FOR UPDATE`,
+		nodeID,
+	).Scan(&operatorID, &status, &activeKeyVersion); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ApprovedNode{}, ErrApprovedNodeNotFound
+		}
+		return ApprovedNode{}, err
+	}
+	if status == "revoked" {
+		if err := tx.Commit(); err != nil {
+			return ApprovedNode{}, err
+		}
+		return s.ApprovedNode(ctx, nodeID)
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE approved_nodes
+		 SET status = 'revoked', revoked_at = $2, updated_at = $2
+		 WHERE node_id = $1`,
+		nodeID,
+		now,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE approved_node_keys
+		 SET state = 'revoked',
+		     valid_until = COALESCE(valid_until, $2),
+		     retired_at = COALESCE(retired_at, $2)
+		 WHERE node_id = $1 AND state IN ('active', 'overlap')`,
+		nodeID,
+		now,
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if err := appendNodeRegistryAuditTX(
+		ctx,
+		tx,
+		nodeID,
+		operatorID,
+		"revoke",
+		actor,
+		reason,
+		activeKeyVersion,
+		"",
+	); err != nil {
+		return ApprovedNode{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApprovedNode{}, err
+	}
+	return s.ApprovedNode(ctx, nodeID)
+}
+
+// AuthorizedNodeKeys returns only keys that may currently authenticate. At
+// most one active key and one unexpired overlap key can be returned.
+func (s *Store) AuthorizedNodeKeys(ctx context.Context, nodeID string) ([]ApprovedNodeKey, error) {
+	nodeID, err := normalizeRegistryID(nodeID, "node id")
+	if err != nil {
+		return nil, ErrApprovedNodeNotFound
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT k.node_id, k.key_version, k.public_key, k.fingerprint_sha256,
+		        k.state, k.valid_from, k.valid_until, k.retired_at, k.created_at
+		 FROM approved_nodes n
+		 JOIN node_operators o ON o.id = n.operator_id
+		 JOIN approved_node_keys k ON k.node_id = n.node_id
+		 WHERE n.node_id = $1
+		   AND n.status = 'approved'
+		   AND o.status = 'approved'
+		   AND (
+		       (k.state = 'active' AND k.key_version = n.active_key_version)
+		       OR (k.state = 'overlap' AND k.valid_until > NOW())
+		   )
+		 ORDER BY k.key_version DESC`,
+		nodeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys, err := scanApprovedNodeKeys(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, ErrApprovedNodeNotFound
+	}
+	return keys, nil
+}
+
+func (s *Store) ApprovedNode(ctx context.Context, nodeID string) (ApprovedNode, error) {
+	nodeID, err := normalizeRegistryID(nodeID, "node id")
+	if err != nil {
+		return ApprovedNode{}, ErrApprovedNodeNotFound
+	}
+	node, err := scanApprovedNodeBase(s.db.QueryRowContext(ctx,
+		`SELECT n.node_id, n.operator_id, o.name, o.status, n.status,
+		        n.active_key_version, n.approved_at, n.revoked_at,
+		        n.created_at, n.updated_at
+		 FROM approved_nodes n
+		 JOIN node_operators o ON o.id = n.operator_id
+		 WHERE n.node_id = $1`,
+		nodeID,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ApprovedNode{}, ErrApprovedNodeNotFound
+		}
+		return ApprovedNode{}, err
+	}
+	keys, err := s.listNodeKeys(ctx, nodeID)
+	if err != nil {
+		return ApprovedNode{}, err
+	}
+	node.Keys = keys
+	return node, nil
+}
+
+func (s *Store) ListApprovedNodes(ctx context.Context) ([]ApprovedNode, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT n.node_id, n.operator_id, o.name, o.status, n.status,
+		        n.active_key_version, n.approved_at, n.revoked_at,
+		        n.created_at, n.updated_at
+		 FROM approved_nodes n
+		 JOIN node_operators o ON o.id = n.operator_id
+		 ORDER BY n.node_id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []ApprovedNode
+	for rows.Next() {
+		node, err := scanApprovedNodeBase(rows)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index := range nodes {
+		keys, err := s.listNodeKeys(ctx, nodes[index].NodeID)
+		if err != nil {
+			return nil, err
+		}
+		nodes[index].Keys = keys
+	}
+	return nodes, nil
+}
+
+func (s *Store) listNodeKeys(ctx context.Context, nodeID string) ([]ApprovedNodeKey, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, key_version, public_key, fingerprint_sha256,
+		        state, valid_from, valid_until, retired_at, created_at
+		 FROM approved_node_keys
+		 WHERE node_id = $1
+		 ORDER BY key_version DESC`,
+		nodeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanApprovedNodeKeys(rows)
+}
+
+type approvedNodeKeyRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}
+
+func scanApprovedNodeKeys(rows approvedNodeKeyRows) ([]ApprovedNodeKey, error) {
+	var keys []ApprovedNodeKey
+	for rows.Next() {
+		var key ApprovedNodeKey
+		if err := rows.Scan(
+			&key.NodeID,
+			&key.KeyVersion,
+			&key.PublicKey,
+			&key.FingerprintSHA256,
+			&key.State,
+			&key.ValidFrom,
+			&key.ValidUntil,
+			&key.RetiredAt,
+			&key.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+type approvedNodeScanner interface {
+	Scan(...any) error
+}
+
+func scanApprovedNodeBase(scanner approvedNodeScanner) (ApprovedNode, error) {
+	var node ApprovedNode
+	err := scanner.Scan(
+		&node.NodeID,
+		&node.OperatorID,
+		&node.OperatorName,
+		&node.OperatorStatus,
+		&node.Status,
+		&node.ActiveKeyVersion,
+		&node.ApprovedAt,
+		&node.RevokedAt,
+		&node.CreatedAt,
+		&node.UpdatedAt,
+	)
+	return node, err
+}
+
+func appendNodeRegistryAuditTX(
+	ctx context.Context,
+	tx *sql.Tx,
+	nodeID string,
+	operatorID string,
+	action string,
+	actor string,
+	reason string,
+	keyVersion int64,
+	fingerprint string,
+) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO node_registry_audit (
+		     node_id, operator_id, action, actor, reason, key_version, fingerprint_sha256
+		 ) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`,
+		nodeID,
+		operatorID,
+		action,
+		actor,
+		reason,
+		keyVersion,
+		fingerprint,
+	)
+	return err
+}
+
+func appendOperatorRegistryAuditTX(
+	ctx context.Context,
+	tx *sql.Tx,
+	operatorID string,
+	action string,
+	actor string,
+	reason string,
+) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO operator_registry_audit (
+		     operator_id, action, actor, reason
+		 ) VALUES ($1, $2, $3, $4)`,
+		operatorID,
+		action,
+		actor,
+		reason,
+	)
+	return err
+}
+
+func normalizeRegistryID(value, label string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return "", fmt.Errorf("%s must contain 1..128 characters", label)
+	}
+	for index, char := range value {
+		allowed := (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			(index > 0 && (char == '.' || char == '_' || char == ':' || char == '-'))
+		if !allowed {
+			return "", fmt.Errorf("%s contains an unsupported character", label)
+		}
+	}
+	return value, nil
+}
+
+func boundedRegistryText(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		value = string(runes[:maxRunes])
+	}
+	return value
+}
+
 func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, operation string) (Runtime, Host, error) {
 	accountID = strings.TrimSpace(accountID)
 	runtimeID = strings.TrimSpace(runtimeID)
@@ -3263,7 +4222,7 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		     storage_preflight_at = EXCLUDED.storage_preflight_at,
 		     storage_wallet_address = EXCLUDED.storage_wallet_address,
 		     public_key = CASE
-		         WHEN COALESCE(hosts.public_key, '') = '' THEN EXCLUDED.public_key
+		         WHEN COALESCE(EXCLUDED.public_key, '') <> '' THEN EXCLUDED.public_key
 		         ELSE hosts.public_key
 		     END,
 		     updated_at = NOW(),
@@ -4737,11 +5696,18 @@ func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (s
 
 	var hostID string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT id FROM hosts
-		 WHERE docker_socket = TRUE
-		   AND binder = TRUE
-		   AND last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
-		 ORDER BY last_heartbeat_at DESC
+		`SELECT h.id FROM hosts h
+		 JOIN approved_nodes n ON n.node_id = h.id AND n.status = 'approved'
+		 JOIN node_operators o ON o.id = n.operator_id AND o.status = 'approved'
+		 JOIN approved_node_keys k ON k.node_id = n.node_id AND k.public_key = h.public_key
+		 WHERE h.docker_socket = TRUE
+		   AND h.binder = TRUE
+		   AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
+		   AND (
+		       (k.state = 'active' AND k.key_version = n.active_key_version)
+		       OR (k.state = 'overlap' AND k.valid_until > NOW())
+		   )
+		 ORDER BY h.last_heartbeat_at DESC
 		 LIMIT 1`,
 	).Scan(&hostID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -4797,11 +5763,18 @@ func requireReadyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (string,
 	}
 	var found string
 	err := tx.QueryRowContext(ctx,
-		`SELECT id FROM hosts
-		 WHERE id = $1
-		   AND docker_socket = TRUE
-		   AND binder = TRUE
-		   AND last_heartbeat_at >= NOW() - INTERVAL '2 minutes'`,
+		`SELECT h.id FROM hosts h
+		 JOIN approved_nodes n ON n.node_id = h.id AND n.status = 'approved'
+		 JOIN node_operators o ON o.id = n.operator_id AND o.status = 'approved'
+		 JOIN approved_node_keys k ON k.node_id = n.node_id AND k.public_key = h.public_key
+		 WHERE h.id = $1
+		   AND h.docker_socket = TRUE
+		   AND h.binder = TRUE
+		   AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
+		   AND (
+		       (k.state = 'active' AND k.key_version = n.active_key_version)
+		       OR (k.state = 'overlap' AND k.valid_until > NOW())
+		   )`,
 		hostID,
 	).Scan(&found)
 	if err != nil {
@@ -4816,11 +5789,19 @@ func requireReadyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (string,
 func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, error) {
 	var host Host
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
-		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
-		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
-		        created_at, updated_at, last_heartbeat_at
-		 FROM hosts WHERE id = $1`,
+		`SELECT h.id, h.name, h.advertise_addr, h.relay_port, h.docker_socket, h.binder, h.public_key,
+		        h.blob_store_kind, h.storage_preflight_kind, h.storage_preflight_status,
+		        h.storage_preflight_json, h.storage_preflight_at, h.storage_wallet_address,
+		        h.created_at, h.updated_at, h.last_heartbeat_at
+		 FROM hosts h
+		 JOIN approved_nodes n ON n.node_id = h.id AND n.status = 'approved'
+		 JOIN node_operators o ON o.id = n.operator_id AND o.status = 'approved'
+		 JOIN approved_node_keys k ON k.node_id = n.node_id AND k.public_key = h.public_key
+		 WHERE h.id = $1
+		   AND (
+		       (k.state = 'active' AND k.key_version = n.active_key_version)
+		       OR (k.state = 'overlap' AND k.valid_until > NOW())
+		   )`,
 		strings.TrimSpace(hostID),
 	).Scan(
 		&host.ID,

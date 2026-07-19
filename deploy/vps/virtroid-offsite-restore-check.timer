@@ -1,0 +1,11 @@
+[Unit]
+Description=Run a weekly encrypted off-site Virtroid restore check
+
+[Timer]
+OnCalendar=Sun *-*-* 06:00:00 UTC
+RandomizedDelaySec=1h
+Persistent=true
+Unit=virtroid-offsite-restore-check.service
+
+[Install]
+WantedBy=timers.target

@@ -2,11 +2,15 @@
 Description=Create a verified local Virtroid rollback backup
 Requires=docker.service
 After=docker.service
-ConditionPathExists=/opt/virtroid/deploy/vps/.env
+StartLimitIntervalSec=6h
+StartLimitBurst=8
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/virtroid-backup.sh
+TimeoutStartSec=1h
+Restart=on-failure
+RestartSec=30m
 UMask=0077
 Nice=10
 IOSchedulingClass=idle
@@ -14,7 +18,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/backups/virtroid
+ReadWritePaths=/var/backups/virtroid /var/lib/virtroid-deploy
 ReadOnlyPaths=/srv/virtroid /opt/virtroid/deploy/vps/.env /var/run/docker.sock
 ProtectKernelModules=true
 ProtectKernelTunables=true

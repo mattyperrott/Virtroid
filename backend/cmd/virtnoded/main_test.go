@@ -2,7 +2,9 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -229,27 +231,196 @@ func TestExtractAPKMExtractsBoundedRegularAPKFiles(t *testing.T) {
 		"metadata.json":     "ignored",
 	})
 	extractDir := filepath.Join(t.TempDir(), "extracted")
-	paths, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 9)
+	paths, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 8, 9)
 	if err != nil {
 		t.Fatalf("extractAPKMWithLimits: %v", err)
 	}
-	if len(paths) != 2 || filepath.Base(paths[0]) != "base.apk" || filepath.Base(paths[1]) != "config.apk" {
-		t.Fatalf("extracted paths = %v, want sorted base.apk and config.apk", paths)
+	if len(paths) != 2 || filepath.Base(paths[0]) != "apk-000.apk" || filepath.Base(paths[1]) != "apk-001.apk" {
+		t.Fatalf("extracted paths = %v, want deterministic generated names", paths)
+	}
+	for index, want := range []string{"base", "split"} {
+		payload, err := os.ReadFile(paths[index])
+		if err != nil {
+			t.Fatalf("read extracted APK %d: %v", index, err)
+		}
+		if string(payload) != want {
+			t.Fatalf("extracted APK %d = %q, want %q", index, payload, want)
+		}
 	}
 }
 
-func TestExtractAPKMRejectsDuplicateFlattenedNamesAndCleansOutput(t *testing.T) {
+func TestExtractAPKMGeneratedNamesAllowDuplicateUntrustedBasenames(t *testing.T) {
 	apkmPath := writeTestAPKM(t, map[string]string{
 		"one/base.apk": "one",
 		"two/base.apk": "two",
 	})
 	extractDir := filepath.Join(t.TempDir(), "extracted")
-	_, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 16)
-	if err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("extractAPKMWithLimits error = %v, want duplicate-name rejection", err)
+	paths, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 8, 16)
+	if err != nil {
+		t.Fatalf("extractAPKMWithLimits: %v", err)
+	}
+	if len(paths) != 2 || filepath.Base(paths[0]) != "apk-000.apk" || filepath.Base(paths[1]) != "apk-001.apk" {
+		t.Fatalf("extracted paths = %v, want unique generated names", paths)
+	}
+}
+
+func TestExtractAPKMAllowsCaseDistinctCanonicalPaths(t *testing.T) {
+	apkmPath := writeTestAPKMEntries(t, []testZipEntry{
+		{name: "A.apk", body: "upper"},
+		{name: "a.apk", body: "lower"},
+	})
+	extractDir := filepath.Join(t.TempDir(), "extracted")
+	paths, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 8, 16)
+	if err != nil {
+		t.Fatalf("extractAPKMWithLimits: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("extracted paths = %v, want two case-distinct APK entries", paths)
+	}
+}
+
+func TestExtractAPKMRejectsTooManyTotalArchiveEntries(t *testing.T) {
+	apkmPath := writeTestAPKMEntries(t, []testZipEntry{
+		{name: "base.apk", body: "apk"},
+		{name: "icon.png", body: "icon"},
+		{name: "metadata.json", body: "{}"},
+	})
+	extractDir := filepath.Join(t.TempDir(), "extracted")
+	_, err := extractAPKMWithLimits(apkmPath, extractDir, 1, 2, 8, 8)
+	if err == nil || !strings.Contains(err.Error(), "more than 2 archive entries") {
+		t.Fatalf("extractAPKMWithLimits error = %v, want total archive-entry rejection", err)
+	}
+	if _, statErr := os.Stat(extractDir); !os.IsNotExist(statErr) {
+		t.Fatalf("entry-count rejection created extraction directory: %v", statErr)
+	}
+}
+
+func TestExtractAPKMRejectsUnderreportedCentralDirectoryCountBeforeParsing(t *testing.T) {
+	apkmPath := writeTestAPKMEntries(t, []testZipEntry{
+		{name: "base.apk", body: "apk"},
+		{name: "icon.png", body: "icon"},
+		{name: "metadata.json", body: "{}"},
+	})
+	payload, err := os.ReadFile(apkmPath)
+	if err != nil {
+		t.Fatalf("read APKM: %v", err)
+	}
+	directoryEndIndex := bytes.LastIndex(payload, []byte{'P', 'K', 0x05, 0x06})
+	if directoryEndIndex < 0 {
+		t.Fatal("test APKM is missing its central-directory end record")
+	}
+	// archive/zip parses central headers before checking this declared count.
+	// Underreport it to prove our bounded preflight counts the actual headers.
+	binary.LittleEndian.PutUint16(payload[directoryEndIndex+8:directoryEndIndex+10], 1)
+	binary.LittleEndian.PutUint16(payload[directoryEndIndex+10:directoryEndIndex+12], 1)
+	if err := os.WriteFile(apkmPath, payload, 0o600); err != nil {
+		t.Fatalf("rewrite APKM: %v", err)
+	}
+
+	extractDir := filepath.Join(t.TempDir(), "extracted")
+	_, err = extractAPKMWithLimits(apkmPath, extractDir, 1, 2, 8, 8)
+	if err == nil || !strings.Contains(err.Error(), "more than 2 archive entries") {
+		t.Fatalf("extractAPKMWithLimits error = %v, want pre-parse entry-count rejection", err)
+	}
+	if _, statErr := os.Stat(extractDir); !os.IsNotExist(statErr) {
+		t.Fatalf("entry-count rejection created extraction directory: %v", statErr)
+	}
+}
+
+func TestExtractAPKMRejectsRecordsOnDiskOnlyZIP64Sentinel(t *testing.T) {
+	apkmPath := writeTestAPKMEntries(t, []testZipEntry{{name: "base.apk", body: "apk"}})
+	payload, err := os.ReadFile(apkmPath)
+	if err != nil {
+		t.Fatalf("read APKM: %v", err)
+	}
+	directoryEndIndex := bytes.LastIndex(payload, []byte{'P', 'K', 0x05, 0x06})
+	if directoryEndIndex < 0 {
+		t.Fatal("test APKM is missing its central-directory end record")
+	}
+	// archive/zip does not treat the records-on-this-disk field alone as a
+	// ZIP64 trigger. The bounded preflight must therefore reject this mismatch
+	// under the same classic interpretation, before archive/zip allocates.
+	binary.LittleEndian.PutUint16(payload[directoryEndIndex+8:directoryEndIndex+10], 0xffff)
+	if err := os.WriteFile(apkmPath, payload, 0o600); err != nil {
+		t.Fatalf("rewrite APKM: %v", err)
+	}
+
+	extractDir := filepath.Join(t.TempDir(), "extracted")
+	_, err = extractAPKMWithLimits(apkmPath, extractDir, 1, 2, 8, 8)
+	if err == nil || !strings.Contains(err.Error(), "multi-disk") {
+		t.Fatalf("extractAPKMWithLimits error = %v, want classic-record mismatch rejection", err)
+	}
+	if _, statErr := os.Stat(extractDir); !os.IsNotExist(statErr) {
+		t.Fatalf("record-mismatch rejection created extraction directory: %v", statErr)
+	}
+}
+
+func TestExtractAPKMRejectsDuplicateCanonicalPathAndCleansOutput(t *testing.T) {
+	apkmPath := writeTestAPKMEntries(t, []testZipEntry{
+		{name: "base.apk", body: "one"},
+		{name: "base.apk", body: "two"},
+	})
+	extractDir := filepath.Join(t.TempDir(), "extracted")
+	_, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 8, 16)
+	if err == nil || !strings.Contains(err.Error(), "duplicate archive path") {
+		t.Fatalf("extractAPKMWithLimits error = %v, want duplicate path rejection", err)
 	}
 	if _, statErr := os.Stat(extractDir); !os.IsNotExist(statErr) {
 		t.Fatalf("failed extraction directory still exists: %v", statErr)
+	}
+}
+
+func TestExtractAPKMRejectsNonCanonicalAndEscapingPaths(t *testing.T) {
+	tests := []string{
+		"/absolute.apk",
+		"../outside.apk",
+		"../extracted-evil/base.apk",
+		`..\outside.apk`,
+		"C:/absolute.apk",
+		"./base.apk",
+		"splits/../base.apk",
+		"splits//base.apk",
+		strings.Repeat("a", maxArchivePathBytes-3) + ".apk",
+	}
+	for _, archivePath := range tests {
+		t.Run(strings.ReplaceAll(archivePath, "/", "_"), func(t *testing.T) {
+			apkmPath := writeTestAPKMEntries(t, []testZipEntry{{name: archivePath, body: "apk"}})
+			extractDir := filepath.Join(t.TempDir(), "extracted")
+			_, err := extractAPKMWithLimits(apkmPath, extractDir, 1, 8, 8, 8)
+			if err == nil || !strings.Contains(err.Error(), "invalid path") {
+				t.Fatalf("extractAPKMWithLimits(%q) error = %v, want invalid path rejection", archivePath, err)
+			}
+			if _, statErr := os.Stat(extractDir); !os.IsNotExist(statErr) {
+				t.Fatalf("failed extraction directory still exists: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestExtractAPKMDoesNotFollowPreexistingExtractionSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	extractDir := filepath.Join(root, "extracted")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatalf("create outside directory: %v", err)
+	}
+	if err := os.Symlink(outside, extractDir); err != nil {
+		t.Fatalf("create extraction symlink: %v", err)
+	}
+	apkmPath := writeTestAPKM(t, map[string]string{"base.apk": "apk"})
+	paths, err := extractAPKMWithLimits(apkmPath, extractDir, 1, 8, 8, 8)
+	if err != nil {
+		t.Fatalf("extractAPKMWithLimits: %v", err)
+	}
+	if len(paths) != 1 || filepath.Dir(paths[0]) != extractDir {
+		t.Fatalf("extracted paths = %v, want path under replacement directory", paths)
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("read outside directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("extraction followed preexisting symlink: %v", entries)
 	}
 }
 
@@ -269,7 +440,7 @@ func TestExtractAPKMRejectsFileAndTotalExpansionLimits(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			apkmPath := writeTestAPKM(t, tt.files)
-			_, err := extractAPKMWithLimits(apkmPath, filepath.Join(t.TempDir(), "extracted"), tt.maxFiles, tt.maxFile, tt.maxTotal)
+			_, err := extractAPKMWithLimits(apkmPath, filepath.Join(t.TempDir(), "extracted"), tt.maxFiles, 8, tt.maxFile, tt.maxTotal)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("extractAPKMWithLimits error = %v, want %q rejection", err, tt.wantError)
 			}
@@ -285,7 +456,7 @@ func TestExtractAPKMRejectsSpecialFileEntry(t *testing.T) {
 		t.Fatalf("create APKM: %v", err)
 	}
 	writer := zip.NewWriter(archive)
-	header := &zip.FileHeader{Name: "base.apk", Method: zip.Store}
+	header := &zip.FileHeader{Name: "metadata.json", Method: zip.Store}
 	header.SetMode(os.ModeSymlink | 0o777)
 	entry, err := writer.CreateHeader(header)
 	if err != nil {
@@ -301,7 +472,7 @@ func TestExtractAPKMRejectsSpecialFileEntry(t *testing.T) {
 		t.Fatalf("close APKM: %v", err)
 	}
 
-	_, err = extractAPKMWithLimits(apkmPath, filepath.Join(root, "extracted"), 1, 16, 16)
+	_, err = extractAPKMWithLimits(apkmPath, filepath.Join(root, "extracted"), 1, 8, 16, 16)
 	if err == nil || !strings.Contains(err.Error(), "regular file") {
 		t.Fatalf("extractAPKMWithLimits error = %v, want special-file rejection", err)
 	}
@@ -309,24 +480,43 @@ func TestExtractAPKMRejectsSpecialFileEntry(t *testing.T) {
 
 func writeTestAPKM(t *testing.T, files map[string]string) string {
 	t.Helper()
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([]testZipEntry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, testZipEntry{name: name, body: files[name]})
+	}
+	return writeTestAPKMEntries(t, entries)
+}
+
+type testZipEntry struct {
+	name string
+	body string
+	mode os.FileMode
+}
+
+func writeTestAPKMEntries(t *testing.T, entries []testZipEntry) string {
+	t.Helper()
 	apkmPath := filepath.Join(t.TempDir(), "test.apkm")
 	archive, err := os.Create(apkmPath)
 	if err != nil {
 		t.Fatalf("create APKM: %v", err)
 	}
 	writer := zip.NewWriter(archive)
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		entry, err := writer.Create(name)
-		if err != nil {
-			t.Fatalf("create APKM entry %q: %v", name, err)
+	for _, archiveEntry := range entries {
+		header := &zip.FileHeader{Name: archiveEntry.name, Method: zip.Store}
+		if archiveEntry.mode != 0 {
+			header.SetMode(archiveEntry.mode)
 		}
-		if _, err := entry.Write([]byte(files[name])); err != nil {
-			t.Fatalf("write APKM entry %q: %v", name, err)
+		entry, err := writer.CreateHeader(header)
+		if err != nil {
+			t.Fatalf("create APKM entry %q: %v", archiveEntry.name, err)
+		}
+		if _, err := entry.Write([]byte(archiveEntry.body)); err != nil {
+			t.Fatalf("write APKM entry %q: %v", archiveEntry.name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
