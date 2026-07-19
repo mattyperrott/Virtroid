@@ -142,7 +142,7 @@ image_tree="$(docker image inspect --format '{{index .Config.Labels "com.virtroi
 
 docker save --output "${temporary_dir}/backend-image.tar" "${image_tag}"
 config_path="$(tar -xOf "${temporary_dir}/backend-image.tar" manifest.json |
-  sed -nE 's/^\[{"Config":"([^"]+)".*$/\1/p')"
+  sed -nE 's/^\[\{"Config":"([^"]+)".*$/\1/p')"
 case "${config_path}" in
   blobs/sha256/[0-9a-f][0-9a-f]*)
     image_id="sha256:${config_path##*/}"
