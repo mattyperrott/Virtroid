@@ -6,6 +6,8 @@ import android.content.Intent
 import android.os.Bundle
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.security.AppLockStore
+import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.RuntimeCapabilityStore
 import io.virtroid.client.security.applyScreenCaptureProtection
 
 class VirtroidApplication : Application(), Application.ActivityLifecycleCallbacks {
@@ -14,6 +16,7 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
 
     override fun onCreate() {
         super.onCreate()
+        RuntimeCapabilityStore.initialize(this)
         registerActivityLifecycleCallbacks(this)
         AppLogStore.get(this).info("App startup", "lifecycle")
     }
@@ -27,6 +30,7 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
         if (startedActivities == 0) {
             wasBackgrounded = true
             AppLockStore(activity).noteAppBackgrounded()
+            IdentityPasswordStore(activity).clearUnlocked()
         }
     }
 
@@ -40,6 +44,7 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
         val lockStore = AppLockStore(activity)
         if (lockStore.shouldLockAfterBackground()) {
             lockStore.clearUnlocked()
+            IdentityPasswordStore(activity).clearUnlocked()
             AppLogStore.get(activity).info("App locked after background resume", "auth")
             activity.startActivity(
                 Intent(activity, UnlockActivity::class.java)

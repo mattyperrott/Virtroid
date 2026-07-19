@@ -80,6 +80,31 @@ func TestSnapshotRestoreWrongKeyDoesNotTouchTarget(t *testing.T) {
 	}
 }
 
+func TestSnapshotRejectsSparseSourceBeyondUncompressedBudget(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	oversizedPath := filepath.Join(sourceDir, "oversized.sparse")
+	file, err := os.Create(oversizedPath)
+	if err != nil {
+		t.Fatalf("create sparse source: %v", err)
+	}
+	if err := file.Truncate(maxRestoredSnapshotData + 1); err != nil {
+		_ = file.Close()
+		t.Skipf("filesystem cannot create a sparse test file: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close sparse source: %v", err)
+	}
+
+	_, err = writeSnapshot(filepath.Join(root, "oversized.enc"), sourceDir, testBlobKey(1))
+	if err == nil || !strings.Contains(err.Error(), "maximum uncompressed size") {
+		t.Fatalf("writeSnapshot oversized sparse source error = %v, want source budget rejection", err)
+	}
+}
+
 func TestPruneEphemeralAndroidStatePreservesKeystore(t *testing.T) {
 	dataDir := t.TempDir()
 	keystoreDB := filepath.Join(dataDir, "misc", "keystore", "persistent.sqlite")
@@ -171,6 +196,52 @@ func TestLocalBlobStoreRejectsTraversalChunkKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not match expected runtime path") {
 		t.Fatalf("restoreToDir error = %q, want runtime path validation", err.Error())
+	}
+}
+
+func TestRuntimeBoundSnapshotRejectsCrossRuntimeTransplant(t *testing.T) {
+	root := t.TempDir()
+	store := &localBlobStore{root: filepath.Join(root, "blobstore"), chunkSize: 32}
+	sourceDir := filepath.Join(root, "source")
+	writeFile(t, filepath.Join(sourceDir, "private.txt"), "runtime-a-private-state")
+	masterKey := testBlobKey(4)
+
+	manifest, err := store.persistFromDir(context.Background(), "runtime-a", sourceDir, masterKey)
+	if err != nil {
+		t.Fatalf("persistFromDir: %v", err)
+	}
+	if manifest.Version != 2 || manifest.RuntimeID != "runtime-a" {
+		t.Fatalf("manifest domain = version %d runtime %q, want v2 runtime-a", manifest.Version, manifest.RuntimeID)
+	}
+
+	transplanted := *manifest
+	transplanted.RuntimeID = "runtime-b"
+	transplanted.Chunks = append([]blobChunk(nil), manifest.Chunks...)
+	for index := range transplanted.Chunks {
+		sourcePath, err := store.blobObjectPath(manifest.Chunks[index].Key)
+		if err != nil {
+			t.Fatalf("source blobObjectPath: %v", err)
+		}
+		transplanted.Chunks[index].Key = filepath.ToSlash(filepath.Join("runtime-b", manifest.SnapshotID, filepath.Base(manifest.Chunks[index].Key)))
+		targetPath, err := store.blobObjectPath(transplanted.Chunks[index].Key)
+		if err != nil {
+			t.Fatalf("target blobObjectPath: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			t.Fatalf("mkdir transplanted generation: %v", err)
+		}
+		payload, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read source chunk: %v", err)
+		}
+		if err := os.WriteFile(targetPath, payload, 0o600); err != nil {
+			t.Fatalf("write transplanted chunk: %v", err)
+		}
+	}
+
+	err = store.restoreToDir(context.Background(), "runtime-b", &transplanted, filepath.Join(root, "restore"), masterKey)
+	if err == nil || !strings.Contains(err.Error(), "integrity check failed") {
+		t.Fatalf("cross-runtime transplant error = %v, want runtime-bound integrity failure", err)
 	}
 }
 
@@ -311,6 +382,57 @@ func TestRuntimeBlobKeyAcceptsVerifierMatch(t *testing.T) {
 	}
 }
 
+func TestRuntimeBlobKeyCacheCopiesAndZeroesKeys(t *testing.T) {
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	node := &nodeAgent{}
+	original := testBlobKey(7)
+	want := append([]byte(nil), original...)
+
+	node.cacheRuntimeBlobKey(runtimeID, original)
+	original[0] ^= 0xff
+
+	got, ok := node.cachedRuntimeBlobKey(runtimeID)
+	if !ok || !bytes.Equal(got, want) {
+		t.Fatalf("cachedRuntimeBlobKey = %x, %v; want an independent copy %x", got, ok, want)
+	}
+	got[1] ^= 0xff
+	gotAgain, ok := node.cachedRuntimeBlobKey(runtimeID)
+	if !ok || !bytes.Equal(gotAgain, want) {
+		t.Fatalf("caller mutation changed cached key: %x", gotAgain)
+	}
+
+	stored := node.runtimeBlobKeys[runtimeID]
+	node.clearCachedRuntimeBlobKey(runtimeID)
+	if _, ok := node.cachedRuntimeBlobKey(runtimeID); ok {
+		t.Fatal("cleared runtime key remained available")
+	}
+	for index, value := range stored {
+		if value != 0 {
+			t.Fatalf("cached key byte %d was not zeroed", index)
+		}
+	}
+}
+
+func TestRuntimeBlobKeyUsesLiveSessionCacheWithoutControlPlaneHandoff(t *testing.T) {
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	node := &nodeAgent{}
+	want := testBlobKey(9)
+	node.cacheRuntimeBlobKey(runtimeID, want)
+
+	got, err := node.runtimeBlobKeyWithContext(context.Background(), runtimeAssignment{ID: runtimeID})
+	if err != nil {
+		t.Fatalf("runtimeBlobKeyWithContext returned error with a live cached key: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("runtimeBlobKeyWithContext = %x, want %x", got, want)
+	}
+	clearBytes(got)
+	stillCached, ok := node.cachedRuntimeBlobKey(runtimeID)
+	if !ok || !bytes.Equal(stillCached, want) {
+		t.Fatal("clearing a borrowed key copy erased the live-session cache")
+	}
+}
+
 func TestRenterdBlobStoreRoundTripAndDelete(t *testing.T) {
 	server, objects := newRenterdTestServer(t, "secret")
 	sourceDir := filepath.Join(t.TempDir(), "source")
@@ -413,6 +535,7 @@ func TestRenterdPreflightFailsWithoutContracts(t *testing.T) {
 }
 
 func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
+	t.Setenv("NODE_AGENT_CONTAINER_NAME", "virtnoded")
 	root := t.TempDir()
 	runtimeID := "11111111-1111-1111-1111-111111111111"
 	dataDir := filepath.Join(root, runtimeID, "data")
@@ -450,10 +573,11 @@ func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
 
 	node := &nodeAgent{
 		cfg: config.NodeConfig{
-			NodeID:          "host-1",
-			ControlPlaneURL: controlPlane.URL,
-			RuntimeRoot:     root,
-			BlobStoreKind:   blobStoreLocal,
+			NodeID:            "host-1",
+			ControlPlaneURL:   controlPlane.URL,
+			RuntimeRoot:       root,
+			BlobStoreKind:     blobStoreLocal,
+			DockerNetworkName: "virtroid-guests",
 		},
 		controlPlane: controlPlane.Client(),
 		docker: &http.Client{

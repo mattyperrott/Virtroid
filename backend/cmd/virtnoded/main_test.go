@@ -1,9 +1,14 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -214,5 +219,255 @@ func TestVerifyAPKFileRejectsHashMismatch(t *testing.T) {
 	}
 	if err := verifyAPKFile(path, strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "hash mismatch") {
 		t.Fatalf("verifyAPKFile mismatch error = %v, want hash mismatch", err)
+	}
+}
+
+func TestExtractAPKMExtractsBoundedRegularAPKFiles(t *testing.T) {
+	apkmPath := writeTestAPKM(t, map[string]string{
+		"base.apk":          "base",
+		"splits/config.apk": "split",
+		"metadata.json":     "ignored",
+	})
+	extractDir := filepath.Join(t.TempDir(), "extracted")
+	paths, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 9)
+	if err != nil {
+		t.Fatalf("extractAPKMWithLimits: %v", err)
+	}
+	if len(paths) != 2 || filepath.Base(paths[0]) != "base.apk" || filepath.Base(paths[1]) != "config.apk" {
+		t.Fatalf("extracted paths = %v, want sorted base.apk and config.apk", paths)
+	}
+}
+
+func TestExtractAPKMRejectsDuplicateFlattenedNamesAndCleansOutput(t *testing.T) {
+	apkmPath := writeTestAPKM(t, map[string]string{
+		"one/base.apk": "one",
+		"two/base.apk": "two",
+	})
+	extractDir := filepath.Join(t.TempDir(), "extracted")
+	_, err := extractAPKMWithLimits(apkmPath, extractDir, 2, 8, 16)
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("extractAPKMWithLimits error = %v, want duplicate-name rejection", err)
+	}
+	if _, statErr := os.Stat(extractDir); !os.IsNotExist(statErr) {
+		t.Fatalf("failed extraction directory still exists: %v", statErr)
+	}
+}
+
+func TestExtractAPKMRejectsFileAndTotalExpansionLimits(t *testing.T) {
+	tests := []struct {
+		name      string
+		files     map[string]string
+		maxFiles  int
+		maxFile   int64
+		maxTotal  int64
+		wantError string
+	}{
+		{name: "file count", files: map[string]string{"a.apk": "a", "b.apk": "b"}, maxFiles: 1, maxFile: 8, maxTotal: 16, wantError: "more than"},
+		{name: "single file", files: map[string]string{"a.apk": "12345"}, maxFiles: 1, maxFile: 4, maxTotal: 8, wantError: "entry"},
+		{name: "total", files: map[string]string{"a.apk": "123", "b.apk": "456"}, maxFiles: 2, maxFile: 4, maxTotal: 5, wantError: "total"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apkmPath := writeTestAPKM(t, tt.files)
+			_, err := extractAPKMWithLimits(apkmPath, filepath.Join(t.TempDir(), "extracted"), tt.maxFiles, tt.maxFile, tt.maxTotal)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("extractAPKMWithLimits error = %v, want %q rejection", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestExtractAPKMRejectsSpecialFileEntry(t *testing.T) {
+	root := t.TempDir()
+	apkmPath := filepath.Join(root, "special.apkm")
+	archive, err := os.Create(apkmPath)
+	if err != nil {
+		t.Fatalf("create APKM: %v", err)
+	}
+	writer := zip.NewWriter(archive)
+	header := &zip.FileHeader{Name: "base.apk", Method: zip.Store}
+	header.SetMode(os.ModeSymlink | 0o777)
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		t.Fatalf("create symlink entry: %v", err)
+	}
+	if _, err := entry.Write([]byte("target.apk")); err != nil {
+		t.Fatalf("write symlink entry: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close ZIP writer: %v", err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatalf("close APKM: %v", err)
+	}
+
+	_, err = extractAPKMWithLimits(apkmPath, filepath.Join(root, "extracted"), 1, 16, 16)
+	if err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("extractAPKMWithLimits error = %v, want special-file rejection", err)
+	}
+}
+
+func writeTestAPKM(t *testing.T, files map[string]string) string {
+	t.Helper()
+	apkmPath := filepath.Join(t.TempDir(), "test.apkm")
+	archive, err := os.Create(apkmPath)
+	if err != nil {
+		t.Fatalf("create APKM: %v", err)
+	}
+	writer := zip.NewWriter(archive)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatalf("create APKM entry %q: %v", name, err)
+		}
+		if _, err := entry.Write([]byte(files[name])); err != nil {
+			t.Fatalf("write APKM entry %q: %v", name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close ZIP writer: %v", err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatalf("close APKM: %v", err)
+	}
+	return apkmPath
+}
+
+func TestContainerUsesExpectedRuntimeNetworkRejectsAdditionalSharedBridge(t *testing.T) {
+	t.Setenv("NODE_RUNTIME_NETWORK_MODE", "per-runtime")
+	node := &nodeAgent{cfg: config.NodeConfig{DockerNetworkName: "virtroid-guests"}}
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	expected, err := node.runtimeDockerNetworkName(runtimeID)
+	if err != nil {
+		t.Fatalf("runtimeDockerNetworkName: %v", err)
+	}
+	inspect := dockerInspectResponse{}
+	inspect.NetworkSettings.Networks = map[string]struct {
+		IPAddress string `json:"IPAddress"`
+		Gateway   string `json:"Gateway"`
+	}{
+		expected:          {},
+		"virtroid-guests": {},
+	}
+	usesExpected, err := node.containerUsesExpectedRuntimeNetwork(runtimeID, inspect)
+	if err != nil {
+		t.Fatalf("containerUsesExpectedRuntimeNetwork: %v", err)
+	}
+	if usesExpected {
+		t.Fatal("runtime attached to both isolated and shared networks was accepted")
+	}
+}
+
+func TestCreateContainerUsesBoundedLocalLogging(t *testing.T) {
+	t.Setenv("NODE_RUNTIME_NETWORK_MODE", "shared")
+	t.Setenv("NODE_RUNTIME_IMAGE", "redroid/redroid:test@sha256:"+strings.Repeat("a", 64))
+	t.Setenv("NODE_REQUIRE_DIGESTED_RUNTIME_IMAGE", "true")
+
+	node := &nodeAgent{cfg: config.NodeConfig{
+		DockerNetworkName: "virtroid-test",
+		RuntimeRoot:       t.TempDir(),
+	}}
+	var requestBody map[string]any
+	node.docker = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.Path != "/containers/create" {
+			t.Fatalf("Docker request = %s %s, want POST /containers/create", req.Method, req.URL.Path)
+		}
+		if err := json.NewDecoder(req.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode Docker create request: %v", err)
+		}
+		return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+	})}
+
+	err := node.createContainer(context.Background(), "virtroid-runtime-test", runtimeAssignment{
+		ID:         "11111111-1111-1111-1111-111111111111",
+		WidthPx:    720,
+		HeightPx:   1280,
+		DensityDpi: 320,
+	}, filepath.Join(t.TempDir(), "data"), 5555, sessionPersona{})
+	if err != nil {
+		t.Fatalf("createContainer: %v", err)
+	}
+	hostConfig, ok := requestBody["HostConfig"].(map[string]any)
+	if !ok {
+		t.Fatalf("HostConfig = %#v, want object", requestBody["HostConfig"])
+	}
+	logConfig, ok := hostConfig["LogConfig"].(map[string]any)
+	if !ok || logConfig["Type"] != "local" {
+		t.Fatalf("LogConfig = %#v, want local driver", hostConfig["LogConfig"])
+	}
+	options, ok := logConfig["Config"].(map[string]any)
+	if !ok || options["max-size"] != "10m" || options["max-file"] != "3" {
+		t.Fatalf("LogConfig.Config = %#v, want bounded rotation", logConfig["Config"])
+	}
+}
+
+func TestEnsureRuntimeNetworkReconnectsRecreatedNodeAgent(t *testing.T) {
+	t.Setenv("NODE_RUNTIME_NETWORK_MODE", "per-runtime")
+	t.Setenv("NODE_AGENT_CONTAINER_NAME", "virtnoded")
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	node := &nodeAgent{cfg: config.NodeConfig{DockerNetworkName: "virtroid-guests"}}
+	networkName, err := node.runtimeDockerNetworkName(runtimeID)
+	if err != nil {
+		t.Fatalf("runtimeDockerNetworkName: %v", err)
+	}
+	requests := 0
+	node.docker = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			payload, _ := json.Marshal(dockerNetworkInspectResponse{
+				Name: networkName,
+				Labels: map[string]string{
+					"io.virtroid.managed": "true",
+					"io.virtroid.runtime": runtimeID,
+				},
+				Containers: map[string]struct {
+					Name string `json:"Name"`
+				}{"guest-id": {Name: containerNameForRuntime(runtimeID)}},
+			})
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(payload))), Header: make(http.Header)}, nil
+		case 2:
+			if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/connect") {
+				t.Fatalf("second Docker request = %s %s, want network connect", req.Method, req.URL.Path)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+		default:
+			t.Fatalf("unexpected Docker request %d: %s %s", requests, req.Method, req.URL.Path)
+			return nil, nil
+		}
+	})}
+
+	got, err := node.ensureRuntimeNetwork(context.Background(), runtimeID)
+	if err != nil {
+		t.Fatalf("ensureRuntimeNetwork: %v", err)
+	}
+	if got != networkName || requests != 2 {
+		t.Fatalf("ensureRuntimeNetwork = %q with %d requests, want %q with inspect+connect", got, requests, networkName)
+	}
+}
+
+func TestRemoveRuntimeNetworkRefusesUnmanagedCollision(t *testing.T) {
+	t.Setenv("NODE_RUNTIME_NETWORK_MODE", "per-runtime")
+	t.Setenv("NODE_AGENT_CONTAINER_NAME", "virtnoded")
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	node := &nodeAgent{cfg: config.NodeConfig{DockerNetworkName: "virtroid-guests"}}
+	requests := 0
+	node.docker = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		payload := `{"Name":"collision","Labels":{"io.virtroid.managed":"false"},"Containers":{}}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(payload)), Header: make(http.Header)}, nil
+	})}
+
+	err := node.removeRuntimeNetwork(context.Background(), runtimeID)
+	if err == nil || !strings.Contains(err.Error(), "refusing to remove unmanaged") {
+		t.Fatalf("removeRuntimeNetwork error = %v, want unmanaged collision refusal", err)
+	}
+	if requests != 1 {
+		t.Fatalf("removeRuntimeNetwork made %d Docker requests after unmanaged collision, want inspect only", requests)
 	}
 }

@@ -1,4 +1,9 @@
-# Virtdroid Current Status and Remaining Work
+# Virtroid Current Status and Remaining Work
+
+> **Superseded:** This 2026-05-10 snapshot is historical and must not be used for
+> current security, privacy, feature, or release claims. See
+> [`remediation-status-2026-07-19.md`](./remediation-status-2026-07-19.md) for
+> the current release decision, verified remediations, and remaining blockers.
 
 Generated: 2026-05-10
 
@@ -47,7 +52,7 @@ Implemented:
 - secure-window protection on sensitive screens
 - encrypted active-session/log/settings stores with vault/Keystore-backed handling
 - release manifest gates for backup, cleartext, debug/test, data extraction rules, and preview activity leakage
-- signed release artifact generation in `android-client/dist/virtdroid-client-0.1.0-release.apk`
+- release signing is fail-closed and requires externally supplied signing credentials; generated APKs are not committed
 
 Still missing or partial:
 

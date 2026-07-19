@@ -69,7 +69,7 @@ func appCatalogSyncLoop(ctx context.Context, pg *store.Store, cfg config.ServerC
 	runSync := func() {
 		syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
-		count, err := appcatalog.SyncFDroid(syncCtx, pg, cfg.AppCatalogSyncURL, cfg.AppCatalogSyncMaxApps)
+		count, err := appcatalog.SyncFDroid(syncCtx, pg, cfg.AppCatalogSyncURL, cfg.AppCatalogSyncSHA256, cfg.AppCatalogSyncMaxApps)
 		if err != nil {
 			log.Printf("app catalog sync failed: %v", err)
 			return

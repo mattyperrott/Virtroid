@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.LruCache
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -26,13 +27,17 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSelectionStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAppInstallBinding
+import io.virtroid.client.security.CatalogIconPolicy
 import io.virtroid.client.security.enableSecureWindow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import java.net.URL
+import java.io.IOException
+import javax.net.ssl.HttpsURLConnection
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -44,7 +49,10 @@ class AppInstallActivity : AppCompatActivity() {
     private val api = VirtroidApi()
     private var catalog: List<AppCatalogEntry> = emptyList()
     private val selectedPackages = linkedSetOf<String>()
-    private val iconCache = mutableMapOf<String, Bitmap>()
+    private val iconCache = object : LruCache<String, Bitmap>(CatalogIconPolicy.MAX_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount.coerceAtLeast(1)
+    }
+    private val iconDownloadSemaphore = Semaphore(ICON_DOWNLOAD_CONCURRENCY)
     private val selectionIcons = mutableMapOf<String, ImageView>()
     private var searchJob: Job? = null
     private var loadedInitialSelections = false
@@ -351,7 +359,7 @@ class AppInstallActivity : AppCompatActivity() {
     private fun loadAppIcon(iconUrl: String?, image: ImageView, placeholder: TextView) {
         val url = iconUrl?.takeIf { it.isNotBlank() } ?: return
         image.tag = url
-        iconCache[url]?.let { bitmap ->
+        iconCache.get(url)?.let { bitmap ->
             image.setImageBitmap(bitmap)
             image.visibility = View.VISIBLE
             placeholder.visibility = View.GONE
@@ -360,20 +368,77 @@ class AppInstallActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             val bitmap = withContext(Dispatchers.IO) {
-                runCatching {
-                    val connection = URL(url).openConnection().apply {
-                        connectTimeout = 5000
-                        readTimeout = 5000
-                    }
-                    connection.getInputStream().use(BitmapFactory::decodeStream)
-                }.getOrNull()
+                iconDownloadSemaphore.withPermit {
+                    runCatching { downloadCatalogIcon(url) }.getOrNull()
+                }
             } ?: return@launch
-            iconCache[url] = bitmap
+            iconCache.put(url, bitmap)
             if (image.tag == url) {
                 image.setImageBitmap(bitmap)
                 image.visibility = View.VISIBLE
                 placeholder.visibility = View.GONE
             }
+        }
+    }
+
+    private fun downloadCatalogIcon(rawUrl: String): Bitmap {
+        val url = CatalogIconPolicy.validatedUrl(rawUrl)
+            ?: throw IOException("Catalog icon URL is not allowlisted")
+        val connection = (url.openConnection() as? HttpsURLConnection)
+            ?: throw IOException("Catalog icon connection is not HTTPS")
+        return try {
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = ICON_CONNECT_TIMEOUT_MS
+            connection.readTimeout = ICON_READ_TIMEOUT_MS
+            connection.setRequestProperty("Accept", "image/png, image/jpeg, image/webp")
+
+            if (connection.responseCode != HttpsURLConnection.HTTP_OK) {
+                throw IOException("Catalog icon request returned HTTP ${connection.responseCode}")
+            }
+            val contentLength = connection.contentLengthLong
+            if (!CatalogIconPolicy.allowsContent(connection.contentType, contentLength)) {
+                throw IOException("Catalog icon response metadata was rejected")
+            }
+            val encoded = connection.inputStream.use { input ->
+                val expectedLength = contentLength.toInt()
+                val bytes = ByteArray(expectedLength)
+                var offset = 0
+                while (offset < expectedLength) {
+                    val read = input.read(bytes, offset, expectedLength - offset)
+                    if (read < 0) {
+                        throw IOException("Catalog icon response ended before Content-Length")
+                    }
+                    offset += read
+                }
+                if (input.read() != -1) {
+                    throw IOException("Catalog icon response exceeded Content-Length")
+                }
+                bytes
+            }
+
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(encoded, 0, encoded.size, bounds)
+            if (!CatalogIconPolicy.allowsDecodedBitmap(bounds.outWidth, bounds.outHeight)) {
+                throw IOException("Catalog icon dimensions exceeded policy")
+            }
+            val bitmap = BitmapFactory.decodeByteArray(
+                encoded,
+                0,
+                encoded.size,
+                BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
+            ) ?: throw IOException("Catalog icon could not be decoded")
+            if (!CatalogIconPolicy.allowsDecodedBitmap(
+                    bitmap.width,
+                    bitmap.height,
+                    bitmap.allocationByteCount,
+                )
+            ) {
+                bitmap.recycle()
+                throw IOException("Decoded catalog icon exceeded memory policy")
+            }
+            bitmap
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -414,6 +479,10 @@ class AppInstallActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val ICON_CONNECT_TIMEOUT_MS = 5_000
+        private const val ICON_READ_TIMEOUT_MS = 5_000
+        private const val ICON_DOWNLOAD_CONCURRENCY = 4
+
         fun createIntent(context: Context): Intent = Intent(context, AppInstallActivity::class.java)
     }
 }

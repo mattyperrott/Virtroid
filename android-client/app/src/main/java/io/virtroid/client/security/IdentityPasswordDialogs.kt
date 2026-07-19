@@ -82,19 +82,6 @@ suspend fun AppCompatActivity.promptPassphrase(
     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
 )
 
-suspend fun AppCompatActivity.promptIdentityPasswordWithConfirmation(
-    title: String,
-    hint: String,
-    confirmHint: String,
-): String? {
-    val first = promptIdentityPassword(title, hint)?.trim().orEmpty()
-    if (first.isBlank()) {
-        return null
-    }
-    val confirmation = promptIdentityPassword(title, confirmHint)?.trim().orEmpty()
-    return if (first == confirmation) first else ""
-}
-
 suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
     suspendCancellableCoroutine { continuation ->
         val binding = DialogIdentityPasswordSetupBinding.inflate(layoutInflater)
@@ -122,10 +109,28 @@ suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
         binding.passwordDialogConfirmButton.setOnClickListener {
             val first = binding.passwordInput.text?.toString()?.trim().orEmpty()
             val confirmed = binding.passwordConfirmInput.text?.toString()?.trim().orEmpty()
-            when {
-                first.isBlank() -> binding.passwordInputLayout.error = getString(R.string.identity_password_required)
-                first != confirmed -> binding.passwordConfirmInputLayout.error = getString(R.string.identity_password_mismatch)
-                else -> finishWith(first)
+            when (IdentityPasswordPolicy.violation(first)) {
+                IdentityPasswordPolicy.Violation.EMPTY -> {
+                    binding.passwordInputLayout.error = getString(R.string.identity_password_required)
+                }
+                IdentityPasswordPolicy.Violation.TOO_SHORT -> {
+                    binding.passwordInputLayout.error = getString(
+                        R.string.identity_password_too_short,
+                        IdentityPasswordPolicy.MIN_LENGTH,
+                    )
+                }
+                IdentityPasswordPolicy.Violation.TOO_LONG -> {
+                    binding.passwordInputLayout.error = getString(
+                        R.string.identity_password_too_long,
+                        IdentityPasswordPolicy.MAX_LENGTH,
+                    )
+                }
+                null -> when {
+                    first != confirmed -> {
+                        binding.passwordConfirmInputLayout.error = getString(R.string.identity_password_mismatch)
+                    }
+                    else -> finishWith(first)
+                }
             }
         }
         dialog.setOnCancelListener { finishWith(null) }

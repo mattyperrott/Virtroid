@@ -36,14 +36,6 @@ class AppSettingsStore(private val context: Context) {
         get() = prefs.getLong(KEY_UI_INACTIVITY_TIMEOUT_MS, DEFAULT_UI_INACTIVITY_TIMEOUT_MS)
         set(value) = prefs.edit().putLong(KEY_UI_INACTIVITY_TIMEOUT_MS, value.coerceAtLeast(30_000L)).apply()
 
-    var autoDeleteMetadata: Boolean
-        get() = protectedBoolean(KEY_AUTO_DELETE_METADATA, true)
-        set(value) = putProtectedBoolean(KEY_AUTO_DELETE_METADATA, value)
-
-    var clearPostTransferArtifacts: Boolean
-        get() = protectedBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, true)
-        set(value) = putProtectedBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, value)
-
     var autoClearClipboard: Boolean
         get() = protectedBoolean(KEY_AUTO_CLEAR_CLIPBOARD, true)
         set(value) = putProtectedBoolean(KEY_AUTO_CLEAR_CLIPBOARD, value)
@@ -102,16 +94,8 @@ class AppSettingsStore(private val context: Context) {
         if (!vault.isUnlocked) {
             return
         }
-        if (prefs.contains(KEY_AUTO_DELETE_METADATA)) {
-            vault.putBoolean(NAMESPACE, KEY_AUTO_DELETE_METADATA, prefs.getBoolean(KEY_AUTO_DELETE_METADATA, true))
-        }
-        if (prefs.contains(KEY_CLEAR_POST_TRANSFER_ARTIFACTS)) {
-            vault.putBoolean(
-                NAMESPACE,
-                KEY_CLEAR_POST_TRANSFER_ARTIFACTS,
-                prefs.getBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, true),
-            )
-        }
+        vault.remove(NAMESPACE, LEGACY_KEY_AUTO_DELETE_METADATA)
+        vault.remove(NAMESPACE, LEGACY_KEY_CLEAR_POST_TRANSFER_ARTIFACTS)
         if (prefs.contains(KEY_AUTO_CLEAR_CLIPBOARD)) {
             vault.putBoolean(NAMESPACE, KEY_AUTO_CLEAR_CLIPBOARD, prefs.getBoolean(KEY_AUTO_CLEAR_CLIPBOARD, true))
         }
@@ -119,8 +103,8 @@ class AppSettingsStore(private val context: Context) {
             vault.putString(NAMESPACE, KEY_LAST_SESSION_END_REASON, prefs.getString(KEY_LAST_SESSION_END_REASON, null))
         }
         prefs.edit()
-            .remove(KEY_AUTO_DELETE_METADATA)
-            .remove(KEY_CLEAR_POST_TRANSFER_ARTIFACTS)
+            .remove(LEGACY_KEY_AUTO_DELETE_METADATA)
+            .remove(LEGACY_KEY_CLEAR_POST_TRANSFER_ARTIFACTS)
             .remove(KEY_AUTO_CLEAR_CLIPBOARD)
             .remove(KEY_LAST_SESSION_END_REASON)
             .apply()
@@ -131,8 +115,6 @@ class AppSettingsStore(private val context: Context) {
             return
         }
         prefs.edit()
-            .putBoolean(KEY_AUTO_DELETE_METADATA, vault.getBoolean(NAMESPACE, KEY_AUTO_DELETE_METADATA, true))
-            .putBoolean(KEY_CLEAR_POST_TRANSFER_ARTIFACTS, vault.getBoolean(NAMESPACE, KEY_CLEAR_POST_TRANSFER_ARTIFACTS, true))
             .putBoolean(KEY_AUTO_CLEAR_CLIPBOARD, vault.getBoolean(NAMESPACE, KEY_AUTO_CLEAR_CLIPBOARD, true))
             .putString(
                 KEY_LAST_SESSION_END_REASON,
@@ -234,8 +216,8 @@ class AppSettingsStore(private val context: Context) {
         private const val KEY_FAILED_ATTEMPTS_THRESHOLD = "failed_attempts_threshold"
         private const val KEY_BLOCK_SCREEN_CAPTURE = "block_screen_capture"
         private const val KEY_UI_INACTIVITY_TIMEOUT_MS = "ui_inactivity_timeout_ms"
-        private const val KEY_AUTO_DELETE_METADATA = "auto_delete_metadata"
-        private const val KEY_CLEAR_POST_TRANSFER_ARTIFACTS = "clear_post_transfer_artifacts"
+        private const val LEGACY_KEY_AUTO_DELETE_METADATA = "auto_delete_metadata"
+        private const val LEGACY_KEY_CLEAR_POST_TRANSFER_ARTIFACTS = "clear_post_transfer_artifacts"
         private const val KEY_AUTO_CLEAR_CLIPBOARD = "auto_clear_clipboard"
         private const val KEY_LAST_SESSION_END_REASON = "last_session_end_reason"
         private const val NAMESPACE = "app_settings"

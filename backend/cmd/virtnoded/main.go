@@ -39,7 +39,16 @@ import (
 )
 
 var errContainerNotFound = errors.New("container not found")
+var errInstalledPackageMissing = errors.New("installed artifact did not provide the expected package")
 var appPackageNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
+var digestedImageReferencePattern = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-fA-F]{64}$`)
+var dockerNetworkNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+
+const (
+	maxAPKMFiles      = 64
+	maxAPKMFileBytes  = int64(512 * 1024 * 1024)
+	maxAPKMTotalBytes = int64(1024 * 1024 * 1024)
+)
 
 var builtInTrustedAppCatalog = map[string]runtimeApp{
 	"org.fdroid.basic": {
@@ -180,25 +189,27 @@ not_ready no_focused_window
 `
 
 type runtimeAssignment struct {
-	ID               string       `json:"id"`
-	Name             string       `json:"name"`
-	Status           string       `json:"status"`
-	DesiredState     string       `json:"desired_state"`
-	ConnectionStatus string       `json:"connection_status"`
-	PersonaVersion   int          `json:"persona_version"`
-	AndroidImage     string       `json:"android_image"`
-	AndroidVersion   string       `json:"android_version"`
-	WidthPx          int          `json:"width_px"`
-	HeightPx         int          `json:"height_px"`
-	DensityDpi       int          `json:"density_dpi"`
-	BlobAutoSnapshot bool         `json:"blob_auto_snapshot"`
-	BlobStoreKind    *string      `json:"blob_store_kind"`
-	BlobManifestJSON *string      `json:"blob_manifest_json"`
-	ADBPort          *int         `json:"adb_port"`
-	ViewerPort       *int         `json:"viewer_port"`
-	WipeRequested    bool         `json:"wipe_requested"`
-	LastError        *string      `json:"last_error"`
-	SelectedApps     []runtimeApp `json:"selected_apps"`
+	ID                  string       `json:"id"`
+	Name                string       `json:"name"`
+	Status              string       `json:"status"`
+	DesiredState        string       `json:"desired_state"`
+	ConnectionStatus    string       `json:"connection_status"`
+	PersonaVersion      int          `json:"persona_version"`
+	AndroidImage        string       `json:"android_image"`
+	AndroidVersion      string       `json:"android_version"`
+	WidthPx             int          `json:"width_px"`
+	HeightPx            int          `json:"height_px"`
+	DensityDpi          int          `json:"density_dpi"`
+	BlobAutoSnapshot    bool         `json:"blob_auto_snapshot"`
+	BlobStoreKind       *string      `json:"blob_store_kind"`
+	BlobManifestJSON    *string      `json:"blob_manifest_json"`
+	ADBPort             *int         `json:"adb_port"`
+	ViewerPort          *int         `json:"viewer_port"`
+	WipeRequested       bool         `json:"wipe_requested"`
+	CleanupPending      bool         `json:"cleanup_pending"`
+	OperationGeneration int64        `json:"operation_generation"`
+	LastError           *string      `json:"last_error"`
+	SelectedApps        []runtimeApp `json:"selected_apps"`
 }
 
 type runtimeApp struct {
@@ -261,6 +272,14 @@ type dockerInspectResponse struct {
 	} `json:"NetworkSettings"`
 }
 
+type dockerNetworkInspectResponse struct {
+	Name       string            `json:"Name"`
+	Labels     map[string]string `json:"Labels"`
+	Containers map[string]struct {
+		Name string `json:"Name"`
+	} `json:"Containers"`
+}
+
 const (
 	viewerPrepareTimeout = 90 * time.Second
 	viewerDefaultMaxSize = 720
@@ -281,6 +300,15 @@ type nodeAgent struct {
 	blobPreflightMu     sync.Mutex
 	blobPreflightReport blobPreflightReport
 	blobPreflightAt     time.Time
+	runtimeBlobKeyMu    sync.Mutex
+	runtimeBlobKeys     map[string][]byte
+}
+
+type runtimeContainerResources struct {
+	MemoryBytes int64
+	NanoCPUs    int64
+	PidsLimit   int64
+	ShmBytes    int64
 }
 
 func main() {
@@ -301,6 +329,7 @@ func main() {
 		},
 		docker: dockerHTTPClient(),
 	}
+	defer node.clearAllCachedRuntimeBlobKeys()
 	if os.Getenv("NODE_BLOB_SMOKE_TEST") == "1" {
 		if err := node.runBlobSmokeTest(context.Background()); err != nil {
 			log.Fatalf("blob smoke test failed: %v", err)
@@ -634,9 +663,6 @@ func (n *nodeAgent) cachedStoragePreflight(ctx context.Context) (blobPreflightRe
 		return n.blobPreflightReport, n.blobPreflightAt
 	}
 	kind := strings.TrimSpace(n.cfg.BlobStoreKind)
-	if strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" {
-		kind = blobStoreRenterd
-	}
 	preflightCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	report := n.runBlobPreflightForKind(preflightCtx, kind)
@@ -927,7 +953,7 @@ func (n *nodeAgent) reconcileOnce(ctx context.Context) {
 			log.Printf("runtime %s: %s", runtime.ID, message)
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", message)
 			lastError := message
-			_ = n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+			_ = n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 				Status:           "error",
 				ConnectionStatus: "offline",
 				LastError:        &lastError,
@@ -950,6 +976,11 @@ func (n *nodeAgent) reconcileRuntime(ctx context.Context, runtime runtimeAssignm
 }
 
 func (n *nodeAgent) ensureRuntimeProvisioned(ctx context.Context, runtime runtimeAssignment) error {
+	runtimeImage, err := runtimeImageForAssignment(runtime.AndroidImage)
+	if err != nil {
+		return err
+	}
+	runtime.AndroidImage = runtimeImage
 	containerName := containerNameForRuntime(runtime.ID)
 	adbPort := adbPortForRuntime(runtime.ID)
 	inspect, err := n.inspectContainer(ctx, containerName)
@@ -962,7 +993,7 @@ func (n *nodeAgent) ensureRuntimeProvisioned(ctx context.Context, runtime runtim
 		}
 		persona := buildSessionPersona(runtime)
 		personaJSON := marshalSessionPersona(persona)
-		return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+		return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 			Status:            "provisioned",
 			ConnectionStatus:  "offline",
 			ContainerName:     stringPtr(containerName),
@@ -994,7 +1025,7 @@ func (n *nodeAgent) ensureRuntimeProvisioned(ctx context.Context, runtime runtim
 		"info",
 		fmt.Sprintf("Runtime container %s provisioned offline with persona %s.", containerName, personaSummary(persona)),
 	)
-	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+	return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 		Status:            "provisioned",
 		ConnectionStatus:  "offline",
 		ContainerName:     stringPtr(containerName),
@@ -1005,6 +1036,11 @@ func (n *nodeAgent) ensureRuntimeProvisioned(ctx context.Context, runtime runtim
 }
 
 func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAssignment) error {
+	runtimeImage, err := runtimeImageForAssignment(runtime.AndroidImage)
+	if err != nil {
+		return err
+	}
+	runtime.AndroidImage = runtimeImage
 	containerName := containerNameForRuntime(runtime.ID)
 	adbPort := adbPortForRuntime(runtime.ID)
 	if runtime.ViewerPort == nil {
@@ -1014,6 +1050,22 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	if err != nil && !errors.Is(err, errContainerNotFound) {
 		return err
 	}
+	if err == nil && runtimeUsesPerRuntimeNetwork() {
+		usesExpectedNetwork, networkErr := n.containerUsesExpectedRuntimeNetwork(runtime.ID, inspect)
+		if networkErr != nil {
+			return networkErr
+		}
+		if !usesExpectedNetwork {
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Migrating runtime from a shared Docker network to an isolated per-runtime bridge.")
+			return n.ensureRuntimeStopped(ctx, runtime, false)
+		}
+		// The node container may have been recreated while the guest survived.
+		// Reconcile its endpoint on every pass so ADB remains reachable without
+		// ever putting the guest back on the shared Compose bridge.
+		if _, networkErr := n.ensureRuntimeNetwork(ctx, runtime.ID); networkErr != nil {
+			return fmt.Errorf("reconnect node agent to isolated runtime network: %w", networkErr)
+		}
+	}
 	hadContainer := err == nil
 
 	if err == nil && inspect.State.Running {
@@ -1022,7 +1074,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			return readyErr
 		}
 		if !ready {
-			return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+			return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 				Status:           "starting",
 				ConnectionStatus: "connecting",
 				ContainerName:    stringPtr(containerName),
@@ -1037,7 +1089,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			}
 			if !interactive {
 				log.Printf("runtime %s Android UI not ready: %s", runtime.ID, detail)
-				return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+				return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 					Status:           "starting",
 					ConnectionStatus: "connecting",
 					ContainerName:    stringPtr(containerName),
@@ -1046,6 +1098,10 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				})
 			}
 			if installErr := n.ensureSelectedAppsInstalled(ctx, runtime, inspect); installErr != nil {
+				if errors.Is(installErr, errInstalledPackageMissing) {
+					cleanupErr := n.discardTaintedRuntime(ctx, runtime, containerName)
+					return errors.Join(fmt.Errorf("selected app package identity verification failed: %w", installErr), cleanupErr)
+				}
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Selected app install failed: %v.", installErr))
 			}
 			prewarmMaxSize := max(runtime.WidthPx, runtime.HeightPx)
@@ -1059,7 +1115,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Encrypted viewer bridge prewarmed.")
 			}
 		}
-		return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+		return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 			Status:           "running",
 			ConnectionStatus: "online",
 			ContainerName:    stringPtr(containerName),
@@ -1071,10 +1127,13 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 		if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 			return fmt.Errorf("remove stale offline container: %w", err)
 		}
+		if err := n.removeRuntimeNetwork(ctx, runtime.ID); err != nil {
+			return fmt.Errorf("remove stale isolated runtime network: %w", err)
+		}
 		hadContainer = false
 	}
 
-	restoredSnapshot, err := n.prepareSessionData(runtime)
+	restoredSnapshot, err := n.prepareSessionData(ctx, runtime)
 	if err != nil {
 		return fmt.Errorf("prepare session data: %w", err)
 	}
@@ -1111,7 +1170,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			restoreMessage,
 		),
 	)
-	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+	return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 		Status:            "starting",
 		ConnectionStatus:  "connecting",
 		ContainerName:     stringPtr(containerName),
@@ -1121,6 +1180,22 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	})
 }
 
+func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAssignment, containerName string) error {
+	var cleanupErrors []error
+	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove tainted runtime container: %w", err))
+	}
+	if err := n.removeRuntimeNetwork(ctx, runtime.ID); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove tainted runtime network: %w", err))
+	}
+	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
+	if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove tainted runtime userdata: %w", err))
+	}
+	n.clearCachedRuntimeBlobKey(runtime.ID)
+	return errors.Join(cleanupErrors...)
+}
+
 func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAssignment, clearWipe bool) error {
 	containerName := containerNameForRuntime(runtime.ID)
 	_, inspectErr := n.inspectContainer(ctx, containerName)
@@ -1128,18 +1203,40 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 	if inspectErr != nil && !errors.Is(inspectErr, errContainerNotFound) {
 		return inspectErr
 	}
-	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
-		return err
-	}
-
 	persisted := &persistedBlob{}
 	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
-	shouldPersistOrClearBlob := hadContainer || directoryHasEntries(dataDir)
+	// A stopped assignment is the durable intermediate state of the cleanup
+	// protocol. Its manifest is already committed, so retries must resume cleanup
+	// instead of creating another snapshot generation.
+	cleanupPending := runtime.CleanupPending || strings.EqualFold(strings.TrimSpace(runtime.Status), "stopped")
+	shouldPersistOrClearBlob := !cleanupPending && (hadContainer || directoryHasEntries(dataDir))
+	var persistencePlan *sessionPersistencePlan
 	if shouldPersistOrClearBlob {
 		var err error
-		persisted, err = n.persistSessionData(runtime)
+		persistencePlan, err = n.prepareSessionPersistence(ctx, runtime)
 		if err != nil {
-			return fmt.Errorf("persist encrypted userdata blob: %w", err)
+			return fmt.Errorf("prepare encrypted userdata persistence before stopping container: %w", err)
+		}
+		defer clearBytes(persistencePlan.masterKey)
+	}
+
+	if hadContainer {
+		if err := n.stopContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+			return fmt.Errorf("quiesce runtime container before persistence: %w", err)
+		}
+	}
+	if shouldPersistOrClearBlob {
+		var err error
+		persisted, err = n.persistSessionData(ctx, runtime, persistencePlan)
+		if err != nil {
+			return fmt.Errorf("persist encrypted userdata blob while retaining plaintext recovery state: %w", err)
+		}
+	}
+
+	if hadContainer {
+		if err := n.removeContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+			cleanupErr := n.discardUncommittedBlob(persisted)
+			return errors.Join(fmt.Errorf("remove runtime container after durable persistence: %w", err), cleanupErr)
 		}
 	}
 	if persisted != nil && persisted.SnapshotAt != nil {
@@ -1177,21 +1274,65 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 	if persisted != nil && persisted.ClearExisting {
 		status.ClearBlobManifest = true
 	}
-	if err := n.reportRuntimeStatus(ctx, runtime.ID, status); err != nil {
-		return err
+	if err := n.reportRuntimeStatus(ctx, runtime, status); err != nil {
+		cleanupErr := n.discardUncommittedBlob(persisted)
+		return errors.Join(fmt.Errorf("commit stopped runtime status: %w", err), cleanupErr)
 	}
-	if shouldPersistOrClearBlob && persisted != nil {
-		return n.cleanupBlobStorage(runtime, persisted.Manifest)
+	if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove plaintext userdata after manifest commit: %w", err)
+	}
+	if err := n.removeRuntimeNetwork(ctx, runtime.ID); err != nil {
+		return fmt.Errorf("remove isolated runtime network after manifest commit: %w", err)
+	}
+
+	retainedManifest := persisted.Manifest
+	if cleanupPending && retainedManifest == nil {
+		var err error
+		retainedManifest, err = parseBlobManifest(runtime.BlobManifestJSON)
+		if err != nil {
+			return fmt.Errorf("parse committed blob manifest during cleanup retry: %w", err)
+		}
+	}
+	if (shouldPersistOrClearBlob && persisted != nil) || cleanupPending {
+		if err := n.cleanupBlobStorage(runtime, retainedManifest); err != nil {
+			return fmt.Errorf("cleanup stale blob generations after manifest commit: %w", err)
+		}
+	}
+	n.clearCachedRuntimeBlobKey(runtime.ID)
+
+	status.CleanupComplete = true
+	if err := n.reportRuntimeStatus(ctx, runtime, status); err != nil {
+		return fmt.Errorf("acknowledge stopped runtime cleanup: %w", err)
+	}
+	return nil
+}
+
+func (n *nodeAgent) discardUncommittedBlob(persisted *persistedBlob) error {
+	if persisted == nil || persisted.Manifest == nil {
+		return nil
+	}
+	store, err := n.blobStoreForManifest(persisted.Manifest)
+	if err != nil {
+		return fmt.Errorf("resolve uncommitted blob store: %w", err)
+	}
+	if err := store.deleteManifest(context.Background(), persisted.Manifest); err != nil {
+		return fmt.Errorf("delete uncommitted blob manifest: %w", err)
 	}
 	return nil
 }
 
 func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) error {
-	if _, err := n.runtimeBlobKey(runtime); err != nil {
+	masterKey, err := n.runtimeBlobKeyWithContext(ctx, runtime)
+	if err != nil {
 		return fmt.Errorf("verify runtime blob key before wipe: %w", err)
 	}
-	if err := n.ensureRuntimeStopped(ctx, runtime, false); err != nil {
-		return err
+	clearBytes(masterKey)
+	containerName := containerNameForRuntime(runtime.ID)
+	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+		return fmt.Errorf("remove runtime container before wipe: %w", err)
+	}
+	if err := n.removeRuntimeNetwork(ctx, runtime.ID); err != nil {
+		return fmt.Errorf("remove isolated runtime network before wipe: %w", err)
 	}
 
 	runtimeRoot := filepath.Join(n.cfg.RuntimeRoot, runtime.ID)
@@ -1202,16 +1343,18 @@ func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) 
 	if err := n.clearSnapshot(runtime); err != nil {
 		return fmt.Errorf("remove encrypted userdata blob: %w", err)
 	}
+	n.clearCachedRuntimeBlobKey(runtime.ID)
 
 	now := time.Now().UTC()
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Runtime data directory and encrypted userdata blob wiped.")
-	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+	return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 		Status:             "stopped",
 		ConnectionStatus:   "offline",
 		ContainerName:      nil,
 		ADBPort:            nil,
 		ClearWipeRequested: true,
 		ClearBlobManifest:  true,
+		CleanupComplete:    true,
 		BlobLastSnapshotAt: &now,
 		LastError:          nil,
 		ClearActivePersona: true,
@@ -1223,6 +1366,9 @@ func (n *nodeAgent) deleteRuntime(ctx context.Context, runtime runtimeAssignment
 	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 		return err
 	}
+	if err := n.removeRuntimeNetwork(ctx, runtime.ID); err != nil {
+		return fmt.Errorf("remove isolated runtime network: %w", err)
+	}
 
 	runtimeRoot := filepath.Join(n.cfg.RuntimeRoot, runtime.ID)
 	if err := os.RemoveAll(runtimeRoot); err != nil {
@@ -1231,9 +1377,10 @@ func (n *nodeAgent) deleteRuntime(ctx context.Context, runtime runtimeAssignment
 	if err := n.clearSnapshot(runtime); err != nil {
 		return fmt.Errorf("remove runtime blob data: %w", err)
 	}
+	n.clearCachedRuntimeBlobKey(runtime.ID)
 
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Runtime removed from node storage.")
-	return n.reportRuntimeStatus(ctx, runtime.ID, runtimeStatusUpdate{
+	return n.reportRuntimeStatus(ctx, runtime, runtimeStatusUpdate{
 		Deleted: true,
 	})
 }
@@ -1319,16 +1466,18 @@ type runtimeStatusUpdate struct {
 	ActivePersonaJSON  *string    `json:"active_persona_json,omitempty"`
 	ClearActivePersona bool       `json:"clear_active_persona,omitempty"`
 	ClearBlobManifest  bool       `json:"clear_blob_manifest,omitempty"`
+	CleanupComplete    bool       `json:"cleanup_complete,omitempty"`
 	Deleted            bool       `json:"deleted,omitempty"`
 }
 
-func (n *nodeAgent) reportRuntimeStatus(ctx context.Context, runtimeID string, update runtimeStatusUpdate) error {
+func (n *nodeAgent) reportRuntimeStatus(ctx context.Context, runtime runtimeAssignment, update runtimeStatusUpdate) error {
 	body := map[string]any{
-		"host_id":        n.cfg.NodeID,
-		"deleted":        update.Deleted,
-		"container_name": update.ContainerName,
-		"adb_port":       update.ADBPort,
-		"last_error":     update.LastError,
+		"host_id":              n.cfg.NodeID,
+		"operation_generation": runtime.OperationGeneration,
+		"deleted":              update.Deleted,
+		"container_name":       update.ContainerName,
+		"adb_port":             update.ADBPort,
+		"last_error":           update.LastError,
 	}
 	if update.LoadAverage != nil {
 		body["load_average"] = update.LoadAverage
@@ -1362,8 +1511,11 @@ func (n *nodeAgent) reportRuntimeStatus(ctx context.Context, runtimeID string, u
 	if update.ClearBlobManifest {
 		body["clear_blob_manifest"] = true
 	}
+	if update.CleanupComplete {
+		body["cleanup_complete"] = true
+	}
 
-	return n.postControlPlane(ctx, fmt.Sprintf("/api/v1/internal/runtimes/%s/status", url.PathEscape(runtimeID)), body)
+	return n.postControlPlane(ctx, fmt.Sprintf("/api/v1/internal/runtimes/%s/status", url.PathEscape(runtime.ID)), body)
 }
 
 func nodeLoadAverage() (*float64, bool) {
@@ -1501,7 +1653,311 @@ func (n *nodeAgent) inspectContainer(ctx context.Context, containerName string) 
 	return inspect, nil
 }
 
-func (n *nodeAgent) createContainer(ctx context.Context, containerName string, runtime runtimeAssignment, dataDir string, adbPort int, persona sessionPersona) error {
+func (n *nodeAgent) runtimeDockerNetworkName(runtimeID string) (string, error) {
+	mode := runtimeNetworkMode()
+	base := strings.TrimSpace(n.cfg.DockerNetworkName)
+	if mode == "shared" {
+		return base, nil
+	}
+	if mode != "per-runtime" {
+		return "", fmt.Errorf("unsupported NODE_RUNTIME_NETWORK_MODE %q", mode)
+	}
+	if !dockerNetworkNamePattern.MatchString(base) {
+		return "", errors.New("NODE_DOCKER_NETWORK must be a simple base name in per-runtime mode")
+	}
+	digest := sha256.Sum256([]byte(runtimeID))
+	suffix := "-" + hex.EncodeToString(digest[:12])
+	maxBaseLength := 63 - len(suffix)
+	if len(base) > maxBaseLength {
+		base = strings.TrimRight(base[:maxBaseLength], ".-")
+	}
+	if base == "" {
+		return "", errors.New("NODE_DOCKER_NETWORK base name is empty after normalization")
+	}
+	return base + suffix, nil
+}
+
+func runtimeUsesPerRuntimeNetwork() bool {
+	return runtimeNetworkMode() == "per-runtime"
+}
+
+func runtimeNetworkMode() string {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("NODE_RUNTIME_NETWORK_MODE")))
+	if mode == "" {
+		return "per-runtime"
+	}
+	return mode
+}
+
+func (n *nodeAgent) containerUsesExpectedRuntimeNetwork(runtimeID string, inspect dockerInspectResponse) (bool, error) {
+	expectedNetwork, err := n.runtimeDockerNetworkName(runtimeID)
+	if err != nil {
+		return false, err
+	}
+	_, found := inspect.NetworkSettings.Networks[expectedNetwork]
+	return found && len(inspect.NetworkSettings.Networks) == 1, nil
+}
+
+func (n *nodeAgent) ensureRuntimeNetwork(ctx context.Context, runtimeID string) (string, error) {
+	networkName, err := n.runtimeDockerNetworkName(runtimeID)
+	if err != nil || !runtimeUsesPerRuntimeNetwork() {
+		return networkName, err
+	}
+	agentContainer := strings.TrimSpace(os.Getenv("NODE_AGENT_CONTAINER_NAME"))
+	if agentContainer == "" {
+		return "", errors.New("NODE_AGENT_CONTAINER_NAME is required in per-runtime network mode")
+	}
+
+	inspect, found, err := n.inspectRuntimeNetwork(ctx, networkName)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		payload, marshalErr := json.Marshal(map[string]any{
+			"Name":           networkName,
+			"Driver":         "bridge",
+			"Internal":       false,
+			"Attachable":     false,
+			"CheckDuplicate": true,
+			"Labels": map[string]string{
+				"io.virtroid.managed": "true",
+				"io.virtroid.runtime": runtimeID,
+			},
+		})
+		if marshalErr != nil {
+			return "", marshalErr
+		}
+		status, responseBody, requestErr := n.doDockerRequest(ctx, http.MethodPost, "http://docker/networks/create", payload)
+		if requestErr != nil {
+			return "", requestErr
+		}
+		if status == http.StatusConflict {
+			inspect, found, err = n.inspectRuntimeNetwork(ctx, networkName)
+			if err != nil || !found {
+				return "", errors.Join(fmt.Errorf("runtime network create raced: %s", strings.TrimSpace(string(responseBody))), err)
+			}
+		} else if status < 200 || status >= 300 {
+			return "", fmt.Errorf("docker network create failed: status=%d body=%s", status, strings.TrimSpace(string(responseBody)))
+		} else {
+			inspect = dockerNetworkInspectResponse{
+				Name: networkName,
+				Labels: map[string]string{
+					"io.virtroid.managed": "true",
+					"io.virtroid.runtime": runtimeID,
+				},
+				Containers: make(map[string]struct {
+					Name string `json:"Name"`
+				}),
+			}
+		}
+	}
+	if inspect.Labels["io.virtroid.managed"] != "true" || inspect.Labels["io.virtroid.runtime"] != runtimeID {
+		return "", fmt.Errorf("refusing unmanaged or mismatched Docker network %q", networkName)
+	}
+	for _, container := range inspect.Containers {
+		if strings.TrimPrefix(container.Name, "/") == strings.TrimPrefix(agentContainer, "/") {
+			return networkName, nil
+		}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"Container": agentContainer,
+	})
+	if err != nil {
+		return "", err
+	}
+	status, responseBody, err := n.doDockerRequest(ctx, http.MethodPost, "http://docker/networks/"+url.PathEscape(networkName)+"/connect", payload)
+	if err != nil {
+		return "", err
+	}
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("connect node agent to runtime network: status=%d body=%s", status, strings.TrimSpace(string(responseBody)))
+	}
+	return networkName, nil
+}
+
+func (n *nodeAgent) inspectRuntimeNetwork(ctx context.Context, networkName string) (dockerNetworkInspectResponse, bool, error) {
+	var inspect dockerNetworkInspectResponse
+	status, responseBody, err := n.doDockerRequest(ctx, http.MethodGet, "http://docker/networks/"+url.PathEscape(networkName), nil)
+	if err != nil {
+		return inspect, false, err
+	}
+	if status == http.StatusNotFound {
+		return inspect, false, nil
+	}
+	if status < 200 || status >= 300 {
+		return inspect, false, fmt.Errorf("docker network inspect failed: status=%d body=%s", status, strings.TrimSpace(string(responseBody)))
+	}
+	if err := json.Unmarshal(responseBody, &inspect); err != nil {
+		return inspect, false, fmt.Errorf("decode Docker network inspect: %w", err)
+	}
+	return inspect, true, nil
+}
+
+func (n *nodeAgent) removeRuntimeNetwork(ctx context.Context, runtimeID string) error {
+	if !runtimeUsesPerRuntimeNetwork() {
+		return nil
+	}
+	networkName, err := n.runtimeDockerNetworkName(runtimeID)
+	if err != nil {
+		return err
+	}
+	agentContainer := strings.TrimSpace(os.Getenv("NODE_AGENT_CONTAINER_NAME"))
+	if agentContainer == "" {
+		return errors.New("NODE_AGENT_CONTAINER_NAME is required in per-runtime network mode")
+	}
+	inspect, found, err := n.inspectRuntimeNetwork(ctx, networkName)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if inspect.Labels["io.virtroid.managed"] != "true" || inspect.Labels["io.virtroid.runtime"] != runtimeID {
+		return fmt.Errorf("refusing to remove unmanaged or mismatched Docker network %q", networkName)
+	}
+	agentAttached := false
+	for _, container := range inspect.Containers {
+		if strings.TrimPrefix(container.Name, "/") == strings.TrimPrefix(agentContainer, "/") {
+			agentAttached = true
+			break
+		}
+	}
+	if agentAttached {
+		payload, err := json.Marshal(map[string]any{
+			"Container": agentContainer,
+			"Force":     true,
+		})
+		if err != nil {
+			return err
+		}
+		status, responseBody, err := n.doDockerRequest(ctx, http.MethodPost, "http://docker/networks/"+url.PathEscape(networkName)+"/disconnect", payload)
+		if err != nil {
+			return err
+		}
+		alreadyDisconnected := (status == http.StatusConflict || status == http.StatusForbidden) &&
+			strings.Contains(strings.ToLower(string(responseBody)), "not connected")
+		if status != http.StatusNotFound && !alreadyDisconnected && (status < 200 || status >= 300) {
+			return fmt.Errorf("disconnect node agent from runtime network: status=%d body=%s", status, strings.TrimSpace(string(responseBody)))
+		}
+	}
+	var status int
+	var responseBody []byte
+	status, responseBody, err = n.doDockerRequest(ctx, http.MethodDelete, "http://docker/networks/"+url.PathEscape(networkName), nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusNotFound && (status < 200 || status >= 300) {
+		return fmt.Errorf("remove runtime network: status=%d body=%s", status, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func (n *nodeAgent) doDockerRequest(ctx context.Context, method, requestURL string, payload []byte) (int, []byte, error) {
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, responseBody, nil
+}
+
+func runtimeImageForAssignment(assignedImage string) (string, error) {
+	image := strings.TrimSpace(os.Getenv("NODE_RUNTIME_IMAGE"))
+	if image == "" {
+		image = strings.TrimSpace(assignedImage)
+	}
+	if image == "" {
+		return "", errors.New("runtime image is required")
+	}
+	requireDigestRaw := strings.TrimSpace(os.Getenv("NODE_REQUIRE_DIGESTED_RUNTIME_IMAGE"))
+	if requireDigestRaw == "" {
+		requireDigestRaw = "false"
+	}
+	requireDigest, err := strconv.ParseBool(requireDigestRaw)
+	if err != nil {
+		return "", fmt.Errorf("parse NODE_REQUIRE_DIGESTED_RUNTIME_IMAGE: %w", err)
+	}
+	if requireDigest && !digestedImageReferencePattern.MatchString(image) {
+		return "", fmt.Errorf("runtime image %q must be an immutable @sha256 reference", image)
+	}
+	return image, nil
+}
+
+func runtimeResourcesFromEnv() (runtimeContainerResources, error) {
+	memoryBytes, err := runtimeLimitFromEnv("NODE_RUNTIME_MEMORY_BYTES", 4<<30, 512<<20, 32<<30)
+	if err != nil {
+		return runtimeContainerResources{}, err
+	}
+	nanoCPUs, err := runtimeLimitFromEnv("NODE_RUNTIME_NANO_CPUS", 2_000_000_000, 250_000_000, 16_000_000_000)
+	if err != nil {
+		return runtimeContainerResources{}, err
+	}
+	pidsLimit, err := runtimeLimitFromEnv("NODE_RUNTIME_PIDS_LIMIT", 4096, 256, 32768)
+	if err != nil {
+		return runtimeContainerResources{}, err
+	}
+	shmBytes, err := runtimeLimitFromEnv("NODE_RUNTIME_SHM_BYTES", 256<<20, 64<<20, 2<<30)
+	if err != nil {
+		return runtimeContainerResources{}, err
+	}
+	return runtimeContainerResources{
+		MemoryBytes: memoryBytes,
+		NanoCPUs:    nanoCPUs,
+		PidsLimit:   pidsLimit,
+		ShmBytes:    shmBytes,
+	}, nil
+}
+
+func runtimeLimitFromEnv(name string, fallback, minimum, maximum int64) (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", name, err)
+	}
+	if value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s=%d is outside safe range %d..%d", name, value, minimum, maximum)
+	}
+	return value, nil
+}
+
+func (n *nodeAgent) createContainer(ctx context.Context, containerName string, runtime runtimeAssignment, dataDir string, adbPort int, persona sessionPersona) (err error) {
+	runtimeImage, err := runtimeImageForAssignment(runtime.AndroidImage)
+	if err != nil {
+		return err
+	}
+	resources, err := runtimeResourcesFromEnv()
+	if err != nil {
+		return err
+	}
+	networkName, err := n.ensureRuntimeNetwork(ctx, runtime.ID)
+	if err != nil {
+		return err
+	}
+	if runtimeUsesPerRuntimeNetwork() {
+		defer func() {
+			if err != nil {
+				err = errors.Join(err, n.removeRuntimeNetwork(context.WithoutCancel(ctx), runtime.ID))
+			}
+		}()
+	}
 	targetFPS := 15
 	gpuMode := "guest"
 	if gpuAccelerationAvailable() {
@@ -1520,13 +1976,26 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 	cmd = append(cmd, personaOverrideProps(persona)...)
 
 	body := map[string]any{
-		"Image": runtime.AndroidImage,
+		"Image": runtimeImage,
 		"Cmd":   cmd,
 		"ExposedPorts": map[string]any{
 			"5555/tcp": map[string]any{},
 		},
 		"HostConfig": map[string]any{
-			"Privileged": true,
+			"Privileged":     true,
+			"Memory":         resources.MemoryBytes,
+			"MemorySwap":     resources.MemoryBytes,
+			"NanoCpus":       resources.NanoCPUs,
+			"PidsLimit":      resources.PidsLimit,
+			"ShmSize":        resources.ShmBytes,
+			"OomKillDisable": false,
+			"LogConfig": map[string]any{
+				"Type": "local",
+				"Config": map[string]string{
+					"max-size": "10m",
+					"max-file": "3",
+				},
+			},
 			"Binds": []string{
 				dataDir + ":/data",
 				n.scrcpyServerPath() + ":" + scrcpyServerMountPath + ":ro",
@@ -1544,7 +2013,7 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 			},
 		},
 	}
-	if networkName := strings.TrimSpace(n.cfg.DockerNetworkName); networkName != "" {
+	if networkName = strings.TrimSpace(networkName); networkName != "" {
 		body["HostConfig"].(map[string]any)["NetworkMode"] = networkName
 		body["NetworkingConfig"] = map[string]any{
 			"EndpointsConfig": map[string]any{
@@ -1671,7 +2140,11 @@ func (n *nodeAgent) adbSerialForRuntime(runtime runtimeAssignment, inspect docke
 		}
 	}
 
-	if containerIP := containerIPAddress(inspect, n.cfg.DockerNetworkName); containerIP != "" {
+	preferredNetwork, err := n.runtimeDockerNetworkName(runtime.ID)
+	if err != nil {
+		return "", err
+	}
+	if containerIP := containerIPAddress(inspect, preferredNetwork); containerIP != "" {
 		return net.JoinHostPort(containerIP, "5555"), nil
 	}
 
@@ -1756,31 +2229,38 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 	}
 
 	installed := 0
-	var failures []string
+	var failures []error
 	for _, app := range apps {
 		packageName := strings.TrimSpace(app.PackageName)
 		if !appPackageNamePattern.MatchString(packageName) {
-			failures = append(failures, fmt.Sprintf("%s: invalid package name", packageName))
+			failures = append(failures, fmt.Errorf("%s: invalid package name", packageName))
 			continue
 		}
 		if n.androidPackageInstalled(ctx, serial, packageName) {
 			if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
 				message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
-				failures = append(failures, fmt.Sprintf("%s policy: %v", packageName, err))
+				failures = append(failures, fmt.Errorf("%s policy: %w", packageName, err))
 			}
 			continue
 		}
 		if err := n.installRuntimeApp(ctx, serial, app); err != nil {
 			message := fmt.Sprintf("Install selected app %s failed: %v.", packageName, err)
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
-			failures = append(failures, fmt.Sprintf("%s: %v", packageName, err))
+			failures = append(failures, fmt.Errorf("%s: %w", packageName, err))
+			continue
+		}
+		if !n.androidPackageInstalled(ctx, serial, packageName) {
+			identityErr := fmt.Errorf("%w: %s", errInstalledPackageMissing, packageName)
+			message := fmt.Sprintf("Installed selected app artifact did not expose expected package %s; discarding the tainted session.", packageName)
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", message)
+			failures = append(failures, identityErr)
 			continue
 		}
 		if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
 			message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
-			failures = append(failures, fmt.Sprintf("%s policy: %v", packageName, err))
+			failures = append(failures, fmt.Errorf("%s policy: %w", packageName, err))
 			continue
 		}
 		installed++
@@ -1794,7 +2274,7 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", fmt.Sprintf("Installed %d selected app package(s).", installed))
 	}
 	if len(failures) > 0 {
-		return errors.New(strings.Join(failures, "; "))
+		return errors.Join(failures...)
 	}
 	return nil
 }
@@ -2061,7 +2541,7 @@ func (n *nodeAgent) apkPathForSelectedApp(ctx context.Context, app runtimeApp) (
 		return "", err
 	}
 	parsed, err := url.Parse(apkURL)
-	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "f-droid.org") {
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "f-droid.org") || parsed.User != nil {
 		return "", fmt.Errorf("unsupported APK URL")
 	}
 
@@ -2170,6 +2650,13 @@ func normalizeHomeActivity(packageName, activity string, setAsHome bool) (string
 }
 
 func extractAPKM(apkmPath, extractDir string) ([]string, error) {
+	return extractAPKMWithLimits(apkmPath, extractDir, maxAPKMFiles, maxAPKMFileBytes, maxAPKMTotalBytes)
+}
+
+func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles int, maxFileBytes, maxTotalBytes int64) ([]string, error) {
+	if maxFiles <= 0 || maxFileBytes <= 0 || maxTotalBytes <= 0 {
+		return nil, errors.New("APKM extraction limits must be positive")
+	}
 	reader, err := zip.OpenReader(apkmPath)
 	if err != nil {
 		return nil, err
@@ -2182,41 +2669,89 @@ func extractAPKM(apkmPath, extractDir string) ([]string, error) {
 	if err := os.MkdirAll(extractDir, 0o755); err != nil {
 		return nil, err
 	}
+	extracted := false
+	defer func() {
+		if !extracted {
+			_ = os.RemoveAll(extractDir)
+		}
+	}()
 
-	var apkPaths []string
+	apkFiles := make([]*zip.File, 0, min(len(reader.File), maxFiles))
+	seenNames := make(map[string]struct{})
+	var declaredTotal int64
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() || !strings.HasSuffix(strings.ToLower(file.Name), ".apk") {
 			continue
 		}
-		baseName := filepath.Base(file.Name)
-		if baseName == "." || baseName == string(filepath.Separator) {
-			continue
+		if file.Mode()&os.ModeType != 0 {
+			return nil, fmt.Errorf("APKM entry %q must be a regular file", file.Name)
 		}
+		if len(apkFiles) >= maxFiles {
+			return nil, fmt.Errorf("APKM contains more than %d APK files", maxFiles)
+		}
+		if file.UncompressedSize64 > uint64(maxFileBytes) {
+			return nil, fmt.Errorf("APKM entry %q exceeds %d-byte limit", file.Name, maxFileBytes)
+		}
+		fileBytes := int64(file.UncompressedSize64)
+		if fileBytes > maxTotalBytes-declaredTotal {
+			return nil, fmt.Errorf("APKM APK contents exceed %d-byte total limit", maxTotalBytes)
+		}
+		declaredTotal += fileBytes
+
+		baseName := path.Base(strings.ReplaceAll(file.Name, "\\", "/"))
+		if baseName == "." || baseName == "/" || baseName == "" {
+			return nil, fmt.Errorf("APKM entry %q has an invalid filename", file.Name)
+		}
+		nameKey := strings.ToLower(baseName)
+		if _, exists := seenNames[nameKey]; exists {
+			return nil, fmt.Errorf("APKM contains duplicate APK filename %q", baseName)
+		}
+		seenNames[nameKey] = struct{}{}
+		apkFiles = append(apkFiles, file)
+	}
+	if len(apkFiles) == 0 {
+		return nil, errors.New("APKM contains no APK files")
+	}
+
+	apkPaths := make([]string, 0, len(apkFiles))
+	var extractedTotal int64
+	for _, file := range apkFiles {
+		baseName := path.Base(strings.ReplaceAll(file.Name, "\\", "/"))
 		targetPath := filepath.Join(extractDir, baseName)
 		source, err := file.Open()
 		if err != nil {
 			return nil, err
 		}
-		target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {
 			source.Close()
 			return nil, err
 		}
-		_, copyErr := io.Copy(target, source)
+		remainingTotal := maxTotalBytes - extractedTotal
+		readLimit := min(maxFileBytes, remainingTotal)
+		written, copyErr := io.Copy(target, io.LimitReader(source, readLimit+1))
 		closeErr := target.Close()
-		source.Close()
+		sourceCloseErr := source.Close()
 		if copyErr != nil {
 			return nil, copyErr
 		}
 		if closeErr != nil {
 			return nil, closeErr
 		}
+		if sourceCloseErr != nil {
+			return nil, sourceCloseErr
+		}
+		if written > maxFileBytes {
+			return nil, fmt.Errorf("APKM entry %q exceeds %d-byte limit", file.Name, maxFileBytes)
+		}
+		if written > maxTotalBytes-extractedTotal {
+			return nil, fmt.Errorf("APKM APK contents exceed %d-byte total limit", maxTotalBytes)
+		}
+		extractedTotal += written
 		apkPaths = append(apkPaths, targetPath)
 	}
-	if len(apkPaths) == 0 {
-		return nil, errors.New("APKM contains no APK files")
-	}
 	sort.Strings(apkPaths)
+	extracted = true
 	return apkPaths, nil
 }
 
@@ -2225,7 +2760,12 @@ func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, 
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := &http.Client{
+		Timeout: 5 * time.Minute,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -2425,6 +2965,13 @@ func (n *nodeAgent) startViewerProcessInContainer(ctx context.Context, container
 }
 
 func (n *nodeAgent) stopAndRemoveContainer(ctx context.Context, containerName string) error {
+	if err := n.stopContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
+		return err
+	}
+	return n.removeContainer(ctx, containerName)
+}
+
+func (n *nodeAgent) stopContainer(ctx context.Context, containerName string) error {
 	inspect, err := n.inspectContainer(ctx, containerName)
 	if err != nil {
 		return err
@@ -2446,7 +2993,10 @@ func (n *nodeAgent) stopAndRemoveContainer(ctx context.Context, containerName st
 			return fmt.Errorf("docker stop failed: status=%d body=%s", resp.StatusCode, string(payload))
 		}
 	}
+	return nil
+}
 
+func (n *nodeAgent) removeContainer(ctx context.Context, containerName string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, "http://docker/containers/"+url.PathEscape(containerName)+"?force=true", nil)
 	if err != nil {
 		return err

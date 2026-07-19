@@ -1,8 +1,10 @@
 package io.virtroid.client.security
 
+import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -22,6 +24,7 @@ class RuntimeCapabilityStore {
         if (keyStore.containsAlias(alias)) {
             keyStore.deleteEntry(alias)
         }
+        RuntimeCapabilityAliasRegistry.unregister(alias)
     }
 
     fun publicKeyMaterial(runtimeId: String): String {
@@ -29,8 +32,11 @@ class RuntimeCapabilityStore {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         val existingCertificate = keyStore.getCertificate(alias)
         if (existingCertificate != null) {
+            RuntimeCapabilityAliasRegistry.register(alias)
             return Base64.encodeToString(existingCertificate.publicKey.encoded, Base64.NO_WRAP)
         }
+
+        RuntimeCapabilityAliasRegistry.register(alias)
 
         val keyPairGenerator = KeyPairGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_EC,
@@ -104,15 +110,81 @@ class RuntimeCapabilityStore {
     }
 
     private fun keyAlias(runtimeId: String): String {
-        val cleanRuntimeId = runtimeId.trim().replace(Regex("""[^A-Za-z0-9_-]"""), "_")
-        return "$KEY_ALIAS_PREFIX$cleanRuntimeId"
+        return RuntimeCapabilityAliases.forRuntime(runtimeId)
     }
 
-    private companion object {
+    companion object {
+        fun initialize(context: Context) {
+            RuntimeCapabilityAliasRegistry.initialize(context)
+        }
+
+        fun clearAllRegistered(context: Context) {
+            RuntimeCapabilityAliasRegistry.initialize(context)
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val discoveredAliases = keyStore.aliases().toList()
+                .filter(RuntimeCapabilityAliases::isManaged)
+            val aliases = RuntimeCapabilityAliasRegistry.aliases() + discoveredAliases
+            aliases
+                .filter(RuntimeCapabilityAliases::isManaged)
+                .forEach { alias ->
+                    if (keyStore.containsAlias(alias)) {
+                        keyStore.deleteEntry(alias)
+                    }
+                }
+            RuntimeCapabilityAliasRegistry.clear()
+        }
+
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        const val KEY_ALIAS_PREFIX = "virtroid_runtime_capability_"
         const val CAPABILITY_ID_CONTEXT = "VIRTROID-RUNTIME-CAPABILITY-ID-V1"
         const val SIGNATURE_CONTEXT = "VIRTROID-CAPABILITY-SIGNATURE-V1"
         const val B64_URL_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
     }
+}
+
+private object RuntimeCapabilityAliasRegistry {
+    private const val PREFS_NAME = "virtroid-runtime-capability-aliases"
+    private const val KEY_ALIASES = "aliases"
+    private val lock = Any()
+
+    @Volatile
+    private var applicationContext: Context? = null
+
+    fun initialize(context: Context) {
+        applicationContext = context.applicationContext
+    }
+
+    fun register(alias: String) {
+        require(RuntimeCapabilityAliases.isManaged(alias)) { "Refusing to register an unmanaged key alias" }
+        synchronized(lock) {
+            val prefs = preferences()
+            val aliases = prefs.getStringSet(KEY_ALIASES, emptySet()).orEmpty().toMutableSet()
+            if (aliases.add(alias)) {
+                prefs.edit { putStringSet(KEY_ALIASES, aliases) }
+            }
+        }
+    }
+
+    fun unregister(alias: String) {
+        synchronized(lock) {
+            val prefs = preferences()
+            val aliases = prefs.getStringSet(KEY_ALIASES, emptySet()).orEmpty().toMutableSet()
+            if (aliases.remove(alias)) {
+                prefs.edit { putStringSet(KEY_ALIASES, aliases) }
+            }
+        }
+    }
+
+    fun aliases(): Set<String> = synchronized(lock) {
+        preferences().getStringSet(KEY_ALIASES, emptySet()).orEmpty().toSet()
+    }
+
+    fun clear() {
+        synchronized(lock) {
+            preferences().edit { remove(KEY_ALIASES) }
+        }
+    }
+
+    private fun preferences() = checkNotNull(applicationContext) {
+        "Runtime capability alias registry has not been initialized"
+    }.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }

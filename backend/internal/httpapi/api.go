@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,9 +34,15 @@ type API struct {
 	bootstrapLimiter *bootstrapRateLimiter
 }
 
+type durableBlobKeyHandoffStore interface {
+	ClearRuntimeBlobKeyHandoff(context.Context, string) error
+	ClearAccountBlobKeyHandoffs(context.Context, string) error
+}
+
 type activeBlobKeyVault struct {
-	mu   sync.Mutex
-	keys map[string]activeBlobKeyEntry
+	mu    sync.Mutex
+	keys  map[string]activeBlobKeyEntry
+	store durableBlobKeyHandoffStore
 }
 
 type activeBlobKeyEntry struct {
@@ -92,12 +99,18 @@ const bootstrapRateLimitWindow = time.Minute
 const defaultBootstrapMaxBodyBytes = 32 * 1024
 const viewerPrepareProxyTimeout = 90 * time.Second
 const blobKeyEnvelopeAlgorithm = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
+const maxAPIRequestBodyBytes int64 = 2 << 20
+
+var errNodeAdvertiseAllowlistUnavailable = errors.New("node advertise address allowlist is required in production")
 
 const (
 	maxSecurityEventOutputRunes            = 4096
 	maxSecurityEventJSONRunes              = 65536
 	maxSecurityEventTags                   = 16
 	maxSecurityEventTagRunes               = 64
+	maxRuntimeLogSourceRunes               = 64
+	maxRuntimeLogLevelRunes                = 32
+	maxRuntimeLogMessageRunes              = 4096
 	defaultSecurityEventRateLimitPerMinute = 120
 	defaultSecurityEventRetention          = 7 * 24 * time.Hour
 )
@@ -151,8 +164,12 @@ func (l *bootstrapRateLimiter) allow(client string) (bool, time.Duration) {
 	return true, 0
 }
 
-func newActiveBlobKeyVault() *activeBlobKeyVault {
-	return &activeBlobKeyVault{keys: map[string]activeBlobKeyEntry{}}
+func newActiveBlobKeyVault(stores ...durableBlobKeyHandoffStore) *activeBlobKeyVault {
+	var st durableBlobKeyHandoffStore
+	if len(stores) > 0 {
+		st = stores[0]
+	}
+	return &activeBlobKeyVault{keys: map[string]activeBlobKeyEntry{}, store: st}
 }
 
 func (v *activeBlobKeyVault) putLease(lease activeBlobKeyLease) time.Time {
@@ -236,19 +253,39 @@ func (v *activeBlobKeyVault) get(runtimeID string, hostID string) (blobKeyEnvelo
 	return entry.envelope, entry.blobKeyVerifier, entry.expiresAt, true
 }
 
-func (v *activeBlobKeyVault) clear(runtimeID string) {
+func (v *activeBlobKeyVault) cache(entry activeBlobKeyEntry) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.keys[entry.runtimeID] = entry
+}
+
+func (v *activeBlobKeyVault) clear(runtimeID string) {
+	v.mu.Lock()
 	delete(v.keys, runtimeID)
+	v.mu.Unlock()
+	if v.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := v.store.ClearRuntimeBlobKeyHandoff(ctx, runtimeID); err != nil {
+			log.Printf("clear durable runtime blob-key handoff %s: %v", runtimeID, err)
+		}
+	}
 }
 
 func (v *activeBlobKeyVault) clearAccount(accountID string) {
 	accountID = strings.TrimSpace(accountID)
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	for runtimeID, entry := range v.keys {
 		if entry.accountID == accountID {
 			delete(v.keys, runtimeID)
+		}
+	}
+	v.mu.Unlock()
+	if v.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := v.store.ClearAccountBlobKeyHandoffs(ctx, accountID); err != nil {
+			log.Printf("clear durable account blob-key handoffs %s: %v", accountID, err)
 		}
 	}
 }
@@ -260,10 +297,14 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	}
 	cfg.BootstrapMaxBodyBytes = bootstrapMaxBodyBytes
 
+	activeBlobKeys := newActiveBlobKeyVault()
+	if st != nil {
+		activeBlobKeys = newActiveBlobKeyVault(st)
+	}
 	api := &API{
 		cfg:              cfg,
 		store:            st,
-		activeBlobKeys:   newActiveBlobKeyVault(),
+		activeBlobKeys:   activeBlobKeys,
 		bootstrapLimiter: newBootstrapRateLimiter(cfg.BootstrapRateLimitPerMinute, bootstrapRateLimitWindow),
 	}
 
@@ -319,10 +360,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 
 func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.Ping(r.Context()); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
-		})
+		writeServerAPIError(w, http.StatusServiceUnavailable, "health_check_failed", "service unavailable", err)
 		return
 	}
 
@@ -353,7 +391,7 @@ func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
 
 	hosts, err := a.store.ListHosts(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "hosts_list_failed", err)
 		return
 	}
 
@@ -361,6 +399,10 @@ func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
+	if !a.cfg.BootstrapEnabled {
+		writeAPIError(w, http.StatusServiceUnavailable, "bootstrap_disabled", "new account bootstrap is disabled")
+		return
+	}
 	if ok, retryAfter := a.bootstrapLimiter.allow(bootstrapClientKey(r, a.cfg.TrustProxyHeaders)); !ok {
 		if retryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
@@ -451,6 +493,49 @@ func bootstrapClientKey(r *http.Request, trustProxyHeaders bool) string {
 	return remoteHost + "|" + forwardedFor
 }
 
+func validateNodeAdvertiseAddr(raw string, allowed []string, appEnv string) (string, error) {
+	address, err := normalizeNodeAdvertiseHost(raw)
+	if err != nil {
+		return "", err
+	}
+	if len(allowed) == 0 {
+		if strings.EqualFold(strings.TrimSpace(appEnv), "production") {
+			return "", errNodeAdvertiseAllowlistUnavailable
+		}
+		return address, nil
+	}
+	for _, candidate := range allowed {
+		normalized, candidateErr := normalizeNodeAdvertiseHost(candidate)
+		if candidateErr == nil && strings.EqualFold(normalized, address) {
+			return address, nil
+		}
+	}
+	return "", fmt.Errorf("node advertise address %q is not in the configured allowlist", address)
+}
+
+func normalizeNodeAdvertiseHost(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 253 || strings.ContainsAny(raw, "/\\@?#[] 	\r\n") {
+		return "", errors.New("node advertise address must be a host without a scheme, port, path, or credentials")
+	}
+	if parsedIP := net.ParseIP(raw); parsedIP != nil {
+		return parsedIP.String(), nil
+	}
+	labels := strings.Split(raw, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return "", errors.New("node advertise address is not a valid DNS host")
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+				(char < '0' || char > '9') && char != '-' {
+				return "", errors.New("node advertise address is not a valid DNS host")
+			}
+		}
+	}
+	return strings.ToLower(raw), nil
+}
+
 func (a *API) listMyRuntimes(w http.ResponseWriter, r *http.Request) {
 	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
 	if !ok {
@@ -459,7 +544,7 @@ func (a *API) listMyRuntimes(w http.ResponseWriter, r *http.Request) {
 
 	runtimes, err := a.store.ListRuntimes(r.Context(), accountID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtimes_list_failed", err)
 		return
 	}
 
@@ -474,7 +559,7 @@ func (a *API) listMyRuntimeStates(w http.ResponseWriter, r *http.Request) {
 
 	states, err := a.store.ListRuntimeStates(r.Context(), accountID, deviceID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_states_list_failed", err)
 		return
 	}
 
@@ -484,7 +569,7 @@ func (a *API) listMyRuntimeStates(w http.ResponseWriter, r *http.Request) {
 func (a *API) listAppCatalog(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListPublicAppCatalog(r.Context(), r.URL.Query().Get("search"))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "public_catalog_list_failed", err)
 		return
 	}
 
@@ -499,7 +584,7 @@ func (a *API) getMyEntitlement(w http.ResponseWriter, r *http.Request) {
 
 	entitlement, err := a.store.GetAccountEntitlementSummary(r.Context(), accountID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "entitlement_lookup_failed", err)
 		return
 	}
 
@@ -514,7 +599,7 @@ func (a *API) listMyAppCatalog(w http.ResponseWriter, r *http.Request) {
 
 	items, err := a.store.ListAppCatalog(r.Context(), accountID, r.URL.Query().Get("search"))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "account_catalog_list_failed", err)
 		return
 	}
 
@@ -557,51 +642,32 @@ func (a *API) getMyStorage(w http.ResponseWriter, r *http.Request) {
 
 	storage, err := a.store.GetAccountStorage(r.Context(), accountID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "account_storage_lookup_failed", err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, storage)
+	writeJSON(w, http.StatusOK, clientVisibleAccountStorage(storage))
 }
 
 func (a *API) updateMyStorage(w http.ResponseWriter, r *http.Request) {
-	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
-	if !ok {
-		return
-	}
-
-	var req struct {
-		AccountID          string  `json:"account_id"`
-		Provider           string  `json:"provider"`
-		FundingModel       string  `json:"funding_model"`
-		WalletAddress      *string `json:"wallet_address"`
-		EncryptedSeedBlob  *string `json:"encrypted_seed_blob"`
-		SeedEncryptionHint *string `json:"seed_encryption_hint"`
-		Status             string  `json:"status"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
-		return
-	}
-	if strings.TrimSpace(req.AccountID) != "" && strings.TrimSpace(req.AccountID) != accountID {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed account does not match request body"})
-		return
-	}
-
-	storage, err := a.store.UpdateAccountStorage(r.Context(), accountID, store.UpdateAccountStorageInput{
-		Provider:           req.Provider,
-		FundingModel:       req.FundingModel,
-		WalletAddress:      req.WalletAddress,
-		EncryptedSeedBlob:  req.EncryptedSeedBlob,
-		SeedEncryptionHint: req.SeedEncryptionHint,
-		Status:             req.Status,
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		"code":  "account_storage_mutation_unavailable",
+		"error": "user-managed storage and funding configuration is disabled until payment ownership and storage isolation are authenticated end to end",
 	})
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
+}
 
-	writeJSON(w, http.StatusOK, storage)
+func clientVisibleAccountStorage(storage store.AccountStorage) store.AccountStorage {
+	// Account-facing storage status is informational. Neither a node heartbeat
+	// nor a legacy account row is an authenticated payment instruction, so never
+	// return a deposit address to a client.
+	storage.WalletAddress = nil
+	storage.FundingAddress = nil
+	if strings.TrimSpace(storage.Provider) == "sia-renterd" {
+		storage.FundingModel = "operator-pooled"
+	} else {
+		storage.FundingModel = "operator"
+	}
+	return storage
 }
 
 func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
@@ -643,7 +709,7 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 		case store.ErrIdentityAlreadySet:
 			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			writeInternalAPIError(w, "identity_registration_failed", err)
 		}
 		return
 	}
@@ -652,52 +718,12 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) changeMyIdentityPassword(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
-	if !ok {
-		return
-	}
-
-	var req struct {
-		AccountID              string `json:"account_id"`
-		DeviceID               string `json:"device_id"`
-		BlobKeyVerifier        string `json:"blob_key_verifier"`
-		CurrentBlobKeyVerifier string `json:"current_blob_key_verifier"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
-		return
-	}
-	if strings.TrimSpace(req.AccountID) != "" && strings.TrimSpace(req.AccountID) != accountID {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed account does not match request body"})
-		return
-	}
-	if strings.TrimSpace(req.DeviceID) != "" && strings.TrimSpace(req.DeviceID) != deviceID {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed device does not match request body"})
-		return
-	}
-
-	if err := a.store.ChangeDeviceBlobKeyVerifier(
-		r.Context(),
-		accountID,
-		deviceID,
-		req.BlobKeyVerifier,
-		req.CurrentBlobKeyVerifier,
-	); err != nil {
-		switch err {
-		case store.ErrDeviceNotFound:
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		case store.ErrIdentityKeyRequired:
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		case store.ErrIdentityNotFound, store.ErrIdentityAuthFailed:
-			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
-		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-		return
-	}
-
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+	writeAPIError(
+		w,
+		http.StatusNotImplemented,
+		"identity_password_rotation_unavailable",
+		"password rotation is unavailable until snapshots can be transactionally rewrapped",
+	)
 }
 
 func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
@@ -711,7 +737,7 @@ func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "account_delete_failed", err)
 		return
 	}
 	a.activeBlobKeys.clearAccount(accountID)
@@ -727,7 +753,7 @@ func (a *API) listMyDevices(w http.ResponseWriter, r *http.Request) {
 
 	devices, err := a.store.ListDevices(r.Context(), accountID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "devices_list_failed", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": devices})
@@ -745,7 +771,7 @@ func (a *API) revokeMyDevice(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "device_revoke_failed", err)
 		return
 	}
 	a.activeBlobKeys.clearAccount(accountID)
@@ -769,7 +795,7 @@ func (a *API) getMyRuntime(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_lookup_failed", err)
 		return
 	}
 
@@ -788,7 +814,7 @@ func (a *API) getMyRuntimeState(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_state_lookup_failed", err)
 		return
 	}
 
@@ -831,7 +857,7 @@ func (a *API) registerMyRuntimeCapability(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_capability_registration_failed", err)
 		return
 	}
 
@@ -1030,16 +1056,31 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 
 	leaseID, err := randomLeaseID()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "blob_key_lease_failed", err)
 		return
 	}
-	expiresAt := a.activeBlobKeys.putLease(activeBlobKeyLease{
+	lease := activeBlobKeyLease{
 		AccountID: actor.accountID,
 		RuntimeID: runtime.ID,
 		HostID:    host.ID,
 		Operation: operation,
 		LeaseID:   leaseID,
-	})
+	}
+	expiresAt := a.activeBlobKeys.putLease(lease)
+	if a.store != nil {
+		if err := a.store.PutRuntimeBlobKeyLease(r.Context(), store.RuntimeBlobKeyHandoff{
+			AccountID: actor.accountID,
+			RuntimeID: runtime.ID,
+			HostID:    host.ID,
+			Operation: operation,
+			LeaseID:   leaseID,
+			ExpiresAt: expiresAt,
+		}); err != nil {
+			a.activeBlobKeys.clear(runtime.ID)
+			writeInternalAPIError(w, "blob_key_lease_persist_failed", err)
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"lease_id":        leaseID,
@@ -1128,7 +1169,7 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			writeInternalAPIError(w, "runtime_stop_failed", err)
 		}
 		return
 	}
@@ -1188,7 +1229,7 @@ func (a *API) runtimeLogs(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_logs_list_failed", err)
 		return
 	}
 
@@ -1219,22 +1260,63 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	relayEndpoint, err := a.publicRelayEndpoint()
+	if err != nil {
+		writeInternalAPIError(w, "public_relay_configuration_failed", err)
+		return
+	}
+
+	// Reserve the one-live-session invariant before activating a key handoff or
+	// rotating the guest viewer key. A competing actor must fail with zero node
+	// side effects.
+	var session store.Session
+	if actor.capability {
+		session, err = a.store.CreateSessionWithCapability(r.Context(), actor.accountID, actor.capabilityID, runtimeID)
+	} else {
+		session, err = a.store.CreateSession(r.Context(), actor.deviceID, runtimeID)
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrSessionAlreadyActive) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+			return
+		}
+		switch err {
+		case store.ErrRuntimeNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		case store.ErrRuntimeNotReady:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		default:
+			writeInternalAPIError(w, "session_create_failed", err)
+		}
+		return
+	}
+	abortPendingSession := func(reason string) {
+		abortCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+		defer cancel()
+		if _, abortErr := a.store.AbortPendingSession(abortCtx, session.ID, session.RelayToken, reason); abortErr != nil {
+			log.Printf("abort pending session %s after setup failure: %v", session.ID, abortErr)
+		}
+	}
+
 	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "session", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
+		abortPendingSession("blob-key handoff activation failed")
 		return
 	}
 	if !a.verifyActiveBlobKeyEnvelope(w, r, lease) {
+		abortPendingSession("blob-key handoff verification failed")
 		return
 	}
 
 	runtime, err := a.store.GetRuntime(r.Context(), actor.accountID, runtimeID)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
+		abortPendingSession("runtime lookup failed")
 		if err == store.ErrRuntimeNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "session_runtime_lookup_failed", err)
 		return
 	}
 	if runtime.Status != "running" ||
@@ -1243,18 +1325,22 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		runtime.HostID == nil ||
 		runtime.ViewerPort == nil {
 		a.activeBlobKeys.clear(runtimeID)
+		abortPendingSession("runtime became unavailable during session setup")
 		writeJSON(w, http.StatusConflict, map[string]any{"error": store.ErrRuntimeNotReady.Error()})
 		return
 	}
 	if runtime.HostID == nil || strings.TrimSpace(*runtime.HostID) != lease.hostID {
 		a.activeBlobKeys.clear(runtimeID)
+		abortPendingSession("runtime assignment changed during session setup")
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime blob-key lease host does not match assignment"})
 		return
 	}
 
 	host, err := a.store.GetHost(r.Context(), *runtime.HostID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		a.activeBlobKeys.clear(runtimeID)
+		abortPendingSession("runtime host lookup failed")
+		writeInternalAPIError(w, "session_host_lookup_failed", err)
 		return
 	}
 
@@ -1269,37 +1355,9 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 
 	viewerPublicKey, err := a.prepareViewer(r.Context(), host.AdvertiseAddr, host.RelayPort, runtime.ID, maxSize, bitRate)
 	if err != nil {
-		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), actor.accountID, runtime.ID); stopErr == nil {
-			_ = stoppedRuntime
-		}
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
-		return
-	}
-
-	var session store.Session
-	if actor.capability {
-		session, err = a.store.CreateSessionWithCapability(r.Context(), actor.accountID, actor.capabilityID, runtime.ID)
-	} else {
-		session, err = a.store.CreateSession(r.Context(), actor.deviceID, runtime.ID)
-	}
-	if err != nil {
-		if stoppedRuntime, stopErr := a.store.StopRuntime(r.Context(), actor.accountID, runtime.ID); stopErr == nil {
-			_ = stoppedRuntime
-		}
-		switch err {
-		case store.ErrRuntimeNotFound:
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		case store.ErrRuntimeNotReady:
-			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
-		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-		return
-	}
-
-	relayEndpoint, err := a.publicRelayEndpoint()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		a.activeBlobKeys.clear(runtimeID)
+		abortPendingSession("viewer preparation failed")
+		writeServerAPIError(w, http.StatusBadGateway, "viewer_prepare_failed", "upstream service error", err)
 		return
 	}
 
@@ -1336,8 +1394,33 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 	if !actor.capability && !a.validateSignedDeviceBody(w, actor.accountID, actor.deviceID, req.AccountID, req.DeviceID) {
 		return
 	}
+	sessionID := strings.TrimSpace(r.PathValue("id"))
+	runtimeID := strings.TrimSpace(req.BlobKeyEnvelope.RuntimeID)
+	if sessionID == "" || runtimeID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "session id and blob-key envelope runtime id are required"})
+		return
+	}
+	if actor.capability && strings.TrimSpace(r.URL.Query().Get("runtime_id")) != runtimeID {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "capability runtime does not match blob-key envelope runtime"})
+		return
+	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, req.BlobKeyEnvelope.RuntimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	var bindingErr error
+	if actor.capability {
+		bindingErr = a.store.RequireSessionRuntimeWithCapability(r.Context(), actor.accountID, actor.capabilityID, sessionID, runtimeID)
+	} else {
+		bindingErr = a.store.RequireSessionRuntime(r.Context(), actor.accountID, actor.deviceID, sessionID, runtimeID)
+	}
+	if bindingErr != nil {
+		if errors.Is(bindingErr, store.ErrSessionNotFound) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "session does not match blob-key envelope runtime"})
+			return
+		}
+		writeInternalAPIError(w, "session_binding_failed", bindingErr)
+		return
+	}
+
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1348,9 +1431,9 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 	var runtime store.Runtime
 	var err error
 	if actor.capability {
-		runtime, err = a.store.EndSessionAndStopRuntimeWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
+		runtime, err = a.store.EndSessionAndStopRuntimeWithCapability(r.Context(), actor.accountID, actor.capabilityID, sessionID, runtimeID)
 	} else {
-		runtime, err = a.store.EndSessionAndStopRuntime(r.Context(), actor.accountID, actor.deviceID, r.PathValue("id"))
+		runtime, err = a.store.EndSessionAndStopRuntime(r.Context(), actor.accountID, actor.deviceID, sessionID, runtimeID)
 	}
 	if err != nil {
 		a.activeBlobKeys.clear(lease.runtimeID)
@@ -1360,7 +1443,7 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 		case store.ErrRuntimeNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			writeInternalAPIError(w, "session_end_failed", err)
 		}
 		return
 	}
@@ -1390,7 +1473,7 @@ func (a *API) closeMySession(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "session_close_failed", err)
 		return
 	}
 
@@ -1405,7 +1488,7 @@ func (a *API) listMyActiveSessions(w http.ResponseWriter, r *http.Request) {
 
 	sessions, capabilities, err := a.store.ListActiveSessionCapabilities(r.Context(), accountID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "active_sessions_list_failed", err)
 		return
 	}
 
@@ -1433,7 +1516,7 @@ func (a *API) getMySession(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "session_state_lookup_failed", err)
 		return
 	}
 
@@ -1458,7 +1541,7 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "session_relay_token_issue_failed", err)
 		return
 	}
 
@@ -1483,7 +1566,7 @@ func (a *API) heartbeatMySession(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "session_heartbeat_failed", err)
 		return
 	}
 
@@ -1589,6 +1672,16 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "id, name, and advertise_addr are required"})
 		return
 	}
+	advertiseAddr, err := validateNodeAdvertiseAddr(req.AdvertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	if err != nil {
+		if errors.Is(err, errNodeAdvertiseAllowlistUnavailable) {
+			writeServerAPIError(w, http.StatusServiceUnavailable, "node_advertise_allowlist_unavailable", "node registration unavailable", err)
+		} else {
+			writeAPIError(w, http.StatusForbidden, "node_advertise_address_rejected", "node advertise address is not allowed")
+		}
+		return
+	}
+	req.AdvertiseAddr = advertiseAddr
 	if len(req.StoragePreflightJSON) > maxSecurityEventJSONRunes {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "storage_preflight_json is too large"})
 		return
@@ -1620,7 +1713,11 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		StorageWalletAddress:   req.StorageWalletAddress,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "host_heartbeat_upsert_failed", err)
+		return
+	}
+	if _, err := a.store.AssignPendingRemoteRuntimeCleanup(r.Context(), host.ID, host.BlobStoreKind); err != nil {
+		writeInternalAPIError(w, "remote_cleanup_assignment_failed", err)
 		return
 	}
 
@@ -1639,7 +1736,7 @@ func (a *API) hostAssignments(w http.ResponseWriter, r *http.Request) {
 
 	items, err := a.store.ListAssignedRuntimes(r.Context(), node.id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "host_assignments_list_failed", err)
 		return
 	}
 
@@ -1664,13 +1761,17 @@ func (a *API) runtimeBlobKey(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_assignment_check_failed", err)
 		return
 	}
 
-	envelope, blobKeyVerifier, expiresAt, ok := a.activeBlobKeys.get(runtimeID, hostID)
-	if !ok {
+	envelope, blobKeyVerifier, expiresAt, err := a.getActiveRuntimeBlobKeyHandoff(r.Context(), runtimeID, hostID)
+	if errors.Is(err, store.ErrRuntimeBlobKeyHandoff) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime active blob key envelope is not available"})
+		return
+	}
+	if err != nil {
+		writeInternalAPIError(w, "runtime_blob_key_handoff_lookup_failed", err)
 		return
 	}
 
@@ -1695,7 +1796,7 @@ func (a *API) activateRuntimeBlobKeyEnvelope(
 		writeIdentityAuthError(w, err)
 		return activeBlobKeyEntry{}, false
 	}
-	entry, err := a.activeBlobKeys.activate(activeBlobKeyHandoff{
+	handoff := activeBlobKeyHandoff{
 		AccountID:       actor.accountID,
 		RuntimeID:       runtimeID,
 		HostID:          envelope.HostID,
@@ -1703,7 +1804,8 @@ func (a *API) activateRuntimeBlobKeyEnvelope(
 		LeaseID:         envelope.LeaseID,
 		Envelope:        envelope,
 		BlobKeyVerifier: verifiedBlobKeyVerifier,
-	})
+	}
+	entry, err := a.activateRuntimeBlobKeyHandoff(r.Context(), handoff)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return activeBlobKeyEntry{}, false
@@ -1711,21 +1813,100 @@ func (a *API) activateRuntimeBlobKeyEnvelope(
 	return entry, true
 }
 
+func (a *API) activateRuntimeBlobKeyHandoff(ctx context.Context, handoff activeBlobKeyHandoff) (activeBlobKeyEntry, error) {
+	if a.store == nil {
+		return a.activeBlobKeys.activate(handoff)
+	}
+	entry := activeBlobKeyEntry{
+		accountID:       strings.TrimSpace(handoff.AccountID),
+		runtimeID:       strings.TrimSpace(handoff.RuntimeID),
+		hostID:          strings.TrimSpace(handoff.HostID),
+		operation:       strings.TrimSpace(handoff.Operation),
+		leaseID:         strings.TrimSpace(handoff.LeaseID),
+		envelope:        handoff.Envelope,
+		blobKeyVerifier: strings.TrimSpace(handoff.BlobKeyVerifier),
+		hasEnvelope:     true,
+	}
+	if err := validateBlobKeyEnvelope(handoff.Envelope, entry); err != nil {
+		return activeBlobKeyEntry{}, err
+	}
+	if entry.blobKeyVerifier == "" {
+		return activeBlobKeyEntry{}, errors.New("runtime blob-key verifier is required")
+	}
+	envelopeJSON, err := json.Marshal(handoff.Envelope)
+	if err != nil {
+		return activeBlobKeyEntry{}, err
+	}
+	persisted, err := a.store.ActivateRuntimeBlobKeyHandoff(ctx, store.RuntimeBlobKeyHandoff{
+		AccountID:       entry.accountID,
+		RuntimeID:       entry.runtimeID,
+		HostID:          entry.hostID,
+		Operation:       entry.operation,
+		LeaseID:         entry.leaseID,
+		EnvelopeJSON:    string(envelopeJSON),
+		BlobKeyVerifier: entry.blobKeyVerifier,
+	})
+	if err != nil {
+		return activeBlobKeyEntry{}, err
+	}
+	entry.expiresAt = persisted.ExpiresAt
+	a.activeBlobKeys.cache(entry)
+	return entry, nil
+}
+
+func (a *API) getActiveRuntimeBlobKeyHandoff(ctx context.Context, runtimeID, hostID string) (blobKeyEnvelope, string, time.Time, error) {
+	if a.store != nil {
+		handoff, err := a.store.GetRuntimeBlobKeyHandoff(ctx, runtimeID, hostID)
+		if err != nil {
+			return blobKeyEnvelope{}, "", time.Time{}, err
+		}
+		var envelope blobKeyEnvelope
+		if err := json.Unmarshal([]byte(handoff.EnvelopeJSON), &envelope); err != nil {
+			return blobKeyEnvelope{}, "", time.Time{}, fmt.Errorf("decode durable blob-key envelope: %w", err)
+		}
+		entry := activeBlobKeyEntry{
+			accountID:       handoff.AccountID,
+			runtimeID:       handoff.RuntimeID,
+			hostID:          handoff.HostID,
+			operation:       handoff.Operation,
+			leaseID:         handoff.LeaseID,
+			envelope:        envelope,
+			blobKeyVerifier: handoff.BlobKeyVerifier,
+			hasEnvelope:     true,
+			expiresAt:       handoff.ExpiresAt,
+		}
+		if err := validateBlobKeyEnvelope(envelope, entry); err != nil {
+			return blobKeyEnvelope{}, "", time.Time{}, fmt.Errorf("validate durable blob-key envelope: %w", err)
+		}
+		a.activeBlobKeys.cache(entry)
+		return envelope, handoff.BlobKeyVerifier, handoff.ExpiresAt, nil
+	}
+	envelope, verifier, expiresAt, ok := a.activeBlobKeys.get(runtimeID, hostID)
+	if !ok {
+		return blobKeyEnvelope{}, "", time.Time{}, store.ErrRuntimeBlobKeyHandoff
+	}
+	return envelope, verifier, expiresAt, nil
+}
+
 func (a *API) verifyActiveBlobKeyEnvelope(w http.ResponseWriter, r *http.Request, entry activeBlobKeyEntry) bool {
 	host, err := a.store.GetHost(r.Context(), entry.hostID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "blob_key_host_lookup_failed", err)
 		return false
 	}
 	if err := a.verifyBlobKeyEnvelopeWithNode(r.Context(), host, entry); err != nil {
 		a.activeBlobKeys.clear(entry.runtimeID)
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		writeAPIError(w, http.StatusConflict, "blob_key_envelope_rejected", "blob-key envelope verification failed")
 		return false
 	}
 	return true
 }
 
 func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host, entry activeBlobKeyEntry) error {
+	advertiseAddr, err := validateNodeAdvertiseAddr(host.AdvertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	if err != nil {
+		return err
+	}
 	relayPort := host.RelayPort
 	if relayPort <= 0 {
 		relayPort = 8090
@@ -1743,7 +1924,7 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 	req, err := http.NewRequestWithContext(
 		verifyCtx,
 		http.MethodPost,
-		fmt.Sprintf("http://%s:%d/api/v1/internal/blob-key/verify", host.AdvertiseAddr, relayPort),
+		"http://"+net.JoinHostPort(advertiseAddr, strconv.Itoa(relayPort))+"/api/v1/internal/blob-key/verify",
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -1840,7 +2021,7 @@ func (a *API) requireRuntimeCapabilityRequest(w http.ResponseWriter, r *http.Req
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
 			return runtimeActor{}, false
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_capability_lookup_failed", err)
 		return runtimeActor{}, false
 	}
 	publicKey, err := parseECDSAPublicKeyMaterial(publicKeyMaterial)
@@ -1865,11 +2046,11 @@ func (a *API) requireRuntimeCapabilityRequest(w http.ResponseWriter, r *http.Req
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
 			return runtimeActor{}, false
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_capability_nonce_failed", err)
 		return runtimeActor{}, false
 	}
 	if err := a.store.TouchRuntimeCapability(r.Context(), capabilityID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_capability_touch_failed", err)
 		return runtimeActor{}, false
 	}
 
@@ -1895,7 +2076,7 @@ func writeIdentityAuthError(w http.ResponseWriter, err error) {
 	case store.ErrIdentityNotFound, store.ErrIdentityAuthFailed, store.ErrIdentityKeyRequired:
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 	default:
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "identity_verification_failed", err)
 	}
 }
 
@@ -1958,7 +2139,7 @@ func (a *API) sessionRelayTarget(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "relay target not found"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "session_relay_target_failed", err)
 		return
 	}
 	if target.HostID != node.id {
@@ -1976,21 +2157,23 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		HostID             string     `json:"host_id"`
-		Status             string     `json:"status"`
-		ConnectionStatus   string     `json:"connection_status"`
-		ContainerName      *string    `json:"container_name"`
-		ADBPort            *int       `json:"adb_port"`
-		LastError          *string    `json:"last_error"`
-		BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at"`
-		LoadAverage        *float64   `json:"load_average"`
-		ClearWipeRequested bool       `json:"clear_wipe_requested"`
-		ActivePersonaJSON  *string    `json:"active_persona_json"`
-		ClearActivePersona bool       `json:"clear_active_persona"`
-		BlobStoreKind      *string    `json:"blob_store_kind"`
-		BlobManifestJSON   *string    `json:"blob_manifest_json"`
-		ClearBlobManifest  bool       `json:"clear_blob_manifest"`
-		Deleted            bool       `json:"deleted"`
+		HostID              string     `json:"host_id"`
+		Status              string     `json:"status"`
+		ConnectionStatus    string     `json:"connection_status"`
+		ContainerName       *string    `json:"container_name"`
+		ADBPort             *int       `json:"adb_port"`
+		LastError           *string    `json:"last_error"`
+		BlobLastSnapshotAt  *time.Time `json:"blob_last_snapshot_at"`
+		LoadAverage         *float64   `json:"load_average"`
+		ClearWipeRequested  bool       `json:"clear_wipe_requested"`
+		ActivePersonaJSON   *string    `json:"active_persona_json"`
+		ClearActivePersona  bool       `json:"clear_active_persona"`
+		BlobStoreKind       *string    `json:"blob_store_kind"`
+		BlobManifestJSON    *string    `json:"blob_manifest_json"`
+		ClearBlobManifest   bool       `json:"clear_blob_manifest"`
+		CleanupComplete     bool       `json:"cleanup_complete"`
+		OperationGeneration int64      `json:"operation_generation"`
+		Deleted             bool       `json:"deleted"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2001,26 +2184,39 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed node does not match runtime status host"})
 		return
 	}
+	if req.OperationGeneration <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "operation_generation is required"})
+		return
+	}
 
 	if err := a.store.UpdateRuntimeObservation(r.Context(), r.PathValue("id"), store.RuntimeObservation{
-		HostID:             node.id,
-		Status:             strings.TrimSpace(req.Status),
-		ConnectionStatus:   strings.TrimSpace(req.ConnectionStatus),
-		ContainerName:      req.ContainerName,
-		ADBPort:            req.ADBPort,
-		LastError:          req.LastError,
-		BlobLastSnapshotAt: req.BlobLastSnapshotAt,
-		LoadAverage:        req.LoadAverage,
-		ClearWipeRequested: req.ClearWipeRequested,
-		ActivePersonaJSON:  req.ActivePersonaJSON,
-		ClearActivePersona: req.ClearActivePersona,
-		BlobStoreKind:      req.BlobStoreKind,
-		BlobManifestJSON:   req.BlobManifestJSON,
-		ClearBlobManifest:  req.ClearBlobManifest,
-		Deleted:            req.Deleted,
+		HostID:              node.id,
+		Status:              strings.TrimSpace(req.Status),
+		ConnectionStatus:    strings.TrimSpace(req.ConnectionStatus),
+		ContainerName:       req.ContainerName,
+		ADBPort:             req.ADBPort,
+		LastError:           req.LastError,
+		BlobLastSnapshotAt:  req.BlobLastSnapshotAt,
+		LoadAverage:         req.LoadAverage,
+		ClearWipeRequested:  req.ClearWipeRequested,
+		ActivePersonaJSON:   req.ActivePersonaJSON,
+		ClearActivePersona:  req.ClearActivePersona,
+		BlobStoreKind:       req.BlobStoreKind,
+		BlobManifestJSON:    req.BlobManifestJSON,
+		ClearBlobManifest:   req.ClearBlobManifest,
+		CleanupComplete:     req.CleanupComplete,
+		OperationGeneration: req.OperationGeneration,
+		Deleted:             req.Deleted,
 	}); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		if errors.Is(err, store.ErrRuntimeObservationStale) {
+			writeAPIError(w, http.StatusConflict, "runtime_observation_stale", err.Error())
+			return
+		}
+		writeInternalAPIError(w, "runtime_status_update_failed", err)
 		return
+	}
+	if req.CleanupComplete || req.Deleted {
+		a.activeBlobKeys.clear(r.PathValue("id"))
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
@@ -2051,12 +2247,18 @@ func (a *API) runtimeLogAppend(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "runtime_assignment_check_failed", err)
 		return
 	}
 
-	if err := a.store.AppendRuntimeLog(r.Context(), r.PathValue("id"), req.Source, req.Level, req.Message); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	if err := a.store.AppendRuntimeLog(
+		r.Context(),
+		r.PathValue("id"),
+		trimForStorage(req.Source, maxRuntimeLogSourceRunes),
+		trimForStorage(req.Level, maxRuntimeLogLevelRunes),
+		trimForStorage(req.Message, maxRuntimeLogMessageRunes),
+	); err != nil {
+		writeInternalAPIError(w, "runtime_log_append_failed", err)
 		return
 	}
 
@@ -2128,7 +2330,7 @@ func (a *API) securityEventAppend(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "rate_limited": true})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "security_event_append_failed", err)
 		return
 	}
 
@@ -2177,7 +2379,7 @@ func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return "", "", false
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "device_key_lookup_failed", err)
 		return "", "", false
 	}
 	publicKeyDER, err := base64.StdEncoding.DecodeString(publicKeyMaterial)
@@ -2213,7 +2415,7 @@ func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
 			return "", "", false
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "device_nonce_persist_failed", err)
 		return "", "", false
 	}
 
@@ -2309,13 +2511,13 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRe
 		return nodeRequestIdentity{}, false
 	}
 	if a.store == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "store is not configured"})
+		writeInternalAPIError(w, "store_unavailable", errors.New("store is not configured"))
 		return nodeRequestIdentity{}, false
 	}
 
 	publicKey, err := a.store.HostPublicKey(r.Context(), nodeID)
 	if err != nil && !errors.Is(err, store.ErrHostNotFound) {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "node_key_lookup_failed", err)
 		return nodeRequestIdentity{}, false
 	}
 	if strings.TrimSpace(publicKey) == "" {
@@ -2324,7 +2526,13 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRe
 			return nodeRequestIdentity{}, false
 		}
 		if a.cfg.NodeRegistrationSecret == "" && a.cfg.AppEnv != "development" {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "node registration secret is not configured"})
+			writeServerAPIError(
+				w,
+				http.StatusServiceUnavailable,
+				"node_registration_unavailable",
+				"service unavailable",
+				errors.New("node registration secret is not configured"),
+			)
 			return nodeRequestIdentity{}, false
 		}
 		if a.cfg.NodeRegistrationSecret != "" && r.Header.Get(nodeauth.HeaderRegistrationSecret) != a.cfg.NodeRegistrationSecret {
@@ -2348,7 +2556,7 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRe
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
 			return nodeRequestIdentity{}, false
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeInternalAPIError(w, "node_nonce_persist_failed", err)
 		return nodeRequestIdentity{}, false
 	}
 
@@ -2356,6 +2564,11 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowRe
 }
 
 func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort int, runtimeID string, maxSize, bitRate int) (string, error) {
+	var err error
+	advertiseAddr, err = validateNodeAdvertiseAddr(advertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	if err != nil {
+		return "", err
+	}
 	if relayPort <= 0 {
 		relayPort = 8090
 	}
@@ -2374,7 +2587,7 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 	req, err := http.NewRequestWithContext(
 		prepareCtx,
 		http.MethodPost,
-		fmt.Sprintf("http://%s:%d/api/v1/internal/viewer/prepare", advertiseAddr, relayPort),
+		"http://"+net.JoinHostPort(advertiseAddr, strconv.Itoa(relayPort))+"/api/v1/internal/viewer/prepare",
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -2423,6 +2636,17 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, payload)
 }
 
+func writeServerAPIError(w http.ResponseWriter, status int, code, message string, err error) {
+	if err != nil {
+		log.Printf("httpapi server error status=%d code=%s: %v", status, code, err)
+	}
+	writeAPIError(w, status, code, message)
+}
+
+func writeInternalAPIError(w http.ResponseWriter, code string, err error) {
+	writeServerAPIError(w, http.StatusInternalServerError, code, "internal server error", err)
+}
+
 func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 	switch err {
 	case store.ErrRuntimeNotFound:
@@ -2431,6 +2655,8 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusConflict, store.NoReadyHostCode, err.Error())
 	case store.ErrRuntimeBlobOwner:
 		writeAPIError(w, http.StatusConflict, store.RuntimeBlobOwnerCode, err.Error())
+	case store.ErrRuntimeCleanupPending:
+		writeAPIError(w, http.StatusConflict, store.RuntimeCleanupPendingCode, err.Error())
 	case store.ErrRuntimeEntitlement:
 		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeEntitlementRequiredCode, err.Error())
 	case store.ErrRuntimeQuota:
@@ -2442,15 +2668,36 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 	case store.ErrRuntimeProfile:
 		writeAPIError(w, http.StatusBadRequest, store.RuntimeProfileNotAllowedCode, err.Error())
 	default:
-		writeAPIError(w, http.StatusBadRequest, "runtime_mutation_failed", err.Error())
+		writeInternalAPIError(w, "runtime_mutation_failed", err)
 	}
 }
 
 func withJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if responseMustNotBeStored(r.URL.Path) {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		if r.Body != nil {
+			if r.ContentLength > maxAPIRequestBodyBytes {
+				writeAPIError(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "request body is too large")
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxAPIRequestBodyBytes)
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func responseMustNotBeStored(path string) bool {
+	path = strings.TrimSpace(path)
+	return path == "/api/v1/bootstrap" ||
+		path == "/api/v1/hosts" ||
+		path == "/api/v1/me" ||
+		strings.HasPrefix(path, "/api/v1/me/") ||
+		path == "/api/v1/internal" ||
+		strings.HasPrefix(path, "/api/v1/internal/")
 }
 
 func websocketBase(base string) string {

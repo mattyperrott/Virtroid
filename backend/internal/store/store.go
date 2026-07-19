@@ -21,7 +21,19 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, last_error, deleted_at, created_at, updated_at`
+const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at`
+
+const (
+	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
+	// this transaction-scoped advisory lock while schema changes are applied.
+	schemaMigrationLockKey  int64 = 0x56697274726f6964
+	currentSchemaVersion    int64 = 2026071902
+	schemaVersionLabel            = "security lifecycle and durable handoff remediation 2026-07-19"
+	runtimeLogRetentionRows       = 2000
+	runtimeLogSourceRunes         = 64
+	runtimeLogLevelRunes          = 32
+	runtimeLogMessageRunes        = 4096
+)
 
 const (
 	defaultAndroidImage  = "redroid/redroid:14.0.0_64only-latest"
@@ -29,6 +41,9 @@ const (
 	viewerPortEnd        = 46099
 	sessionAttachTTL     = 2 * time.Minute
 	runtimeCapabilityTTL = 24 * time.Hour
+	// Keep this aligned with the Android client's MAX_CATALOG_ITEMS bound so a
+	// valid server response is never rejected solely because of cardinality.
+	catalogResponseLimit = 250
 )
 
 var allowedAndroidImages = map[string]struct{}{
@@ -45,6 +60,7 @@ var (
 	ErrRuntimeNotFound         = errors.New("runtime not found")
 	ErrRuntimeNotReady         = errors.New("runtime is not ready for sessions")
 	ErrSessionNotFound         = errors.New("session not found")
+	ErrSessionAlreadyActive    = errors.New("runtime already has an active session")
 	ErrIdentityNotFound        = errors.New("identity password is not configured for this device")
 	ErrIdentityAlreadySet      = errors.New("identity password is already configured for this device")
 	ErrIdentityAuthFailed      = errors.New("identity authentication failed")
@@ -60,6 +76,9 @@ var (
 	ErrSecurityEventRateLimit  = errors.New("security event rate limit exceeded")
 	ErrAccountNotFound         = errors.New("account not found")
 	ErrRuntimeBlobOwner        = errors.New("runtime local snapshot owner is unknown")
+	ErrRuntimeCleanupPending   = errors.New("runtime cleanup is still pending")
+	ErrRuntimeObservationStale = errors.New("runtime observation generation is stale")
+	ErrRuntimeBlobKeyHandoff   = errors.New("runtime blob-key handoff is not available")
 	ErrRuntimeCapability       = errors.New("runtime capability is invalid or expired")
 	ErrRuntimeCapabilityReplay = errors.New("runtime capability nonce has already been used")
 )
@@ -72,6 +91,7 @@ const (
 	RuntimeProfileNotAllowedCode   = "runtime_profile_not_allowed"
 	NoReadyHostCode                = "no_ready_host"
 	RuntimeBlobOwnerCode           = "runtime_blob_owner_unknown"
+	RuntimeCleanupPendingCode      = "runtime_cleanup_pending"
 )
 
 type BootstrapResult struct {
@@ -173,40 +193,42 @@ type Device struct {
 }
 
 type Runtime struct {
-	ID                 string            `json:"id"`
-	AccountID          string            `json:"account_id"`
-	Name               string            `json:"name"`
-	Status             string            `json:"status"`
-	DesiredState       string            `json:"desired_state"`
-	ConnectionStatus   string            `json:"connection_status"`
-	HostID             *string           `json:"host_id,omitempty"`
-	PersonaVersion     int               `json:"persona_version"`
-	ActivePersonaJSON  *string           `json:"active_persona_json,omitempty"`
-	AndroidImage       string            `json:"android_image"`
-	AndroidVersion     string            `json:"android_version"`
-	WidthPx            int               `json:"width_px"`
-	HeightPx           int               `json:"height_px"`
-	DensityDpi         int               `json:"density_dpi"`
-	AudioEnabled       bool              `json:"audio_enabled"`
-	CameraMode         string            `json:"camera_mode"`
-	FileMode           string            `json:"file_mode"`
-	BlobAutoSnapshot   bool              `json:"blob_auto_snapshot"`
-	BlobRetainDays     int               `json:"blob_retain_days"`
-	BlobStoreKind      *string           `json:"blob_store_kind,omitempty"`
-	BlobManifestJSON   *string           `json:"blob_manifest_json,omitempty"`
-	BlobHostID         *string           `json:"-"`
-	BlobLastSnapshotAt *time.Time        `json:"blob_last_snapshot_at,omitempty"`
-	StartedAt          *time.Time        `json:"started_at,omitempty"`
-	LoadAverage        *float64          `json:"load_average,omitempty"`
-	ContainerName      *string           `json:"container_name,omitempty"`
-	ADBPort            *int              `json:"adb_port,omitempty"`
-	ViewerPort         *int              `json:"viewer_port,omitempty"`
-	WipeRequested      bool              `json:"wipe_requested"`
-	LastError          *string           `json:"last_error,omitempty"`
-	SelectedApps       []AppCatalogEntry `json:"selected_apps,omitempty"`
-	DeletedAt          *time.Time        `json:"deleted_at,omitempty"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
+	ID                  string            `json:"id"`
+	AccountID           string            `json:"account_id"`
+	Name                string            `json:"name"`
+	Status              string            `json:"status"`
+	DesiredState        string            `json:"desired_state"`
+	ConnectionStatus    string            `json:"connection_status"`
+	HostID              *string           `json:"host_id,omitempty"`
+	PersonaVersion      int               `json:"persona_version"`
+	ActivePersonaJSON   *string           `json:"active_persona_json,omitempty"`
+	AndroidImage        string            `json:"android_image"`
+	AndroidVersion      string            `json:"android_version"`
+	WidthPx             int               `json:"width_px"`
+	HeightPx            int               `json:"height_px"`
+	DensityDpi          int               `json:"density_dpi"`
+	AudioEnabled        bool              `json:"audio_enabled"`
+	CameraMode          string            `json:"camera_mode"`
+	FileMode            string            `json:"file_mode"`
+	BlobAutoSnapshot    bool              `json:"blob_auto_snapshot"`
+	BlobRetainDays      int               `json:"blob_retain_days"`
+	BlobStoreKind       *string           `json:"blob_store_kind,omitempty"`
+	BlobManifestJSON    *string           `json:"blob_manifest_json,omitempty"`
+	BlobHostID          *string           `json:"-"`
+	BlobLastSnapshotAt  *time.Time        `json:"blob_last_snapshot_at,omitempty"`
+	StartedAt           *time.Time        `json:"started_at,omitempty"`
+	LoadAverage         *float64          `json:"load_average,omitempty"`
+	ContainerName       *string           `json:"container_name,omitempty"`
+	ADBPort             *int              `json:"adb_port,omitempty"`
+	ViewerPort          *int              `json:"viewer_port,omitempty"`
+	WipeRequested       bool              `json:"wipe_requested"`
+	CleanupPending      bool              `json:"cleanup_pending"`
+	OperationGeneration int64             `json:"operation_generation"`
+	LastError           *string           `json:"last_error,omitempty"`
+	SelectedApps        []AppCatalogEntry `json:"selected_apps,omitempty"`
+	DeletedAt           *time.Time        `json:"deleted_at,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
 type RuntimeLogEntry struct {
@@ -315,21 +337,34 @@ type HostHeartbeat struct {
 }
 
 type RuntimeObservation struct {
-	HostID             string
-	Status             string
-	ConnectionStatus   string
-	ContainerName      *string
-	ADBPort            *int
-	LastError          *string
-	BlobStoreKind      *string
-	BlobManifestJSON   *string
-	BlobLastSnapshotAt *time.Time
-	LoadAverage        *float64
-	ClearWipeRequested bool
-	ActivePersonaJSON  *string
-	ClearActivePersona bool
-	ClearBlobManifest  bool
-	Deleted            bool
+	HostID              string
+	Status              string
+	ConnectionStatus    string
+	ContainerName       *string
+	ADBPort             *int
+	LastError           *string
+	BlobStoreKind       *string
+	BlobManifestJSON    *string
+	BlobLastSnapshotAt  *time.Time
+	LoadAverage         *float64
+	ClearWipeRequested  bool
+	ActivePersonaJSON   *string
+	ClearActivePersona  bool
+	ClearBlobManifest   bool
+	CleanupComplete     bool
+	OperationGeneration int64
+	Deleted             bool
+}
+
+type RuntimeBlobKeyHandoff struct {
+	AccountID       string
+	RuntimeID       string
+	HostID          string
+	Operation       string
+	LeaseID         string
+	EnvelopeJSON    string
+	BlobKeyVerifier string
+	ExpiresAt       time.Time
 }
 
 type Session struct {
@@ -439,8 +474,49 @@ func (s *Store) Ping(ctx context.Context) error {
 }
 
 func (s *Store) EnsureSchema(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, schemaSQL)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema migration: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, schemaMigrationLockKey); err != nil {
+		return fmt.Errorf("lock schema migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version BIGINT PRIMARY KEY,
+			description TEXT NOT NULL,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		return fmt.Errorf("create schema migration ledger: %w", err)
+	}
+
+	var newestVersion int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&newestVersion); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if newestVersion > currentSchemaVersion {
+		return fmt.Errorf("database schema version %d is newer than binary version %d", newestVersion, currentSchemaVersion)
+	}
+
+	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+		return fmt.Errorf("apply schema version %d: %w", currentSchemaVersion, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO schema_migrations (version, description)
+		VALUES ($1, $2)
+		ON CONFLICT (version) DO NOTHING
+	`, currentSchemaVersion, schemaVersionLabel); err != nil {
+		return fmt.Errorf("record schema version %d: %w", currentSchemaVersion, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version %d: %w", currentSchemaVersion, err)
+	}
+	return nil
 }
 
 func (s *Store) BootstrapAccount(ctx context.Context, deviceName, publicKey string, defaults CreateRuntimeInput) (BootstrapResult, error) {
@@ -554,15 +630,27 @@ func (s *Store) DeleteAccount(ctx context.Context, accountID string) error {
 
 	rows, err := tx.QueryContext(ctx,
 		`UPDATE runtimes
-		 SET status = CASE WHEN host_id IS NULL THEN 'deleted' ELSE 'deleting' END,
+		 SET host_id = COALESCE(host_id, blob_host_id),
+		     operation_generation = CASE
+		         WHEN desired_state = 'deleted' THEN operation_generation
+		         ELSE operation_generation + 1
+		     END,
+		     status = CASE
+		         WHEN COALESCE(host_id, blob_host_id) IS NULL
+		          AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NULL THEN 'deleted'
+		         ELSE 'deleting'
+		     END,
 		     desired_state = 'deleted',
-			     connection_status = 'offline',
-			     started_at = NULL,
-			     container_name = CASE WHEN host_id IS NULL THEN NULL ELSE container_name END,
-			     adb_port = CASE WHEN host_id IS NULL THEN NULL ELSE adb_port END,
-			     viewer_port = CASE WHEN host_id IS NULL THEN NULL ELSE viewer_port END,
-			     blob_host_id = CASE WHEN host_id IS NULL THEN NULL ELSE blob_host_id END,
-			     deleted_at = CASE WHEN host_id IS NULL THEN NOW() ELSE deleted_at END,
+		     connection_status = 'offline',
+		     started_at = NULL,
+		     container_name = CASE WHEN COALESCE(host_id, blob_host_id) IS NULL THEN NULL ELSE container_name END,
+		     adb_port = CASE WHEN COALESCE(host_id, blob_host_id) IS NULL THEN NULL ELSE adb_port END,
+		     viewer_port = CASE WHEN COALESCE(host_id, blob_host_id) IS NULL THEN NULL ELSE viewer_port END,
+		     deleted_at = CASE
+		         WHEN COALESCE(host_id, blob_host_id) IS NULL
+		          AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NULL THEN NOW()
+		         ELSE deleted_at
+		     END,
 		     updated_at = NOW()
 		 WHERE account_id = $1
 		   AND deleted_at IS NULL
@@ -771,6 +859,7 @@ func (s *Store) RevokeDevice(ctx context.Context, accountID, targetDeviceID stri
 		     UPDATE runtimes r
 		        SET status = CASE WHEN r.host_id IS NULL THEN 'stopped' ELSE 'stopping' END,
 		            desired_state = 'stopped',
+		            operation_generation = r.operation_generation + 1,
 		            connection_status = CASE WHEN r.host_id IS NULL THEN 'offline' ELSE 'disconnecting' END,
 		            started_at = NULL,
 		            last_error = NULL,
@@ -1219,6 +1308,10 @@ func (s *Store) deleteRuntime(ctx context.Context, accountID, runtimeID, hostID 
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
 		 SET host_id = COALESCE(host_id, NULLIF($3, '')),
+		     operation_generation = CASE
+		         WHEN desired_state = 'deleted' THEN operation_generation
+		         ELSE operation_generation + 1
+		     END,
 		     status = CASE
 		         WHEN COALESCE(host_id, NULLIF($3, '')) IS NULL THEN 'deleted'
 		         ELSE 'deleting'
@@ -1473,17 +1566,16 @@ func (s *Store) applyLatestStoragePreflight(ctx context.Context, storage *Accoun
 	var status sql.NullString
 	var payload sql.NullString
 	var at sql.NullTime
-	var walletAddress sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT storage_preflight_kind, storage_preflight_status, storage_preflight_json,
-		        storage_preflight_at, storage_wallet_address
+		        storage_preflight_at
 		   FROM hosts
 		  WHERE storage_preflight_kind = 'sia-renterd'
 		    AND last_heartbeat_at >= NOW() - INTERVAL '5 minutes'
 		  ORDER BY CASE WHEN storage_preflight_status = 'ready' THEN 0 ELSE 1 END,
 		           last_heartbeat_at DESC
 		  LIMIT 1`,
-	).Scan(&kind, &status, &payload, &at, &walletAddress)
+	).Scan(&kind, &status, &payload, &at)
 	if err != nil {
 		return
 	}
@@ -1495,7 +1587,7 @@ func (s *Store) applyLatestStoragePreflight(ctx context.Context, storage *Accoun
 		storage.Status = strings.TrimSpace(status.String)
 	}
 	if payload.Valid && strings.TrimSpace(payload.String) != "" {
-		storage.LastPreflightJSON = &payload.String
+		storage.LastPreflightJSON = sanitizedStoragePreflightJSON(payload.String)
 	}
 	if status.Valid && strings.TrimSpace(status.String) != "" {
 		storage.LastPreflightStatus = &status.String
@@ -1503,13 +1595,44 @@ func (s *Store) applyLatestStoragePreflight(ctx context.Context, storage *Accoun
 	if at.Valid {
 		storage.LastPreflightAt = &at.Time
 	}
-	if walletAddress.Valid && strings.TrimSpace(walletAddress.String) != "" {
-		storage.FundingAddress = &walletAddress.String
-		if storage.WalletAddress == nil || strings.TrimSpace(*storage.WalletAddress) == "" {
-			storage.WalletAddress = &walletAddress.String
+	// A host heartbeat is node-controlled and is not an authenticated payment
+	// instruction. Never copy its wallet address into account-facing funding or
+	// wallet fields. Account wallet settings remain exclusively user supplied.
+	storage.FundingAddress = nil
+	_ = kind
+}
+
+func sanitizedStoragePreflightJSON(raw string) *string {
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return nil
+	}
+	redactStoragePaymentAddresses(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	result := string(encoded)
+	return &result
+}
+
+func redactStoragePaymentAddresses(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalizedKey := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(strings.TrimSpace(key)))
+			switch normalizedKey {
+			case "walletaddress", "fundingaddress", "storagewalletaddress":
+				delete(typed, key)
+			default:
+				redactStoragePaymentAddresses(child)
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			redactStoragePaymentAddresses(child)
 		}
 	}
-	_ = kind
 }
 
 func (s *Store) ListAppCatalog(ctx context.Context, accountID, search string) ([]AppCatalogEntry, error) {
@@ -1541,9 +1664,10 @@ func (s *Store) ListAppCatalog(ctx context.Context, accountID, search string) ([
 		  WHERE c.enabled = TRUE
 		    AND ($2 = '%' OR LOWER(c.display_name) LIKE $2 OR LOWER(c.package_name) LIKE $2 OR LOWER(c.summary) LIKE $2)
 		  ORDER BY c.recommended DESC, LOWER(c.display_name), c.package_name
-		  LIMIT 500`,
+		  LIMIT $3`,
 		accountID,
 		term,
+		catalogResponseLimit,
 	)
 	if err != nil {
 		return nil, err
@@ -1576,8 +1700,9 @@ func (s *Store) ListPublicAppCatalog(ctx context.Context, search string) ([]AppC
 		  WHERE c.enabled = TRUE
 		    AND ($1 = '%' OR LOWER(c.display_name) LIKE $1 OR LOWER(c.package_name) LIKE $1 OR LOWER(c.summary) LIKE $1)
 		  ORDER BY c.recommended DESC, LOWER(c.display_name), c.package_name
-		  LIMIT 500`,
+		  LIMIT $2`,
 		term,
+		catalogResponseLimit,
 	)
 	if err != nil {
 		return nil, err
@@ -1657,13 +1782,15 @@ func (s *Store) UpsertAppCatalogEntries(ctx context.Context, entries []AppCatalo
 	defer tx.Rollback()
 
 	upserted := 0
+	packagesBySource := make(map[string][]string)
 	for _, entry := range entries {
 		packageName := strings.TrimSpace(entry.PackageName)
 		displayName := strings.TrimSpace(entry.DisplayName)
 		if packageName == "" || displayName == "" || strings.TrimSpace(entry.APKURL) == "" || strings.TrimSpace(entry.APKSHA256) == "" {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx,
+		source := defaultString(entry.Source, "fdroid")
+		result, err := tx.ExecContext(ctx,
 			`INSERT INTO app_catalog (
 			     package_name, source, display_name, summary, icon_url, version_name,
 			     version_code, apk_url, apk_sha256, apk_size_bytes, min_sdk, native_code,
@@ -1689,9 +1816,10 @@ func (s *Store) UpsertAppCatalogEntries(ctx context.Context, entries []AppCatalo
 			     recommended = EXCLUDED.recommended,
 			     enabled = TRUE,
 			     catalog_updated_at = EXCLUDED.catalog_updated_at,
-			     updated_at = NOW()`,
+			     updated_at = NOW()
+			 WHERE EXCLUDED.version_code >= app_catalog.version_code`,
 			packageName,
-			defaultString(entry.Source, "fdroid"),
+			source,
 			displayName,
 			strings.TrimSpace(entry.Summary),
 			strings.TrimSpace(entry.IconURL),
@@ -1707,16 +1835,73 @@ func (s *Store) UpsertAppCatalogEntries(ctx context.Context, entries []AppCatalo
 			defaultString(entry.AntiFeaturesJSON, "[]"),
 			entry.Recommended,
 			entry.CatalogUpdatedAt,
-		); err != nil {
+		)
+		if err != nil {
 			return 0, err
 		}
-		upserted++
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		upserted += int(rowsAffected)
+		packagesBySource[source] = append(packagesBySource[source], packageName)
+	}
+
+	for source, packageNames := range packagesBySource {
+		if err := disableMissingCatalogEntriesTX(ctx, tx, source, packageNames); err != nil {
+			return 0, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return upserted, nil
+}
+
+func (s *Store) DisableAppCatalogSource(ctx context.Context, source string) (int, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return 0, errors.New("app catalog source is required")
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE app_catalog
+		    SET enabled = FALSE,
+		        updated_at = NOW()
+		  WHERE source = $1
+		    AND enabled = TRUE`,
+		source,
+	)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	return int(rowsAffected), err
+}
+
+func disableMissingCatalogEntriesTX(ctx context.Context, tx *sql.Tx, source string, packageNames []string) error {
+	source = strings.TrimSpace(source)
+	if source == "" || len(packageNames) == 0 {
+		return nil
+	}
+
+	args := make([]any, 0, len(packageNames)+1)
+	args = append(args, source)
+	placeholders := make([]string, 0, len(packageNames))
+	for _, packageName := range packageNames {
+		args = append(args, packageName)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+	_, err := tx.ExecContext(ctx,
+		`UPDATE app_catalog
+		    SET enabled = FALSE,
+		        updated_at = NOW()
+		  WHERE source = $1
+		    AND enabled = TRUE
+		    AND package_name NOT IN (`+strings.Join(placeholders, ", ")+`)`,
+		args...,
+	)
+	return err
 }
 
 func scanAppCatalogRows(rows *sql.Rows) ([]AppCatalogEntry, error) {
@@ -2352,19 +2537,34 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 	}
 	defer tx.Rollback()
 
-	var currentHost sql.NullString
-	var currentViewerPort sql.NullInt32
-	var currentDesiredState string
+	var current Runtime
 	if err := tx.QueryRowContext(ctx,
-		`SELECT host_id, viewer_port, desired_state FROM runtimes
-		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'`,
+		fmt.Sprintf(`SELECT %s FROM runtimes
+		 WHERE account_id = $1
+		   AND id = $2
+		   AND deleted_at IS NULL
+		   AND desired_state <> 'deleted'
+		 FOR UPDATE`, runtimeColumns),
 		accountID,
 		runtimeID,
-	).Scan(&currentHost, &currentViewerPort, &currentDesiredState); err != nil {
+	).Scan(scanRuntimeDest(&current)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
 		}
 		return Runtime{}, err
+	}
+
+	// The row lock serializes start/stop transitions for this runtime. Once the
+	// desired state is running, a repeated request is an observation, not a new
+	// billable start: preserve the persona, assignment, viewer, and sessions.
+	if strings.EqualFold(strings.TrimSpace(current.DesiredState), "running") {
+		if err := tx.Commit(); err != nil {
+			return Runtime{}, err
+		}
+		return current, nil
+	}
+	if current.CleanupPending {
+		return Runtime{}, ErrRuntimeCleanupPending
 	}
 	if err := ensureRuntimeStartEntitlementTX(ctx, tx, accountID, runtimeID); err != nil {
 		return Runtime{}, err
@@ -2377,13 +2577,16 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 			return Runtime{}, err
 		}
 	} else {
-		hostID, err = pickReadyHostTX(ctx, tx, currentHost.String)
+		hostID, err = pickReadyHostTX(ctx, tx, valueOrEmpty(current.HostID))
 		if err != nil {
 			return Runtime{}, err
 		}
 	}
 
-	viewerPort := currentViewerPort
+	var viewerPort sql.NullInt32
+	if current.ViewerPort != nil {
+		viewerPort = sql.NullInt32{Int32: int32(*current.ViewerPort), Valid: true}
+	}
 	if !viewerPort.Valid {
 		allocatedViewerPort, err := allocateViewerPortTX(ctx, tx)
 		if err != nil {
@@ -2391,13 +2594,14 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 		}
 		viewerPort = sql.NullInt32{Int32: int32(allocatedViewerPort), Valid: true}
 	}
-	rotatePersona := !strings.EqualFold(strings.TrimSpace(currentDesiredState), "running")
+	rotatePersona := true
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
 			 SET host_id = $3,
-				     status = 'starting',
-				     desired_state = 'running',
+			     status = 'starting',
+			     desired_state = 'running',
+			     operation_generation = operation_generation + 1,
 				     connection_status = 'connecting',
 				     viewer_port = $4,
 				     wipe_requested = FALSE,
@@ -2445,11 +2649,35 @@ func (s *Store) StopRuntime(ctx context.Context, accountID, runtimeID string) (R
 	}
 	defer tx.Rollback()
 
+	var current Runtime
+	if err := tx.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM runtimes
+		 WHERE account_id = $1
+		   AND id = $2
+		   AND deleted_at IS NULL
+		   AND desired_state <> 'deleted'
+		 FOR UPDATE`, runtimeColumns),
+		accountID,
+		runtimeID,
+	).Scan(scanRuntimeDest(&current)...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Runtime{}, ErrRuntimeNotFound
+		}
+		return Runtime{}, err
+	}
+	if strings.EqualFold(strings.TrimSpace(current.DesiredState), "stopped") {
+		if err := tx.Commit(); err != nil {
+			return Runtime{}, err
+		}
+		return current, nil
+	}
+
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
 		 SET status = 'stopping',
 		     desired_state = 'stopped',
+		     operation_generation = operation_generation + 1,
 		     connection_status = 'disconnecting',
 		     started_at = NULL,
 		     updated_at = NOW()
@@ -2503,6 +2731,10 @@ func (s *Store) wipeRuntime(ctx context.Context, accountID, runtimeID, hostID st
 		 SET host_id = COALESCE(host_id, NULLIF($3, '')),
 		     status = 'wiping',
 		     desired_state = 'stopped',
+		     operation_generation = CASE
+		         WHEN wipe_requested OR status = 'wiping' THEN operation_generation
+		         ELSE operation_generation + 1
+		     END,
 		     connection_status = 'offline',
 		     started_at = NULL,
 		     wipe_requested = TRUE,
@@ -2616,15 +2848,37 @@ func (s *Store) ListRuntimeLogs(ctx context.Context, accountID, runtimeID string
 }
 
 func (s *Store) AppendRuntimeLog(ctx context.Context, runtimeID, source, level, message string) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO runtime_logs (runtime_id, source, level, message)
 		 VALUES ($1, $2, $3, $4)`,
 		runtimeID,
-		defaultString(source, "system"),
-		defaultString(level, "info"),
-		strings.TrimSpace(message),
-	)
-	return err
+		truncateRunes(defaultString(source, "system"), runtimeLogSourceRunes),
+		truncateRunes(defaultString(level, "info"), runtimeLogLevelRunes),
+		truncateRunes(strings.TrimSpace(message), runtimeLogMessageRunes),
+	); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM runtime_logs
+		  WHERE id IN (
+		      SELECT id
+		        FROM runtime_logs
+		       WHERE runtime_id = $1
+		       ORDER BY created_at DESC, id DESC
+		       OFFSET $2
+		  )`,
+		runtimeID,
+		runtimeLogRetentionRows,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) AppendSecurityEvent(ctx context.Context, event SecurityEventInput) error {
@@ -2854,6 +3108,139 @@ func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, 
 	return runtime, host, nil
 }
 
+func (s *Store) PutRuntimeBlobKeyLease(ctx context.Context, handoff RuntimeBlobKeyHandoff) error {
+	handoff.AccountID = strings.TrimSpace(handoff.AccountID)
+	handoff.RuntimeID = strings.TrimSpace(handoff.RuntimeID)
+	handoff.HostID = strings.TrimSpace(handoff.HostID)
+	handoff.Operation = strings.TrimSpace(handoff.Operation)
+	handoff.LeaseID = strings.TrimSpace(handoff.LeaseID)
+	if handoff.AccountID == "" || handoff.RuntimeID == "" || handoff.HostID == "" ||
+		handoff.Operation == "" || handoff.LeaseID == "" || !handoff.ExpiresAt.After(time.Now().UTC()) {
+		return ErrRuntimeBlobKeyHandoff
+	}
+	result, err := s.db.ExecContext(ctx,
+		`INSERT INTO runtime_blob_key_handoffs (
+		     runtime_id, account_id, host_id, operation, lease_id, envelope_json,
+		     blob_key_verifier, expires_at, activated_at, updated_at
+		 )
+		 SELECT r.id, r.account_id, $3, $4, $5, NULL, NULL, $6, NULL, NOW()
+		   FROM runtimes r
+		  WHERE r.id = $2
+		    AND r.account_id = $1
+		    AND r.deleted_at IS NULL
+		    AND r.desired_state <> 'deleted'
+		 ON CONFLICT (runtime_id) DO UPDATE
+		 SET account_id = EXCLUDED.account_id,
+		     host_id = EXCLUDED.host_id,
+		     operation = EXCLUDED.operation,
+		     lease_id = EXCLUDED.lease_id,
+		     envelope_json = NULL,
+		     blob_key_verifier = NULL,
+		     expires_at = EXCLUDED.expires_at,
+		     activated_at = NULL,
+		     updated_at = NOW()`,
+		handoff.AccountID,
+		handoff.RuntimeID,
+		handoff.HostID,
+		handoff.Operation,
+		handoff.LeaseID,
+		handoff.ExpiresAt,
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrRuntimeBlobKeyHandoff
+	}
+	return nil
+}
+
+func (s *Store) ActivateRuntimeBlobKeyHandoff(ctx context.Context, handoff RuntimeBlobKeyHandoff) (RuntimeBlobKeyHandoff, error) {
+	handoff.AccountID = strings.TrimSpace(handoff.AccountID)
+	handoff.RuntimeID = strings.TrimSpace(handoff.RuntimeID)
+	handoff.HostID = strings.TrimSpace(handoff.HostID)
+	handoff.Operation = strings.TrimSpace(handoff.Operation)
+	handoff.LeaseID = strings.TrimSpace(handoff.LeaseID)
+	handoff.EnvelopeJSON = strings.TrimSpace(handoff.EnvelopeJSON)
+	handoff.BlobKeyVerifier = strings.TrimSpace(handoff.BlobKeyVerifier)
+	if handoff.AccountID == "" || handoff.RuntimeID == "" || handoff.HostID == "" ||
+		handoff.Operation == "" || handoff.LeaseID == "" || handoff.EnvelopeJSON == "" || handoff.BlobKeyVerifier == "" {
+		return RuntimeBlobKeyHandoff{}, ErrRuntimeBlobKeyHandoff
+	}
+
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE runtime_blob_key_handoffs
+		    SET envelope_json = $6,
+		        blob_key_verifier = $7,
+		        activated_at = NOW(),
+		        updated_at = NOW()
+		  WHERE account_id = $1
+		    AND runtime_id = $2
+		    AND host_id = $3
+		    AND operation = $4
+		    AND lease_id = $5
+		    AND expires_at > NOW()
+		 RETURNING expires_at`,
+		handoff.AccountID,
+		handoff.RuntimeID,
+		handoff.HostID,
+		handoff.Operation,
+		handoff.LeaseID,
+		handoff.EnvelopeJSON,
+		handoff.BlobKeyVerifier,
+	).Scan(&handoff.ExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RuntimeBlobKeyHandoff{}, ErrRuntimeBlobKeyHandoff
+	}
+	if err != nil {
+		return RuntimeBlobKeyHandoff{}, err
+	}
+	return handoff, nil
+}
+
+func (s *Store) GetRuntimeBlobKeyHandoff(ctx context.Context, runtimeID, hostID string) (RuntimeBlobKeyHandoff, error) {
+	var handoff RuntimeBlobKeyHandoff
+	err := s.db.QueryRowContext(ctx,
+		`SELECT account_id, runtime_id, host_id, operation, lease_id,
+		        envelope_json, blob_key_verifier, expires_at
+		   FROM runtime_blob_key_handoffs
+		  WHERE runtime_id = $1
+		    AND host_id = $2
+		    AND expires_at > NOW()
+		    AND NULLIF(TRIM(COALESCE(envelope_json, '')), '') IS NOT NULL
+		    AND NULLIF(TRIM(COALESCE(blob_key_verifier, '')), '') IS NOT NULL`,
+		strings.TrimSpace(runtimeID),
+		strings.TrimSpace(hostID),
+	).Scan(
+		&handoff.AccountID,
+		&handoff.RuntimeID,
+		&handoff.HostID,
+		&handoff.Operation,
+		&handoff.LeaseID,
+		&handoff.EnvelopeJSON,
+		&handoff.BlobKeyVerifier,
+		&handoff.ExpiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RuntimeBlobKeyHandoff{}, ErrRuntimeBlobKeyHandoff
+	}
+	return handoff, err
+}
+
+func (s *Store) ClearRuntimeBlobKeyHandoff(ctx context.Context, runtimeID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM runtime_blob_key_handoffs WHERE runtime_id = $1`, strings.TrimSpace(runtimeID))
+	return err
+}
+
+func (s *Store) ClearAccountBlobKeyHandoffs(ctx context.Context, accountID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM runtime_blob_key_handoffs WHERE account_id = $1`, strings.TrimSpace(accountID))
+	return err
+}
+
 func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat) (Host, error) {
 	var host Host
 	err := s.db.QueryRowContext(ctx,
@@ -2918,6 +3305,38 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 	)
 
 	return host, err
+}
+
+// AssignPendingRemoteRuntimeCleanup lets a healthy node reclaim deletion work
+// for remote object stores when legacy rows have lost both host pointers. Local
+// disk snapshots remain unassigned because only their original node can safely
+// locate and erase them.
+func (s *Store) AssignPendingRemoteRuntimeCleanup(ctx context.Context, hostID, blobStoreKind string) (int, error) {
+	hostID = strings.TrimSpace(hostID)
+	blobStoreKind = strings.ToLower(strings.TrimSpace(blobStoreKind))
+	if hostID == "" || blobStoreKind == "" || blobStoreKind == "local-disk" {
+		return 0, nil
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE runtimes
+		    SET host_id = $1,
+		        status = 'deleting',
+		        connection_status = 'offline',
+		        updated_at = NOW()
+		  WHERE host_id IS NULL
+		    AND blob_host_id IS NULL
+		    AND deleted_at IS NULL
+		    AND desired_state = 'deleted'
+		    AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL
+		    AND LOWER(COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk')) = $2`,
+		hostID,
+		blobStoreKind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	return int(rowsAffected), err
 }
 
 func (s *Store) ResolveSessionRelayTarget(ctx context.Context, sessionID, relayToken string) (SessionRelayTarget, error) {
@@ -3301,14 +3720,87 @@ func (s *Store) IssueSessionRelayTokenWithCapability(ctx context.Context, accoun
 	return session, nil
 }
 
-func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceID, sessionID string) (Runtime, error) {
+func (s *Store) RequireSessionRuntime(ctx context.Context, accountID, deviceID, sessionID, runtimeID string) error {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	sessionID = strings.TrimSpace(sessionID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	if accountID == "" || deviceID == "" || sessionID == "" || runtimeID == "" {
+		return ErrSessionNotFound
+	}
+
+	var found string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT s.runtime_id
+		   FROM sessions s
+		   JOIN runtimes r ON r.id = s.runtime_id
+		   JOIN devices d ON d.id = s.device_id AND d.account_id = r.account_id
+		  WHERE s.id = $1
+		    AND s.runtime_id = $2
+		    AND s.device_id = $3
+		    AND r.account_id = $4
+		    AND d.revoked_at IS NULL
+		    AND r.deleted_at IS NULL
+		    AND s.status IN ('pending', 'active')`,
+		sessionID,
+		runtimeID,
+		deviceID,
+		accountID,
+	).Scan(&found); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSessionNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) RequireSessionRuntimeWithCapability(ctx context.Context, accountID, capabilityID, sessionID, runtimeID string) error {
+	accountID = strings.TrimSpace(accountID)
+	capabilityID = strings.TrimSpace(capabilityID)
+	sessionID = strings.TrimSpace(sessionID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	if accountID == "" || capabilityID == "" || sessionID == "" || runtimeID == "" {
+		return ErrSessionNotFound
+	}
+
+	var found string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT s.runtime_id
+		   FROM sessions s
+		   JOIN runtimes r ON r.id = s.runtime_id
+		   JOIN runtime_capabilities c ON c.id = s.capability_id
+		  WHERE s.id = $1
+		    AND s.runtime_id = $2
+		    AND s.capability_id = $3
+		    AND r.account_id = $4
+		    AND c.runtime_id = r.id
+		    AND c.account_id = r.account_id
+		    AND c.revoked_at IS NULL
+		    AND c.expires_at > NOW()
+		    AND r.deleted_at IS NULL
+		    AND s.status IN ('pending', 'active')`,
+		sessionID,
+		runtimeID,
+		capabilityID,
+		accountID,
+	).Scan(&found); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSessionNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceID, sessionID, runtimeID string) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Runtime{}, err
 	}
 	defer tx.Rollback()
 
-	var runtimeID string
+	var matchedRuntimeID string
 	if err := tx.QueryRowContext(ctx,
 		`UPDATE sessions AS s
 		 SET status = 'closed',
@@ -3320,12 +3812,14 @@ func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceI
 		   AND s.device_id = $2
 		   AND r.id = s.runtime_id
 		   AND r.account_id = $3
+		   AND s.runtime_id = $4
 		   AND s.status IN ('pending', 'active')
 		 RETURNING s.runtime_id`,
 		sessionID,
 		deviceID,
 		accountID,
-	).Scan(&runtimeID); err != nil {
+		runtimeID,
+	).Scan(&matchedRuntimeID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrSessionNotFound
 		}
@@ -3340,6 +3834,10 @@ func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceI
 		         ELSE 'stopping'
 		     END,
 		     desired_state = 'stopped',
+		     operation_generation = CASE
+		         WHEN desired_state = 'stopped' THEN operation_generation
+		         ELSE operation_generation + 1
+		     END,
 		     connection_status = CASE
 		         WHEN host_id IS NULL THEN 'offline'
 		         ELSE 'disconnecting'
@@ -3353,7 +3851,7 @@ func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceI
 		   AND desired_state <> 'deleted'
 		 RETURNING %s`, runtimeColumns),
 		accountID,
-		runtimeID,
+		matchedRuntimeID,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
@@ -3373,14 +3871,14 @@ func (s *Store) EndSessionAndStopRuntime(ctx context.Context, accountID, deviceI
 	return runtime, nil
 }
 
-func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, accountID, capabilityID, sessionID string) (Runtime, error) {
+func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, accountID, capabilityID, sessionID, runtimeID string) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Runtime{}, err
 	}
 	defer tx.Rollback()
 
-	var runtimeID string
+	var matchedRuntimeID string
 	if err := tx.QueryRowContext(ctx,
 		`UPDATE sessions AS s
 		 SET status = 'closed',
@@ -3392,6 +3890,7 @@ func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, acco
 		   AND s.capability_id = $2
 		   AND r.id = s.runtime_id
 		   AND r.account_id = $3
+		   AND s.runtime_id = $4
 		   AND c.id = s.capability_id
 		   AND c.runtime_id = r.id
 		   AND c.account_id = r.account_id
@@ -3402,7 +3901,8 @@ func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, acco
 		sessionID,
 		capabilityID,
 		accountID,
-	).Scan(&runtimeID); err != nil {
+		runtimeID,
+	).Scan(&matchedRuntimeID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrSessionNotFound
 		}
@@ -3417,6 +3917,10 @@ func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, acco
 		         ELSE 'stopping'
 		     END,
 		     desired_state = 'stopped',
+		     operation_generation = CASE
+		         WHEN desired_state = 'stopped' THEN operation_generation
+		         ELSE operation_generation + 1
+		     END,
 		     connection_status = CASE
 		         WHEN host_id IS NULL THEN 'offline'
 		         ELSE 'disconnecting'
@@ -3430,7 +3934,7 @@ func (s *Store) EndSessionAndStopRuntimeWithCapability(ctx context.Context, acco
 		   AND desired_state <> 'deleted'
 		 RETURNING %s`, runtimeColumns),
 		accountID,
-		runtimeID,
+		matchedRuntimeID,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
@@ -3648,6 +4152,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		 updated AS (
 		     UPDATE runtimes r
 		        SET desired_state = 'stopped',
+		            operation_generation = r.operation_generation + 1,
 		            connection_status = 'offline',
 		            started_at = NULL,
 		            last_error = NULL,
@@ -3891,6 +4396,9 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 	if observation.HostID == "" {
 		return errors.New("host id is required")
 	}
+	if observation.OperationGeneration <= 0 {
+		return ErrRuntimeObservationStale
+	}
 
 	if observation.Deleted {
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -3918,15 +4426,19 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 			     last_error = $3,
 			     deleted_at = NOW(),
 			     updated_at = NOW()
-			 WHERE id = $1 AND host_id = $2 AND deleted_at IS NULL
+			 WHERE id = $1
+			   AND host_id = $2
+			   AND operation_generation = $4
+			   AND deleted_at IS NULL
 			 RETURNING account_id`,
 			runtimeID,
 			observation.HostID,
 			nullString(observation.LastError),
+			observation.OperationGeneration,
 		).Scan(&accountID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return nil
+				return ErrRuntimeObservationStale
 			}
 			return err
 		}
@@ -3936,12 +4448,16 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		return tx.Commit()
 	}
 
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`UPDATE runtimes
 		 SET status = $3,
 		     connection_status = $4,
 		     host_id = CASE
-		         WHEN desired_state <> 'deleted' AND ($3 IN ('stopped', 'provisioned') OR ($3 = 'error' AND desired_state <> 'running')) THEN NULL
+		         WHEN desired_state <> 'deleted'
+		          AND (
+		              $3 = 'provisioned'
+		              OR ($16 AND desired_state <> 'running' AND $3 IN ('stopped', 'error'))
+		          ) THEN NULL
 		         ELSE host_id
 		     END,
 		     container_name = $5,
@@ -3967,8 +4483,16 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		         ELSE started_at
 		     END,
 		     load_average = COALESCE($15, load_average),
+		     cleanup_pending = CASE
+		         WHEN $16 THEN FALSE
+		         WHEN $3 = 'stopped' AND desired_state <> 'running' THEN TRUE
+		         ELSE cleanup_pending
+		     END,
 		     updated_at = NOW()
-		 WHERE id = $1 AND host_id = $2 AND deleted_at IS NULL`,
+		 WHERE id = $1
+		   AND host_id = $2
+		   AND operation_generation = $17
+		   AND deleted_at IS NULL`,
 		runtimeID,
 		observation.HostID,
 		defaultString(observation.Status, "stopped"),
@@ -3984,8 +4508,20 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		nullString(observation.BlobStoreKind),
 		nullString(observation.BlobManifestJSON),
 		nullFloat64(observation.LoadAverage),
+		observation.CleanupComplete,
+		observation.OperationGeneration,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrRuntimeObservationStale
+	}
+	return nil
 }
 
 func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (Session, error) {
@@ -4026,6 +4562,19 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO sessions (id, runtime_id, device_id, status, relay_token, expires_at, last_client_heartbeat_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		 ON CONFLICT (runtime_id) WHERE status IN ('pending', 'active') DO UPDATE
+		 SET device_id = EXCLUDED.device_id,
+		     capability_id = NULL,
+		     status = CASE WHEN sessions.expires_at <= NOW() THEN EXCLUDED.status ELSE sessions.status END,
+		     relay_token = EXCLUDED.relay_token,
+		     relay_token_consumed_at = NULL,
+		     expires_at = EXCLUDED.expires_at,
+		     created_at = CASE WHEN sessions.expires_at <= NOW() THEN NOW() ELSE sessions.created_at END,
+		     last_client_heartbeat_at = NOW(),
+		     ended_at = NULL,
+		     end_reason = NULL,
+		     updated_at = NOW()
+		 WHERE sessions.expires_at <= NOW()
 		 RETURNING id, runtime_id, device_id, status, created_at, updated_at,
 		           last_client_heartbeat_at, ended_at, end_reason, expires_at`,
 		sessionID, runtimeID, deviceID, "pending", relayTokenHash, expiresAt,
@@ -4041,9 +4590,15 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 		&session.EndReason,
 		&session.ExpiresAt,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionAlreadyActive
+	}
+	if err != nil {
+		return Session{}, err
+	}
 	session.RelayToken = relayToken
 
-	return session, err
+	return session, nil
 }
 
 func (s *Store) CreateSessionWithCapability(ctx context.Context, accountID, capabilityID, runtimeID string) (Session, error) {
@@ -4095,6 +4650,19 @@ func (s *Store) CreateSessionWithCapability(ctx context.Context, accountID, capa
 	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO sessions (id, runtime_id, device_id, capability_id, status, relay_token, expires_at, last_client_heartbeat_at)
 		 VALUES ($1, $2, NULL, $3, $4, $5, $6, NOW())
+		 ON CONFLICT (runtime_id) WHERE status IN ('pending', 'active') DO UPDATE
+		 SET device_id = NULL,
+		     capability_id = EXCLUDED.capability_id,
+		     status = CASE WHEN sessions.expires_at <= NOW() THEN EXCLUDED.status ELSE sessions.status END,
+		     relay_token = EXCLUDED.relay_token,
+		     relay_token_consumed_at = NULL,
+		     expires_at = EXCLUDED.expires_at,
+		     created_at = CASE WHEN sessions.expires_at <= NOW() THEN NOW() ELSE sessions.created_at END,
+		     last_client_heartbeat_at = NOW(),
+		     ended_at = NULL,
+		     end_reason = NULL,
+		     updated_at = NOW()
+		 WHERE sessions.expires_at <= NOW()
 		 RETURNING id, runtime_id, COALESCE(device_id::text, ''), capability_id, status, created_at, updated_at,
 		           last_client_heartbeat_at, ended_at, end_reason, expires_at`,
 		sessionID, runtimeID, capabilityID, "pending", relayTokenHash, expiresAt,
@@ -4111,10 +4679,49 @@ func (s *Store) CreateSessionWithCapability(ctx context.Context, accountID, capa
 		&session.EndReason,
 		&session.ExpiresAt,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionAlreadyActive
+	}
+	if err != nil {
+		return Session{}, err
+	}
 	session.RelayToken = relayToken
 	session.CapabilityID = &sessionCapabilityID
 
-	return session, err
+	return session, nil
+}
+
+// AbortPendingSession closes only the exact, still-pending reservation created
+// for the supplied one-time relay token. The token predicate prevents one
+// concurrent retry from aborting a newer reservation for the same session.
+func (s *Store) AbortPendingSession(ctx context.Context, sessionID, relayToken, reason string) (bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	relayToken = strings.TrimSpace(relayToken)
+	if sessionID == "" || relayToken == "" {
+		return false, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "session setup aborted"
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE sessions
+		 SET status = 'closed',
+		     updated_at = NOW(),
+		     ended_at = NOW(),
+		     end_reason = $3
+		 WHERE id = $1
+		   AND relay_token = $2
+		   AND status = 'pending'`,
+		sessionID,
+		hashRelayToken(relayToken),
+		reason,
+	)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	return rowsAffected > 0, err
 }
 
 func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (string, error) {
@@ -4597,6 +5204,8 @@ func scanRuntimeDest(runtime *Runtime) []any {
 		&runtime.ADBPort,
 		&runtime.ViewerPort,
 		&runtime.WipeRequested,
+		&runtime.CleanupPending,
+		&runtime.OperationGeneration,
 		&runtime.LastError,
 		&runtime.DeletedAt,
 		&runtime.CreatedAt,
@@ -4660,28 +5269,31 @@ func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error)
 }
 
 func normalizeAccountStorageInput(input UpdateAccountStorageInput) (UpdateAccountStorageInput, error) {
+	if strings.EqualFold(strings.TrimSpace(input.FundingModel), "user-funded") {
+		return UpdateAccountStorageInput{}, errors.New("user-funded storage configuration is disabled")
+	}
 	input.Provider = normalizeChoice(input.Provider, "local-disk", "local-disk", "sia-renterd")
-	input.FundingModel = normalizeChoice(input.FundingModel, "operator", "operator", "operator-pooled", "user-funded")
+	input.FundingModel = normalizeChoice(input.FundingModel, "operator", "operator", "operator-pooled")
 	input.Status = normalizeChoice(input.Status, "not_configured", "not_configured", "configured", "funding_required", "syncing", "contracts_required", "ready", "error")
 
-	if input.Provider == "sia-renterd" && input.FundingModel != "user-funded" && input.FundingModel != "operator-pooled" {
-		return UpdateAccountStorageInput{}, errors.New("sia-renterd storage requires user-funded or operator-pooled mode")
+	if input.Provider == "sia-renterd" && input.FundingModel != "operator-pooled" {
+		return UpdateAccountStorageInput{}, errors.New("sia-renterd storage requires operator-pooled mode")
 	}
-	if (input.FundingModel == "user-funded" || input.FundingModel == "operator-pooled") && input.Provider != "sia-renterd" {
-		return UpdateAccountStorageInput{}, errors.New("sia-renterd funding modes require sia-renterd provider")
+	if input.FundingModel == "operator-pooled" && input.Provider != "sia-renterd" {
+		return UpdateAccountStorageInput{}, errors.New("operator-pooled mode requires sia-renterd provider")
 	}
-	if input.WalletAddress != nil && len(strings.TrimSpace(*input.WalletAddress)) > 256 {
-		return UpdateAccountStorageInput{}, errors.New("wallet address is too long")
+	if input.WalletAddress != nil && strings.TrimSpace(*input.WalletAddress) != "" {
+		return UpdateAccountStorageInput{}, errors.New("account wallet configuration is disabled")
 	}
-	if input.EncryptedSeedBlob != nil && len(strings.TrimSpace(*input.EncryptedSeedBlob)) > 65536 {
-		return UpdateAccountStorageInput{}, errors.New("encrypted seed blob is too large")
+	if input.EncryptedSeedBlob != nil && strings.TrimSpace(*input.EncryptedSeedBlob) != "" {
+		return UpdateAccountStorageInput{}, errors.New("account storage seed configuration is disabled")
 	}
-	if input.SeedEncryptionHint != nil && len(strings.TrimSpace(*input.SeedEncryptionHint)) > 256 {
-		return UpdateAccountStorageInput{}, errors.New("seed encryption hint is too long")
+	if input.SeedEncryptionHint != nil && strings.TrimSpace(*input.SeedEncryptionHint) != "" {
+		return UpdateAccountStorageInput{}, errors.New("account storage seed configuration is disabled")
 	}
-	if input.Provider == "sia-renterd" && input.Status == "ready" && (input.WalletAddress == nil || strings.TrimSpace(*input.WalletAddress) == "") {
-		return UpdateAccountStorageInput{}, errors.New("ready sia-renterd storage requires a wallet address")
-	}
+	input.WalletAddress = nil
+	input.EncryptedSeedBlob = nil
+	input.SeedEncryptionHint = nil
 	return input, nil
 }
 
@@ -4801,6 +5413,18 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return trimmed
+}
+
+func truncateRunes(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func nullString(value *string) sql.NullString {

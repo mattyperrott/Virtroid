@@ -2,10 +2,13 @@ package appcatalog
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -30,12 +33,17 @@ var recommendedPackages = map[string]struct{}{
 
 type Store interface {
 	UpsertAppCatalogEntries(context.Context, []store.AppCatalogEntry) (int, error)
+	DisableAppCatalogSource(context.Context, string) (int, error)
 }
 
-func SyncFDroid(ctx context.Context, st Store, indexURL string, maxApps int) (int, error) {
-	indexURL = strings.TrimSpace(indexURL)
-	if indexURL == "" {
-		indexURL = defaultIndexURL
+func SyncFDroid(ctx context.Context, st Store, indexURL, expectedSHA256 string, maxApps int) (int, error) {
+	pinnedSHA256, err := normalizeSHA256(expectedSHA256)
+	if err != nil {
+		return 0, fmt.Errorf("fdroid index pin: %w", err)
+	}
+	indexURL, err = validateIndexURL(indexURL)
+	if err != nil {
+		return 0, err
 	}
 	if maxApps <= 0 {
 		maxApps = 1500
@@ -46,8 +54,14 @@ func SyncFDroid(ctx context.Context, st Store, indexURL string, maxApps int) (in
 		return 0, err
 	}
 	req.Header.Set("User-Agent", "virtroid-app-catalog/0.1")
+	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := &http.Client{
+		Timeout: 90 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -56,15 +70,87 @@ func SyncFDroid(ctx context.Context, st Store, indexURL string, maxApps int) (in
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return 0, fmt.Errorf("fdroid index returned HTTP %d", resp.StatusCode)
 	}
-
-	var index fdroidIndex
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, maxIndexBytes))
-	if err := decoder.Decode(&index); err != nil {
-		return 0, fmt.Errorf("decode fdroid index: %w", err)
+	if resp.ContentLength > maxIndexBytes {
+		return 0, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
 	}
 
+	index, err := decodePinnedIndex(resp.Body, pinnedSHA256)
+	if err != nil {
+		return 0, err
+	}
+
+	return replaceFDroidIndex(ctx, st, index, maxApps)
+}
+
+func replaceFDroidIndex(ctx context.Context, st Store, index fdroidIndex, maxApps int) (int, error) {
 	entries := buildEntries(index, maxApps)
+	if len(entries) == 0 {
+		_, err := st.DisableAppCatalogSource(ctx, "fdroid")
+		return 0, err
+	}
 	return st.UpsertAppCatalogEntries(ctx, entries)
+}
+
+func validateIndexURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = defaultIndexURL
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Scheme != "https" ||
+		!strings.EqualFold(parsed.Hostname(), "f-droid.org") || parsed.Port() != "" ||
+		parsed.User != nil || parsed.Path != "/repo/index-v2.json" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("fdroid index URL must be exactly %s", defaultIndexURL)
+	}
+	return defaultIndexURL, nil
+}
+
+func decodePinnedIndex(reader io.Reader, expectedSHA256 string) (fdroidIndex, error) {
+	expectedSHA256, err := normalizeSHA256(expectedSHA256)
+	if err != nil {
+		return fdroidIndex{}, fmt.Errorf("fdroid index pin: %w", err)
+	}
+
+	limited := &io.LimitedReader{R: reader, N: maxIndexBytes + 1}
+	hash := sha256.New()
+	decoder := json.NewDecoder(io.TeeReader(limited, hash))
+	var index fdroidIndex
+	if err := decoder.Decode(&index); err != nil {
+		return fdroidIndex{}, fmt.Errorf("decode fdroid index: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fdroidIndex{}, fmt.Errorf("decode fdroid index: multiple JSON values")
+		}
+		return fdroidIndex{}, fmt.Errorf("decode fdroid index trailing data: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, io.TeeReader(limited, hash)); err != nil {
+		return fdroidIndex{}, fmt.Errorf("read fdroid index: %w", err)
+	}
+	readBytes := maxIndexBytes + 1 - limited.N
+	if readBytes > maxIndexBytes {
+		return fdroidIndex{}, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
+	}
+	actualSHA256 := fmt.Sprintf("%x", hash.Sum(nil))
+	if actualSHA256 != expectedSHA256 {
+		return fdroidIndex{}, fmt.Errorf("fdroid index SHA-256 mismatch")
+	}
+	return index, nil
+}
+
+func normalizeSHA256(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) != sha256.Size*2 {
+		return "", fmt.Errorf("must contain exactly %d hexadecimal characters", sha256.Size*2)
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return "", fmt.Errorf("must be hexadecimal")
+		}
+	}
+	return value, nil
 }
 
 func buildEntries(index fdroidIndex, maxApps int) []store.AppCatalogEntry {
@@ -188,10 +274,32 @@ func repoURL(name string) string {
 	if name == "" {
 		return ""
 	}
-	if strings.HasPrefix(name, "http://") || strings.HasPrefix(name, "https://") {
-		return name
+	parsed, err := url.Parse(name)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
 	}
-	return repoBaseURL + "/" + strings.TrimPrefix(name, "/")
+	if parsed.IsAbs() {
+		if parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "f-droid.org") ||
+			parsed.Port() != "" || !strings.HasPrefix(parsed.Path, "/repo/") {
+			return ""
+		}
+		cleaned := path.Clean(parsed.Path)
+		if !strings.HasPrefix(cleaned, "/repo/") || cleaned == "/repo" {
+			return ""
+		}
+		parsed.Path = cleaned
+		parsed.RawPath = ""
+		return parsed.String()
+	}
+	if parsed.Host != "" || strings.HasPrefix(name, "//") {
+		return ""
+	}
+	cleaned := path.Clean(strings.TrimPrefix(parsed.Path, "/"))
+	if cleaned == "." || cleaned == "" || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return ""
+	}
+	result := &url.URL{Scheme: "https", Host: "f-droid.org", Path: "/repo/" + cleaned}
+	return result.String()
 }
 
 func recommended(packageName string) bool {

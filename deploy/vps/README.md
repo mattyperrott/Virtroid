@@ -18,20 +18,61 @@ The default layout is:
 
 ## Fresh Server
 
-Create a non-root sudo user, copy the project to `/opt/virtroid`, then run:
+Copy the project to `/opt/virtroid`, prepare the host, then create the dedicated
+deploy account with an SSH public key:
 
 ```bash
 cd /opt/virtroid/deploy/vps
 sudo bash ./prepare-redroid-host.sh
 ./generate-env.sh https://your-domain.example your-node-id
+sudo VIRTROID_AUTHORIZED_KEY_FILE=/tmp/virtroid-deploy.pub \
+  bash ./create-deploy-user.sh
 ```
+
+The default deploy account is `virtroid`. Its password is locked and SSH must
+use the installed public key. It can read the root-owned deployment environment
+and belongs to the Docker and certificate groups. It also has passwordless sudo
+for host administration. Docker control is already root-equivalent, so this
+account is an auditable administrative identity, not a security sandbox.
+
+Test a completely fresh key login and `sudo -n true` before enabling key-only
+SSH. Keep the original root session open until the second fresh login succeeds:
+
+```bash
+ssh -i ~/.ssh/virtroid-cp-ed25519 virtroid@your-server.example
+sudo -n true
+sudo /opt/virtroid/deploy/vps/enable-key-only-ssh.sh
+```
+
+The final helper disables direct root SSH and all password authentication. It
+refuses to run unless the deploy account has a valid authorized key and rolls
+back if SSH validation or reload fails.
+
+The generated production configuration keeps public account bootstrap disabled
+and allows control-plane callbacks only to the Compose `virtnoded` service.
+Do not enable `BOOTSTRAP_ENABLED` until a durable invite or billing gate exists;
+`deploy.sh` rejects that unsafe setting for this topology.
 
 Put a full PEM bundle at `/srv/virtroid/tls/virtroid.pem`. It must contain the
 certificate chain and private key in one file:
 
 ```bash
-sudo install -m 0644 fullchain-plus-private-key.pem /srv/virtroid/tls/virtroid.pem
+cert_gid="$(getent group virtroid-cert | cut -d: -f3)"
+sudo install -o root -g "${cert_gid}" -m 0640 \
+  fullchain-plus-private-key.pem /srv/virtroid/tls/virtroid.pem
 ```
+
+For Certbot-managed certificates, install the atomic deploy hook after running
+`prepare-redroid-host.sh` and generating `.env`:
+
+```bash
+sudo install -m 0755 ./certbot-deploy-hook.sh \
+  /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
+```
+
+The hook verifies the renewed certificate and matching private key, replaces
+the combined PEM atomically with mode `0640`, validates HAProxy, restarts only
+the edge container, and waits for HTTPS health.
 
 Then start the stack:
 
@@ -45,6 +86,13 @@ The helper starts:
 - `virtroidd`
 - `virtnoded`
 - `edge` via HAProxy by default
+
+Host preparation also enables Fail2ban, conservative SSH attempt/grace limits,
+bounded container logs, and a daily root-only local backup timer. Daily backups
+retain the seven most recent successful PostgreSQL dumps, `/srv/virtroid`
+archives, and deployment-environment copies under `/var/backups/virtroid`. They
+are rollback copies on the same host, not a substitute for encrypted off-host
+disaster recovery. Deleted account data can remain in those retained copies.
 
 ## Preinstalled Runtime Apps
 
@@ -136,6 +184,8 @@ For production, migrate Postgres before DNS cutover.
 ./deploy.sh logs virtnoded
 ./deploy.sh ps
 ./deploy.sh health
+sudo systemctl start virtroid-backup.service
+sudo systemctl status virtroid-backup.timer
 ```
 
 Optional profiles:

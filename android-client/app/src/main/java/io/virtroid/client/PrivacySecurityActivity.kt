@@ -90,18 +90,6 @@ class PrivacySecurityActivity : AppCompatActivity() {
                 renderTelemetry()
             }
         }
-        binding.autoDeleteMetadataSwitch.setOnCheckedChangeListener { _, checked ->
-            if (!bindingSettings) {
-                appSettings.autoDeleteMetadata = checked
-                appLogs.info("Auto-delete metadata set to $checked", "privacy")
-            }
-        }
-        binding.clearPostTransferSwitch.setOnCheckedChangeListener { _, checked ->
-            if (!bindingSettings) {
-                appSettings.clearPostTransferArtifacts = checked
-                appLogs.info("Clear post-transfer artifacts set to $checked", "privacy")
-            }
-        }
         binding.autoClearClipboardSwitch.setOnCheckedChangeListener { _, checked ->
             if (!bindingSettings) {
                 appSettings.autoClearClipboard = checked
@@ -130,8 +118,6 @@ class PrivacySecurityActivity : AppCompatActivity() {
             appLockStore.canUseBiometricUnlock()
         binding.requireUnlockResumeSwitch.isChecked = appSettings.requireUnlockOnResume
         binding.blockScreenCaptureSwitch.isChecked = appSettings.blockScreenCapture
-        binding.autoDeleteMetadataSwitch.isChecked = appSettings.autoDeleteMetadata
-        binding.clearPostTransferSwitch.isChecked = appSettings.clearPostTransferArtifacts
         binding.autoClearClipboardSwitch.isChecked = appSettings.autoClearClipboard
         binding.autoLockTimerValue.text = appSettings.autoLockLabel()
         binding.failedAttemptsValue.text = getString(

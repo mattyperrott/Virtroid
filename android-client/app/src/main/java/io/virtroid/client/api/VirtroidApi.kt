@@ -1,5 +1,6 @@
 package io.virtroid.client.api
 
+import android.content.Context
 import io.virtroid.client.BuildConfig
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.BlobKeyEnvelopeCrypto
@@ -13,9 +14,11 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.ResponseBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -210,6 +213,13 @@ class VirtroidApi(
     private val deviceIdentityStore: DeviceIdentityStore = DeviceIdentityStore(),
     private val runtimeCapabilityStore: RuntimeCapabilityStore = RuntimeCapabilityStore(),
 ) {
+    fun clearLocalRuntimeCapabilities(context: Context) {
+        RuntimeCapabilityStore.clearAllRegistered(context)
+        synchronized(registeredRuntimeCapabilities) {
+            registeredRuntimeCapabilities.clear()
+        }
+    }
+
     suspend fun registerIdentity(
         baseUrl: String,
         accountId: String,
@@ -226,32 +236,6 @@ class VirtroidApi(
             signedJsonRequest(
                 baseUrl = baseUrl,
                 pathAndQuery = "/api/v1/me/identity/register",
-                method = "POST",
-                accountId = accountId,
-                deviceId = deviceId,
-                body = requestBody,
-            ),
-        )
-    }
-
-    suspend fun changeIdentityPassword(
-        baseUrl: String,
-        accountId: String,
-        deviceId: String,
-        blobKeyVerifier: String,
-        currentBlobKeyVerifier: String,
-    ) = withContext(Dispatchers.IO) {
-        val requestBody = JSONObject()
-            .put("account_id", accountId)
-            .put("device_id", deviceId)
-            .put("blob_key_verifier", blobKeyVerifier)
-            .put("current_blob_key_verifier", currentBlobKeyVerifier)
-            .toString()
-
-        executeJson(
-            signedJsonRequest(
-                baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/identity/change-password",
                 method = "POST",
                 accountId = accountId,
                 deviceId = deviceId,
@@ -365,8 +349,7 @@ class VirtroidApi(
                 ),
             )
 
-            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
-            List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
+            payload.toAppCatalogEntries()
         }
 
     suspend fun listPublicAppCatalog(
@@ -386,8 +369,7 @@ class VirtroidApi(
                     .build(),
             )
 
-            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
-            List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
+            payload.toAppCatalogEntries()
         }
 
     suspend fun updateAppSelections(
@@ -416,8 +398,7 @@ class VirtroidApi(
                 ),
             )
 
-            val items = payload.optJSONArray("items") ?: return@withContext emptyList()
-            List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
+            payload.toAppCatalogEntries()
         }
 
     suspend fun getStorage(baseUrl: String, accountId: String, deviceId: String): AccountStorage =
@@ -434,42 +415,6 @@ class VirtroidApi(
 
             payload.toAccountStorage()
         }
-
-    suspend fun updateStorage(
-        baseUrl: String,
-        accountId: String,
-        deviceId: String,
-        provider: String,
-        fundingModel: String,
-        walletAddress: String?,
-        encryptedSeedBlob: String?,
-        seedEncryptionHint: String?,
-        status: String,
-    ): AccountStorage = withContext(Dispatchers.IO) {
-        val requestBody = JSONObject()
-            .put("account_id", accountId)
-            .put("device_id", deviceId)
-            .put("provider", provider)
-            .put("funding_model", fundingModel)
-            .put("wallet_address", walletAddress)
-            .put("encrypted_seed_blob", encryptedSeedBlob)
-            .put("seed_encryption_hint", seedEncryptionHint)
-            .put("status", status)
-            .toString()
-
-        val payload = executeJson(
-            signedJsonRequest(
-                baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/storage",
-                method = "PUT",
-                accountId = accountId,
-                deviceId = deviceId,
-                body = requestBody,
-            ),
-        )
-
-        payload.toAccountStorage()
-    }
 
     suspend fun createRuntime(
         baseUrl: String,
@@ -1054,7 +999,9 @@ class VirtroidApi(
 
     private fun executeJson(request: Request): JSONObject {
         okHttpClient.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+            val responseBody = response.body
+            val contentType = responseBody?.contentType()
+            val body = readBoundedResponseBody(responseBody)
             if (!response.isSuccessful) {
                 val errorPayload = parseError(body)
                 throw VirtroidApiException(
@@ -1063,15 +1010,52 @@ class VirtroidApi(
                     errorMessage = errorPayload.second,
                 )
             }
+            val isJson = contentType?.let {
+                it.type.equals("application", ignoreCase = true) &&
+                    (it.subtype.equals("json", ignoreCase = true) || it.subtype.endsWith("+json", ignoreCase = true))
+            } == true
+            if (!isJson) {
+                throw IOException("API response Content-Type must be application/json")
+            }
             return JSONObject(body)
         }
+    }
+
+    private fun readBoundedResponseBody(responseBody: ResponseBody?): String {
+        val body = responseBody ?: throw IOException("API response body is missing")
+        val declaredLength = body.contentLength()
+        if (declaredLength > MAX_JSON_RESPONSE_BYTES) {
+            throw IOException("API response exceeded the JSON size limit")
+        }
+        val initialSize = declaredLength
+            .takeIf { it in 1L..MAX_JSON_RESPONSE_BYTES }
+            ?.toInt()
+            ?: 8_192
+        val output = ByteArrayOutputStream(initialSize)
+        body.byteStream().use { input ->
+            val buffer = ByteArray(8_192)
+            var total = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) {
+                    break
+                }
+                total += read
+                if (total > MAX_JSON_RESPONSE_BYTES) {
+                    throw IOException("API response exceeded the JSON size limit")
+                }
+                output.write(buffer, 0, read)
+            }
+        }
+        return output.toString(Charsets.UTF_8.name())
     }
 
     private fun parseError(body: String): Pair<String?, String> {
         return runCatching {
             val payload = JSONObject(body)
-            payload.optString("code").ifBlank { null } to payload.optString("error").ifBlank { body }
-        }.getOrDefault(null to body)
+            payload.optString("code").ifBlank { null } to
+                payload.optString("error").ifBlank { body }.take(MAX_ERROR_MESSAGE_CHARS)
+        }.getOrDefault(null to body.take(MAX_ERROR_MESSAGE_CHARS))
     }
 
     private fun VirtroidApiException.isRuntimeCapabilityInvalid(): Boolean {
@@ -1206,6 +1190,14 @@ class VirtroidApi(
         )
     }
 
+    private fun JSONObject.toAppCatalogEntries(): List<AppCatalogEntry> {
+        val items = optJSONArray("items") ?: return emptyList()
+        if (items.length() > MAX_CATALOG_ITEMS) {
+            throw IOException("App catalog exceeded the item limit")
+        }
+        return List(items.length()) { index -> items.getJSONObject(index).toAppCatalogEntry() }
+    }
+
     private fun JSONObject.parsePersona(): JSONObject? {
         val raw = optString("active_persona_json").ifBlank { return null }
         return runCatching { JSONObject(raw) }.getOrNull()
@@ -1213,6 +1205,9 @@ class VirtroidApi(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        const val MAX_JSON_RESPONSE_BYTES = 2L * 1024L * 1024L
+        const val MAX_ERROR_MESSAGE_CHARS = 2_048
+        const val MAX_CATALOG_ITEMS = 250
         val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
         val registeredRuntimeCapabilities = mutableSetOf<String>()
     }

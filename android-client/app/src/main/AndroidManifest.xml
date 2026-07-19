@@ -29,12 +29,6 @@
             android:name=".SystemLogsActivity"
             android:exported="false" />
         <activity
-            android:name=".UsdtPaymentActivity"
-            android:exported="false" />
-        <activity
-            android:name=".FundStorageActivity"
-            android:exported="false" />
-        <activity
             android:name=".AccountIdentityActivity"
             android:exported="false" />
         <activity
