@@ -120,8 +120,6 @@ calculate_tree_digest() {
   find "${tree_root}" -xdev -mindepth 1 \
     ! -path "${tree_root}/.env" \
     ! -path "${tree_root}/release.env" \
-    ! -path "${tree_root}/restic.env" \
-    ! -path "${tree_root}/restic-password" \
     -print0 > "${listing_file}"
   if [ ! -s "${listing_file}" ]; then
     find "${listing_file}" -delete
@@ -173,54 +171,69 @@ read_state_value() {
 
 runtime_sources=(
   virtroid-backup.sh
-  virtroid-offsite-backup.sh
   derive-node-fingerprint.sh
   virtroid-binderfs-setup.sh
   create-deploy-user.sh
   enable-key-only-ssh.sh
   install-reviewed-deployment-tree.sh
   apply-local-release.sh
+  release-on-vps.sh
   sshd-key-only.conf
-  restic.env.example
   redroid-binderfs.service
   virtroid-backup.service
   virtroid-backup.timer
-  virtroid-offsite-backup.service
-  virtroid-offsite-backup.timer
-  virtroid-offsite-restore-check.service
-  virtroid-offsite-restore-check.timer
   fail2ban-virtroid.conf
   sshd-virtroid-hardening.conf
   certbot-deploy-hook.sh
 )
 runtime_destinations=(
   /usr/local/sbin/virtroid-backup.sh
-  /usr/local/sbin/virtroid-offsite-backup.sh
   /usr/local/sbin/virtroid-derive-node-fingerprint
   /usr/local/sbin/virtroid-binderfs-setup.sh
   /usr/local/sbin/virtroid-create-deploy-user.sh
   /usr/local/sbin/virtroid-enable-key-only-ssh.sh
   /usr/local/sbin/virtroid-install-reviewed-deployment-tree
   /usr/local/sbin/virtroid-apply-local-release
+  /usr/local/sbin/virtroid-release-on-vps
   /usr/local/share/virtroid/sshd-key-only.conf
-  /usr/local/share/virtroid/restic.env.example
   /etc/systemd/system/redroid-binderfs.service
   /etc/systemd/system/virtroid-backup.service
   /etc/systemd/system/virtroid-backup.timer
-  /etc/systemd/system/virtroid-offsite-backup.service
-  /etc/systemd/system/virtroid-offsite-backup.timer
-  /etc/systemd/system/virtroid-offsite-restore-check.service
-  /etc/systemd/system/virtroid-offsite-restore-check.timer
   /etc/fail2ban/jail.d/virtroid.conf
   /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
   /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
 )
 runtime_modes=(
   0755 0755 0755 0755 0755 0755 0755 0755
-  0644 0644
-  0644 0644 0644 0644 0644 0644 0644 0644 0644
+  0644
+  0644 0644 0644 0644 0644
   0755
 )
+
+retired_runtime_destinations=(
+  /usr/local/sbin/virtroid-offsite-backup.sh
+  /usr/local/share/virtroid/restic.env.example
+  /etc/systemd/system/virtroid-offsite-backup.service
+  /etc/systemd/system/virtroid-offsite-backup.timer
+  /etc/systemd/system/virtroid-offsite-restore-check.service
+  /etc/systemd/system/virtroid-offsite-restore-check.timer
+)
+retired_units=(
+  virtroid-offsite-backup.service
+  virtroid-offsite-backup.timer
+  virtroid-offsite-restore-check.service
+  virtroid-offsite-restore-check.timer
+)
+managed_runtime_destinations=(
+  "${runtime_destinations[@]}"
+  "${retired_runtime_destinations[@]}"
+)
+
+if [ "${#runtime_sources[@]}" -ne "${#runtime_destinations[@]}" ] ||
+   [ "${#runtime_sources[@]}" -ne "${#runtime_modes[@]}" ]; then
+  echo "reviewed runtime installation arrays are inconsistent" >&2
+  exit 1
+fi
 
 required_tree_files=(
   .env.example README.md apply-local-release.sh build-local-release.sh
@@ -229,16 +242,13 @@ required_tree_files=(
   derive-node-fingerprint.sh docker-compose.yml enable-key-only-ssh.sh
   fail2ban-virtroid.conf generate-env.sh haproxy.cfg
   install-reviewed-deployment-tree.sh prepare-redroid-host.sh
-  redroid-binderfs.service release.env.example renterd.md restic.env.example
-  send-local-release.sh
+  release-on-vps.sh
+  redroid-binderfs.service release.env.example renterd.md
   sshd-key-only.conf sshd-virtroid-hardening.conf test-compose-config.sh
-  test-env-safety.sh test-node-fingerprint.sh test-offsite-backup.sh
+  test-env-safety.sh test-node-fingerprint.sh
   test-certbot-deploy-hook.sh
   virtroid-backup.service virtroid-backup.sh
   virtroid-backup.timer virtroid-binderfs-setup.sh
-  virtroid-offsite-backup.service virtroid-offsite-backup.sh
-  virtroid-offsite-backup.timer virtroid-offsite-restore-check.service
-  virtroid-offsite-restore-check.timer
 )
 
 atomic_install_file() {
@@ -253,12 +263,20 @@ atomic_install_file() {
 }
 
 install_runtime_copies() {
-  local index
+  local index retired_destination retired_unit
   for ((index = 0; index < ${#runtime_sources[@]}; index++)); do
     atomic_install_file \
       "${target_dir}/${runtime_sources[index]}" \
       "${runtime_destinations[index]}" \
       "${runtime_modes[index]}"
+  done
+  for retired_unit in "${retired_units[@]}"; do
+    systemctl disable --now "${retired_unit}" >/dev/null 2>&1 || true
+  done
+  for retired_destination in "${retired_runtime_destinations[@]}"; do
+    if [ -e "${retired_destination}" ] || [ -L "${retired_destination}" ]; then
+      find "${retired_destination}" -maxdepth 0 -delete
+    fi
   done
   systemctl daemon-reload
   sshd -t
@@ -268,7 +286,7 @@ install_runtime_copies() {
 }
 
 verify_runtime_copies() {
-  local index protected_unit
+  local index protected_unit retired_destination
   for ((index = 0; index < ${#runtime_sources[@]}; index++)); do
     cmp -s \
       "${target_dir}/${runtime_sources[index]}" \
@@ -277,13 +295,15 @@ verify_runtime_copies() {
       return 1
     }
   done
+  for retired_destination in "${retired_runtime_destinations[@]}"; do
+    if [ -e "${retired_destination}" ] || [ -L "${retired_destination}" ]; then
+      echo "retired runtime integration still exists: ${retired_destination}" >&2
+      return 1
+    fi
+  done
   for protected_unit in \
     virtroid-backup.service \
     virtroid-backup.timer \
-    virtroid-offsite-backup.service \
-    virtroid-offsite-backup.timer \
-    virtroid-offsite-restore-check.service \
-    virtroid-offsite-restore-check.timer \
     redroid-binderfs.service; do
     if [ -n "$(systemctl show --property=DropInPaths --value "${protected_unit}")" ]; then
       echo "${protected_unit} must not have unreviewed systemd drop-ins" >&2
@@ -295,8 +315,8 @@ verify_runtime_copies() {
 restore_runtime_copies() {
   local index destination relative backup_file temporary
   local restore_status=0
-  for ((index = 0; index < ${#runtime_destinations[@]}; index++)); do
-    destination="${runtime_destinations[index]}"
+  for ((index = 0; index < ${#managed_runtime_destinations[@]}; index++)); do
+    destination="${managed_runtime_destinations[index]}"
     relative="${destination#/}"
     backup_file="${backup_dir}/system/${relative}"
     if [ -f "${backup_file}" ] && [ ! -L "${backup_file}" ]; then
@@ -422,8 +442,6 @@ trap 'exit 143' TERM
 rsync -a --one-file-system --delete \
   --exclude=/.env \
   --exclude=/release.env \
-  --exclude=/restic.env \
-  --exclude=/restic-password \
   "${source_dir}/" "${snapshot_dir}/"
 snapshot_digest="$(calculate_tree_digest "${snapshot_dir}")"
 if [ "${snapshot_digest}" != "${expected_digest}" ]; then
@@ -520,8 +538,8 @@ if [ -f "${preinstall_state_file}" ] && [ ! -L "${preinstall_state_file}" ]; the
   preinstall_state_existed=1
 fi
 rsync -a --one-file-system "${target_dir}/" "${backup_dir}/vps/"
-for ((index = 0; index < ${#runtime_destinations[@]}; index++)); do
-  destination="${runtime_destinations[index]}"
+for ((index = 0; index < ${#managed_runtime_destinations[@]}; index++)); do
+  destination="${managed_runtime_destinations[index]}"
   if [ -f "${destination}" ] && [ ! -L "${destination}" ]; then
     install -d -o root -g root -m 0700 "${backup_dir}/system/$(dirname "${destination#/}")"
     cp -a "${destination}" "${backup_dir}/system/${destination#/}"

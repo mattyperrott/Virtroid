@@ -35,8 +35,6 @@ trap cleanup EXIT
 find "${tree_root}" -xdev -mindepth 1 \
   ! -path "${tree_root}/.env" \
   ! -path "${tree_root}/release.env" \
-  ! -path "${tree_root}/restic.env" \
-  ! -path "${tree_root}/restic-password" \
   -print0 > "${listing_file}"
 [ -s "${listing_file}" ] || {
   echo "deployment tree contains no distributable paths" >&2

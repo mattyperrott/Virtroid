@@ -6,12 +6,12 @@ Virtroid currently has no supported public production release. Do not use the
 current system for hostile multi-tenancy, high-threat anonymity, or
 irreplaceable data.
 
-The last verified VPS snapshot on 2026-07-19 used schema `2026071902`. Security
-controls present only in the schema-`2026071903` working tree, including the
-approved node/operator registry, direct local release path, and Restic
-automation, must not be represented as live until the exact local commit is
-built, deployed, and checked. No independent off-host repository or clean-host
-restore drill has yet been recorded.
+The verified VPS deployment on 2026-07-19 uses schema `2026071903`, the approved
+node/operator registry, and the immutable VPS-local release path. Production
+source, builds, release bundles, secrets, rollback state, and backups remain on
+the VPS; GitHub has no production credential or deployment authority. No
+independent backup exists by explicit isolation choice, so total VPS or
+provider loss remains an accepted availability risk.
 
 ## Reporting a vulnerability
 
@@ -32,7 +32,7 @@ encryption protects stored data but does not prevent the active node from
 seeing live plaintext or usable keys. See the current remediation status for
 the authoritative list of controls and unresolved architecture work.
 
-Local release checksums and exact Docker image IDs concern build/deployment
+VPS-local release checksums and exact Docker image IDs concern build/deployment
 integrity only. Virtroid does not yet implement confidential-VM runtime
 attestation, measured key release, client-approved leases, or an account DEK
 wrapped to authorized devices. The remaining control-plane-to-node callback

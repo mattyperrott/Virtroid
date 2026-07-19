@@ -262,21 +262,17 @@ if grep -q '"${partial_dir}/deploy.env".*SHA256SUMS' "${script_dir}/virtroid-bac
   echo "backup checksum manifest contains temporary absolute paths" >&2
   exit 1
 fi
-grep -q '^OnCalendar=\*-\*-\* 04:00:00 UTC$' "${script_dir}/virtroid-offsite-backup.timer"
-grep -q '^OnCalendar=Sun \*-\*-\* 06:00:00 UTC$' "${script_dir}/virtroid-offsite-restore-check.timer"
-grep -q 'VIRTROID_RESTIC_ENV_FILE=/etc/virtroid/restic.env' "${script_dir}/virtroid-offsite-backup.service"
-grep -q 'ProtectSystem=strict' "${script_dir}/virtroid-offsite-backup.service"
-grep -q 'RESTIC_PASSWORD_COMMAND is not allowed' "${script_dir}/virtroid-offsite-backup.sh"
-grep -q 'supported remote backend' "${script_dir}/virtroid-offsite-backup.sh"
-grep -q -- '--group-by host,tags' "${script_dir}/virtroid-offsite-backup.sh"
-grep -q 'restic.env.example' "${script_dir}/prepare-redroid-host.sh"
-grep -q 'virtroid-offsite-restore-check.timer' "${script_dir}/prepare-redroid-host.sh"
-if grep -Eq '(^|[[:space:]])(eval|source)[[:space:]]' "${script_dir}/virtroid-offsite-backup.sh"; then
-  echo "off-site backup script evaluates its configuration as shell code" >&2
-  exit 1
-fi
-if grep -q 'env -i' "${script_dir}/virtroid-offsite-backup.sh"; then
-  echo "off-site backup script exposes credentials as env command arguments" >&2
+grep -q '/usr/local/sbin/virtroid-release-on-vps' "${script_dir}/release-on-vps.sh"
+grep -q 'production VPS source repository must not have a Git remote' "${script_dir}/release-on-vps.sh"
+grep -q 'GitHub automation must not exist on the production VPS' "${script_dir}/release-on-vps.sh"
+if grep -RniE 'restic|offsite|off-site' "${script_dir}" \
+    --exclude=README.md \
+    --exclude=test-env-safety.sh \
+    --exclude=deployment-tree-digest.sh \
+    --exclude=build-local-release.sh \
+    --exclude=install-reviewed-deployment-tree.sh \
+    --exclude=virtroid-backup.sh >/dev/null; then
+  echo "external backup integration remains in the isolated VPS deployment tree" >&2
   exit 1
 fi
 if grep -q 'chmod 0644' "${script_dir}/certbot-deploy-hook.sh"; then
@@ -284,7 +280,6 @@ if grep -q 'chmod 0644' "${script_dir}/certbot-deploy-hook.sh"; then
   exit 1
 fi
 
-bash "${script_dir}/test-offsite-backup.sh" >/dev/null
 bash "${script_dir}/test-node-fingerprint.sh" >/dev/null
 
 echo "env safety checks passed"

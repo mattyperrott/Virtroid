@@ -1,12 +1,9 @@
 # Virtroid VPS Deploy
 
-> **Rollout status (2026-07-19):** The last verified VPS snapshot runs schema
-> `2026071902`. The schema-`2026071903` node registry, direct local release
-> path, and Restic units described below exist in the current working branch but
-> have not yet been promoted to that host. Do not run the schema boundary until
-> the exact local commit passes all release gates, a final local backup is
-> verified, and a real independent off-host upload plus clean-host restore drill
-> has succeeded.
+> **Rollout status (2026-07-19):** The VPS runs schema `2026071903` with the
+> approved production node registry. Production builds, release bundles,
+> rollback state, secrets, and backups remain on the VPS. Developer machines
+> and source-hosting services are not release runners or backup targets.
 
 This folder is intended to be deployable on a fresh Ubuntu VPS with:
 
@@ -18,21 +15,30 @@ This folder is intended to be deployable on a fresh Ubuntu VPS with:
 The default layout is:
 
 ```text
-/opt/virtroid                 project checkout
+/opt/virtroid-source          root-owned offline production source checkout
 /opt/virtroid/deploy/vps/.env deployment configuration
+/var/lib/virtroid-release-bundles root-only release image archives
 /srv/virtroid                 runtime data, assets, TLS bundle
 /srv/virtroid/tls/virtroid.pem HAProxy certificate bundle
 ```
 
 ## Fresh Server
 
-Copy the project to `/opt/virtroid`, prepare the host, then create the dedicated
-deploy account with an SSH public key:
+Install a reviewed source snapshot at `/opt/virtroid-source`, remove `.github`,
+initialize it as a root-owned offline Git repository with no remote, and copy
+only its deployment tree to the runtime location. Then prepare the host and
+create the dedicated administrative account with an SSH public key:
 
 ```bash
+sudo test -z "$(sudo git -C /opt/virtroid-source remote)"
+sudo test ! -e /opt/virtroid-source/.github
+sudo install -d -o root -g root -m 0755 /opt/virtroid/deploy
+sudo cp -a /opt/virtroid-source/deploy/vps /opt/virtroid/deploy/vps
+sudo chown -R root:root /opt/virtroid /opt/virtroid-source
+sudo chmod -R go-w /opt/virtroid /opt/virtroid-source
 cd /opt/virtroid/deploy/vps
 sudo bash ./prepare-redroid-host.sh
-./generate-env.sh https://your-domain.example your-node-id
+sudo ./generate-env.sh https://your-domain.example your-node-id
 sudo VIRTROID_AUTHORIZED_KEY_FILE=/tmp/virtroid-deploy.pub \
   bash ./create-deploy-user.sh
 ```
@@ -65,53 +71,51 @@ that separate path is replaced with mutually authenticated transport.
 Do not enable `BOOTSTRAP_ENABLED` until a durable invite or billing gate exists;
 `deploy.sh` rejects that unsafe setting for this topology.
 
-## Direct local releases
+## VPS-local releases
 
-The source remote is passive safekeeping only. It has no VPS key, deployment
-credential, image-registry role, approval environment, or place in the release
-path. Production releases are built on the trusted operator workstation and
-sent directly to the human `virtroid` account over its pinned, key-only SSH
-connection. The VPS never checks out or builds source.
+The production source checkout is `/opt/virtroid-source`. It is root-owned,
+offline, and has no Git remote or `.github` directory. Git is used only as a
+local content/version ledger on the VPS. GitHub may hold a development copy for
+safekeeping, but the VPS never fetches from it and GitHub has no credential or
+release role.
 
-The workstation helper requires a clean local commit, builds one
-`linux/amd64` image, binds its labels to that commit, schema version, and the
-complete reviewed deployment-tree digest, then writes the exact Docker image ID
-and portable checksums into a private bundle:
-
-```bash
-./deploy/vps/build-local-release.sh
-```
-
-Before the first release, derive the node fingerprint through the existing
-administrative connection without printing the private key. Record the
-`fingerprint_sha256` independently; future releases must match it exactly:
+Only reviewed source code enters the offline checkout. Production secrets,
+database dumps, Docker image archives, and release state never leave the VPS.
+After updating the source snapshot, make a local VPS commit with no remote:
 
 ```bash
-ssh virtroid@your-server.example \
-  'sudo /usr/local/sbin/virtroid-derive-node-fingerprint'
+sudo git -C /opt/virtroid-source status --short
+sudo git -C /opt/virtroid-source remote   # must print nothing
+sudo git -C /opt/virtroid-source add --all
+sudo git -C /opt/virtroid-source commit -m 'Reviewed production source update'
+sudo chown -R root:root /opt/virtroid-source
+sudo chmod -R go-w /opt/virtroid-source
 ```
 
-Send the resulting bundle from the workstation. Use the exact bundle directory
-printed by the build command and the already verified administrative key:
+The first setup records the existing node-key fingerprint in a root-only VPS
+file. The private key is never printed or copied:
 
 ```bash
-VIRTROID_EXPECTED_NODE_FINGERPRINT=REPLACE_WITH_64_HEX \
-VIRTROID_SSH_IDENTITY="$HOME/.ssh/virtroid-cp-ed25519" \
-./deploy/vps/send-local-release.sh \
-  ./dist/releases/REPLACE_WITH_40_HEX_COMMIT_SHA \
-  virtroid@your-server.example
+sudo /usr/local/sbin/virtroid-derive-node-fingerprint |
+  awk -F= '$1 == "fingerprint_sha256" {print $2}' |
+  sudo tee /var/lib/virtroid-deploy/node-fingerprint.sha256 >/dev/null
+sudo chown root:root /var/lib/virtroid-deploy/node-fingerprint.sha256
+sudo chmod 0400 /var/lib/virtroid-deploy/node-fingerprint.sha256
 ```
 
-The transfer helper verifies the bundle locally, uses strict host-key checking,
-installs the reviewed tree atomically, and invokes the preinstalled root helper.
-The root helper snapshots the unprivileged staging files once, verifies their
-checksums, exact local image ID, architecture, labels, schema, and tree digest,
-and takes the maintenance lock shared by releases and backups. It then makes a
-verified pre-deploy backup, imports the image, migrates the control plane,
-approves only the independently recorded node key, waits for a fresh matching
-heartbeat, and opens ingress last. An interrupted or uncertain cutover leaves
-ingress stopped for explicit operator recovery. It does not automatically
-restart an older image across a database-schema boundary.
+Build and release entirely on the VPS:
+
+```bash
+sudo /usr/local/sbin/virtroid-release-on-vps
+```
+
+The helper refuses a configured Git remote, `.github` content, non-root source
+ownership, a dirty checkout, or group/world-writable source. It snapshots the
+source, builds the `linux/amd64` backend image on the VPS, creates a root-only
+checksummed bundle under `/var/lib/virtroid-release-bundles`, installs the
+reviewed deployment tree atomically, takes a consistent local backup, applies
+the schema, verifies the stored node fingerprint and fresh heartbeat, and opens
+HTTPS ingress last. An interrupted or uncertain cutover leaves ingress stopped.
 
 The image tag is only a readable local name. The bundle records both the
 portable config ID and manifest digest because Docker engines expose different
@@ -125,11 +129,9 @@ They use the same maintenance lock, accept only the installed root-owned tree,
 verify the active local image ID, and cannot race a backup. Normal releases use
 the bundle helpers above.
 
-The first node-registry release remains a supervised schema boundary from live
-schema `2026071902` to branch schema `2026071903`. The old pre-registry image is
-not a valid automatic rollback after that migration. Keep the verified
-schema-v2 recovery set until schema-v3 data and recovery have been independently
-checked.
+The node-registry migration to schema `2026071903` has completed. Retained VPS
+backups remain the recovery boundary; an older schema image must never be
+started automatically against a newer database.
 
 Put a full PEM bundle at `/srv/virtroid/tls/virtroid.pem`. It must contain the
 certificate chain and private key in one file:
@@ -167,10 +169,8 @@ control plane, node, and renterd writers while capturing a PostgreSQL dump,
 current/previous release state. The first legacy-to-immutable backup also saves
 the exact immutable Docker image IDs used by each backend container. Portable
 checksums cover the complete set, and the seven newest successful sets are kept
-under `/var/backups/virtroid`. They are rollback copies on the same host. The
-optional Restic layer described below encrypts and copies the newest verified
-set to independent storage. Deleted account data can remain in either retained
-backup tier.
+under `/var/backups/virtroid`. They are rollback copies on the same host and
+never leave it. Deleted account data can remain in retained backups.
 
 ## Operator revocation and reactivation
 
@@ -224,121 +224,13 @@ sudo docker exec virtroid-postgres psql -U virtroid -d virtroid -x -c \
     LIMIT 50;'
 ```
 
-## Encrypted Off-site Backups
+## VPS-local backups
 
-The scripts and units in this section are tooling, not evidence that off-site
-recovery exists. As of the 2026-07-19 live inventory, the VPS had no Restic
-binary, remote repository credentials, completed off-host upload, or clean-host
-restore record. Supplying an independent repository, escrowing its credentials,
-and recording a successful restore on a clean host are release blockers.
-
-Host preparation installs Restic and the off-site backup units, but deliberately
-does not enable them until a remote repository and root-only credentials exist.
-The wrapper accepts Restic's HTTPS REST, S3, B2, Azure, Google Cloud Storage,
-OpenStack Swift, and SFTP remote repository schemes. Local repositories,
-indirection through general-purpose remotes, and explicit plaintext HTTP
-endpoints are rejected because they do not satisfy
-the off-host, encrypted-transport requirement.
-
-Create an independent bucket or repository first. Prefer object lock or an
-append-only Restic server and credentials that can write backups but cannot
-delete them. Generate a unique Restic repository password and keep an
-independent recovery copy outside this VPS; losing it makes the encrypted data
-unrecoverable:
-
-```bash
-sudo install -d -o root -g root -m 0700 /etc/virtroid
-openssl rand -base64 48 | sudo tee /etc/virtroid/restic-password >/dev/null
-sudo chown root:root /etc/virtroid/restic-password
-sudo chmod 0600 /etc/virtroid/restic-password
-sudo install -o root -g root -m 0600 \
-  /usr/local/share/virtroid/restic.env.example \
-  /etc/virtroid/restic.env
-sudoedit /etc/virtroid/restic.env
-```
-
-`restic.env` is parsed as literal `KEY=VALUE` records, not sourced as shell
-code. Do not add quotes, shell expansion, commands, proxy variables, or
-unsupported keys. It must remain a regular root-owned file with mode `0400` or
-`0600`. The separate `RESTIC_PASSWORD_FILE` must meet the same rules and contain
-exactly one non-empty line. Inline `RESTIC_PASSWORD` and executable
-`RESTIC_PASSWORD_COMMAND` values are rejected. Before Restic starts, the wrapper
-clears inherited exported variables and provides allowed credentials only in
-the child environment, not as command-line arguments.
-
-The example uses S3 variables. Other accepted credential sets are Restic REST
-username/password, B2 account ID/key, Azure account values, Google project and
-root-only application-credential file, or OpenStack `OS_*` credentials. The
-canonical backend syntax and variables are
-listed in the [Restic repository documentation](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html).
-SFTP must use noninteractive public-key authentication configured under
-`/etc/ssh`; the hardened service cannot read keys from a home directory.
-
-Initialize a new repository exactly once, or use `snapshots` to verify an
-existing one. Neither the repository password nor backend credentials belong in
-Git:
-
-```bash
-sudo /usr/local/sbin/virtroid-offsite-backup.sh init
-sudo /usr/local/sbin/virtroid-offsite-backup.sh snapshots
-```
-
-Run the first upload and restore check manually before enabling automation:
-
-```bash
-sudo systemctl start virtroid-backup.service
-sudo systemctl start virtroid-offsite-backup.service
-sudo systemctl start virtroid-offsite-restore-check.service
-sudo systemctl enable --now virtroid-offsite-backup.timer
-sudo systemctl enable --now virtroid-offsite-restore-check.timer
-systemctl list-timers 'virtroid-*backup*' 'virtroid-*restore*'
-```
-
-The daily off-site job refuses missing, corrupt, future-dated, or older-than-12-
-hour local sets. After uploading it runs a repository metadata check and reads a
-configurable percentage of encrypted pack data. The weekly check downloads the
-latest tagged snapshot into a private temporary directory, verifies the
-portable SHA-256 manifest, lists the `/srv` archive, validates the PostgreSQL
-dump end to end with `pg_restore --file=/dev/null`, and removes the restored
-files. A clean-host drill must still restore into and start an isolated
-PostgreSQL instance.
-
-Deletion is disabled by default so append-only or object-locked credentials can
-be used. If `VIRTROID_RESTIC_PRUNE_ENABLED=true` is intentionally selected, the
-configured daily/weekly/monthly/yearly retention policy is restricted to this
-host and the `virtroid-offsite` tag before pruning. Prefer server-side lifecycle
-rules or separate maintenance credentials when the storage provider supports
-them.
-
-Useful manual verification commands are:
-
-```bash
-sudo /usr/local/sbin/virtroid-offsite-backup.sh check
-sudo /usr/local/sbin/virtroid-offsite-backup.sh check-full
-sudo /usr/local/sbin/virtroid-offsite-backup.sh restore-check
-sudo journalctl -u virtroid-offsite-backup.service
-sudo journalctl -u virtroid-offsite-restore-check.service
-```
-
-`check-full` reads the whole remote repository and may have significant time and
-egress cost. The scheduled restore check proves that this host can decrypt and
-materialize a valid backup, but it is not the complete disaster-recovery drill.
-Periodically copy only the independently escrowed credentials to a clean host,
-restore there, start an isolated PostgreSQL instance, and record recovery time
-and application-level data checks. See the [Restic integrity-check guidance](https://restic.readthedocs.io/en/stable/045_working_with_repos.html#checking-integrity-and-consistency)
-and [restore procedure](https://restic.readthedocs.io/en/stable/050_restore.html).
-
-Before promoting schema `2026071903`, retain evidence for all of the following:
-
-- the exact clean local source SHA, backend Docker image ID, schema label,
-  release-bundle checksums, and reviewed deployment-tree digest;
-- a green final-image smoke/vulnerability result and all deployment shell tests
-  from that same commit;
-- an independently verified SSH host key and production node-key fingerprint;
-- a verified final schema-v2 local backup;
-- an encrypted upload to an actually independent repository; and
-- a clean-host restore that starts isolated PostgreSQL and checks application
-  data, not only archive readability.
+`virtroid-backup.timer` writes root-only checksummed recovery sets under
+`/var/backups/virtroid`. No Mac, GitHub service, or external storage
+participates. These backups intentionally do not survive total VPS or provider
+loss. That is an explicit limitation of the requested isolation boundary, not
+off-site disaster recovery.
 
 ## Preinstalled Runtime Apps
 
@@ -432,8 +324,6 @@ sudo ./deploy.sh ps
 sudo ./deploy.sh health
 sudo systemctl start virtroid-backup.service
 sudo systemctl status virtroid-backup.timer
-sudo systemctl status virtroid-offsite-backup.timer
-sudo systemctl status virtroid-offsite-restore-check.timer
 ```
 
 Optional profiles:

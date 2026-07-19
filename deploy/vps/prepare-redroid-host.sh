@@ -24,10 +24,10 @@ apt-get install -y \
   docker-compose-v2 \
   docker.io \
   fail2ban \
+  git \
   gnupg \
   openssl \
   python3 \
-  restic \
   rsync \
   "linux-modules-extra-${current_kernel}"
 
@@ -44,25 +44,20 @@ install -m 0644 "${script_dir}/redroid-binderfs.service" /etc/systemd/system/red
 install -m 0644 "${script_dir}/fail2ban-virtroid.conf" /etc/fail2ban/jail.d/virtroid.conf
 install -m 0644 "${script_dir}/sshd-virtroid-hardening.conf" /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
 install -m 0755 "${script_dir}/virtroid-backup.sh" /usr/local/sbin/virtroid-backup.sh
-install -m 0755 "${script_dir}/virtroid-offsite-backup.sh" /usr/local/sbin/virtroid-offsite-backup.sh
 install -m 0755 "${script_dir}/derive-node-fingerprint.sh" /usr/local/sbin/virtroid-derive-node-fingerprint
 install -m 0755 "${script_dir}/create-deploy-user.sh" /usr/local/sbin/virtroid-create-deploy-user.sh
 install -m 0755 "${script_dir}/enable-key-only-ssh.sh" /usr/local/sbin/virtroid-enable-key-only-ssh.sh
 install -m 0755 "${script_dir}/install-reviewed-deployment-tree.sh" /usr/local/sbin/virtroid-install-reviewed-deployment-tree
 install -m 0755 "${script_dir}/apply-local-release.sh" /usr/local/sbin/virtroid-apply-local-release
+install -m 0755 "${script_dir}/release-on-vps.sh" /usr/local/sbin/virtroid-release-on-vps
 install -d -o root -g root -m 0755 /usr/local/share/virtroid
-install -d -o root -g root -m 0700 /etc/virtroid
 install -d -o root -g root -m 0700 /var/lib/virtroid-deploy
+install -d -o root -g root -m 0700 /var/lib/virtroid-build /var/lib/virtroid-release-bundles
 install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 install -m 0755 "${script_dir}/certbot-deploy-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
 install -m 0644 "${script_dir}/sshd-key-only.conf" /usr/local/share/virtroid/sshd-key-only.conf
-install -m 0644 "${script_dir}/restic.env.example" /usr/local/share/virtroid/restic.env.example
 install -m 0644 "${script_dir}/virtroid-backup.service" /etc/systemd/system/virtroid-backup.service
 install -m 0644 "${script_dir}/virtroid-backup.timer" /etc/systemd/system/virtroid-backup.timer
-install -m 0644 "${script_dir}/virtroid-offsite-backup.service" /etc/systemd/system/virtroid-offsite-backup.service
-install -m 0644 "${script_dir}/virtroid-offsite-backup.timer" /etc/systemd/system/virtroid-offsite-backup.timer
-install -m 0644 "${script_dir}/virtroid-offsite-restore-check.service" /etc/systemd/system/virtroid-offsite-restore-check.service
-install -m 0644 "${script_dir}/virtroid-offsite-restore-check.timer" /etc/systemd/system/virtroid-offsite-restore-check.timer
 
 systemctl daemon-reload
 systemctl enable --now docker

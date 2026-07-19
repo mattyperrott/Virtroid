@@ -11,12 +11,12 @@ Virtroid is suitable for development and tightly controlled trusted-operator
 testing with disposable data. It is **not ready for public beta, hostile
 multi-tenancy, high-threat use, or claims of end-to-end/confidential execution**.
 
-The last verified VPS snapshot on 2026-07-19 ran database schema `2026071902`.
-The current `codex/secure-release-deployment` working branch adds schema
-`2026071903`, an operator-approved node registry, an immutable release/deploy
-path, and encrypted off-site backup automation, but that work is not yet
-deployed. Real remote backup credentials and a clean-host restore drill are
-still required before promotion.
+The verified VPS deployment on 2026-07-19 runs database schema `2026071903`,
+the operator-approved node registry, and an immutable release/deploy path.
+Production source, image builds, release bundles, secrets, rollback state, and
+backups are isolated on the VPS. Same-host backup retention is an explicit
+availability limitation: total VPS or provider loss is not recoverable from
+those copies.
 
 The current node still controls the container runtime and can observe live
 plaintext. Privileged shared-kernel ReDroid guests must be replaced with
@@ -34,17 +34,19 @@ status and remaining blockers are recorded in
 
 ## Verification
 
-Release verification is run from the trusted local checkout. The source remote
-is passive safekeeping and has no production credentials, registry role, or
-deployment authority. Local entry points include:
+Developer checks can run from a Mac checkout. The source remote is passive
+safekeeping and has no production credentials, registry role, or deployment
+authority. Developer entry points include:
 
 ```bash
 cd backend && go test -count=1 ./...
 cd android-client && ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
 bash deploy/vps/test-env-safety.sh
 bash deploy/vps/test-compose-config.sh
-bash deploy/vps/test-offsite-backup.sh
 ```
+
+Production releases are built and applied only on the VPS from its root-owned,
+offline source checkout with no Git remote or `.github` directory.
 
 Production setup and recovery procedures are documented in
 [`deploy/vps/README.md`](deploy/vps/README.md).

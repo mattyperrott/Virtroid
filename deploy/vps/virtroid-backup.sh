@@ -691,8 +691,6 @@ tar -tzf "${partial_dir}/srv-virtroid.tgz" >/dev/null
 tar -C /opt/virtroid/deploy \
   --exclude='vps/.env' \
   --exclude='vps/release.env' \
-  --exclude='vps/restic.env' \
-  --exclude='vps/restic-password' \
   -czf "${partial_dir}/deploy-tree.tgz" vps
 tar -tzf "${partial_dir}/deploy-tree.tgz" >/dev/null
 if [ "${prior_tree_required}" -eq 1 ]; then
