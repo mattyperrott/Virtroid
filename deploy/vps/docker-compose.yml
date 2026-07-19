@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18
+    image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE to an immutable postgres image with @sha256 digest}
     container_name: virtroid-postgres
     restart: unless-stopped
     environment:
@@ -9,6 +9,16 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql
+    mem_limit: "${POSTGRES_MEMORY_LIMIT:-1g}"
+    cpus: "${POSTGRES_CPU_LIMIT:-2.0}"
+    pids_limit: ${POSTGRES_PIDS_LIMIT:-256}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - database
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
@@ -18,6 +28,9 @@ services:
   virtroidd:
     build:
       context: ../../backend
+      args:
+        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:?set GO_BUILD_IMAGE to an immutable Go 1.26.5+ image with @sha256 digest}
+        BACKEND_RUNTIME_IMAGE: ${BACKEND_RUNTIME_IMAGE:?set BACKEND_RUNTIME_IMAGE to an immutable runtime image with @sha256 digest}
     container_name: virtroidd
     restart: unless-stopped
     depends_on:
@@ -31,20 +44,42 @@ services:
       PUBLIC_RELAY_URL: ${PUBLIC_RELAY_URL:?set PUBLIC_RELAY_URL, for example https://your-domain.example}
       NODE_SHARED_SECRET: ${NODE_SHARED_SECRET:?set NODE_SHARED_SECRET}
       NODE_REGISTRATION_SECRET: ${NODE_REGISTRATION_SECRET:-}
+      BOOTSTRAP_ENABLED: ${BOOTSTRAP_ENABLED:-false}
       BOOTSTRAP_RATE_LIMIT_PER_MINUTE: ${BOOTSTRAP_RATE_LIMIT_PER_MINUTE:-5}
       BOOTSTRAP_MAX_BODY_BYTES: ${BOOTSTRAP_MAX_BODY_BYTES:-32768}
-      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      NODE_ALLOWED_ADVERTISE_ADDRS: ${NODE_ALLOWED_ADVERTISE_ADDRS:?set NODE_ALLOWED_ADVERTISE_ADDRS}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       SECURITY_EVENT_RATE_LIMIT_PER_MINUTE: ${SECURITY_EVENT_RATE_LIMIT_PER_MINUTE:-120}
       SECURITY_EVENT_RETENTION: ${SECURITY_EVENT_RETENTION:-168h}
       SESSION_REAPER_INTERVAL: ${SESSION_REAPER_INTERVAL:-30s}
       ACTIVE_SESSION_TIMEOUT: ${ACTIVE_SESSION_TIMEOUT:-2m}
       RUNTIME_IDLE_TIMEOUT: ${RUNTIME_IDLE_TIMEOUT:-3m}
+      APP_CATALOG_SYNC_ENABLED: ${APP_CATALOG_SYNC_ENABLED:-false}
+      APP_CATALOG_SYNC_URL: ${APP_CATALOG_SYNC_URL:-https://f-droid.org/repo/index-v2.json}
+      APP_CATALOG_SYNC_SHA256: ${APP_CATALOG_SYNC_SHA256:-}
+      APP_CATALOG_SYNC_INTERVAL: ${APP_CATALOG_SYNC_INTERVAL:-12h}
+      APP_CATALOG_SYNC_MAX_APPS: ${APP_CATALOG_SYNC_MAX_APPS:-1500}
     ports:
       - "${HOST_API_BIND:-127.0.0.1}:8080:8080"
+    mem_limit: "${VIRTROIDD_MEMORY_LIMIT:-512m}"
+    cpus: "${VIRTROIDD_CPU_LIMIT:-1.0}"
+    pids_limit: ${VIRTROIDD_PIDS_LIMIT:-256}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - app-egress
+      - database
+      - control
 
   virtnoded:
     build:
       context: ../../backend
+      args:
+        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:?set GO_BUILD_IMAGE to an immutable Go 1.26.5+ image with @sha256 digest}
+        BACKEND_RUNTIME_IMAGE: ${BACKEND_RUNTIME_IMAGE:?set BACKEND_RUNTIME_IMAGE to an immutable runtime image with @sha256 digest}
     container_name: virtnoded
     command: ["virtnoded"]
     user: "0:0"
@@ -77,7 +112,15 @@ services:
       NODE_BLOB_PREFLIGHT_INTERVAL: ${NODE_BLOB_PREFLIGHT_INTERVAL:-5m}
       NODE_HEARTBEAT_INTERVAL: 30s
       NODE_RECONCILE_INTERVAL: 10s
-      NODE_DOCKER_NETWORK: ${NODE_DOCKER_NETWORK:-virtroid_default}
+      NODE_DOCKER_NETWORK: ${NODE_DOCKER_NETWORK:?set NODE_DOCKER_NETWORK to the dedicated guest network name}
+      NODE_RUNTIME_NETWORK_MODE: ${NODE_RUNTIME_NETWORK_MODE:-per-runtime}
+      NODE_AGENT_CONTAINER_NAME: ${NODE_AGENT_CONTAINER_NAME:-virtnoded}
+      NODE_RUNTIME_IMAGE: ${NODE_RUNTIME_IMAGE:?set NODE_RUNTIME_IMAGE to an immutable ReDroid image with @sha256 digest}
+      NODE_REQUIRE_DIGESTED_RUNTIME_IMAGE: "true"
+      NODE_RUNTIME_MEMORY_BYTES: ${NODE_RUNTIME_MEMORY_BYTES:-4294967296}
+      NODE_RUNTIME_NANO_CPUS: ${NODE_RUNTIME_NANO_CPUS:-2000000000}
+      NODE_RUNTIME_PIDS_LIMIT: ${NODE_RUNTIME_PIDS_LIMIT:-4096}
+      NODE_RUNTIME_SHM_BYTES: ${NODE_RUNTIME_SHM_BYTES:-268435456}
       NODE_RUNTIME_ROOT: /srv/virtroid/runtimes
     ports:
       - "${HOST_RELAY_BIND:-127.0.0.1}:8090:8090"
@@ -87,9 +130,21 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /dev/binderfs:/dev/binderfs:ro
       - /srv/virtroid:/srv/virtroid
+    mem_limit: "${VIRTNODED_MEMORY_LIMIT:-1g}"
+    cpus: "${VIRTNODED_CPU_LIMIT:-2.0}"
+    pids_limit: ${VIRTNODED_PIDS_LIMIT:-512}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - guest
+      - control
+      - blob
 
   renterd:
-    image: ghcr.io/siafoundation/renterd:master
+    image: ${RENTERD_IMAGE:-virtroid-renterd-profile-disabled}
     container_name: virtroid-renterd
     restart: unless-stopped
     profiles:
@@ -104,10 +159,23 @@ services:
     volumes:
       - renterd-data:/data
     stop_grace_period: 5m
+    mem_limit: "${RENTERD_MEMORY_LIMIT:-4g}"
+    cpus: "${RENTERD_CPU_LIMIT:-4.0}"
+    pids_limit: ${RENTERD_PIDS_LIMIT:-1024}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - renterd-egress
+      - blob
 
   edge:
-    image: haproxy:lts
+    image: ${HAPROXY_IMAGE:-virtroid-edge-profile-disabled}
     container_name: virtroid-edge
+    group_add:
+      - "${HAPROXY_CERT_GID:?set HAPROXY_CERT_GID to the host virtroid-cert group id}"
     restart: unless-stopped
     profiles:
       - edge
@@ -119,9 +187,20 @@ services:
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ${HAPROXY_CERT_PATH:-/srv/virtroid/tls/virtroid.pem}:/usr/local/etc/haproxy/certs/virtroid.pem:ro
+    mem_limit: "${HAPROXY_MEMORY_LIMIT:-256m}"
+    cpus: "${HAPROXY_CPU_LIMIT:-0.5}"
+    pids_limit: ${HAPROXY_PIDS_LIMIT:-128}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - edge-egress
+      - control
 
   falco:
-    image: falcosecurity/falco:0.43.0
+    image: ${FALCO_IMAGE:-virtroid-falco-profile-disabled}
     container_name: virtroid-falco
     restart: unless-stopped
     profiles:
@@ -160,10 +239,18 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    mem_limit: "${FALCO_MEMORY_LIMIT:-1g}"
+    cpus: "${FALCO_CPU_LIMIT:-1.0}"
+    pids_limit: ${FALCO_PIDS_LIMIT:-512}
+    networks:
+      - monitoring
 
   falco-forwarder:
     build:
       context: ../../backend
+      args:
+        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:?set GO_BUILD_IMAGE to an immutable Go 1.26.5+ image with @sha256 digest}
+        BACKEND_RUNTIME_IMAGE: ${BACKEND_RUNTIME_IMAGE:?set BACKEND_RUNTIME_IMAGE to an immutable runtime image with @sha256 digest}
     container_name: virtroid-falco-forwarder
     command: ["falco-forwarder"]
     user: "0:0"
@@ -184,6 +271,31 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    mem_limit: "${FALCO_FORWARDER_MEMORY_LIMIT:-256m}"
+    cpus: "${FALCO_FORWARDER_CPU_LIMIT:-0.5}"
+    pids_limit: ${FALCO_FORWARDER_PIDS_LIMIT:-128}
+    networks:
+      - monitoring
+      - control
+
+networks:
+  database:
+    internal: true
+  control:
+    internal: true
+  blob:
+    internal: true
+  monitoring:
+    internal: true
+  guest:
+    name: ${NODE_DOCKER_NETWORK:?set NODE_DOCKER_NETWORK to the dedicated guest network name}
+    driver: bridge
+  app-egress:
+    driver: bridge
+  renterd-egress:
+    driver: bridge
+  edge-egress:
+    driver: bridge
 
 volumes:
   postgres-data:

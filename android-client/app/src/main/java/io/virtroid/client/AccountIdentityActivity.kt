@@ -24,8 +24,7 @@ import io.virtroid.client.security.IdentityCrypto
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
-import io.virtroid.client.security.promptIdentityPassword
-import io.virtroid.client.security.promptIdentityPasswordWithConfirmation
+import io.virtroid.client.security.promptIdentityPasswordSetup
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -164,11 +163,7 @@ class AccountIdentityActivity : AppCompatActivity() {
                 binding.storageReadyChip.text = storage.lastPreflightStatus
                     ?.ifBlank { null }
                     ?: storage.status.ifBlank { getString(R.string.account_storage_unavailable) }
-                binding.storageCreditValue.text = storage.fundingAddress
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let(::shortId)
-                    ?: storage.walletAddress?.takeIf { it.isNotBlank() }?.let(::shortId)
-                    ?: "--"
+                binding.storageCreditValue.text = getString(R.string.account_storage_operator_managed)
                 binding.storageUsageValue.text = "--"
                 binding.storageUsageUnit.text = ""
                 binding.storageUsageSubtitle.text = getString(R.string.account_storage_usage_unreported)
@@ -343,7 +338,7 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
 
         val configured = identityPasswordStore.isConfigured(accountId, deviceId)
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(getString(R.string.identity_password_title))
             .setMessage(
                 if (configured) {
@@ -352,84 +347,50 @@ class AccountIdentityActivity : AppCompatActivity() {
                     getString(R.string.identity_password_setup_body)
                 },
             )
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setNeutralButton(getString(R.string.identity_password_clear_cache)) { _, _ ->
+            .setNegativeButton(
+                getString(if (configured) R.string.identity_password_close else R.string.controls_cancel),
+                null,
+            )
+        if (configured) {
+            dialog.setNeutralButton(getString(R.string.identity_password_clear_cache)) { _, _ ->
                 identityPasswordStore.clearUnlocked()
                 renderIdentity()
                 toast(getString(R.string.identity_password_cache_cleared))
             }
-            .setPositiveButton(
-                if (configured) getString(R.string.identity_password_change_action)
-                else getString(R.string.identity_password_set_action),
-            ) { _, _ ->
-                updateIdentityPassword(accountId, deviceId)
+        } else {
+            dialog.setPositiveButton(getString(R.string.identity_password_set_action)) { _, _ ->
+                configureIdentityPassword(accountId, deviceId)
             }
-            .show()
+        }
+        dialog.show()
     }
 
-    private fun updateIdentityPassword(accountId: String, deviceId: String) {
+    private fun configureIdentityPassword(accountId: String, deviceId: String) {
         lifecycleScope.launch {
-            val configured = identityPasswordStore.isConfigured(accountId, deviceId)
-            val currentBlobKeyVerifier = if (configured) {
-                val currentPassword = promptIdentityPassword(
-                    title = getString(R.string.identity_password_title),
-                    hint = getString(R.string.identity_password_current_prompt),
-                )?.trim()
-                when {
-                    currentPassword == null -> return@launch
-                    currentPassword.isBlank() -> {
-                        toast(getString(R.string.identity_password_required))
-                        return@launch
-                    }
-                    else -> IdentityCrypto.blobKeyVerifier(
-                        IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, currentPassword),
-                    )
-                }
-            } else {
-                null
+            if (identityPasswordStore.isConfigured(accountId, deviceId)) {
+                toast(getString(R.string.identity_password_change_action))
+                return@launch
             }
 
-            val password = promptIdentityPasswordWithConfirmation(
-                title = getString(R.string.identity_password_title),
-                hint = getString(R.string.identity_password_prompt),
-                confirmHint = getString(R.string.identity_password_confirm_prompt),
-            )?.trim()
-            when {
-                password == null -> return@launch
-                password.isBlank() -> {
-                    toast(getString(R.string.identity_password_mismatch))
-                    return@launch
-                }
-            }
+            val password = promptIdentityPasswordSetup() ?: return@launch
 
             runCatching {
                 val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, password)
                 val verifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
-                if (configured) {
-                    api.changeIdentityPassword(
-                        baseUrl = sessionStore.baseUrl,
-                        accountId = accountId,
-                        deviceId = deviceId,
-                        blobKeyVerifier = verifier,
-                        currentBlobKeyVerifier = currentBlobKeyVerifier
-                            ?: throw IllegalStateException("current identity verifier required"),
-                    )
-                } else {
-                    api.registerIdentity(
-                        baseUrl = sessionStore.baseUrl,
-                        accountId = accountId,
-                        deviceId = deviceId,
-                        blobKeyVerifier = verifier,
-                    )
-                }
+                api.registerIdentity(
+                    baseUrl = sessionStore.baseUrl,
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    blobKeyVerifier = verifier,
+                )
                 identityPasswordStore.unlock(accountId, deviceId, password)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
             }.onSuccess {
-                appLogs.warn("Identity blob password verifier updated", "auth")
+                appLogs.info("Identity blob password configured", "auth")
                 renderIdentity()
                 toast(getString(R.string.identity_password_updated))
             }.onFailure { error ->
-                appLogs.error("Identity blob password update failed: ${error.message}", "auth")
+                appLogs.error("Identity blob password setup failed: ${error.message}", "auth")
                 toast(error.virtroidDisplayMessage(this@AccountIdentityActivity))
             }
         }
@@ -471,6 +432,10 @@ class AccountIdentityActivity : AppCompatActivity() {
 
     private fun resetLocalIdentity() {
         activeSessionStore.clear()
+        runCatching { api.clearLocalRuntimeCapabilities(this) }
+            .onFailure { error ->
+                appLogs.error("Runtime capability key cleanup failed: ${error.message}", "auth")
+            }
         identityPasswordStore.clearConfigured()
         appLockStore.clearCredential()
         appSettings.clearSafeLocalCache()

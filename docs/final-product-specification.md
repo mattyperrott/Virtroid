@@ -1,12 +1,12 @@
-# Virtdroid Final Product Specification
+# Virtroid Final Product Specification
 
 Generated: 2026-05-10
 
-This document is the target product specification for the finished Virtdroid system. It supersedes the older early-stage whitepaper/spec drafts in this repository while preserving the useful parts: disposable Android runtimes, durable encrypted state, trusted enrolled devices, explicit reset semantics, and honest trust labels.
+This document is the target product specification for the finished Virtroid system. It supersedes the older early-stage whitepaper/spec drafts in this repository while preserving the useful parts: disposable Android runtimes, durable encrypted state, trusted enrolled devices, explicit reset semantics, and honest trust labels.
 
 ## Product Outcome
 
-Virtdroid gives a user a personal Android environment that is started on demand, streamed to the Android client, saved as encrypted user state, and destroyed after use.
+Virtroid gives a user a personal Android environment that is started on demand, streamed to the Android client, saved as encrypted user state, and destroyed after use.
 
 The finished system has three primary production components:
 
@@ -308,7 +308,7 @@ Before production release:
 
 ## Final Acceptance Criteria
 
-Virtdroid is finished when:
+Virtroid is finished when:
 
 - a user can create an account, configure blob storage, create a runtime profile, start a fresh session, use the Android viewer, background/foreground the app without losing the active session, end the session, and later start a new fresh session from restored encrypted state
 - production snapshots are stored through Sia/renterd, with local disk only as a development fallback

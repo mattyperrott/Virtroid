@@ -74,6 +74,12 @@ if [[ ! "${docker_gid}" =~ ^[0-9]+$ ]]; then
   echo "DOCKER_GID must be numeric, got: ${docker_gid}" >&2
   exit 1
 fi
+haproxy_cert_gid="$(getent group virtroid-cert 2>/dev/null | cut -d: -f3 || true)"
+haproxy_cert_gid="${HAPROXY_CERT_GID:-${haproxy_cert_gid:-99}}"
+if [[ ! "${haproxy_cert_gid}" =~ ^[0-9]+$ ]]; then
+  echo "HAPROXY_CERT_GID must be numeric, got: ${haproxy_cert_gid}" >&2
+  exit 1
+fi
 
 write_env_var() {
   printf '%s=%s\n' "$1" "$2"
@@ -81,28 +87,50 @@ write_env_var() {
 
 {
   write_env_var COMPOSE_PROJECT_NAME virtroid
+  write_env_var POSTGRES_IMAGE "${POSTGRES_IMAGE:-postgres:18@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var GO_BUILD_IMAGE "${GO_BUILD_IMAGE:-golang:1.26.5-bookworm@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var BACKEND_RUNTIME_IMAGE "${BACKEND_RUNTIME_IMAGE:-debian:bookworm-slim@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var NODE_RUNTIME_IMAGE "${NODE_RUNTIME_IMAGE:-redroid/redroid:14.0.0_64only-latest@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var HAPROXY_IMAGE "${HAPROXY_IMAGE:-haproxy:lts@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var RENTERD_IMAGE "${RENTERD_IMAGE:-ghcr.io/siafoundation/renterd:v2.9.1@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var FALCO_IMAGE "${FALCO_IMAGE:-falcosecurity/falco:0.43.0@sha256:REPLACE_WITH_64_HEX}"
   write_env_var POSTGRES_DB virtroid
   write_env_var POSTGRES_USER virtroid
   write_env_var POSTGRES_PASSWORD "$(random_hex)"
   write_env_var NODE_SHARED_SECRET "$(random_hex)"
   write_env_var NODE_REGISTRATION_SECRET "$(random_hex)"
   write_env_var NODE_PRIVATE_KEY_B64 "$(node_private_key_b64)"
+  write_env_var BOOTSTRAP_ENABLED false
   write_env_var BOOTSTRAP_RATE_LIMIT_PER_MINUTE 5
   write_env_var BOOTSTRAP_MAX_BODY_BYTES 32768
-  write_env_var TRUST_PROXY_HEADERS false
+  write_env_var TRUST_PROXY_HEADERS true
   write_env_var PUBLIC_BASE_URL "${public_url}"
   write_env_var PUBLIC_RELAY_URL "${public_url}"
   write_env_var NODE_ADVERTISE_ADDR virtnoded
+  write_env_var NODE_ALLOWED_ADVERTISE_ADDRS virtnoded
   write_env_var HOST_API_BIND 127.0.0.1
   write_env_var HOST_RELAY_BIND 127.0.0.1
   write_env_var NODE_ID "${node_id}"
   write_env_var NODE_NAME "${node_id}"
   write_env_var HAPROXY_CERT_PATH /srv/virtroid/tls/virtroid.pem
+  write_env_var HAPROXY_CERT_GID "${haproxy_cert_gid}"
   write_env_var DOCKER_GID "${docker_gid}"
-  write_env_var NODE_DOCKER_NETWORK virtroid_default
+  write_env_var NODE_DOCKER_NETWORK virtroid-guests
+  write_env_var NODE_RUNTIME_NETWORK_MODE per-runtime
+  write_env_var NODE_AGENT_CONTAINER_NAME virtnoded
+  write_env_var NODE_RUNTIME_MEMORY_BYTES 4294967296
+  write_env_var NODE_RUNTIME_NANO_CPUS 2000000000
+  write_env_var NODE_RUNTIME_PIDS_LIMIT 4096
+  write_env_var NODE_RUNTIME_SHM_BYTES 268435456
+
+  write_env_var APP_CATALOG_SYNC_ENABLED false
+  write_env_var APP_CATALOG_SYNC_URL https://f-droid.org/repo/index-v2.json
+  write_env_var APP_CATALOG_SYNC_SHA256 ""
+  write_env_var APP_CATALOG_SYNC_INTERVAL 12h
+  write_env_var APP_CATALOG_SYNC_MAX_APPS 1500
 
   write_env_var NODE_BLOB_STORE_KIND local-disk
-  write_env_var NODE_SIA_RENTERD_WORKER_URL http://renterd:9980
+  write_env_var NODE_SIA_RENTERD_WORKER_URL ""
   write_env_var NODE_SIA_RENTERD_PASSWORD ""
   write_env_var NODE_SIA_RENTERD_BUCKET virtroid
   write_env_var NODE_SIA_RENTERD_WALLET_ADDRESS ""
@@ -118,4 +146,4 @@ write_env_var() {
 
 chmod 600 "${env_file}"
 echo "Wrote ${env_file}"
-echo "Next: put a PEM bundle at /srv/virtroid/tls/virtroid.pem, then run ./deploy.sh"
+echo "Next: replace every REPLACE_WITH_64_HEX image digest, install the TLS PEM bundle, then run ./deploy.sh"

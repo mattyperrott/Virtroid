@@ -14,6 +14,101 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+func TestEnsureSchemaSerializesAndRecordsVersion(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).
+		WithArgs(schemaMigrationLockKey).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COALESCE\(MAX\(version\), 0\) FROM schema_migrations`).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS accounts`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO schema_migrations`).
+		WithArgs(currentSchemaVersion, schemaVersionLabel).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	if err := st.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestEnsureSchemaRejectsNewerDatabaseVersion(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).
+		WithArgs(schemaMigrationLockKey).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COALESCE\(MAX\(version\), 0\) FROM schema_migrations`).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(currentSchemaVersion + 1))
+	mock.ExpectRollback()
+
+	err = st.EnsureSchema(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "newer than binary") {
+		t.Fatalf("EnsureSchema error = %v, want newer-schema rejection", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestAppendRuntimeLogBoundsFieldsAndPrunesOldRows(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO runtime_logs`).
+		WithArgs(
+			runtimeID,
+			strings.Repeat("s", runtimeLogSourceRunes),
+			strings.Repeat("l", runtimeLogLevelRunes),
+			strings.Repeat("m", runtimeLogMessageRunes),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`DELETE FROM runtime_logs`).
+		WithArgs(runtimeID, runtimeLogRetentionRows).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectCommit()
+
+	if err := st.AppendRuntimeLog(
+		context.Background(),
+		runtimeID,
+		strings.Repeat("s", runtimeLogSourceRunes+10),
+		strings.Repeat("l", runtimeLogLevelRunes+10),
+		strings.Repeat("m", runtimeLogMessageRunes+10),
+	); err != nil {
+		t.Fatalf("AppendRuntimeLog: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestBootstrapAccountDoesNotCreateRuntime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -82,8 +177,7 @@ func TestGetAccountStorageAppliesLatestRenterdPreflight(t *testing.T) {
 			"storage_preflight_status",
 			"storage_preflight_json",
 			"storage_preflight_at",
-			"storage_wallet_address",
-		}).AddRow("sia-renterd", "contracts_required", `{"store":"sia-renterd"}`, now, "addr:fund"))
+		}).AddRow("sia-renterd", "contracts_required", `{"store":"sia-renterd","wallet_address":"addr:fund","nested":{"fundingAddress":"addr:nested"}}`, now))
 
 	storage, err := st.GetAccountStorage(context.Background(), accountID)
 	if err != nil {
@@ -95,8 +189,14 @@ func TestGetAccountStorageAppliesLatestRenterdPreflight(t *testing.T) {
 	if storage.Status != "contracts_required" {
 		t.Fatalf("storage.Status = %q, want contracts_required", storage.Status)
 	}
-	if storage.FundingAddress == nil || *storage.FundingAddress != "addr:fund" {
-		t.Fatalf("storage.FundingAddress = %v, want addr:fund", storage.FundingAddress)
+	if storage.FundingAddress != nil || storage.WalletAddress != nil {
+		t.Fatalf("node preflight populated account payment fields: funding=%v wallet=%v", storage.FundingAddress, storage.WalletAddress)
+	}
+	if storage.LastPreflightJSON == nil || !strings.Contains(*storage.LastPreflightJSON, `"store":"sia-renterd"`) {
+		t.Fatalf("storage.LastPreflightJSON = %v, want sanitized operational preflight data", storage.LastPreflightJSON)
+	}
+	if strings.Contains(*storage.LastPreflightJSON, "addr:fund") || strings.Contains(*storage.LastPreflightJSON, "addr:nested") {
+		t.Fatalf("storage.LastPreflightJSON exposed a node-supplied payment address: %s", *storage.LastPreflightJSON)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -210,6 +310,101 @@ func TestDeleteAccountQueuesAssignedRuntimeCleanup(t *testing.T) {
 
 	if err := st.DeleteAccount(context.Background(), accountID); err != nil {
 		t.Fatalf("DeleteAccount returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestDeleteAccountQueuesStoppedSnapshotCleanupToBlobOwner(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	blobHostID := "snapshot-owner-1"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(accountID))
+	mock.ExpectQuery("host_id = COALESCE\\(host_id, blob_host_id\\)").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "host_id"}).AddRow(runtimeID, blobHostID))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(runtimeID, "system", "warn", "Account deletion requested; runtime cleanup queued.").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM device_request_nonces").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM devices").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM account_storage").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT deleted_at FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"deleted_at"}).AddRow(now))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectCommit()
+
+	if err := st.DeleteAccount(context.Background(), accountID); err != nil {
+		t.Fatalf("DeleteAccount returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestDeletedObservationAcknowledgesCleanupBeforeHardDeletingAccount(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	cleanupHostID := "snapshot-owner-1"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE runtimes").
+		WithArgs(runtimeID, cleanupHostID, nil, int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id"}).AddRow(accountID))
+	mock.ExpectQuery("SELECT deleted_at FROM accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"deleted_at"}).AddRow(now))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM accounts").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err = st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
+		HostID:              cleanupHostID,
+		OperationGeneration: 1,
+		Deleted:             true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRuntimeObservation returned error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -614,7 +809,7 @@ func TestRuntimeDeletedObservationFinalizesPendingAccountDeletion(t *testing.T) 
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("UPDATE runtimes").
-		WithArgs(runtimeID, "host-1", sql.NullString{String: lastError, Valid: true}).
+		WithArgs(runtimeID, "host-1", sql.NullString{String: lastError, Valid: true}, int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"account_id"}).AddRow(accountID))
 	mock.ExpectQuery("SELECT deleted_at FROM accounts").
 		WithArgs(accountID).
@@ -628,14 +823,315 @@ func TestRuntimeDeletedObservationFinalizesPendingAccountDeletion(t *testing.T) 
 	mock.ExpectCommit()
 
 	if err := st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
-		HostID:    "host-1",
-		Deleted:   true,
-		LastError: &lastError,
+		HostID:              "host-1",
+		OperationGeneration: 1,
+		Deleted:             true,
+		LastError:           &lastError,
 	}); err != nil {
 		t.Fatalf("UpdateRuntimeObservation returned error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestAssignPendingRemoteRuntimeCleanupNeverClaimsLocalSnapshots(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	assigned, err := st.AssignPendingRemoteRuntimeCleanup(context.Background(), "host-1", "local-disk")
+	if err != nil {
+		t.Fatalf("AssignPendingRemoteRuntimeCleanup: %v", err)
+	}
+	if assigned != 0 {
+		t.Fatalf("assigned = %d, want zero for local snapshots", assigned)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unexpected SQL: %v", err)
+	}
+}
+
+func TestAssignPendingRemoteRuntimeCleanupClaimsMatchingStore(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	mock.ExpectExec("UPDATE runtimes").
+		WithArgs("host-1", "sia-renterd").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	assigned, err := st.AssignPendingRemoteRuntimeCleanup(context.Background(), "host-1", "SIA-RENTERD")
+	if err != nil {
+		t.Fatalf("AssignPendingRemoteRuntimeCleanup: %v", err)
+	}
+	if assigned != 2 {
+		t.Fatalf("assigned = %d, want 2", assigned)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestRuntimeBlobKeyHandoffPersistsActivatesAndRestoresEncryptedEnvelope(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	expiresAt := time.Now().UTC().Add(time.Minute)
+	lease := RuntimeBlobKeyHandoff{
+		AccountID: "11111111-1111-1111-1111-111111111111",
+		RuntimeID: "33333333-3333-3333-3333-333333333333",
+		HostID:    "host-1",
+		Operation: "stop",
+		LeaseID:   "lease-1",
+		ExpiresAt: expiresAt,
+	}
+	mock.ExpectExec("INSERT INTO runtime_blob_key_handoffs").
+		WithArgs(lease.AccountID, lease.RuntimeID, lease.HostID, lease.Operation, lease.LeaseID, expiresAt).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	if err := st.PutRuntimeBlobKeyLease(context.Background(), lease); err != nil {
+		t.Fatalf("PutRuntimeBlobKeyLease: %v", err)
+	}
+
+	lease.EnvelopeJSON = `{"version":1,"ciphertext":"encrypted"}`
+	lease.BlobKeyVerifier = "verifier"
+	mock.ExpectQuery("UPDATE runtime_blob_key_handoffs").
+		WithArgs(
+			lease.AccountID,
+			lease.RuntimeID,
+			lease.HostID,
+			lease.Operation,
+			lease.LeaseID,
+			lease.EnvelopeJSON,
+			lease.BlobKeyVerifier,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"expires_at"}).AddRow(expiresAt))
+	activated, err := st.ActivateRuntimeBlobKeyHandoff(context.Background(), lease)
+	if err != nil {
+		t.Fatalf("ActivateRuntimeBlobKeyHandoff: %v", err)
+	}
+	if !activated.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("activated expiry = %v, want %v", activated.ExpiresAt, expiresAt)
+	}
+
+	mock.ExpectQuery("SELECT account_id, runtime_id").
+		WithArgs(lease.RuntimeID, lease.HostID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"account_id", "runtime_id", "host_id", "operation", "lease_id",
+			"envelope_json", "blob_key_verifier", "expires_at",
+		}).AddRow(
+			lease.AccountID,
+			lease.RuntimeID,
+			lease.HostID,
+			lease.Operation,
+			lease.LeaseID,
+			lease.EnvelopeJSON,
+			lease.BlobKeyVerifier,
+			expiresAt,
+		))
+	restored, err := st.GetRuntimeBlobKeyHandoff(context.Background(), lease.RuntimeID, lease.HostID)
+	if err != nil {
+		t.Fatalf("GetRuntimeBlobKeyHandoff: %v", err)
+	}
+	if restored.EnvelopeJSON != lease.EnvelopeJSON || restored.BlobKeyVerifier != lease.BlobKeyVerifier {
+		t.Fatalf("restored handoff = %+v, want encrypted envelope and verifier", restored)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestRuntimeBlobKeyHandoffActivationRejectsExpiredOrMismatchedLease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	handoff := RuntimeBlobKeyHandoff{
+		AccountID:       "11111111-1111-1111-1111-111111111111",
+		RuntimeID:       "33333333-3333-3333-3333-333333333333",
+		HostID:          "host-1",
+		Operation:       "stop",
+		LeaseID:         "wrong-lease",
+		EnvelopeJSON:    `{"version":1}`,
+		BlobKeyVerifier: "verifier",
+	}
+	mock.ExpectQuery("UPDATE runtime_blob_key_handoffs").
+		WithArgs(
+			handoff.AccountID,
+			handoff.RuntimeID,
+			handoff.HostID,
+			handoff.Operation,
+			handoff.LeaseID,
+			handoff.EnvelopeJSON,
+			handoff.BlobKeyVerifier,
+		).
+		WillReturnError(sql.ErrNoRows)
+
+	_, err = st.ActivateRuntimeBlobKeyHandoff(context.Background(), handoff)
+	if !errors.Is(err, ErrRuntimeBlobKeyHandoff) {
+		t.Fatalf("ActivateRuntimeBlobKeyHandoff error = %v, want %v", err, ErrRuntimeBlobKeyHandoff)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestStoppedOrErrorObservationRetainsAssignmentWithoutCleanupAck(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	for _, status := range []string{"stopped", "error"} {
+		mock.ExpectExec(`OR \(\$16 AND desired_state <> 'running' AND \$3 IN \('stopped', 'error'\)\)`).
+			WithArgs(
+				runtimeID,
+				"host-1",
+				status,
+				"offline",
+				nil,
+				nil,
+				nil,
+				nil,
+				false,
+				false,
+				nil,
+				false,
+				nil,
+				nil,
+				nil,
+				false,
+				int64(1),
+			).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		if err := st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
+			HostID:              "host-1",
+			Status:              status,
+			ConnectionStatus:    "offline",
+			OperationGeneration: 1,
+		}); err != nil {
+			t.Fatalf("UpdateRuntimeObservation(%s) returned error: %v", status, err)
+		}
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestStoppedObservationCleanupAckReleasesAssignment(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectExec(`OR \(\$16 AND desired_state <> 'running' AND \$3 IN \('stopped', 'error'\)\)`).
+		WithArgs(
+			runtimeID,
+			"host-1",
+			"stopped",
+			"offline",
+			nil,
+			nil,
+			nil,
+			nil,
+			false,
+			false,
+			nil,
+			false,
+			nil,
+			nil,
+			nil,
+			true,
+			int64(1),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
+		HostID:              "host-1",
+		Status:              "stopped",
+		ConnectionStatus:    "offline",
+		CleanupComplete:     true,
+		OperationGeneration: 1,
+	}); err != nil {
+		t.Fatalf("UpdateRuntimeObservation returned error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRuntimeObservationRejectsStaleOperationGeneration(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	mock.ExpectExec(`operation_generation = \$17`).
+		WithArgs(
+			runtimeID,
+			"host-1",
+			"running",
+			"online",
+			nil,
+			nil,
+			nil,
+			nil,
+			false,
+			false,
+			nil,
+			false,
+			nil,
+			nil,
+			nil,
+			false,
+			int64(7),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
+		HostID:              "host-1",
+		Status:              "running",
+		ConnectionStatus:    "online",
+		OperationGeneration: 7,
+	})
+	if !errors.Is(err, ErrRuntimeObservationStale) {
+		t.Fatalf("UpdateRuntimeObservation error = %v, want %v", err, ErrRuntimeObservationStale)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestSchemaCarriesMonotonicRuntimeOperationGeneration(t *testing.T) {
+	if !strings.Contains(schemaSQL, "operation_generation BIGINT NOT NULL DEFAULT 1") {
+		t.Fatal("runtime operation generation column is missing from the schema")
 	}
 }
 
@@ -743,7 +1239,7 @@ func TestListAppCatalogMarksSelectedApps(t *testing.T) {
 	accountID := "11111111-1111-1111-1111-111111111111"
 
 	mock.ExpectQuery("SELECT c.package_name").
-		WithArgs(accountID, "%").
+		WithArgs(accountID, "%", catalogResponseLimit).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"package_name", "source", "display_name", "summary", "icon_url",
 			"version_name", "version_code", "apk_url", "apk_sha256", "apk_size_bytes",
@@ -782,6 +1278,111 @@ func TestListAppCatalogMarksSelectedApps(t *testing.T) {
 	}
 }
 
+func TestUpsertAppCatalogEntriesRejectsDowngradeAndDisablesMissingGenerationEntries(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	entry := AppCatalogEntry{
+		PackageName:      "org.example.app",
+		Source:           "fdroid",
+		DisplayName:      "Example",
+		VersionName:      "1.0",
+		VersionCode:      10,
+		APKURL:           "https://f-droid.org/repo/org.example.app_10.apk",
+		APKSHA256:        strings.Repeat("a", 64),
+		APKSizeBytes:     1024,
+		MinSDK:           28,
+		CategoriesJSON:   "[]",
+		AntiFeaturesJSON: "[]",
+		CatalogUpdatedAt: now,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("WHERE EXCLUDED.version_code >= app_catalog.version_code").
+		WithArgs(
+			entry.PackageName,
+			entry.Source,
+			entry.DisplayName,
+			entry.Summary,
+			entry.IconURL,
+			entry.VersionName,
+			entry.VersionCode,
+			entry.APKURL,
+			entry.APKSHA256,
+			entry.APKSizeBytes,
+			entry.MinSDK,
+			entry.NativeCode,
+			entry.License,
+			entry.CategoriesJSON,
+			entry.AntiFeaturesJSON,
+			entry.Recommended,
+			entry.CatalogUpdatedAt,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("AND package_name NOT IN").
+		WithArgs(entry.Source, entry.PackageName).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	count, err := st.UpsertAppCatalogEntries(context.Background(), []AppCatalogEntry{entry})
+	if err != nil {
+		t.Fatalf("UpsertAppCatalogEntries returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("upserted count = %d, want 0 for a rejected downgrade", count)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestDisableAppCatalogSourceDisablesEveryEnabledStaleEntry(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	mock.ExpectExec("WHERE source = \\$1").
+		WithArgs("fdroid").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	count, err := st.DisableAppCatalogSource(context.Background(), "fdroid")
+	if err != nil {
+		t.Fatalf("DisableAppCatalogSource: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("disabled count = %d, want 3", count)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestCatalogBootstrapSeedNeverOverwritesAuthoritativeRows(t *testing.T) {
+	seedStart := strings.Index(schemaSQL, "INSERT INTO app_catalog")
+	if seedStart < 0 {
+		t.Fatal("schema is missing app catalog bootstrap seed")
+	}
+	seedEndOffset := strings.Index(schemaSQL[seedStart:], "CREATE TABLE IF NOT EXISTS runtimes")
+	if seedEndOffset < 0 {
+		t.Fatal("schema is missing the boundary after app catalog bootstrap seed")
+	}
+	seedSQL := schemaSQL[seedStart : seedStart+seedEndOffset]
+	if !strings.Contains(seedSQL, "ON CONFLICT (package_name) DO NOTHING") {
+		t.Fatalf("catalog bootstrap seed must preserve every existing authoritative row: %s", seedSQL)
+	}
+	if strings.Contains(seedSQL, "DO UPDATE") || strings.Contains(seedSQL, "enabled = TRUE") {
+		t.Fatalf("catalog bootstrap seed can overwrite or re-enable existing rows: %s", seedSQL)
+	}
+}
+
 func TestReplaceAccountAppSelectionsValidatesPackages(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -813,7 +1414,7 @@ func TestReplaceAccountAppSelectionsValidatesPackages(t *testing.T) {
 	}
 }
 
-func TestStartRuntimeRotatesPersonaForStoppedRuntime(t *testing.T) {
+func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -827,10 +1428,9 @@ func TestStartRuntimeRotatesPersonaForStoppedRuntime(t *testing.T) {
 	hostID := "host-1"
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT host_id, viewer_port, desired_state FROM runtimes").
+	mock.ExpectQuery("FOR UPDATE").
 		WithArgs(accountID, runtimeID).
-		WillReturnRows(sqlmock.NewRows([]string{"host_id", "viewer_port", "desired_state"}).
-			AddRow(hostID, 46000, "stopped"))
+		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "stopped", "stopped", "offline", hostID, 46000))
 	mock.ExpectQuery("SELECT account_id, source, status").
 		WithArgs(accountID).
 		WillReturnRows(entitlementRows(accountID, now))
@@ -870,6 +1470,27 @@ func TestStartRuntimeRotatesPersonaForStoppedRuntime(t *testing.T) {
 	if runtime.ADBPort != nil {
 		t.Fatalf("adb_port = %d, want nil", *runtime.ADBPort)
 	}
+
+	// A second caller obtains the same row lock after the first transaction and
+	// observes desired_state=running. No entitlement query, host selection,
+	// UPDATE, log, or start-event expectation follows: any duplicate transition
+	// would fail this test as an unexpected SQL operation.
+	mock.ExpectBegin()
+	mock.ExpectQuery("FOR UPDATE").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeStartRows(now, runtimeID, accountID, hostID, 2, 46000))
+	mock.ExpectCommit()
+
+	retried, err := st.StartRuntime(context.Background(), accountID, runtimeID)
+	if err != nil {
+		t.Fatalf("retry StartRuntime returned error: %v", err)
+	}
+	if retried.PersonaVersion != runtime.PersonaVersion || retried.Status != runtime.Status || retried.DesiredState != "running" {
+		t.Fatalf("retry runtime = %+v, want unchanged start transition %+v", retried, runtime)
+	}
+	if retried.ViewerPort == nil || *retried.ViewerPort != 46000 {
+		t.Fatalf("retry viewer_port = %v, want preserved 46000", retried.ViewerPort)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
@@ -881,6 +1502,62 @@ func TestNormalizedCreateInputRejectsUnsafeProfile(t *testing.T) {
 	}
 	if _, err := normalizedCreateInput(CreateRuntimeInput{WidthPx: 1920, HeightPx: 1080, DensityDpi: 320}); !errors.Is(err, ErrRuntimeProfile) {
 		t.Fatalf("oversized profile error = %v, want %v", err, ErrRuntimeProfile)
+	}
+}
+
+func TestNormalizeAccountStorageInputRejectsUserFundingMaterial(t *testing.T) {
+	wallet := "user-wallet"
+	seed := "encrypted-seed"
+	hint := "seed-hint"
+	tests := []struct {
+		name  string
+		input UpdateAccountStorageInput
+	}{
+		{
+			name: "user funded mode",
+			input: UpdateAccountStorageInput{
+				Provider:     "sia-renterd",
+				FundingModel: "user-funded",
+			},
+		},
+		{
+			name: "wallet address",
+			input: UpdateAccountStorageInput{
+				Provider:      "sia-renterd",
+				FundingModel:  "operator-pooled",
+				WalletAddress: &wallet,
+			},
+		},
+		{
+			name: "seed material",
+			input: UpdateAccountStorageInput{
+				Provider:           "sia-renterd",
+				FundingModel:       "operator-pooled",
+				EncryptedSeedBlob:  &seed,
+				SeedEncryptionHint: &hint,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := normalizeAccountStorageInput(tt.input); err == nil {
+				t.Fatal("normalizeAccountStorageInput accepted user funding material")
+			}
+		})
+	}
+}
+
+func TestNormalizeAccountStorageInputAllowsOperatorPooledWithoutWallet(t *testing.T) {
+	normalized, err := normalizeAccountStorageInput(UpdateAccountStorageInput{
+		Provider:     "sia-renterd",
+		FundingModel: "operator-pooled",
+		Status:       "ready",
+	})
+	if err != nil {
+		t.Fatalf("normalizeAccountStorageInput: %v", err)
+	}
+	if normalized.WalletAddress != nil || normalized.EncryptedSeedBlob != nil || normalized.SeedEncryptionHint != nil {
+		t.Fatalf("operator-pooled storage retained account funding material: %+v", normalized)
 	}
 }
 
@@ -1137,6 +1814,36 @@ func TestWipeRuntimeOnHostAssignsStoppedRuntimeForNodeCleanup(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestStopRuntimeIsIdempotentWhenAlreadyStopped(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("FOR UPDATE").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeStateRows(now, runtimeID, accountID, "stopped", "stopped", "offline", nil, nil))
+	mock.ExpectCommit()
+
+	runtime, err := st.StopRuntime(context.Background(), accountID, runtimeID)
+	if err != nil {
+		t.Fatalf("StopRuntime: %v", err)
+	}
+	if runtime.Status != "stopped" || runtime.DesiredState != "stopped" {
+		t.Fatalf("runtime = %+v, want unchanged stopped runtime", runtime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -1544,6 +2251,77 @@ func TestCreateSessionRequiresUnrevokedDevice(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRejectsDifferentLiveActor(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+
+	mock.ExpectQuery("d.revoked_at IS NULL").
+		WithArgs(runtimeID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
+			AddRow("running", "running", "online"))
+	mock.ExpectQuery("ON CONFLICT \\(runtime_id\\) WHERE status IN").
+		WithArgs(sqlmock.AnyArg(), runtimeID, deviceID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "device_id", "status", "created_at", "updated_at",
+			"last_client_heartbeat_at", "ended_at", "end_reason", "expires_at",
+		}))
+
+	if _, err := st.CreateSession(context.Background(), deviceID, runtimeID); !errors.Is(err, ErrSessionAlreadyActive) {
+		t.Fatalf("CreateSession error = %v, want %v", err, ErrSessionAlreadyActive)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestCreateSessionRejectsSameLiveActorWithoutRotatingToken(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+
+	mock.ExpectQuery("d.revoked_at IS NULL").
+		WithArgs(runtimeID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
+			AddRow("running", "running", "online"))
+	mock.ExpectQuery(`WHERE sessions.expires_at <= NOW\(\)`).
+		WithArgs(sqlmock.AnyArg(), runtimeID, deviceID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "device_id", "status", "created_at", "updated_at",
+			"last_client_heartbeat_at", "ended_at", "end_reason", "expires_at",
+		}))
+
+	if _, err := st.CreateSession(context.Background(), deviceID, runtimeID); !errors.Is(err, ErrSessionAlreadyActive) {
+		t.Fatalf("CreateSession error = %v, want %v", err, ErrSessionAlreadyActive)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestSessionSchemaReconcilesLegacyDuplicatesBeforeUniqueInvariant(t *testing.T) {
+	reconcileAt := strings.Index(schemaSQL, "WITH ranked_live_sessions AS")
+	uniqueAt := strings.Index(schemaSQL, "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_one_live_per_runtime")
+	if reconcileAt < 0 || uniqueAt < 0 {
+		t.Fatal("session schema is missing duplicate reconciliation or the one-live-session unique index")
+	}
+	if reconcileAt >= uniqueAt {
+		t.Fatal("session duplicate reconciliation must run before creating the unique index")
+	}
+}
+
 func TestCreateSessionWithCapabilityDoesNotStoreDeviceID(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1598,6 +2376,32 @@ func TestCreateSessionWithCapabilityDoesNotStoreDeviceID(t *testing.T) {
 	}
 }
 
+func TestAbortPendingSessionBindsExactRelayToken(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	sessionID := "33333333-3333-3333-3333-333333333333"
+	relayToken := "one-time-relay-token"
+	mock.ExpectExec("UPDATE sessions").
+		WithArgs(sessionID, hashRelayToken(relayToken), "viewer preparation failed").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	aborted, err := st.AbortPendingSession(context.Background(), sessionID, relayToken, "viewer preparation failed")
+	if err != nil {
+		t.Fatalf("AbortPendingSession returned error: %v", err)
+	}
+	if !aborted {
+		t.Fatal("AbortPendingSession did not report the exact pending reservation as closed")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestCloseSessionWithCapabilityRevokesCapability(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1643,7 +2447,7 @@ func TestEndSessionAndStopRuntimeWithCapabilityRevokesRuntimeCapabilities(t *tes
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("UPDATE sessions AS s").
-		WithArgs(sessionID, capabilityID, accountID).
+		WithArgs(sessionID, capabilityID, accountID, runtimeID).
 		WillReturnRows(sqlmock.NewRows([]string{"runtime_id"}).AddRow(runtimeID))
 	mock.ExpectQuery("UPDATE runtimes").
 		WithArgs(accountID, runtimeID).
@@ -1656,12 +2460,66 @@ func TestEndSessionAndStopRuntimeWithCapabilityRevokesRuntimeCapabilities(t *tes
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	runtime, err := st.EndSessionAndStopRuntimeWithCapability(context.Background(), accountID, capabilityID, sessionID)
+	runtime, err := st.EndSessionAndStopRuntimeWithCapability(context.Background(), accountID, capabilityID, sessionID, runtimeID)
 	if err != nil {
 		t.Fatalf("EndSessionAndStopRuntimeWithCapability returned error: %v", err)
 	}
 	if runtime.ID != runtimeID || runtime.DesiredState != "stopped" {
 		t.Fatalf("runtime = %+v, want stopped runtime %s", runtime, runtimeID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRequireSessionRuntimeRejectsDifferentEnvelopeRuntime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	sessionID := "33333333-3333-3333-3333-333333333333"
+	envelopeRuntimeID := "55555555-5555-5555-5555-555555555555"
+
+	mock.ExpectQuery("AND s.runtime_id = \\$2").
+		WithArgs(sessionID, envelopeRuntimeID, deviceID, accountID).
+		WillReturnError(sql.ErrNoRows)
+
+	err = st.RequireSessionRuntime(context.Background(), accountID, deviceID, sessionID, envelopeRuntimeID)
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("RequireSessionRuntime error = %v, want %v", err, ErrSessionNotFound)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestEndSessionDoesNotMutateWhenExpectedRuntimeDiffers(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	sessionID := "33333333-3333-3333-3333-333333333333"
+	envelopeRuntimeID := "55555555-5555-5555-5555-555555555555"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("AND s.runtime_id = \\$4").
+		WithArgs(sessionID, deviceID, accountID, envelopeRuntimeID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	_, err = st.EndSessionAndStopRuntime(context.Background(), accountID, deviceID, sessionID, envelopeRuntimeID)
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("EndSessionAndStopRuntime error = %v, want %v", err, ErrSessionNotFound)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -1919,6 +2777,8 @@ func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, person
 		nil,
 		viewerPort,
 		false,
+		false,
+		int64(1),
 		nil,
 		nil,
 		now,
@@ -2020,6 +2880,8 @@ func runtimeRowValues(
 		nil,
 		viewerPort,
 		false,
+		false,
+		int64(1),
 		nil,
 		nil,
 		now,
@@ -2124,6 +2986,8 @@ func runtimeColumnNames() []string {
 		"adb_port",
 		"viewer_port",
 		"wipe_requested",
+		"cleanup_pending",
+		"operation_generation",
 		"last_error",
 		"deleted_at",
 		"created_at",

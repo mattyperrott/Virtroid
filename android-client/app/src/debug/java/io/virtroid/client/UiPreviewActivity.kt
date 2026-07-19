@@ -41,8 +41,6 @@ class UiPreviewActivity : AppCompatActivity() {
             "my_runtimes" -> R.layout.screen_my_runtimes
             "create_session" -> R.layout.screen_create_session
             "account_identity" -> R.layout.screen_account_identity
-            "fund_storage" -> R.layout.screen_fund_storage
-            "send_usdt" -> R.layout.screen_send_usdt
             "session_controls" -> R.layout.screen_session_controls
             "session_viewer" -> R.layout.screen_session_viewer
             "privacy_security" -> R.layout.screen_privacy_security

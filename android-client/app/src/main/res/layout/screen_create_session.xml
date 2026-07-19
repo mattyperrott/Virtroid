@@ -98,7 +98,7 @@
                     style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="THREAT MODEL"
+                    android:text="@string/new_runtime_storage_behavior"
                     android:layout_marginStart="8dp"
                     android:layout_marginTop="0dp"
                     android:layout_marginBottom="12dp" />
@@ -106,97 +106,24 @@
                     android:id="@+id/option_standard_persistent"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
+                    android:orientation="vertical"
                     android:background="@drawable/bg_surface_stroke_24"
                     android:padding="18dp"
-                    android:layout_marginBottom="12dp">
-                    <RadioButton
-                        android:id="@+id/radio_standard"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:buttonTint="@color/v_text_muted" />
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="8dp">
-                        <TextView
-                            android:id="@+id/text_standard_title"
-                            style="@style/VirtroidText.CardTitle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Standard Persistent" />
-                        <TextView
-                            android:id="@+id/text_standard_subtitle"
-                            style="@style/VirtroidText.Body"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Data is saved between sessions. Acts like a normal second phone."
-                            android:lineSpacingExtra="3dp"
-                            android:layout_marginTop="6dp" />
-                    </LinearLayout>
-                </LinearLayout>
-                <LinearLayout
-                    android:id="@+id/option_ephemeral"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:background="@drawable/bg_selected_card_24"
-                    android:padding="18dp"
                     android:layout_marginBottom="32dp">
-                    <RadioButton
-                        android:id="@+id/radio_ephemeral"
+                    <TextView
+                        android:id="@+id/text_standard_title"
+                        style="@style/VirtroidText.CardTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:checked="true"
-                        android:buttonTint="@color/v_accent" />
-                    <LinearLayout
-                        android:layout_width="0dp"
+                        android:text="@string/new_runtime_persistent_title" />
+                    <TextView
+                        android:id="@+id/text_standard_subtitle"
+                        style="@style/VirtroidText.Body"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="8dp">
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal">
-                            <TextView
-                                android:id="@+id/text_ephemeral_title"
-                                style="@style/VirtroidText.CardTitle"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="Amnesic / Ephemeral"
-                                android:textColor="@color/v_accent" />
-                            <TextView
-                                android:id="@+id/chip_recommended"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Recommended"
-                                android:textColor="@color/v_accent"
-                                android:textSize="10sp"
-                                android:textStyle="bold"
-                                android:fontFamily="sans"
-                                android:includeFontPadding="false"
-                                android:paddingStart="8dp"
-                                android:paddingEnd="8dp"
-                                android:paddingTop="3dp"
-                                android:paddingBottom="3dp"
-                                android:background="@drawable/bg_accent_soft_12" />
-                        </LinearLayout>
-                        <TextView
-                            android:id="@+id/text_ephemeral_subtitle"
-                            style="@style/VirtroidText.Body"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="RAM-only partition. Local session state is cleared on disconnect."
-                            android:lineSpacingExtra="3dp"
-                            android:layout_marginTop="6dp" />
-                    </LinearLayout>
+                        android:text="@string/new_runtime_persistent_body"
+                        android:lineSpacingExtra="3dp"
+                        android:layout_marginTop="6dp" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/settings_card"

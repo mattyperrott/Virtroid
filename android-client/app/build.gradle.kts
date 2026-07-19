@@ -24,6 +24,14 @@ val releaseStoreFilePath = signingValue("VIRTROID_RELEASE_STORE_FILE")
 val releaseStorePassword = signingValue("VIRTROID_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = signingValue("VIRTROID_RELEASE_KEY_ALIAS")
 val releaseKeyPassword = signingValue("VIRTROID_RELEASE_KEY_PASSWORD")
+val releaseSigningValues = linkedMapOf(
+    "VIRTROID_RELEASE_STORE_FILE" to releaseStoreFilePath,
+    "VIRTROID_RELEASE_STORE_PASSWORD" to releaseStorePassword,
+    "VIRTROID_RELEASE_KEY_ALIAS" to releaseKeyAlias,
+    "VIRTROID_RELEASE_KEY_PASSWORD" to releaseKeyPassword,
+)
+val releaseSigningConfigured = releaseSigningValues.values.all { !it.isNullOrBlank() }
+val releaseArtifactTaskNames = setOf("assembleRelease", "packageRelease", "bundleRelease", "signReleaseBundle")
 val defaultControlPlaneUrl = signingValue("VIRTROID_DEFAULT_CONTROL_PLANE_URL")
     ?: "https://virtroid.network"
 val defaultControlPlaneUsesCleartext = defaultControlPlaneUrl.startsWith("http://", ignoreCase = true)
@@ -44,13 +52,14 @@ android {
 
     signingConfigs {
         create("release") {
-            if (!releaseStoreFilePath.isNullOrBlank()) {
-                storeFile = file(releaseStoreFilePath)
+            if (releaseSigningConfigured) {
+                storeFile = file(checkNotNull(releaseStoreFilePath))
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
-                enableV1Signing = true
+                enableV1Signing = false
                 enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
@@ -62,7 +71,7 @@ android {
 
         release {
             isMinifyEnabled = true
-            if (!releaseStoreFilePath.isNullOrBlank()) {
+            if (releaseSigningConfigured) {
                 signingConfig = signingConfigs.getByName("release")
             }
             proguardFiles(
@@ -89,6 +98,31 @@ androidComponents {
             throw GradleException("Release builds require an HTTPS VIRTROID_DEFAULT_CONTROL_PLANE_URL.")
         }
     }
+}
+
+val verifyReleaseSigningConfiguration by tasks.registering {
+    group = "verification"
+    description = "Fails closed unless every release-signing input is present and the keystore is readable."
+    doLast {
+        val missing = releaseSigningValues
+            .filterValues { it.isNullOrBlank() }
+            .keys
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "Release artifact generation requires signing configuration: ${missing.joinToString()}.",
+            )
+        }
+        val store = file(checkNotNull(releaseStoreFilePath))
+        if (!store.isFile || !store.canRead()) {
+            throw GradleException("Release keystore is missing or unreadable: ${store.absolutePath}")
+        }
+    }
+}
+
+tasks.matching {
+    it.name in releaseArtifactTaskNames
+}.configureEach {
+    dependsOn(verifyReleaseSigningConfiguration)
 }
 
 val verifyReleaseSecurityManifest by tasks.registering {
@@ -124,7 +158,7 @@ val verifyReleaseSecurityManifest by tasks.registering {
     }
 }
 
-tasks.matching { it.name == "assembleRelease" }.configureEach {
+tasks.matching { it.name in releaseArtifactTaskNames }.configureEach {
     dependsOn(verifyReleaseSecurityManifest)
 }
 

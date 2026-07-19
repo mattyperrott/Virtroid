@@ -59,6 +59,7 @@ public final class TlsPins {
 
     private static Map<String, Set<String>> buildPins() {
         Set<String> virtroidPins = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+                "sha256/cvS+P8TQmhefb2HgxFxTSeZjVFeNdge9NT0unRppjZc=",
                 "sha256/Nc/etmCowzcN39LRJRfDTNr66aWpCdO4dxwBu1gcZ0o=",
                 "sha256/a9khLOZJxlnJyrxstg/P+seiDCm+Yf3OsrXyFocBaI0=",
                 "sha256/Douxi77vs4G+Ib/BogbTFymEYq0QSFXwSgVCaZcI09Q="

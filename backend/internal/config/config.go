@@ -15,6 +15,8 @@ type ServerConfig struct {
 	PublicRelayURL                  string
 	NodeSharedSecret                string
 	NodeRegistrationSecret          string
+	NodeAllowedAdvertiseAddrs       []string
+	BootstrapEnabled                bool
 	BootstrapRateLimitPerMinute     int
 	BootstrapMaxBodyBytes           int64
 	TrustProxyHeaders               bool
@@ -25,6 +27,7 @@ type ServerConfig struct {
 	RuntimeIdleTimeout              time.Duration
 	AppCatalogSyncEnabled           bool
 	AppCatalogSyncURL               string
+	AppCatalogSyncSHA256            string
 	AppCatalogSyncInterval          time.Duration
 	AppCatalogSyncMaxApps           int
 }
@@ -61,6 +64,7 @@ type NodeConfig struct {
 }
 
 func LoadServer() ServerConfig {
+	appEnv := envOrDefault("APP_ENV", "development")
 	bootstrapRateLimit, err := parseEnvInt("BOOTSTRAP_RATE_LIMIT_PER_MINUTE", 5)
 	if err != nil {
 		bootstrapRateLimit = 5
@@ -84,13 +88,15 @@ func LoadServer() ServerConfig {
 	}
 
 	return ServerConfig{
-		AppEnv:                          envOrDefault("APP_ENV", "development"),
+		AppEnv:                          appEnv,
 		BindAddr:                        envOrDefault("BIND_ADDR", ":8080"),
 		DatabaseURL:                     envOrDefault("DATABASE_URL", "postgres://virtroid:virtroid@127.0.0.1:5432/virtroid?sslmode=disable"),
 		PublicBaseURL:                   envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
 		PublicRelayURL:                  os.Getenv("PUBLIC_RELAY_URL"),
 		NodeSharedSecret:                os.Getenv("NODE_SHARED_SECRET"),
 		NodeRegistrationSecret:          envOrDefault("NODE_REGISTRATION_SECRET", os.Getenv("NODE_SHARED_SECRET")),
+		NodeAllowedAdvertiseAddrs:       parseEnvCSV("NODE_ALLOWED_ADVERTISE_ADDRS", ""),
+		BootstrapEnabled:                parseEnvBool("BOOTSTRAP_ENABLED", appEnv == "development"),
 		BootstrapRateLimitPerMinute:     bootstrapRateLimit,
 		BootstrapMaxBodyBytes:           int64(bootstrapMaxBodyBytes),
 		TrustProxyHeaders:               parseEnvBool("TRUST_PROXY_HEADERS", false),
@@ -99,8 +105,9 @@ func LoadServer() ServerConfig {
 		SessionReaperInterval:           sessionReaperInterval,
 		ActiveSessionTimeout:            activeSessionTimeout,
 		RuntimeIdleTimeout:              runtimeIdleTimeout,
-		AppCatalogSyncEnabled:           parseEnvBool("APP_CATALOG_SYNC_ENABLED", true),
+		AppCatalogSyncEnabled:           parseEnvBool("APP_CATALOG_SYNC_ENABLED", false),
 		AppCatalogSyncURL:               envOrDefault("APP_CATALOG_SYNC_URL", "https://f-droid.org/repo/index-v2.json"),
+		AppCatalogSyncSHA256:            strings.TrimSpace(os.Getenv("APP_CATALOG_SYNC_SHA256")),
 		AppCatalogSyncInterval:          appCatalogSyncInterval,
 		AppCatalogSyncMaxApps:           appCatalogSyncMaxApps,
 	}

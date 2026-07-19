@@ -1,0 +1,14 @@
+.DS_Store
+**/.DS_Store
+._*
+**/._*
+*.apk
+*.aab
+*.idsig
+/dist/
+/android-client/dist/
+/deploy/vps/.env
+/backend/falco-forwarder
+/backend/virtnoded
+/backend/virtroid-viewercrypt
+/backend/virtroidd

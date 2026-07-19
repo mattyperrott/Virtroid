@@ -175,22 +175,7 @@ INSERT INTO app_catalog (
     ('com.termux', 'fdroid', 'Termux', 'Terminal emulator with Linux package support.', 'https://f-droid.org/repo/com.termux/en-US/icon_7jMZ7XD80oeucmGEaTwktIRZexLtGWvJfKdVD6Wu2SI=.png', '0.119.0-beta.3', 1022, 'https://f-droid.org/repo/com.termux_1022.apk', 'fdd476982cd74f2f00aac12d3683b1fa260a0b2d146411b94e09d773be3a7b56', 114920926, 24, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW()),
     ('com.kunzisoft.keepass.libre', 'fdroid', 'KeePassDX', 'Local password and passkey vault.', 'https://f-droid.org/repo/com.kunzisoft.keepass.libre/en-US/icon_eLwXEQD9l2URrUS3t8esDXnsKGBaH02E-ddEYhV_i7Q=.png', '4.4.2', 44200, 'https://f-droid.org/repo/com.kunzisoft.keepass.libre_44200.apk', '4a0400557acdc8e039d4721d7a0ec3a3dc202d34ba31cea29750b5ea22097934', 16549009, 19, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW()),
     ('org.fdroid.basic', 'fdroid', 'F-Droid Basic', 'Minimal F-Droid client for open source app management.', 'https://f-droid.org/repo/org.fdroid.basic/en-US/icon_CPdcoTY7kZ3ERIZkij9504KbM1eEY05XaLvVQwHkqHI=.png', '2.0-alpha9', 2000009, 'https://f-droid.org/repo/org.fdroid.basic_2000009.apk', '1aa1931bf61e11382c2b225581d4adcd2d9803697a144a84c6eb4db04f67cafb', 11391212, 24, 'arm64-v8a,armeabi-v7a,x86,x86_64', FALSE, NOW(), NOW())
-ON CONFLICT (package_name) DO UPDATE
-SET source = EXCLUDED.source,
-    display_name = EXCLUDED.display_name,
-    summary = EXCLUDED.summary,
-    icon_url = EXCLUDED.icon_url,
-    version_name = EXCLUDED.version_name,
-    version_code = EXCLUDED.version_code,
-    apk_url = EXCLUDED.apk_url,
-    apk_sha256 = EXCLUDED.apk_sha256,
-    apk_size_bytes = EXCLUDED.apk_size_bytes,
-    min_sdk = EXCLUDED.min_sdk,
-    native_code = EXCLUDED.native_code,
-    recommended = EXCLUDED.recommended,
-    enabled = TRUE,
-    catalog_updated_at = EXCLUDED.catalog_updated_at,
-    updated_at = NOW();
+ON CONFLICT (package_name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS runtimes (
     id UUID PRIMARY KEY,
@@ -222,6 +207,8 @@ CREATE TABLE IF NOT EXISTS runtimes (
     adb_port INTEGER,
     viewer_port INTEGER,
     wipe_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    cleanup_pending BOOLEAN NOT NULL DEFAULT FALSE,
+    operation_generation BIGINT NOT NULL DEFAULT 1,
     last_error TEXT,
     deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -260,6 +247,8 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS container_name TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS adb_port INTEGER;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS viewer_port INTEGER;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS wipe_requested BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS cleanup_pending BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS operation_generation BIGINT NOT NULL DEFAULT 1;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE runtimes ALTER COLUMN android_image SET DEFAULT 'redroid/redroid:14.0.0_64only-latest';
@@ -267,6 +256,16 @@ ALTER TABLE runtimes ALTER COLUMN android_version SET DEFAULT 'android-14';
 ALTER TABLE runtimes ALTER COLUMN width_px SET DEFAULT 720;
 ALTER TABLE runtimes ALTER COLUMN height_px SET DEFAULT 1600;
 ALTER TABLE runtimes ALTER COLUMN density_dpi SET DEFAULT 320;
+
+-- A stopped runtime can remain assigned while the node removes plaintext,
+-- networks, and stale blob generations. Preserve that retry obligation across
+-- node reports instead of treating an intermediate "stopped" observation as a
+-- completed cleanup.
+UPDATE runtimes
+SET cleanup_pending = TRUE
+WHERE status = 'stopped'
+  AND desired_state <> 'running'
+  AND host_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS runtime_capabilities (
     id TEXT PRIMARY KEY,
@@ -318,6 +317,28 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS end_reason TEXT;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS relay_token_consumed_at TIMESTAMPTZ;
 
+-- Reconcile legacy duplicate live sessions before installing the invariant.
+-- Keep the most recently active row so this migration is safe on existing data.
+WITH ranked_live_sessions AS (
+    SELECT id,
+           ROW_NUMBER() OVER (
+               PARTITION BY runtime_id
+               ORDER BY COALESCE(last_client_heartbeat_at, updated_at, created_at) DESC,
+                        created_at DESC,
+                        id DESC
+           ) AS live_rank
+      FROM sessions
+     WHERE status IN ('pending', 'active')
+)
+UPDATE sessions
+   SET status = 'closed',
+       updated_at = NOW(),
+       ended_at = COALESCE(ended_at, NOW()),
+       end_reason = 'superseded while enforcing one live session per runtime'
+ WHERE id IN (
+     SELECT id FROM ranked_live_sessions WHERE live_rank > 1
+ );
+
 CREATE TABLE IF NOT EXISTS device_request_nonces (
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -344,6 +365,20 @@ CREATE TABLE IF NOT EXISTS runtime_logs (
     level TEXT NOT NULL,
     message TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS runtime_blob_key_handoffs (
+    runtime_id UUID PRIMARY KEY REFERENCES runtimes(id) ON DELETE CASCADE,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    host_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    envelope_json TEXT,
+    blob_key_verifier TEXT,
+    expires_at TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS security_events (
@@ -394,10 +429,14 @@ CREATE INDEX IF NOT EXISTS idx_runtime_capabilities_expires_at ON runtime_capabi
 CREATE INDEX IF NOT EXISTS idx_runtime_capability_nonces_expires_at ON runtime_capability_nonces (expires_at);
 CREATE INDEX IF NOT EXISTS idx_device_request_nonces_expires_at ON device_request_nonces (expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_runtime_id ON sessions (runtime_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_one_live_per_runtime
+    ON sessions (runtime_id)
+    WHERE status IN ('pending', 'active');
 CREATE INDEX IF NOT EXISTS idx_sessions_capability_id ON sessions (capability_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status_expires_at ON sessions (status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_client_heartbeat_at ON sessions (last_client_heartbeat_at);
 CREATE INDEX IF NOT EXISTS idx_runtime_logs_runtime_created_at ON runtime_logs (runtime_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runtime_blob_key_handoffs_expires_at ON runtime_blob_key_handoffs (expires_at);
 CREATE INDEX IF NOT EXISTS idx_security_events_node_created_at ON security_events (node_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_security_events_priority_created_at ON security_events (priority, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_security_event_ingest_limits_bucket_start ON security_event_ingest_limits (bucket_start);

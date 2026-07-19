@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the verified Virtroid rollback backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=virtroid-backup.service
+
+[Install]
+WantedBy=timers.target
