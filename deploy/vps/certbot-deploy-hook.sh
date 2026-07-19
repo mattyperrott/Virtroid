@@ -156,7 +156,10 @@ for required_binary in "${openssl_binary}" "${docker_binary}" "${curl_binary}" "
 done
 
 "${openssl_binary}" x509 -in "${lineage}/fullchain.pem" -noout -checkend 86400 >/dev/null
-"${openssl_binary}" x509 -in "${lineage}/fullchain.pem" -noout -checkhost "${public_hostname}" >/dev/null ||
+"${openssl_binary}" verify \
+  -CAfile "${lineage}/fullchain.pem" \
+  -verify_hostname "${public_hostname}" \
+  "${lineage}/fullchain.pem" >/dev/null 2>&1 ||
   die "renewed certificate does not cover PUBLIC_BASE_URL hostname ${public_hostname}"
 "${openssl_binary}" pkey -in "${lineage}/privkey.pem" -check -noout >/dev/null
 cert_public_key="$(
