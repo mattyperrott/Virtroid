@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/nodeauth"
 	"virtroid/backend/internal/store"
@@ -1285,6 +1286,10 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		case store.ErrRuntimeNotReady:
 			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		case store.ErrRuntimeEntitlement:
+			writeAPIError(w, http.StatusPaymentRequired, store.RuntimeEntitlementRequiredCode, err.Error())
+		case store.ErrRuntimeTrialTimeQuota:
+			writeAPIError(w, http.StatusPaymentRequired, store.RuntimeTrialTimeExceededCode, err.Error())
 		default:
 			writeInternalAPIError(w, "session_create_failed", err)
 		}
@@ -1931,8 +1936,8 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if a.cfg.NodeSharedSecret != "" {
-		req.Header.Set("X-Virtroid-Node-Secret", a.cfg.NodeSharedSecret)
+	if err := a.signNodeCallback(req, body); err != nil {
+		return err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -1944,6 +1949,27 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 		return fmt.Errorf("verify blob key envelope: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 	return nil
+}
+
+func (a *API) signNodeCallback(req *http.Request, body []byte) error {
+	privateKey, _, err := nodeauth.LoadPrivateKey(a.cfg.ControlPlaneCallbackPrivateKey)
+	if err != nil {
+		return fmt.Errorf("load control-plane callback signing key: %w", err)
+	}
+	if privateKey == nil {
+		return callbackauth.ErrMissingPrivateKey
+	}
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return err
+	}
+	return callbackauth.ApplySignedHeaders(
+		req,
+		privateKey,
+		body,
+		strconv.FormatInt(time.Now().Unix(), 10),
+		base64.RawURLEncoding.EncodeToString(nonceBytes),
+	)
 }
 
 func (a *API) verifiedActorBlobKeyVerifier(ctx context.Context, actor runtimeActor, blobKeyVerifier string) (string, error) {
@@ -2210,6 +2236,14 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		if errors.Is(err, store.ErrRuntimeObservationStale) {
 			writeAPIError(w, http.StatusConflict, "runtime_observation_stale", err.Error())
+			return
+		}
+		if errors.Is(err, store.ErrRuntimeStorageQuota) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, store.RuntimeStorageQuotaExceededCode, err.Error())
+			return
+		}
+		if errors.Is(err, store.ErrRuntimeSnapshotRollback) {
+			writeAPIError(w, http.StatusConflict, store.RuntimeSnapshotRollbackCode, err.Error())
 			return
 		}
 		writeInternalAPIError(w, "runtime_status_update_failed", err)
@@ -2617,8 +2651,8 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if a.cfg.NodeSharedSecret != "" {
-		req.Header.Set("X-Virtroid-Node-Secret", a.cfg.NodeSharedSecret)
+	if err := a.signNodeCallback(req, body); err != nil {
+		return "", err
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -2700,6 +2734,8 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusConflict, store.ActiveRuntimeQuotaExceededCode, err.Error())
 	case store.ErrRuntimeStartQuota:
 		writeAPIError(w, http.StatusTooManyRequests, store.RuntimeStartQuotaExceededCode, err.Error())
+	case store.ErrRuntimeTrialTimeQuota:
+		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeTrialTimeExceededCode, err.Error())
 	case store.ErrRuntimeProfile:
 		writeAPIError(w, http.StatusBadRequest, store.RuntimeProfileNotAllowedCode, err.Error())
 	default:

@@ -304,10 +304,7 @@ func TestValidateNodeAdvertiseAddrDevelopmentAllowsSyntacticHost(t *testing.T) {
 }
 
 func TestInternalRoutesRejectLegacySharedSecretWithoutNodeSignature(t *testing.T) {
-	handler := New(config.ServerConfig{
-		AppEnv:           "production",
-		NodeSharedSecret: "legacy-shared-secret",
-	}, nil)
+	handler := New(config.ServerConfig{AppEnv: "production"}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/hosts/victim-host/assignments", nil)
 	req.Header.Set("X-Virtroid-Node-Secret", "legacy-shared-secret")

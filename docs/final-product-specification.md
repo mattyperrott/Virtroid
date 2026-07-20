@@ -12,7 +12,10 @@ The finished system has three primary production components:
 
 1. A central Virtroid control plane for accounts, devices, runtime orchestration, leases, billing/storage metadata, relay routing, logs, and the control panel.
 2. Runtime nodes running inside confidential-compute VMs where possible. Each session runs a fresh Android runtime and receives only short-lived, lease-scoped material.
-3. Sia/renterd-backed user blob storage for durable encrypted runtime snapshots and related user state.
+3. Encrypted user-blob storage for durable runtime snapshots and related user
+   state. The active single-VPS deployment uses local disk. Sia/renterd is an
+   optional future availability backend for these encrypted blobs, not part of
+   the live-runtime trust boundary and not an active deployment requirement.
 
 The central server coordinates. It must not be the final authority that can cause user snapshot keys or long-lived user blob keys to be released to arbitrary runtime nodes.
 
@@ -23,7 +26,8 @@ The central server coordinates. It must not be the final authority that can caus
 - Persistent user data lives in encrypted snapshots/blobs, not in the runtime container.
 - The Android client is an enrolled device and the primary user-side policy/key-release actor.
 - Runtime operators are not automatically trusted with long-lived account secrets.
-- Sia/renterd provides durable encrypted blob availability. It is not the privacy boundary by itself.
+- The selected blob backend provides availability for encrypted state. It is
+  not the privacy boundary by itself.
 - Confidential compute strengthens runtime-node trust, but the app must label non-attested trusted-operator mode honestly.
 - User-facing copy must not claim privacy, verification, directness, or security properties that are not implemented.
 
@@ -35,7 +39,7 @@ The central server coordinates. It must not be the final authority that can caus
 | Control plane | Account/device registry, signed request verification, entitlement/rate limits, storage settings, runtime catalog, node/operator registry, lease records, relay metadata, log/security-event intake, account deletion orchestration, control panel/admin API. |
 | Runtime node | Run one or more fresh Android runtimes, restore encrypted user snapshot into a session runtime, launch encrypted viewer bridge, snapshot state at shutdown, destroy runtime-local plaintext, report status/logs/security events. |
 | Confidential VM layer | Provide measured runtime environment and attestation evidence for the runtime node. Bind measurement, node key, image hash, lease, nonce, and viewer key before key release. |
-| Sia/renterd storage | Store encrypted runtime snapshot chunks/objects. Enforce configured redundancy/contract policy. Support restore, manifest-known deletion, and eventually full remote garbage collection. |
+| Blob storage | Store encrypted runtime snapshot chunks/objects. The current deployment uses VPS local disk. An optional future Sia/renterd backend may add distributed availability for the same encrypted objects. |
 | Relay/viewer path | Route client to active runtime viewer endpoint over TLS plus inner viewer encryption. Bind viewer public key to the session/lease/attestation. |
 
 ## Trust Model
@@ -51,7 +55,8 @@ The central server coordinates. It must not be the final authority that can caus
 
 - Runtime operators in trusted-operator mode. They may see live runtime plaintext and must be labeled as such.
 - The control plane for relay/session metadata. It should not receive long-lived user blob keys.
-- Sia/renterd for encrypted blob availability. It must not be treated as plaintext-private storage.
+- The configured blob-storage operator. Storage encryption does not hide live
+  plaintext from the runtime operator.
 
 ### Untrusted By Default
 
@@ -114,7 +119,7 @@ A session start creates a fresh runtime execution environment.
 7. Node produces viewer key and, in confidential mode, attestation evidence.
 8. Client verifies node/lease/attestation policy where available.
 9. Client releases only lease-scoped runtime material.
-10. Runtime restores encrypted snapshot from Sia/renterd or starts fresh if no snapshot exists.
+10. Runtime restores the latest valid encrypted snapshot from the configured blob store or starts fresh if no snapshot exists.
 11. Viewer session starts with relay TLS and inner viewer encryption.
 12. Client shows stream health and relay heartbeat state.
 
@@ -133,7 +138,7 @@ Ending a session saves state, closes the viewer, and destroys the runtime.
 
 1. Client or timeout requests close/stop.
 2. Runtime snapshots `/data` or equivalent persistent user data.
-3. Snapshot is compressed, encrypted, chunked, and stored through Sia/renterd.
+3. Snapshot is compressed, encrypted, chunked, and stored through the configured blob backend.
 4. Manifest and metadata are reported to the control plane.
 5. Runtime-local plaintext is removed.
 6. Container/VM runtime artifacts are removed.
@@ -171,7 +176,7 @@ After factory reset, ordinary restore of the previous cloud device must fail.
 2. Snapshot is serialized and compressed.
 3. Snapshot is encrypted before leaving the trusted runtime/key-release boundary.
 4. Encrypted output is split into chunks.
-5. Chunks are uploaded to Sia/renterd.
+5. Chunks are committed to the configured blob backend.
 6. Manifest records chunk keys, sizes, hashes, encryption suite, snapshot ID, store kind, and bucket.
 7. Manifest is signed or otherwise integrity-protected.
 8. Control plane stores only metadata required to find and validate encrypted blobs.
@@ -190,22 +195,34 @@ Runtime nodes may receive:
 Attested third-party runtime nodes must not receive:
 
 - master user blob key
-- global Sia/renterd credential; the current combined VPS node may hold it only
-  while it remains inside the explicitly trusted operator boundary
+- reusable global blob-backend credential; the current combined VPS node may
+  hold local storage authority only while it remains inside the explicitly
+  trusted operator boundary
 - permanent operator credential
 - reusable account-wide snapshot secret
 
-### Sia/renterd
+### Storage Backend Policy
 
-Sia/renterd is the production blob storage target.
+The current production deployment stores encrypted runtime-userdata blobs on
+the VPS local disk. `NODE_BLOB_STORE_KIND=local-disk` is an intentional policy,
+not a temporary activation failure. Sia/renterd must remain stopped and outside
+the active service profile unless a later, explicit storage migration is
+approved.
 
-- Local disk is a development fallback only.
-- The current path uses an operator-managed renterd wallet. Sia is storage
+- Local storage must enforce account byte quotas, filesystem capacity
+  monitoring, root-only host access, encrypted snapshot integrity checks,
+  monotonic manifest generations, deletion semantics, and consistent local
+  backups.
+- Sia/renterd support is optional future work for stored encrypted user blobs
+  only. It does not host live runtimes and does not create confidential
+  execution.
+- If enabled later, it uses an operator-managed renterd wallet. Sia is storage
   infrastructure, not an account wallet or user payment surface.
 - Storage settings must expose whether renterd is configured, funded, synced,
   maintaining contracts, private-bucket configured, and ready without exposing
   an operator payment address to accounts.
-- Snapshot chunks should use renterd redundancy settings where available.
+- Snapshot chunks should use renterd redundancy settings only when that backend
+  is explicitly enabled.
 - The initial mainnet policy uses 10 data shards and 30 total shards, requires at
   least 30 active contracts, and must pass a live encrypted write/restore/delete
   smoke test before activation.
@@ -215,7 +232,8 @@ Sia/renterd is the production blob storage target.
 - renterd operational metadata and partial slabs require a consistent,
   restorable off-machine backup; the wallet seed alone is not object recovery.
 - Deletion must remove manifest-known chunks and later support full remote garbage collection for old snapshots.
-- The client UI must not imply Sia provides plaintext privacy; encryption and key custody provide privacy.
+- The client UI must report the backend actually in use and must not imply that
+  local disk or Sia provides live-runtime confidentiality.
 
 ## Viewer and Session Security
 
@@ -314,7 +332,8 @@ Before production release:
 - APK signing provenance is controlled
 - SBOM/SCA/secrets scans run in CI
 - dynamic Android QA covers background viewer, stale session, wrong blob password, app restart, runtime delete, backend/node restart, and storage failure
-- renterd smoke test passes in deployment
+- local-disk snapshot capacity and lifecycle checks pass in deployment; a
+  renterd smoke test is required only before a separately approved Sia cutover
 - confidential runtime POC evidence is captured
 - user-facing privacy/security copy is reviewed against actual implementation
 
@@ -323,7 +342,8 @@ Before production release:
 Virtroid is finished when:
 
 - a user can create an account, configure blob storage, create a runtime profile, start a fresh session, use the Android viewer, background/foreground the app without losing the active session, end the session, and later start a new fresh session from restored encrypted state
-- production snapshots are stored through Sia/renterd, with local disk only as a development fallback
+- production snapshots are stored as authenticated encrypted blobs through the
+  explicitly selected backend; the current selected backend is VPS local disk
 - the control plane cannot read long-lived user snapshot keys
 - runtime nodes receive only lease-scoped material
 - confidential runtime mode verifies lease-bound attestation before key release

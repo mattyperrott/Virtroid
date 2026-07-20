@@ -30,7 +30,7 @@ if [ ! -r "/proc/$$/fd/255" ]; then
   die "cannot verify the executing local release helper descriptor"
 fi
 
-for command_name in awk cmp curl date docker find flock install ln mktemp mv readlink seq sha256sum sleep stat; do
+for command_name in awk cmp curl date docker find flock install ln mktemp mv openssl readlink seq sha256sum sleep stat; do
   command -v "${command_name}" >/dev/null 2>&1 || die "missing local release command: ${command_name}"
 done
 
@@ -168,6 +168,47 @@ read_deploy_value() {
   ' "${deploy_env}"
 }
 
+ensure_callback_signing_keypair() {
+  local private_key
+  local public_key
+  local private_tmp
+  local env_tmp
+  local derived_public
+  local private_missing=0
+  private_key="$(read_deploy_value CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64)" || die "CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64 is duplicated"
+  public_key="$(read_deploy_value CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64)" || die "CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64 is duplicated"
+  if [ -z "${private_key}" ] && [ -n "${public_key}" ]; then
+    die "control-plane callback public key exists without its private key"
+  fi
+  if [ -z "${private_key}" ]; then
+    private_missing=1
+    private_key="$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -outform DER 2>/dev/null | openssl base64 -A)"
+  fi
+  private_tmp="$(mktemp "${state_root}/callback-private.XXXXXX")"
+  if ! printf '%s' "${private_key}" | openssl base64 -d -A > "${private_tmp}" ||
+     ! openssl pkey -inform DER -in "${private_tmp}" -check -noout >/dev/null 2>&1; then
+    find "${private_tmp}" -delete
+    die "CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64 is invalid"
+  fi
+  derived_public="$(openssl pkey -inform DER -in "${private_tmp}" -pubout -outform DER 2>/dev/null | openssl base64 -A)"
+  find "${private_tmp}" -delete
+  if [ -n "${public_key}" ] && [ "${public_key}" != "${derived_public}" ]; then
+    die "configured control-plane callback public key does not match its private key"
+  fi
+  [ -n "${public_key}" ] && return 0
+
+  env_tmp="$(mktemp "${state_root}/deploy-env.XXXXXX")"
+  {
+    awk '{ print }' "${deploy_env}"
+    if [ "${private_missing}" -eq 1 ]; then
+      printf 'CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64=%s\n' "${private_key}"
+    fi
+    printf 'CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64=%s\n' "${derived_public}"
+  } > "${env_tmp}"
+  install -o root -g root -m 0600 "${env_tmp}" "${deploy_env}"
+  find "${env_tmp}" -delete
+}
+
 release_image="$(read_release_value VIRTROID_BACKEND_IMAGE)" || die "release image is invalid"
 release_image_id="$(read_release_value VIRTROID_BACKEND_IMAGE_ID)" || die "release image ID is invalid"
 release_manifest_digest="$(read_release_value VIRTROID_BACKEND_MANIFEST_DIGEST)" || die "release manifest digest is invalid"
@@ -178,6 +219,7 @@ postgres_user="$(read_deploy_value POSTGRES_USER)" || die "POSTGRES_USER is dupl
 postgres_database="$(read_deploy_value POSTGRES_DB)" || die "POSTGRES_DB is duplicated"
 postgres_user="${postgres_user:-virtroid}"
 postgres_database="${postgres_database:-virtroid}"
+ensure_callback_signing_keypair
 [[ "${postgres_user}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || die "POSTGRES_USER is invalid"
 [[ "${postgres_database}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || die "POSTGRES_DB is invalid"
 [[ "${release_image}" =~ ^virtroid-backend:release-([0-9a-f]{40})$ ]] &&

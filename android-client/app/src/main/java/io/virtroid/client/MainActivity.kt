@@ -28,6 +28,7 @@ import io.virtroid.client.databinding.RuntimeCardBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import kotlinx.coroutines.Job
@@ -49,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sessionStore: SessionStore
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private lateinit var appLogs: AppLogStore
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.US)
     private var runtimePollJob: Job? = null
@@ -73,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         sessionStore = SessionStore(this)
         activeSessionStore = ActiveSessionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        snapshotRollbackGuard = SnapshotRollbackGuard(this)
         appLogs = AppLogStore.get(this)
         if (sessionStore.baseUrl.isBlank()) {
             sessionStore.baseUrl = DEFAULT_CONTROL_PLANE_URL
@@ -164,6 +167,7 @@ class MainActivity : AppCompatActivity() {
                 appLogs.info("Refreshing runtime list", "runtime")
                 val entitlement = api.getEntitlement(baseUrl, accountId, deviceId)
                 val runtimeStates = api.listRuntimeStates(baseUrl, accountId, deviceId)
+                runtimeStates.forEach { snapshotRollbackGuard.verifyAndRecord(accountId, it.runtime) }
                 val runtimes = runtimeStates.map { it.runtime }
                 val stateByRuntimeId = runtimeStates.associateBy { it.runtime.id }
                 reconcileStoredActiveSession(baseUrl, accountId, deviceId)
@@ -313,12 +317,26 @@ class MainActivity : AppCompatActivity() {
                 entitlement.runtimeStartsPerDay,
             )
         }
-        binding.entitlementDetailText.text = getString(
+        val allowanceDetail = getString(
             R.string.entitlement_detail,
             entitlement.runtimeCount,
             entitlement.runtimeLimit,
             entitlement.runtimeStartsRemainingToday,
         )
+        val storageDetail = getString(
+            R.string.entitlement_detail_with_storage,
+            allowanceDetail,
+            entitlement.storageBytesRemaining.coerceAtLeast(0L) / (1024L * 1024L),
+        )
+        binding.entitlementDetailText.text = if (entitlement.source.equals("trial", ignoreCase = true)) {
+            getString(
+                R.string.entitlement_detail_with_trial_time,
+                storageDetail,
+                (entitlement.trialRuntimeSecondsRemaining + 59L) / 60L,
+            )
+        } else {
+            storageDetail
+        }
         binding.createRuntimeButton.isEnabled = !binding.progressIndicator.isVisible && entitlement.canCreateRuntime
     }
 
@@ -428,6 +446,7 @@ class MainActivity : AppCompatActivity() {
                 }.getOrNull()
                 if (state?.canWipe != false) {
                     api.wipeRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
+                    snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
                 }
                 activeSessionStore.loadForRuntime(runtime.id)?.let {
                     activeSessionStore.clear()
@@ -439,6 +458,7 @@ class MainActivity : AppCompatActivity() {
                     runtime.id,
                     blobAccessKey,
                 )
+                snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
             }
         }

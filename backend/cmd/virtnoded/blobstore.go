@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,6 +32,7 @@ import (
 
 var errSnapshotMissing = errors.New("snapshot missing")
 var errBlobSnapshotTooLarge = errors.New("encrypted snapshot exceeds maximum size")
+var errRuntimeStorageQuotaExceeded = errors.New("encrypted snapshot exceeds the account storage quota")
 
 const (
 	snapshotMagic             = "VRTBLOB1"
@@ -72,6 +74,7 @@ type blobManifest struct {
 	Bucket            string        `json:"bucket,omitempty"`
 	ObjectType        string        `json:"object_type"`
 	SnapshotID        string        `json:"snapshot_id"`
+	Generation        int64         `json:"generation,omitempty"`
 	CreatedAt         time.Time     `json:"created_at"`
 	ChunkSize         int64         `json:"chunk_size"`
 	TotalBytes        int64         `json:"total_bytes"`
@@ -389,22 +392,95 @@ func (n *nodeAgent) persistSessionData(ctx context.Context, runtime runtimeAssig
 		_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
 		return nil, err
 	}
+	manifest.Generation = 1
+	if previous != nil {
+		if previous.Generation < 0 || previous.Generation == math.MaxInt64 {
+			_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+			return nil, errors.New("blob manifest generation cannot be advanced")
+		}
+		manifest.Generation = previous.Generation + 1
+	}
 	if previous != nil && previous.Store != manifest.Store {
 		manifest.MigrationFallback = previous
 	} else if previous != nil && previous.MigrationFallback != nil {
 		manifest.MigrationFallback = previous.MigrationFallback
 	}
-	if manifest.MigrationFallback != nil {
-		if err := authenticateBlobManifest(manifest, plan.masterKey, runtime.ID); err != nil {
-			_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
-			return nil, err
+	if err := authenticateBlobManifest(manifest, plan.masterKey, runtime.ID); err != nil {
+		_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+		return nil, err
+	}
+	if err := enforceRuntimeStorageQuota(runtime, manifest); err != nil {
+		cleanupErr := plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+		if cleanupErr != nil {
+			cleanupErr = fmt.Errorf("delete over-quota blob candidate: %w", cleanupErr)
 		}
+		return nil, errors.Join(err, cleanupErr)
 	}
 	now := time.Now().UTC()
 	return &persistedBlob{
 		Manifest:   manifest,
 		SnapshotAt: &now,
 	}, nil
+}
+
+func enforceRuntimeStorageQuota(runtime runtimeAssignment, candidate *blobManifest) error {
+	if runtime.StorageBytesLimit == nil || runtime.StorageBytesUsed == nil {
+		return nil
+	}
+	limit := *runtime.StorageBytesLimit
+	used := *runtime.StorageBytesUsed
+	if limit < 0 || used < 0 {
+		return errors.New("control plane returned invalid runtime storage quota metadata")
+	}
+	candidateBytes, err := manifestStorageBytes(candidate)
+	if err != nil {
+		return err
+	}
+	current, err := parseBlobManifest(runtime.BlobManifestJSON)
+	if err != nil {
+		return err
+	}
+	currentBytes, err := manifestStorageBytes(current)
+	if err != nil {
+		return err
+	}
+	otherRuntimeBytes := used - currentBytes
+	if otherRuntimeBytes < 0 {
+		otherRuntimeBytes = 0
+	}
+	if limit <= 0 || candidateBytes > limit-otherRuntimeBytes {
+		return fmt.Errorf(
+			"%w: candidate=%d other_runtimes=%d limit=%d",
+			errRuntimeStorageQuotaExceeded,
+			candidateBytes,
+			otherRuntimeBytes,
+			limit,
+		)
+	}
+	return nil
+}
+
+func manifestStorageBytes(manifest *blobManifest) (int64, error) {
+	if manifest == nil {
+		return 0, nil
+	}
+	if manifest.TotalBytes <= 0 || manifest.TotalBytes > maxBlobSnapshotBytes {
+		return 0, fmt.Errorf("blob manifest has invalid total size %d", manifest.TotalBytes)
+	}
+	total := manifest.TotalBytes
+	if fallback := manifest.MigrationFallback; fallback != nil {
+		if fallback.MigrationFallback != nil {
+			return 0, errors.New("blob manifest migration fallback cannot be nested")
+		}
+		if fallback.TotalBytes <= 0 || fallback.TotalBytes > maxBlobSnapshotBytes {
+			return 0, fmt.Errorf("blob migration fallback has invalid total size %d", fallback.TotalBytes)
+		}
+		if total > math.MaxInt64-fallback.TotalBytes {
+			return 0, errors.New("blob manifest storage usage overflows")
+		}
+		total += fallback.TotalBytes
+	}
+	return total, nil
 }
 
 func summarizeBlobPreflightFailures(report blobPreflightReport) string {
@@ -923,6 +999,9 @@ func validateBlobManifestForRuntime(manifest *blobManifest, runtimeID string) er
 		}
 	}
 	if manifest.Version == 3 {
+		if manifest.Generation < 0 {
+			return errors.New("authenticated blob manifest has an invalid generation")
+		}
 		if len(manifest.Namespace) != sha256.Size*2 {
 			return errors.New("authenticated blob manifest has an invalid namespace")
 		}

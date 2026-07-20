@@ -353,7 +353,7 @@
                     style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="DECENTRALIZED STORAGE"
+                    android:text="ENCRYPTED STORAGE"
                     android:layout_marginStart="8dp"
                     android:layout_marginTop="0dp"
                     android:layout_marginBottom="12dp" />
@@ -499,7 +499,7 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:gravity="center"
-                                android:text="Sia renterd"
+                                android:text="@string/account_storage_backend_local"
                                 android:textColor="@color/v_text_primary"
                                 android:textSize="12sp"
                                 android:textStyle="bold"

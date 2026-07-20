@@ -24,6 +24,8 @@ grep -q '^NODE_RUNTIME_NETWORK_MODE=per-runtime$' "${tmp_dir}/.env"
 grep -q '^NODE_AGENT_CONTAINER_NAME=virtnoded$' "${tmp_dir}/.env"
 grep -q '^BOOTSTRAP_ENABLED=false$' "${tmp_dir}/.env"
 grep -q '^NODE_DEVELOPMENT_ENROLLMENT_ENABLED=false$' "${tmp_dir}/.env"
+grep -Eq '^CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
+grep -Eq '^CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
 grep -q '^NODE_ALLOWED_ADVERTISE_ADDRS=virtnoded$' "${tmp_dir}/.env"
 grep -q '^NODE_SIA_RENTERD_WORKER_URL=$' "${tmp_dir}/.env"
 grep -q '^NODE_SIA_RENTERD_MIN_SHARDS=10$' "${tmp_dir}/.env"
@@ -98,20 +100,22 @@ fi
 
 PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/.env" "${script_dir}/deploy.sh" validate >/dev/null
 
-cp "${tmp_dir}/.env" "${tmp_dir}/weak-secret.env"
-printf '%s\n' 'NODE_SHARED_SECRET=x' >> "${tmp_dir}/weak-secret.env"
-if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/weak-secret.env" \
-  "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
-  echo "weak production shared secret was accepted" >&2
-  exit 1
-fi
-
 non_p256_key="$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -outform DER 2>/dev/null | openssl base64 -A)"
 cp "${tmp_dir}/.env" "${tmp_dir}/wrong-curve.env"
 printf 'NODE_PRIVATE_KEY_B64=%s\n' "${non_p256_key}" >> "${tmp_dir}/wrong-curve.env"
 if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/wrong-curve.env" \
   "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
   echo "non-P-256 production node key was accepted" >&2
+  exit 1
+fi
+
+mismatched_private="$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -outform DER 2>/dev/null | openssl base64 -A)"
+mismatched_public="$(printf '%s' "${mismatched_private}" | openssl base64 -d -A | openssl pkey -inform DER -pubout -outform DER 2>/dev/null | openssl base64 -A)"
+cp "${tmp_dir}/.env" "${tmp_dir}/mismatched-callback-key.env"
+printf 'CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64=%s\n' "${mismatched_public}" >> "${tmp_dir}/mismatched-callback-key.env"
+if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/mismatched-callback-key.env" \
+  "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
+  echo "mismatched control-plane callback keypair was accepted" >&2
   exit 1
 fi
 cp "${tmp_dir}/.env" "${tmp_dir}/renterd.env"
@@ -258,6 +262,10 @@ grep -q 'NODE_ALLOWED_ADVERTISE_ADDRS: ${NODE_ALLOWED_ADVERTISE_ADDRS:' "${scrip
 grep -q 'NODE_DEVELOPMENT_ENROLLMENT_ENABLED: "false"' "${script_dir}/docker-compose.yml"
 if grep -q 'NODE_REGISTRATION_SECRET:' "${script_dir}/docker-compose.yml"; then
   echo "production Compose still exposes the development registration secret" >&2
+  exit 1
+fi
+if grep -q 'NODE_SHARED_SECRET:' "${script_dir}/docker-compose.yml"; then
+  echo "production Compose still exposes the retired callback shared secret" >&2
   exit 1
 fi
 grep -q 'HAPROXY_CERT_GID:?set HAPROXY_CERT_GID' "${script_dir}/docker-compose.yml"

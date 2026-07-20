@@ -35,6 +35,7 @@ import (
 	"syscall"
 	"time"
 
+	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/nodeauth"
 )
@@ -211,6 +212,8 @@ type runtimeAssignment struct {
 	BlobAutoSnapshot    bool         `json:"blob_auto_snapshot"`
 	BlobStoreKind       *string      `json:"blob_store_kind"`
 	BlobManifestJSON    *string      `json:"blob_manifest_json"`
+	StorageBytesLimit   *int64       `json:"storage_bytes_limit"`
+	StorageBytesUsed    *int64       `json:"storage_bytes_used"`
 	ADBPort             *int         `json:"adb_port"`
 	ViewerPort          *int         `json:"viewer_port"`
 	WipeRequested       bool         `json:"wipe_requested"`
@@ -311,6 +314,8 @@ type nodeAgent struct {
 	blobCleanupMu       sync.Mutex
 	runtimeBlobKeyMu    sync.Mutex
 	runtimeBlobKeys     map[string][]byte
+	callbackNonceMu     sync.Mutex
+	callbackNonces      map[string]time.Time
 }
 
 type runtimeContainerResources struct {
@@ -420,9 +425,6 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func (n *nodeAgent) signControlPlaneRequest(req *http.Request, body []byte, includeRegistration bool) error {
-	if n.cfg.SharedSecret != "" {
-		req.Header.Set("X-Virtroid-Node-Secret", n.cfg.SharedSecret)
-	}
 	if n.nodePrivateKey == nil {
 		return nil
 	}
@@ -721,9 +723,74 @@ func mustJSON(value any) string {
 	return string(payload)
 }
 
+func (n *nodeAgent) requireControlPlaneCallback(w http.ResponseWriter, r *http.Request) bool {
+	publicKey := strings.TrimSpace(n.cfg.ControlPlaneCallbackPublicKey)
+	if publicKey == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback public key is not configured"})
+		return false
+	}
+	timestampRaw := strings.TrimSpace(r.Header.Get(callbackauth.HeaderTimestamp))
+	nonce := strings.TrimSpace(r.Header.Get(callbackauth.HeaderNonce))
+	bodyHash := strings.TrimSpace(r.Header.Get(callbackauth.HeaderBodySHA256))
+	signature := strings.TrimSpace(r.Header.Get(callbackauth.HeaderSignature))
+	if timestampRaw == "" || nonce == "" || bodyHash == "" || signature == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "signed control-plane callback headers are required"})
+		return false
+	}
+	if len(nonce) < 16 || len(nonce) > 128 {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid control-plane callback nonce"})
+		return false
+	}
+	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid control-plane callback timestamp"})
+		return false
+	}
+	now := time.Now()
+	callbackTime := time.Unix(timestamp, 0)
+	if skew := now.Sub(callbackTime); skew > 5*time.Minute || skew < -5*time.Minute {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback timestamp is outside the allowed window"})
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, (2<<20)+1))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read control-plane callback body"})
+		return false
+	}
+	if len(body) > 2<<20 {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "control-plane callback body is too large"})
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if callbackauth.BodyHash(body) != bodyHash {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback body hash mismatch"})
+		return false
+	}
+	if err := callbackauth.Verify(publicKey, r.Method, r.URL.RequestURI(), timestampRaw, nonce, bodyHash, signature); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid control-plane callback signature"})
+		return false
+	}
+
+	n.callbackNonceMu.Lock()
+	defer n.callbackNonceMu.Unlock()
+	if n.callbackNonces == nil {
+		n.callbackNonces = make(map[string]time.Time)
+	}
+	for candidate, expiresAt := range n.callbackNonces {
+		if !expiresAt.After(now) {
+			delete(n.callbackNonces, candidate)
+		}
+	}
+	if expiresAt, exists := n.callbackNonces[nonce]; exists && expiresAt.After(now) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback nonce was already used"})
+		return false
+	}
+	n.callbackNonces[nonce] = callbackTime.Add(5 * time.Minute)
+	return true
+}
+
 func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) {
-	if n.cfg.SharedSecret != "" && r.Header.Get("X-Virtroid-Node-Secret") != n.cfg.SharedSecret {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node secret"})
+	if !n.requireControlPlaneCallback(w, r) {
 		return
 	}
 
@@ -788,8 +855,7 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 }
 
 func (n *nodeAgent) handleVerifyBlobKeyEnvelope(w http.ResponseWriter, r *http.Request) {
-	if n.cfg.SharedSecret != "" && r.Header.Get("X-Virtroid-Node-Secret") != n.cfg.SharedSecret {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid node secret"})
+	if !n.requireControlPlaneCallback(w, r) {
 		return
 	}
 
@@ -1289,6 +1355,11 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 		status.ClearBlobManifest = true
 	}
 	if err := n.reportRuntimeStatus(ctx, runtime, status); err != nil {
+		var rejection *controlPlaneResponseError
+		if errors.As(err, &rejection) && rejection.StatusCode == http.StatusRequestEntityTooLarge {
+			cleanupErr := n.discardUncommittedBlob(persisted)
+			return errors.Join(fmt.Errorf("control plane rejected the encrypted snapshot candidate: %w", err), cleanupErr)
+		}
 		// The control plane may have committed the manifest even if its response
 		// was lost. Preserve the completed snapshot; the next successful stop will
 		// prune this generation if the status update was not committed.
@@ -1558,6 +1629,15 @@ func (n *nodeAgent) appendRuntimeLog(ctx context.Context, runtimeID, source, lev
 	})
 }
 
+type controlPlaneResponseError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *controlPlaneResponseError) Error() string {
+	return fmt.Sprintf("control plane rejected request: status=%d body=%s", e.StatusCode, e.Body)
+}
+
 func (n *nodeAgent) postControlPlane(ctx context.Context, path string, body any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -1581,7 +1661,10 @@ func (n *nodeAgent) postControlPlane(ctx context.Context, path string, body any)
 
 	if resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("control plane rejected request: status=%d body=%s", resp.StatusCode, string(payload))
+		return &controlPlaneResponseError{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(payload)),
+		}
 	}
 	return nil
 }

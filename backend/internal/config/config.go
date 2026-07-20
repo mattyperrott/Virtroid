@@ -13,7 +13,7 @@ type ServerConfig struct {
 	DatabaseURL                      string
 	PublicBaseURL                    string
 	PublicRelayURL                   string
-	NodeSharedSecret                 string
+	ControlPlaneCallbackPrivateKey   string
 	NodeRegistrationSecret           string
 	NodeDevelopmentEnrollmentEnabled bool
 	NodeAllowedAdvertiseAddrs        []string
@@ -34,34 +34,34 @@ type ServerConfig struct {
 }
 
 type NodeConfig struct {
-	NodeID                string
-	NodeName              string
-	BindAddr              string
-	RelayPort             int
-	ControlPlaneURL       string
-	AdvertiseAddr         string
-	ADBPath               string
-	ADBHost               string
-	BlobStoreKind         string
-	RenterdWorkerURL      string
-	RenterdPassword       string
-	RenterdBucket         string
-	RenterdWalletAddress  string
-	RenterdMinShards      int
-	RenterdTotalShards    int
-	RenterdContractSet    string
-	DockerNetworkName     string
-	SharedSecret          string
-	RegistrationSecret    string
-	PrivateKey            string
-	AppAPKDir             string
-	AppManifestPath       string
-	DefaultAppPackages    []string
-	ViewerCryptPath       string
-	HeartbeatInterval     time.Duration
-	ReconcileInterval     time.Duration
-	BlobPreflightInterval time.Duration
-	RuntimeRoot           string
+	NodeID                        string
+	NodeName                      string
+	BindAddr                      string
+	RelayPort                     int
+	ControlPlaneURL               string
+	AdvertiseAddr                 string
+	ADBPath                       string
+	ADBHost                       string
+	BlobStoreKind                 string
+	RenterdWorkerURL              string
+	RenterdPassword               string
+	RenterdBucket                 string
+	RenterdWalletAddress          string
+	RenterdMinShards              int
+	RenterdTotalShards            int
+	RenterdContractSet            string
+	DockerNetworkName             string
+	ControlPlaneCallbackPublicKey string
+	RegistrationSecret            string
+	PrivateKey                    string
+	AppAPKDir                     string
+	AppManifestPath               string
+	DefaultAppPackages            []string
+	ViewerCryptPath               string
+	HeartbeatInterval             time.Duration
+	ReconcileInterval             time.Duration
+	BlobPreflightInterval         time.Duration
+	RuntimeRoot                   string
 }
 
 func LoadServer() ServerConfig {
@@ -100,7 +100,7 @@ func LoadServer() ServerConfig {
 		DatabaseURL:                      envOrDefault("DATABASE_URL", "postgres://virtroid:virtroid@127.0.0.1:5432/virtroid?sslmode=disable"),
 		PublicBaseURL:                    envOrDefault("PUBLIC_BASE_URL", "http://127.0.0.1:8080"),
 		PublicRelayURL:                   os.Getenv("PUBLIC_RELAY_URL"),
-		NodeSharedSecret:                 os.Getenv("NODE_SHARED_SECRET"),
+		ControlPlaneCallbackPrivateKey:   strings.TrimSpace(os.Getenv("CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64")),
 		NodeRegistrationSecret:           strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
 		NodeDevelopmentEnrollmentEnabled: developmentEnrollmentEnabled,
 		NodeAllowedAdvertiseAddrs:        parseEnvCSV("NODE_ALLOWED_ADVERTISE_ADDRS", ""),
@@ -155,34 +155,34 @@ func LoadNode() NodeConfig {
 	}
 
 	return NodeConfig{
-		NodeID:                envOrDefault("NODE_ID", hostname),
-		NodeName:              envOrDefault("NODE_NAME", hostname),
-		BindAddr:              envOrDefault("NODE_BIND_ADDR", ":8090"),
-		RelayPort:             relayPort,
-		ControlPlaneURL:       envOrDefault("CONTROL_PLANE_URL", "http://127.0.0.1:8080"),
-		AdvertiseAddr:         envOrDefault("NODE_ADVERTISE_ADDR", hostname),
-		ADBPath:               envOrDefault("NODE_ADB_PATH", "adb"),
-		ADBHost:               envOrDefault("NODE_ADB_HOST", ""),
-		BlobStoreKind:         envOrDefault("NODE_BLOB_STORE_KIND", "local-disk"),
-		RenterdWorkerURL:      envOrDefault("NODE_SIA_RENTERD_WORKER_URL", ""),
-		RenterdPassword:       secretFileOrEnv("NODE_SIA_RENTERD_PASSWORD_FILE", "NODE_SIA_RENTERD_PASSWORD"),
-		RenterdBucket:         envOrDefault("NODE_SIA_RENTERD_BUCKET", "virtroid"),
-		RenterdWalletAddress:  strings.TrimSpace(os.Getenv("NODE_SIA_RENTERD_WALLET_ADDRESS")),
-		RenterdMinShards:      renterdMinShards,
-		RenterdTotalShards:    renterdTotalShards,
-		RenterdContractSet:    envOrDefault("NODE_SIA_RENTERD_CONTRACT_SET", ""),
-		DockerNetworkName:     envOrDefault("NODE_DOCKER_NETWORK", ""),
-		SharedSecret:          os.Getenv("NODE_SHARED_SECRET"),
-		RegistrationSecret:    strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
-		PrivateKey:            os.Getenv("NODE_PRIVATE_KEY_B64"),
-		AppAPKDir:             envOrDefault("NODE_APP_APK_DIR", "/srv/virtroid/apks"),
-		AppManifestPath:       envOrDefault("NODE_APP_MANIFEST_PATH", "/srv/virtroid/apks/manifest.json"),
-		DefaultAppPackages:    parseEnvCSV("NODE_DEFAULT_APP_PACKAGES", "org.fdroid.basic"),
-		ViewerCryptPath:       envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtroid-viewercrypt"),
-		HeartbeatInterval:     heartbeatInterval,
-		ReconcileInterval:     reconcileInterval,
-		BlobPreflightInterval: blobPreflightInterval,
-		RuntimeRoot:           envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtroid/runtimes"),
+		NodeID:                        envOrDefault("NODE_ID", hostname),
+		NodeName:                      envOrDefault("NODE_NAME", hostname),
+		BindAddr:                      envOrDefault("NODE_BIND_ADDR", ":8090"),
+		RelayPort:                     relayPort,
+		ControlPlaneURL:               envOrDefault("CONTROL_PLANE_URL", "http://127.0.0.1:8080"),
+		AdvertiseAddr:                 envOrDefault("NODE_ADVERTISE_ADDR", hostname),
+		ADBPath:                       envOrDefault("NODE_ADB_PATH", "adb"),
+		ADBHost:                       envOrDefault("NODE_ADB_HOST", ""),
+		BlobStoreKind:                 envOrDefault("NODE_BLOB_STORE_KIND", "local-disk"),
+		RenterdWorkerURL:              envOrDefault("NODE_SIA_RENTERD_WORKER_URL", ""),
+		RenterdPassword:               secretFileOrEnv("NODE_SIA_RENTERD_PASSWORD_FILE", "NODE_SIA_RENTERD_PASSWORD"),
+		RenterdBucket:                 envOrDefault("NODE_SIA_RENTERD_BUCKET", "virtroid"),
+		RenterdWalletAddress:          strings.TrimSpace(os.Getenv("NODE_SIA_RENTERD_WALLET_ADDRESS")),
+		RenterdMinShards:              renterdMinShards,
+		RenterdTotalShards:            renterdTotalShards,
+		RenterdContractSet:            envOrDefault("NODE_SIA_RENTERD_CONTRACT_SET", ""),
+		DockerNetworkName:             envOrDefault("NODE_DOCKER_NETWORK", ""),
+		ControlPlaneCallbackPublicKey: strings.TrimSpace(os.Getenv("CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64")),
+		RegistrationSecret:            strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
+		PrivateKey:                    os.Getenv("NODE_PRIVATE_KEY_B64"),
+		AppAPKDir:                     envOrDefault("NODE_APP_APK_DIR", "/srv/virtroid/apks"),
+		AppManifestPath:               envOrDefault("NODE_APP_MANIFEST_PATH", "/srv/virtroid/apks/manifest.json"),
+		DefaultAppPackages:            parseEnvCSV("NODE_DEFAULT_APP_PACKAGES", "org.fdroid.basic"),
+		ViewerCryptPath:               envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtroid-viewercrypt"),
+		HeartbeatInterval:             heartbeatInterval,
+		ReconcileInterval:             reconcileInterval,
+		BlobPreflightInterval:         blobPreflightInterval,
+		RuntimeRoot:                   envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtroid/runtimes"),
 	}
 }
 

@@ -221,13 +221,14 @@ require_generated_hex_secret() {
 }
 
 require_p256_private_key() {
-  local encoded_key="${NODE_PRIVATE_KEY_B64:-}"
+  local key_name="$1"
+  local encoded_key="${!key_name:-}"
   local temporary
   local canonical
   local description
 
   [[ "${encoded_key}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || {
-    echo "NODE_PRIVATE_KEY_B64 must be canonical base64" >&2
+    echo "${key_name} must be canonical base64" >&2
     return 1
   }
   command -v openssl >/dev/null 2>&1 || {
@@ -238,21 +239,45 @@ require_p256_private_key() {
   if ! printf '%s' "${encoded_key}" | openssl base64 -d -A > "${temporary}" ||
      ! openssl pkey -inform DER -in "${temporary}" -check -noout >/dev/null 2>&1; then
     find "${temporary}" -delete
-    echo "NODE_PRIVATE_KEY_B64 is not a valid PKCS8 private key" >&2
+    echo "${key_name} is not a valid PKCS8 private key" >&2
     return 1
   fi
   canonical="$(openssl base64 -A -in "${temporary}")"
   description="$(openssl pkey -inform DER -in "${temporary}" -text -noout 2>/dev/null)"
   find "${temporary}" -delete
   if [ "${canonical}" != "${encoded_key}" ]; then
-    echo "NODE_PRIVATE_KEY_B64 must use canonical base64 encoding" >&2
+    echo "${key_name} must use canonical base64 encoding" >&2
     return 1
   fi
   if [[ "${description}" != *"ASN1 OID: prime256v1"* ]] &&
      [[ "${description}" != *"NIST CURVE: P-256"* ]]; then
-    echo "NODE_PRIVATE_KEY_B64 must contain a P-256 private key" >&2
+    echo "${key_name} must contain a P-256 private key" >&2
     return 1
   fi
+}
+
+require_matching_callback_keypair() {
+  local private_tmp
+  local public_tmp
+  local expected_public
+  local configured_public="${CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64:-}"
+  private_tmp="$(mktemp)"
+  public_tmp="$(mktemp)"
+  if ! printf '%s' "${CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64}" | openssl base64 -d -A > "${private_tmp}" ||
+     ! printf '%s' "${configured_public}" | openssl base64 -d -A > "${public_tmp}"; then
+    find "${private_tmp}" "${public_tmp}" -delete
+    echo "control-plane callback keypair must use canonical base64" >&2
+    return 1
+  fi
+  expected_public="$(openssl pkey -inform DER -in "${private_tmp}" -pubout -outform DER 2>/dev/null | openssl base64 -A)"
+  if ! openssl pkey -pubin -inform DER -in "${public_tmp}" -noout >/dev/null 2>&1 ||
+     [ "$(openssl base64 -A -in "${public_tmp}")" != "${configured_public}" ] ||
+     [ "${expected_public}" != "${configured_public}" ]; then
+    find "${private_tmp}" "${public_tmp}" -delete
+    echo "CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64 must be the canonical public key for CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64" >&2
+    return 1
+  fi
+  find "${private_tmp}" "${public_tmp}" -delete
 }
 
 validate_environment() {
@@ -260,9 +285,10 @@ validate_environment() {
   load_release_env
   require_env \
     POSTGRES_PASSWORD \
-    NODE_SHARED_SECRET \
     NODE_DEVELOPMENT_ENROLLMENT_ENABLED \
     NODE_PRIVATE_KEY_B64 \
+    CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64 \
+    CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64 \
     NODE_ID \
     PUBLIC_BASE_URL \
     PUBLIC_RELAY_URL \
@@ -283,8 +309,9 @@ validate_environment() {
     NODE_AGENT_CONTAINER_NAME
 
   require_generated_hex_secret POSTGRES_PASSWORD
-  require_generated_hex_secret NODE_SHARED_SECRET
-  require_p256_private_key
+  require_p256_private_key NODE_PRIVATE_KEY_B64
+  require_p256_private_key CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64
+  require_matching_callback_keypair
 
   local invalid_image=0
   local image_key

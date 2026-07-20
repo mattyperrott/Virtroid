@@ -54,11 +54,20 @@ random_hex() {
   openssl rand -hex 32
 }
 
-node_private_key_b64() {
+p256_private_key_b64() {
   tmp_key="$(mktemp)"
   trap 'rm -f "${tmp_key}"' RETURN
   openssl ecparam -name prime256v1 -genkey -noout -out "${tmp_key}"
   openssl pkcs8 -topk8 -nocrypt -in "${tmp_key}" -outform DER | base64 | tr -d '\n'
+}
+
+p256_public_key_b64_from_private() {
+  local encoded_private="$1"
+  local tmp_key
+  tmp_key="$(mktemp)"
+  trap 'rm -f "${tmp_key}"' RETURN
+  printf '%s' "${encoded_private}" | openssl base64 -d -A > "${tmp_key}"
+  openssl pkey -inform DER -in "${tmp_key}" -pubout -outform DER | base64 | tr -d '\n'
 }
 
 default_node_id="$(hostname -s | tr -c '[:alnum:]-' '-' | sed -E 's/^-+|-+$//g')"
@@ -80,6 +89,9 @@ if [[ ! "${haproxy_cert_gid}" =~ ^[0-9]+$ ]]; then
   echo "HAPROXY_CERT_GID must be numeric, got: ${haproxy_cert_gid}" >&2
   exit 1
 fi
+node_private_key="$(p256_private_key_b64)"
+control_plane_callback_private_key="$(p256_private_key_b64)"
+control_plane_callback_public_key="$(p256_public_key_b64_from_private "${control_plane_callback_private_key}")"
 
 write_env_var() {
   printf '%s=%s\n' "$1" "$2"
@@ -98,9 +110,10 @@ write_env_var() {
   write_env_var POSTGRES_DB virtroid
   write_env_var POSTGRES_USER virtroid
   write_env_var POSTGRES_PASSWORD "$(random_hex)"
-  write_env_var NODE_SHARED_SECRET "$(random_hex)"
   write_env_var NODE_DEVELOPMENT_ENROLLMENT_ENABLED false
-  write_env_var NODE_PRIVATE_KEY_B64 "$(node_private_key_b64)"
+  write_env_var NODE_PRIVATE_KEY_B64 "${node_private_key}"
+  write_env_var CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64 "${control_plane_callback_private_key}"
+  write_env_var CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64 "${control_plane_callback_public_key}"
   write_env_var BOOTSTRAP_ENABLED false
   write_env_var BOOTSTRAP_RATE_LIMIT_PER_MINUTE 5
   write_env_var BOOTSTRAP_MAX_BODY_BYTES 32768

@@ -157,8 +157,9 @@ class AccountIdentityActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             runCatching {
-                api.getStorage(sessionStore.baseUrl, accountId, deviceId)
-            }.onSuccess { storage ->
+                api.getStorage(sessionStore.baseUrl, accountId, deviceId) to
+                    api.getEntitlement(sessionStore.baseUrl, accountId, deviceId)
+            }.onSuccess { (storage, entitlement) ->
                 binding.storageBackendValue.text = when (storage.provider.trim().lowercase(Locale.US)) {
                     "sia-renterd" -> getString(R.string.account_storage_backend_sia)
                     "local-disk" -> getString(R.string.account_storage_backend_local)
@@ -175,13 +176,22 @@ class AccountIdentityActivity : AppCompatActivity() {
                     else -> readiness.ifBlank { getString(R.string.account_storage_unavailable) }
                 }
                 binding.storageCreditValue.text = getString(R.string.account_storage_operator_managed)
-                binding.storageUsageValue.text = "--"
-                binding.storageUsageUnit.text = ""
-                binding.storageUsageSubtitle.text = getString(R.string.account_storage_usage_unreported)
+                val mib = 1024L * 1024L
+                val usedMiB = entitlement.storageBytesUsed.coerceAtLeast(0L) / mib
+                val limitMiB = entitlement.storageBytesLimit.coerceAtLeast(0L) / mib
+                val remainingMiB = entitlement.storageBytesRemaining.coerceAtLeast(0L) / mib
+                val remainingPercent = if (entitlement.storageBytesLimit > 0L) {
+                    ((entitlement.storageBytesRemaining.coerceAtLeast(0L) * 100L) / entitlement.storageBytesLimit)
+                        .coerceIn(0L, 100L)
+                } else {
+                    0L
+                }
+                binding.storageUsageValue.text = usedMiB.toString()
+                binding.storageUsageUnit.text = getString(R.string.account_storage_mib_unit)
+                binding.storageUsageSubtitle.text = getString(R.string.account_storage_usage_of_limit, usedMiB, limitMiB)
                 binding.storageSnapshots.text = getString(R.string.account_storage_snapshots_unreported)
-                binding.storageRunwayIcon.text = "--"
-                binding.storageRunwayValue.text = storage.lastPreflightAt?.takeIf { it.isNotBlank() }
-                    ?: getString(R.string.account_storage_runway_unreported)
+                binding.storageRunwayIcon.text = getString(R.string.account_storage_remaining_percent, remainingPercent)
+                binding.storageRunwayValue.text = getString(R.string.account_storage_remaining_mib, remainingMiB)
                 binding.identityLastSyncValue.text = OffsetDateTime.now().format(timestampFormatter)
             }.onFailure {
                 binding.storageReadyChip.text = getString(R.string.account_storage_unavailable)

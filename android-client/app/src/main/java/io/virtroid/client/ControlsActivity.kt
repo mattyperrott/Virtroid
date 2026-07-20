@@ -27,6 +27,7 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionControlsBinding
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import kotlinx.coroutines.Job
@@ -41,6 +42,7 @@ class ControlsActivity : AppCompatActivity() {
     private lateinit var sessionStore: SessionStore
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private lateinit var appLogs: AppLogStore
     private var runtimeId: String = ""
     private var runtime: RuntimeSummary? = null
@@ -61,6 +63,7 @@ class ControlsActivity : AppCompatActivity() {
         sessionStore = SessionStore(this)
         activeSessionStore = ActiveSessionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        snapshotRollbackGuard = SnapshotRollbackGuard(this)
         appLogs = AppLogStore.get(this)
         runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID).orEmpty()
         if (runtimeId.isBlank()) {
@@ -83,6 +86,7 @@ class ControlsActivity : AppCompatActivity() {
         binding.controlsConnectButton.setOnClickListener { connectOrStart() }
         binding.displayOutputRow.setOnClickListener { showDisplayDialog() }
         binding.consoleLogsRow.setOnClickListener { toggleLogs() }
+        binding.restartPersonaRow.setOnClickListener { confirmRestartPersona() }
         binding.wipeRow.setOnClickListener { confirmWipe() }
         binding.destroyRow.setOnClickListener { confirmDelete() }
 
@@ -106,6 +110,7 @@ class ControlsActivity : AppCompatActivity() {
             runCatching {
                 val entitlement = api.getEntitlement(sessionStore.baseUrl, accountId, deviceId)
                 val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
+                snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
                 ControlsState(state.runtime, entitlement, state)
             }.onSuccess { loaded ->
                 runtime = loaded.runtime
@@ -146,6 +151,8 @@ class ControlsActivity : AppCompatActivity() {
             it.canConnect || it.canStart || it.effectiveState.equals("starting", ignoreCase = true)
         } ?: (!lifecycleBusy || runtime.isReadyForSession())
         binding.controlsConnectButton.isEnabled = canConnectOrStart && connectOrStartJob?.isActive != true
+        binding.restartPersonaRow.isEnabled = !lifecycleBusy && connectOrStartJob?.isActive != true &&
+            (state?.let { it.canStop || it.canStart } ?: true)
         binding.wipeRow.isEnabled = state?.canWipe ?: !lifecycleBusy
         binding.destroyRow.isEnabled = state?.canDelete ?: !lifecycleBusy
         binding.displayOutputRow.isEnabled = !lifecycleBusy
@@ -263,6 +270,90 @@ class ControlsActivity : AppCompatActivity() {
         }
     }
 
+    private fun confirmRestartPersona() {
+        val current = runtime ?: return
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.controls_restart_confirm_title))
+            .setMessage(getString(R.string.controls_restart_confirm_body))
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.controls_confirm)) { _, _ -> restartWithNewPersona(current) }
+            .show()
+    }
+
+    private fun restartWithNewPersona(current: RuntimeSummary) {
+        if (connectOrStartJob?.isActive == true) {
+            return
+        }
+        connectOrStartJob = lifecycleScope.launch {
+            try {
+                runCatching {
+                    val accountId = sessionStore.accountId ?: throw IOException(getString(R.string.account_missing))
+                    val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
+                    val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                    val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, current.id)
+                    snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
+                    runtime = state.runtime
+                    runtimeState = state
+                    bindRuntime(state.runtime, state)
+                    if (state.canStop) {
+                        api.stopRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                        activeSessionStore.loadForRuntime(current.id)?.let { activeSessionStore.clear() }
+                    } else if (!state.canStart) {
+                        throw IOException(state.blockedReason ?: getString(R.string.runtime_shutdown_in_progress))
+                    }
+                    waitForRuntimeStartable(accountId, deviceId, current.id)
+                    val latestEntitlement = api.getEntitlement(sessionStore.baseUrl, accountId, deviceId)
+                    entitlement = latestEntitlement
+                    latestEntitlement.startRuntimeBlockedMessage(this@ControlsActivity)?.let { throw IOException(it) }
+                    api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                    identityPasswordStore.saveConfigured(accountId, deviceId)
+                    val ready = waitForRuntimeReady(accountId, deviceId, current.id)
+                    if (ready.personaVersion <= current.personaVersion) {
+                        throw IOException(getString(R.string.controls_persona_rotation_failed))
+                    }
+                    ready
+                }.onSuccess {
+                    runtime = it
+                    runtimeState = null
+                    toast(getString(R.string.controls_restart_complete))
+                }.onFailure {
+                    toast(it.virtroidDisplayMessage(this@ControlsActivity))
+                    loadRuntime()
+                }
+            } finally {
+                connectOrStartJob = null
+                runtime?.let { bindRuntime(it, runtimeState) }
+            }
+        }
+    }
+
+    private suspend fun waitForRuntimeStartable(accountId: String, deviceId: String, runtimeId: String): RuntimeState {
+        val startedAtMs = System.currentTimeMillis()
+        while (true) {
+            val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
+            snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
+            runtime = state.runtime
+            runtimeState = state
+            bindRuntime(state.runtime, state)
+            if (state.canStart) {
+                return state
+            }
+            when (state.effectiveState.lowercase()) {
+                "stopped", "provisioned" -> throw IOException(
+                    state.blockedReason ?: getString(R.string.runtime_missing_for_session),
+                )
+                "error" -> throw IOException(
+                    state.runtime.lastError ?: state.blockedReason ?: getString(R.string.status_error),
+                )
+                "deleted", "deleting" -> throw IOException(getString(R.string.runtime_deleted))
+            }
+            if (System.currentTimeMillis() - startedAtMs >= CONNECT_WAIT_MAX_MS) {
+                throw IOException(getString(R.string.controls_restart_timeout))
+            }
+            delay(runtimeWaitDelayMs(startedAtMs))
+        }
+    }
+
     private fun confirmWipe() {
         val current = runtime ?: return
         MaterialAlertDialogBuilder(this)
@@ -279,6 +370,7 @@ class ControlsActivity : AppCompatActivity() {
                         identityPasswordStore.saveConfigured(accountId, deviceId)
                         updated
                     }.onSuccess {
+                        snapshotRollbackGuard.clearRuntime(accountId, current.id)
                         activeSessionStore.loadForRuntime(current.id)?.let {
                             activeSessionStore.clear()
                         }
@@ -310,6 +402,7 @@ class ControlsActivity : AppCompatActivity() {
                     val accountId = sessionStore.accountId ?: throw IOException(getString(R.string.account_missing))
                     val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
                     val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, current.id)
+                    snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
                     runtime = state.runtime
                     runtimeState = state
                     bindRuntime(state.runtime, state)
@@ -351,6 +444,7 @@ class ControlsActivity : AppCompatActivity() {
         val startedAtMs = System.currentTimeMillis()
         while (true) {
             val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
+            snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
             runtime = state.runtime
             runtimeState = state
             bindRuntime(state.runtime, state)
@@ -455,6 +549,7 @@ class ControlsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching {
                 val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtime.id)
+                snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
                 runtimeState = state
                 this@ControlsActivity.runtime = state.runtime
                 bindRuntime(state.runtime, state)
@@ -517,11 +612,13 @@ class ControlsActivity : AppCompatActivity() {
                     runCatching {
                         val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
                         api.wipeRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                        snapshotRollbackGuard.clearRuntime(accountId, current.id)
                         identityPasswordStore.saveConfigured(accountId, deviceId)
                         activeSessionStore.loadForRuntime(current.id)?.let {
                             activeSessionStore.clear()
                         }
                         api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                        snapshotRollbackGuard.clearRuntime(accountId, current.id)
                     }.onSuccess {
                         toast(getString(R.string.runtime_delete_queued))
                         finishToRuntimeList()

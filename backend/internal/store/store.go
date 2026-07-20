@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -28,13 +29,15 @@ const runtimeColumns = `id, account_id, name, status, desired_state, connection_
 const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
-	schemaMigrationLockKey  int64 = 0x56697274726f6964
-	currentSchemaVersion    int64 = 2026071903
-	schemaVersionLabel            = "approved node and operator trust registry 2026-07-19"
-	runtimeLogRetentionRows       = 2000
-	runtimeLogSourceRunes         = 64
-	runtimeLogLevelRunes          = 32
-	runtimeLogMessageRunes        = 4096
+	schemaMigrationLockKey     int64 = 0x56697274726f6964
+	currentSchemaVersion       int64 = 2026071903
+	schemaVersionLabel               = "approved node and operator trust registry 2026-07-19"
+	runtimeLogRetentionRows          = 2000
+	runtimeLogSourceRunes            = 64
+	runtimeLogLevelRunes             = 32
+	runtimeLogMessageRunes           = 4096
+	maxStoredBlobManifestBytes       = 2 << 20
+	maxStoredBlobSnapshotBytes       = 16 << 30
 )
 
 const (
@@ -74,6 +77,9 @@ var (
 	ErrRuntimeQuota            = errors.New("runtime quota exceeded")
 	ErrRuntimeActiveQuota      = errors.New("active runtime quota exceeded")
 	ErrRuntimeStartQuota       = errors.New("runtime start quota exceeded")
+	ErrRuntimeTrialTimeQuota   = errors.New("trial runtime time quota exceeded")
+	ErrRuntimeStorageQuota     = errors.New("runtime storage quota exceeded")
+	ErrRuntimeSnapshotRollback = errors.New("runtime snapshot generation is not monotonic")
 	ErrRuntimeProfile          = errors.New("runtime profile is not allowed")
 	ErrSecurityEventRateLimit  = errors.New("security event rate limit exceeded")
 	ErrAccountNotFound         = errors.New("account not found")
@@ -95,14 +101,17 @@ var (
 const MaxNodeKeyRotationOverlap = 24 * time.Hour
 
 const (
-	RuntimeEntitlementRequiredCode = "runtime_entitlement_required"
-	RuntimeQuotaExceededCode       = "runtime_quota_exceeded"
-	ActiveRuntimeQuotaExceededCode = "active_runtime_quota_exceeded"
-	RuntimeStartQuotaExceededCode  = "runtime_start_quota_exceeded"
-	RuntimeProfileNotAllowedCode   = "runtime_profile_not_allowed"
-	NoReadyHostCode                = "no_ready_host"
-	RuntimeBlobOwnerCode           = "runtime_blob_owner_unknown"
-	RuntimeCleanupPendingCode      = "runtime_cleanup_pending"
+	RuntimeEntitlementRequiredCode  = "runtime_entitlement_required"
+	RuntimeQuotaExceededCode        = "runtime_quota_exceeded"
+	ActiveRuntimeQuotaExceededCode  = "active_runtime_quota_exceeded"
+	RuntimeStartQuotaExceededCode   = "runtime_start_quota_exceeded"
+	RuntimeTrialTimeExceededCode    = "runtime_trial_time_exceeded"
+	RuntimeStorageQuotaExceededCode = "runtime_storage_quota_exceeded"
+	RuntimeSnapshotRollbackCode     = "runtime_snapshot_rollback"
+	RuntimeProfileNotAllowedCode    = "runtime_profile_not_allowed"
+	NoReadyHostCode                 = "no_ready_host"
+	RuntimeBlobOwnerCode            = "runtime_blob_owner_unknown"
+	RuntimeCleanupPendingCode       = "runtime_cleanup_pending"
 )
 
 type BootstrapResult struct {
@@ -148,27 +157,31 @@ type AccountEntitlement struct {
 }
 
 type AccountEntitlementSummary struct {
-	AccountID                   string     `json:"account_id"`
-	Source                      string     `json:"source"`
-	Status                      string     `json:"status"`
-	RuntimeLimit                int        `json:"runtime_limit"`
-	RuntimeCount                int        `json:"runtime_count"`
-	RuntimeRemaining            int        `json:"runtime_remaining"`
-	ActiveRuntimeLimit          int        `json:"active_runtime_limit"`
-	ActiveRuntimeCount          int        `json:"active_runtime_count"`
-	ActiveRuntimeRemaining      int        `json:"active_runtime_remaining"`
-	RuntimeStartsPerDay         int        `json:"runtime_starts_per_day"`
-	RuntimeStartsUsedToday      int        `json:"runtime_starts_used_today"`
-	RuntimeStartsRemainingToday int        `json:"runtime_starts_remaining_today"`
-	StorageBytesLimit           int64      `json:"storage_bytes_limit"`
-	TrialRuntimeSeconds         int        `json:"trial_runtime_seconds"`
-	ExpiresAt                   *time.Time `json:"expires_at,omitempty"`
-	CanCreateRuntime            bool       `json:"can_create_runtime"`
-	CanStartRuntime             bool       `json:"can_start_runtime"`
-	CreateRuntimeBlockedCode    string     `json:"create_runtime_blocked_code,omitempty"`
-	CreateRuntimeBlockedReason  string     `json:"create_runtime_blocked_reason,omitempty"`
-	StartRuntimeBlockedCode     string     `json:"start_runtime_blocked_code,omitempty"`
-	StartRuntimeBlockedReason   string     `json:"start_runtime_blocked_reason,omitempty"`
+	AccountID                    string     `json:"account_id"`
+	Source                       string     `json:"source"`
+	Status                       string     `json:"status"`
+	RuntimeLimit                 int        `json:"runtime_limit"`
+	RuntimeCount                 int        `json:"runtime_count"`
+	RuntimeRemaining             int        `json:"runtime_remaining"`
+	ActiveRuntimeLimit           int        `json:"active_runtime_limit"`
+	ActiveRuntimeCount           int        `json:"active_runtime_count"`
+	ActiveRuntimeRemaining       int        `json:"active_runtime_remaining"`
+	RuntimeStartsPerDay          int        `json:"runtime_starts_per_day"`
+	RuntimeStartsUsedToday       int        `json:"runtime_starts_used_today"`
+	RuntimeStartsRemainingToday  int        `json:"runtime_starts_remaining_today"`
+	StorageBytesLimit            int64      `json:"storage_bytes_limit"`
+	StorageBytesUsed             int64      `json:"storage_bytes_used"`
+	StorageBytesRemaining        int64      `json:"storage_bytes_remaining"`
+	TrialRuntimeSeconds          int        `json:"trial_runtime_seconds"`
+	TrialRuntimeSecondsUsed      int64      `json:"trial_runtime_seconds_used"`
+	TrialRuntimeSecondsRemaining int64      `json:"trial_runtime_seconds_remaining"`
+	ExpiresAt                    *time.Time `json:"expires_at,omitempty"`
+	CanCreateRuntime             bool       `json:"can_create_runtime"`
+	CanStartRuntime              bool       `json:"can_start_runtime"`
+	CreateRuntimeBlockedCode     string     `json:"create_runtime_blocked_code,omitempty"`
+	CreateRuntimeBlockedReason   string     `json:"create_runtime_blocked_reason,omitempty"`
+	StartRuntimeBlockedCode      string     `json:"start_runtime_blocked_code,omitempty"`
+	StartRuntimeBlockedReason    string     `json:"start_runtime_blocked_reason,omitempty"`
 }
 
 type AppCatalogEntry struct {
@@ -227,6 +240,8 @@ type Runtime struct {
 	BlobManifestJSON    *string           `json:"blob_manifest_json,omitempty"`
 	BlobHostID          *string           `json:"-"`
 	BlobLastSnapshotAt  *time.Time        `json:"blob_last_snapshot_at,omitempty"`
+	StorageBytesLimit   *int64            `json:"storage_bytes_limit,omitempty"`
+	StorageBytesUsed    *int64            `json:"storage_bytes_used,omitempty"`
 	StartedAt           *time.Time        `json:"started_at,omitempty"`
 	LoadAverage         *float64          `json:"load_average,omitempty"`
 	ContainerName       *string           `json:"container_name,omitempty"`
@@ -2179,6 +2194,18 @@ func (s *Store) GetAccountEntitlementSummary(ctx context.Context, accountID stri
 	).Scan(&summary.RuntimeStartsUsedToday); err != nil {
 		return AccountEntitlementSummary{}, err
 	}
+	trialSecondsUsed, err := trialRuntimeSecondsUsed(ctx, s.db, accountID)
+	if err != nil {
+		return AccountEntitlementSummary{}, err
+	}
+	summary.TrialRuntimeSecondsUsed = trialSecondsUsed
+	summary.TrialRuntimeSecondsRemaining = remainingInt64(int64(summary.TrialRuntimeSeconds), trialSecondsUsed)
+	storageBytesUsed, err := accountStorageBytesUsed(ctx, s.db, accountID)
+	if err != nil {
+		return AccountEntitlementSummary{}, err
+	}
+	summary.StorageBytesUsed = storageBytesUsed
+	summary.StorageBytesRemaining = remainingInt64(summary.StorageBytesLimit, storageBytesUsed)
 
 	summary.RuntimeRemaining = remaining(summary.RuntimeLimit, summary.RuntimeCount)
 	summary.ActiveRuntimeRemaining = remaining(summary.ActiveRuntimeLimit, summary.ActiveRuntimeCount)
@@ -2197,6 +2224,9 @@ func (s *Store) GetAccountEntitlementSummary(ctx context.Context, accountID stri
 	}
 	if summary.RuntimeStartsPerDay <= 0 || summary.RuntimeStartsUsedToday >= summary.RuntimeStartsPerDay {
 		summary.blockStart(RuntimeStartQuotaExceededCode, ErrRuntimeStartQuota.Error())
+	}
+	if trialRuntimeTimeExhausted(entitlement, trialSecondsUsed) {
+		summary.blockStart(RuntimeTrialTimeExceededCode, ErrRuntimeTrialTimeQuota.Error())
 	}
 
 	return summary, nil
@@ -5080,6 +5110,60 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		return SessionReapResult{}, err
 	}
 
+	trialQuotaRuntimeIDs, err := queryStringColumnTX(ctx, tx,
+		`WITH usage AS (
+		     SELECT r.id,
+		            e.trial_runtime_seconds,
+		            COALESCE(FLOOR(SUM(GREATEST(
+		                0,
+		                EXTRACT(EPOCH FROM (
+		                    CASE
+		                        WHEN s.status IN ('pending', 'active') THEN LEAST(NOW(), s.expires_at)
+		                        ELSE COALESCE(s.ended_at, s.updated_at, s.created_at)
+		                    END - s.created_at
+		                ))
+		            ))), 0)::bigint AS seconds_used
+		       FROM runtimes r
+		       JOIN account_entitlements e ON e.account_id = r.account_id
+		       LEFT JOIN sessions s ON s.runtime_id = r.id
+		      WHERE r.deleted_at IS NULL
+		        AND r.desired_state = 'running'
+		        AND e.source = 'trial'
+		        AND e.status = 'active'
+		      GROUP BY r.id, e.trial_runtime_seconds
+		 ),
+		 candidates AS (
+		     SELECT id
+		       FROM usage
+		      WHERE trial_runtime_seconds <= 0 OR seconds_used >= trial_runtime_seconds
+		 ),
+		 updated AS (
+		     UPDATE runtimes r
+		        SET status = CASE WHEN r.host_id IS NULL THEN 'stopped' ELSE 'stopping' END,
+		            desired_state = 'stopped',
+		            operation_generation = r.operation_generation + 1,
+		            connection_status = CASE WHEN r.host_id IS NULL THEN 'offline' ELSE 'disconnecting' END,
+		            started_at = NULL,
+		            last_error = NULL,
+		            updated_at = NOW()
+		       FROM candidates c
+		      WHERE r.id = c.id
+		      RETURNING r.id
+		 )
+		 SELECT id FROM updated`,
+	)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
+	for _, runtimeID := range trialQuotaRuntimeIDs {
+		if err := closeRuntimeSessionsTX(ctx, tx, runtimeID, "trial runtime time quota reached"); err != nil {
+			return SessionReapResult{}, err
+		}
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because the trial runtime time quota was reached."); err != nil {
+			return SessionReapResult{}, err
+		}
+	}
+
 	stoppedRuntimeIDs, err := queryStringColumnTX(ctx, tx,
 		`WITH latest_session AS (
 		     SELECT runtime_id, MAX(updated_at) AS last_session_at
@@ -5128,12 +5212,15 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 	if err != nil {
 		return SessionReapResult{}, err
 	}
+	allStoppedRuntimeIDs := append(append([]string{}, trialQuotaRuntimeIDs...), stoppedRuntimeIDs...)
 
 	revokedStoppedRuntimeCapabilities := 0
 	for _, runtimeID := range stoppedRuntimeIDs {
 		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because no active client session is heartbeating."); err != nil {
 			return SessionReapResult{}, err
 		}
+	}
+	for _, runtimeID := range allStoppedRuntimeIDs {
 		revokedCount, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtimeID)
 		if err != nil {
 			return SessionReapResult{}, err
@@ -5163,7 +5250,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		StaleActiveSessions:           len(staleActive),
 		RevokedRuntimeCapabilities:    revokedStoppedRuntimeCapabilities + revokedSessionCapabilities + revokedExpiredCapabilities,
 		PrunedRuntimeCapabilityNonces: prunedRuntimeCapabilityNonces,
-		StoppedRuntimeIDs:             stoppedRuntimeIDs,
+		StoppedRuntimeIDs:             allStoppedRuntimeIDs,
 	}, nil
 }
 
@@ -5207,6 +5294,9 @@ func (s *Store) ListAssignedRuntimes(ctx context.Context, hostID string) ([]Runt
 	if err := attachSelectedAppsToRuntimesTX(ctx, tx, runtimes); err != nil {
 		return nil, err
 	}
+	if err := attachStorageQuotaToRuntimesTX(ctx, tx, runtimes); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -5214,6 +5304,45 @@ func (s *Store) ListAssignedRuntimes(ctx context.Context, hostID string) ([]Runt
 		return []Runtime{}, nil
 	}
 	return runtimes, nil
+}
+
+func attachStorageQuotaToRuntimesTX(ctx context.Context, tx *sql.Tx, runtimes []Runtime) error {
+	if len(runtimes) == 0 {
+		return nil
+	}
+	type storageQuota struct {
+		limit int64
+		used  int64
+	}
+	quotasByAccount := make(map[string]storageQuota)
+	for i := range runtimes {
+		accountID := strings.TrimSpace(runtimes[i].AccountID)
+		quota, ok := quotasByAccount[accountID]
+		if !ok {
+			if err := tx.QueryRowContext(ctx,
+				`SELECT storage_bytes_limit
+				   FROM account_entitlements
+				  WHERE account_id = $1`,
+				accountID,
+			).Scan(&quota.limit); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrRuntimeEntitlement
+				}
+				return err
+			}
+			used, err := accountStorageBytesUsed(ctx, tx, accountID)
+			if err != nil {
+				return err
+			}
+			quota.used = used
+			quotasByAccount[accountID] = quota
+		}
+		limit := quota.limit
+		used := quota.used
+		runtimes[i].StorageBytesLimit = &limit
+		runtimes[i].StorageBytesUsed = &used
+	}
+	return nil
 }
 
 func attachSelectedAppsToRuntimesTX(ctx context.Context, tx *sql.Tx, runtimes []Runtime) error {
@@ -5408,7 +5537,30 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 		return tx.Commit()
 	}
 
-	result, err := s.db.ExecContext(ctx,
+	manifestRaw := strings.TrimSpace(valueOrEmpty(observation.BlobManifestJSON))
+	if observation.ClearBlobManifest && manifestRaw != "" {
+		return errors.New("blob manifest cannot be set and cleared in the same observation")
+	}
+	if manifestRaw != "" {
+		manifest, err := parseStoredBlobManifestUsage(manifestRaw)
+		if err != nil {
+			return err
+		}
+		manifestBytes, err := storedBlobManifestBytesAtDepth(manifest, 0)
+		if err != nil {
+			return err
+		}
+		return s.updateRuntimeObservationWithStorageQuota(ctx, runtimeID, observation, manifest, manifestBytes)
+	}
+	return updateRuntimeObservationRecord(ctx, s.db, runtimeID, observation)
+}
+
+type execContexter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func updateRuntimeObservationRecord(ctx context.Context, execer execContexter, runtimeID string, observation RuntimeObservation) error {
+	result, err := execer.ExecContext(ctx,
 		`UPDATE runtimes
 		 SET status = $3,
 		     connection_status = $4,
@@ -5484,12 +5636,137 @@ func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, 
 	return nil
 }
 
+func (s *Store) updateRuntimeObservationWithStorageQuota(
+	ctx context.Context,
+	runtimeID string,
+	observation RuntimeObservation,
+	incomingManifest *storedBlobManifestUsage,
+	incomingManifestBytes int64,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var accountID string
+	var currentManifestRaw sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT account_id, blob_manifest_json
+		   FROM runtimes
+		  WHERE id = $1
+		    AND host_id = $2
+		    AND operation_generation = $3
+		    AND deleted_at IS NULL
+		  FOR UPDATE`,
+		runtimeID,
+		observation.HostID,
+		observation.OperationGeneration,
+	).Scan(&accountID, &currentManifestRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRuntimeObservationStale
+		}
+		return err
+	}
+	if err := validateStoredBlobManifestAdvance(currentManifestRaw.String, incomingManifest); err != nil {
+		return err
+	}
+
+	var storageBytesLimit int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT storage_bytes_limit
+		   FROM account_entitlements
+		  WHERE account_id = $1
+		  FOR UPDATE`,
+		accountID,
+	).Scan(&storageBytesLimit); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRuntimeEntitlement
+		}
+		return err
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, blob_manifest_json
+		   FROM runtimes
+		  WHERE account_id = $1
+		    AND id <> $2
+		    AND deleted_at IS NULL
+		    AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL`,
+		accountID,
+		runtimeID,
+	)
+	if err != nil {
+		return err
+	}
+	var otherRuntimeBytes int64
+	for rows.Next() {
+		var otherRuntimeID string
+		var raw string
+		if err := rows.Scan(&otherRuntimeID, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		manifestBytes, err := storedBlobManifestBytes(raw)
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("runtime %s has invalid blob storage metadata: %w", otherRuntimeID, err)
+		}
+		if otherRuntimeBytes > math.MaxInt64-manifestBytes {
+			rows.Close()
+			return errors.New("account storage usage overflows")
+		}
+		otherRuntimeBytes += manifestBytes
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if storageBytesLimit <= 0 || incomingManifestBytes > storageBytesLimit-otherRuntimeBytes {
+		return ErrRuntimeStorageQuota
+	}
+
+	if err := updateRuntimeObservationRecord(ctx, tx, runtimeID, observation); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func validateStoredBlobManifestAdvance(currentRaw string, incoming *storedBlobManifestUsage) error {
+	if incoming == nil || incoming.Version != 3 || incoming.Generation <= 0 || strings.TrimSpace(incoming.SnapshotID) == "" {
+		return ErrRuntimeSnapshotRollback
+	}
+	current, err := parseStoredBlobManifestUsage(currentRaw)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		if incoming.Generation != 1 {
+			return ErrRuntimeSnapshotRollback
+		}
+		return nil
+	}
+	if incoming.SnapshotID == current.SnapshotID {
+		if incoming.Generation != current.Generation {
+			return ErrRuntimeSnapshotRollback
+		}
+		return nil
+	}
+	if current.Generation == math.MaxInt64 || incoming.Generation != current.Generation+1 {
+		return ErrRuntimeSnapshotRollback
+	}
+	return nil
+}
+
 func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (Session, error) {
+	var accountID string
 	var status string
 	var desiredState string
 	var connectionStatus string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT r.status, r.desired_state, r.connection_status
+		`SELECT r.account_id, r.status, r.desired_state, r.connection_status
 		 FROM runtimes r
 		 JOIN devices d ON d.account_id = r.account_id
 		 WHERE r.id = $1
@@ -5499,7 +5776,7 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 		   AND r.desired_state <> 'deleted'`,
 		runtimeID,
 		deviceID,
-	).Scan(&status, &desiredState, &connectionStatus); err != nil {
+	).Scan(&accountID, &status, &desiredState, &connectionStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Session{}, ErrRuntimeNotFound
 		}
@@ -5508,6 +5785,9 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 
 	if desiredState != "running" || status != "running" || connectionStatus != "online" {
 		return Session{}, ErrRuntimeNotReady
+	}
+	if err := ensureSessionTrialTimeAvailable(ctx, s.db, accountID); err != nil {
+		return Session{}, err
 	}
 
 	sessionID := uuid.NewString()
@@ -5595,6 +5875,9 @@ func (s *Store) CreateSessionWithCapability(ctx context.Context, accountID, capa
 
 	if desiredState != "running" || status != "running" || connectionStatus != "online" {
 		return Session{}, ErrRuntimeNotReady
+	}
+	if err := ensureSessionTrialTimeAvailable(ctx, s.db, accountID); err != nil {
+		return Session{}, err
 	}
 
 	sessionID := uuid.NewString()
@@ -5909,6 +6192,13 @@ func ensureRuntimeStartEntitlementTX(ctx context.Context, tx *sql.Tx, accountID,
 	if startsToday >= entitlement.RuntimeStartsPerDay {
 		return ErrRuntimeStartQuota
 	}
+	trialSecondsUsed, err := trialRuntimeSecondsUsed(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	if trialRuntimeTimeExhausted(entitlement, trialSecondsUsed) {
+		return ErrRuntimeTrialTimeQuota
+	}
 	return nil
 }
 
@@ -5983,6 +6273,201 @@ func remaining(limit, used int) int {
 		return 0
 	}
 	return value
+}
+
+func remainingInt64(limit, used int64) int64 {
+	value := limit - used
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+type queryRowContexter interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type queryContexter interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+type storedBlobManifestUsage struct {
+	Version           int                      `json:"version"`
+	SnapshotID        string                   `json:"snapshot_id"`
+	Generation        int64                    `json:"generation,omitempty"`
+	TotalBytes        int64                    `json:"total_bytes"`
+	Chunks            []storedBlobChunkUsage   `json:"chunks"`
+	MigrationFallback *storedBlobManifestUsage `json:"migration_fallback,omitempty"`
+}
+
+type storedBlobChunkUsage struct {
+	Size int64 `json:"size"`
+}
+
+func storedBlobManifestBytes(raw string) (int64, error) {
+	manifest, err := parseStoredBlobManifestUsage(raw)
+	if err != nil || manifest == nil {
+		return 0, err
+	}
+	return storedBlobManifestBytesAtDepth(manifest, 0)
+}
+
+func parseStoredBlobManifestUsage(raw string) (*storedBlobManifestUsage, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if len(raw) > maxStoredBlobManifestBytes {
+		return nil, errors.New("blob manifest exceeds the maximum encoded size")
+	}
+	var manifest storedBlobManifestUsage
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return nil, fmt.Errorf("decode blob manifest storage usage: %w", err)
+	}
+	if _, err := storedBlobManifestBytesAtDepth(&manifest, 0); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+func storedBlobManifestBytesAtDepth(manifest *storedBlobManifestUsage, depth int) (int64, error) {
+	if manifest == nil {
+		return 0, nil
+	}
+	if depth > 1 {
+		return 0, errors.New("blob manifest migration fallback is nested too deeply")
+	}
+	if manifest.Version < 1 || manifest.Version > 3 {
+		return 0, fmt.Errorf("blob manifest has unsupported version %d", manifest.Version)
+	}
+	if strings.TrimSpace(manifest.SnapshotID) == "" {
+		return 0, errors.New("blob manifest has no snapshot id")
+	}
+	if manifest.Generation < 0 {
+		return 0, errors.New("blob manifest has an invalid generation")
+	}
+	if manifest.TotalBytes <= 0 || manifest.TotalBytes > maxStoredBlobSnapshotBytes {
+		return 0, fmt.Errorf("blob manifest has invalid total size %d", manifest.TotalBytes)
+	}
+	if len(manifest.Chunks) == 0 || len(manifest.Chunks) > maxStoredBlobSnapshotBytes/(4<<20) {
+		return 0, fmt.Errorf("blob manifest has invalid chunk count %d", len(manifest.Chunks))
+	}
+	var chunkTotal int64
+	for _, chunk := range manifest.Chunks {
+		if chunk.Size <= 0 || chunk.Size > 16<<20 {
+			return 0, fmt.Errorf("blob manifest has invalid chunk size %d", chunk.Size)
+		}
+		if chunkTotal > math.MaxInt64-chunk.Size {
+			return 0, errors.New("blob manifest chunk usage overflows")
+		}
+		chunkTotal += chunk.Size
+	}
+	if chunkTotal != manifest.TotalBytes {
+		return 0, errors.New("blob manifest chunk total does not match total size")
+	}
+	total := manifest.TotalBytes
+	if manifest.MigrationFallback != nil {
+		fallbackBytes, err := storedBlobManifestBytesAtDepth(manifest.MigrationFallback, depth+1)
+		if err != nil {
+			return 0, err
+		}
+		if total > math.MaxInt64-fallbackBytes {
+			return 0, errors.New("blob manifest storage usage overflows")
+		}
+		total += fallbackBytes
+	}
+	return total, nil
+}
+
+func accountStorageBytesUsed(ctx context.Context, queryer queryContexter, accountID string) (int64, error) {
+	rows, err := queryer.QueryContext(ctx,
+		`SELECT blob_manifest_json
+		   FROM runtimes
+		  WHERE account_id = $1
+		    AND deleted_at IS NULL
+		    AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL`,
+		strings.TrimSpace(accountID),
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var total int64
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return 0, err
+		}
+		manifestBytes, err := storedBlobManifestBytes(raw)
+		if err != nil {
+			return 0, err
+		}
+		if total > math.MaxInt64-manifestBytes {
+			return 0, errors.New("account storage usage overflows")
+		}
+		total += manifestBytes
+	}
+	return total, rows.Err()
+}
+
+// trialRuntimeSecondsUsed derives usage from durable session history instead
+// of process memory or a periodically flushed counter. Active sessions accrue
+// only through the current time, expired sessions stop at their expiry, and
+// closed sessions stop at their recorded end time.
+func trialRuntimeSecondsUsed(ctx context.Context, queryer queryRowContexter, accountID string) (int64, error) {
+	var used int64
+	err := queryer.QueryRowContext(ctx,
+		`SELECT COALESCE(FLOOR(SUM(GREATEST(
+		            0,
+		            EXTRACT(EPOCH FROM (
+		                CASE
+		                    WHEN s.status IN ('pending', 'active') THEN LEAST(NOW(), s.expires_at)
+		                    ELSE COALESCE(s.ended_at, s.updated_at, s.created_at)
+		                END - s.created_at
+		            ))
+		        ))), 0)::bigint
+		   FROM sessions s
+		   JOIN runtimes r ON r.id = s.runtime_id
+		  WHERE r.account_id = $1`,
+		strings.TrimSpace(accountID),
+	).Scan(&used)
+	return used, err
+}
+
+func trialRuntimeTimeExhausted(entitlement AccountEntitlement, used int64) bool {
+	if !strings.EqualFold(strings.TrimSpace(entitlement.Source), "trial") {
+		return false
+	}
+	return entitlement.TrialRuntimeSeconds <= 0 || used >= int64(entitlement.TrialRuntimeSeconds)
+}
+
+func ensureSessionTrialTimeAvailable(ctx context.Context, queryer queryRowContexter, accountID string) error {
+	var source string
+	var limit int
+	err := queryer.QueryRowContext(ctx,
+		`SELECT source, trial_runtime_seconds
+		   FROM account_entitlements
+		  WHERE account_id = $1`,
+		strings.TrimSpace(accountID),
+	).Scan(&source, &limit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRuntimeEntitlement
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(source), "trial") {
+		return nil
+	}
+	used, err := trialRuntimeSecondsUsed(ctx, queryer, accountID)
+	if err != nil {
+		return err
+	}
+	if limit <= 0 || used >= int64(limit) {
+		return ErrRuntimeTrialTimeQuota
+	}
+	return nil
 }
 
 func appendRuntimeStartEventTX(ctx context.Context, tx *sql.Tx, accountID, runtimeID string) error {

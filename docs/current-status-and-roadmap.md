@@ -5,6 +5,34 @@
 > [`remediation-status-2026-07-19.md`](./remediation-status-2026-07-19.md) for
 > the current release decision, verified remediations, and remaining blockers.
 
+## Current correction — 2026-07-20
+
+This historical snapshot also predates the current storage decision and several
+completed remediations. Do not use its Sia-first build order or its statements
+about raw blob-key transit, trusted-device UX, restart/persona controls, storage
+quotas, trial-time accounting, callback shared secrets, or snapshot generations
+as current facts.
+
+Current policy and implementation:
+
+- production runtime-userdata blobs remain on encrypted `local-disk` storage on
+  the VPS; renterd is inactive and deferred
+- the Android client sends a node-encrypted blob-key envelope; the control plane
+  stores and forwards the opaque, short-lived envelope but cannot decrypt it
+  without the selected node private key
+- trusted-device listing/revocation and explicit restart-with-new-persona and
+  factory-reset controls are implemented
+- cumulative trial runtime and stored encrypted snapshot bytes are derived from
+  durable state and enforced before new work is accepted
+- control-plane callbacks to the node use a separately pinned P-256 signing
+  keypair, signed request context, bounded timestamps, nonces, body hashes, and
+  node-side replay rejection; the old shared callback secret is retired
+- authenticated snapshot manifests now advance monotonically, with control-plane
+  enforcement and a device-local Android high-water mark
+
+The current authoritative remediation ledger remains
+[`remediation-status-2026-07-19.md`](./remediation-status-2026-07-19.md).
+
 Generated: 2026-05-10
 
 This document records where the project is now after reviewing every file under `docs/`, comparing the old claims with the current codebase, and factoring in the intended direction:

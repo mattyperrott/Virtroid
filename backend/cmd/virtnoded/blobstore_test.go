@@ -907,6 +907,9 @@ func TestLocalToRenterdMigrationRetainsFallbackUntilRemoteRestore(t *testing.T) 
 	if !sameBlobGeneration(persisted.Manifest.MigrationFallback, localManifest) {
 		t.Fatal("remote manifest did not retain the local migration fallback")
 	}
+	if persisted.Manifest.Generation != localManifest.Generation+1 {
+		t.Fatalf("remote manifest generation = %d, want %d", persisted.Manifest.Generation, localManifest.Generation+1)
+	}
 	if err := node.cleanupBlobStorage(runtime, persisted.Manifest); err != nil {
 		t.Fatalf("cleanupBlobStorage before restore: %v", err)
 	}
@@ -922,6 +925,35 @@ func TestLocalToRenterdMigrationRetainsFallbackUntilRemoteRestore(t *testing.T) 
 	assertFileContent(t, filepath.Join(dataDir, "app", "state.db"), "durable user state")
 	if _, err := os.Stat(localFirstPath); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("local migration fallback still exists after verified remote restore: %v", err)
+	}
+}
+
+func TestEnforceRuntimeStorageQuotaIncludesOtherRuntimesAndFallback(t *testing.T) {
+	limit := int64(1000)
+	used := int64(400)
+	runtime := runtimeAssignment{
+		StorageBytesLimit: &limit,
+		StorageBytesUsed:  &used,
+	}
+	candidate := &blobManifest{
+		TotalBytes: 500,
+		MigrationFallback: &blobManifest{
+			TotalBytes: 100,
+		},
+	}
+	if err := enforceRuntimeStorageQuota(runtime, candidate); err != nil {
+		t.Fatalf("enforceRuntimeStorageQuota rejected exact quota use: %v", err)
+	}
+
+	candidate.TotalBytes = 501
+	if err := enforceRuntimeStorageQuota(runtime, candidate); !errors.Is(err, errRuntimeStorageQuotaExceeded) {
+		t.Fatalf("enforceRuntimeStorageQuota error = %v, want %v", err, errRuntimeStorageQuotaExceeded)
+	}
+}
+
+func TestEnforceRuntimeStorageQuotaAllowsOlderControlPlaneWithoutMetadata(t *testing.T) {
+	if err := enforceRuntimeStorageQuota(runtimeAssignment{}, &blobManifest{TotalBytes: 1}); err != nil {
+		t.Fatalf("enforceRuntimeStorageQuota rejected assignment without quota metadata: %v", err)
 	}
 }
 

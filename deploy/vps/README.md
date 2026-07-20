@@ -67,9 +67,9 @@ back if SSH validation or reload fails.
 
 The generated production configuration keeps public account bootstrap disabled
 and disables shared-secret node self-enrollment. Production node requests are
-accepted only after an operator-controlled node/key approval exists; the
-remaining `NODE_SHARED_SECRET` protects control-plane-to-node callbacks until
-that separate path is replaced with mutually authenticated transport.
+accepted only after an operator-controlled node/key approval exists. The
+control plane signs node callbacks with a separate P-256 key, and nodes accept
+only pinned, fresh, non-replayed callback signatures.
 Do not enable `BOOTSTRAP_ENABLED` until a durable invite or billing gate exists;
 `deploy.sh` rejects that unsafe setting for this topology.
 

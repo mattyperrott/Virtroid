@@ -29,6 +29,7 @@ data class RuntimeSummary(
     val desiredState: String,
     val connectionStatus: String,
     val hostId: String?,
+    val personaVersion: Int,
     val androidImage: String,
     val androidVersion: String,
     val widthPx: Int,
@@ -40,6 +41,8 @@ data class RuntimeSummary(
     val blobAutoSnapshot: Boolean,
     val blobRetainDays: Int,
     val blobLastSnapshotAt: String?,
+    val blobSnapshotId: String?,
+    val blobSnapshotGeneration: Long,
     val startedAt: String?,
     val loadAverage: Double?,
     val adbPort: Int?,
@@ -168,7 +171,11 @@ data class EntitlementSummary(
     val runtimeStartsUsedToday: Int,
     val runtimeStartsRemainingToday: Int,
     val storageBytesLimit: Long,
+    val storageBytesUsed: Long,
+    val storageBytesRemaining: Long,
     val trialRuntimeSeconds: Int,
+    val trialRuntimeSecondsUsed: Long,
+    val trialRuntimeSecondsRemaining: Long,
     val expiresAt: String?,
     val canCreateRuntime: Boolean,
     val canStartRuntime: Boolean,
@@ -1066,6 +1073,9 @@ class VirtroidApi(
 
     private fun JSONObject.toRuntimeSummary(): RuntimeSummary {
         val persona = parsePersona()
+        val blobManifest = optJSONObject("blob_manifest_json") ?: optString("blob_manifest_json")
+            .takeIf { it.isNotBlank() }
+            ?.let { raw -> runCatching { JSONObject(raw) }.getOrNull() }
         return RuntimeSummary(
             id = getString("id"),
             name = optString("name").ifBlank { "Runtime" },
@@ -1073,6 +1083,7 @@ class VirtroidApi(
             desiredState = optString("desired_state", ""),
             connectionStatus = optString("connection_status", ""),
             hostId = optString("host_id").ifBlank { null },
+            personaVersion = optInt("persona_version", 0),
             androidImage = optString("android_image"),
             androidVersion = optString("android_version"),
             widthPx = optInt("width_px", 720),
@@ -1084,6 +1095,8 @@ class VirtroidApi(
             blobAutoSnapshot = optBoolean("blob_auto_snapshot", true),
             blobRetainDays = optInt("blob_retain_days", 7),
             blobLastSnapshotAt = optString("blob_last_snapshot_at").ifBlank { null },
+            blobSnapshotId = blobManifest?.optString("snapshot_id")?.ifBlank { null },
+            blobSnapshotGeneration = blobManifest?.optLong("generation", 0L) ?: 0L,
             startedAt = optString("started_at").ifBlank { null },
             loadAverage = if (has("load_average") && !isNull("load_average")) optDouble("load_average") else null,
             adbPort = optInt("adb_port").takeIf { has("adb_port") && !isNull("adb_port") },
@@ -1161,7 +1174,11 @@ class VirtroidApi(
             runtimeStartsUsedToday = optInt("runtime_starts_used_today", 0),
             runtimeStartsRemainingToday = optInt("runtime_starts_remaining_today", 0),
             storageBytesLimit = optLong("storage_bytes_limit", 0L),
+            storageBytesUsed = optLong("storage_bytes_used", 0L),
+            storageBytesRemaining = optLong("storage_bytes_remaining", 0L),
             trialRuntimeSeconds = optInt("trial_runtime_seconds", 0),
+            trialRuntimeSecondsUsed = optLong("trial_runtime_seconds_used", 0L),
+            trialRuntimeSecondsRemaining = optLong("trial_runtime_seconds_remaining", 0L),
             expiresAt = optString("expires_at").ifBlank { null },
             canCreateRuntime = optBoolean("can_create_runtime", false),
             canStartRuntime = optBoolean("can_start_runtime", false),

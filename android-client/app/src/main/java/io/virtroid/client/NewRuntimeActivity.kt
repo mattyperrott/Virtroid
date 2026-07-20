@@ -86,12 +86,26 @@ class NewRuntimeActivity : AppCompatActivity() {
         binding.newRuntimeEntitlementText.text = if (entitlement == null) {
             getString(R.string.entitlement_unavailable)
         } else {
-            getString(
+            val allowanceDetail = getString(
                 R.string.entitlement_detail,
                 entitlement.runtimeCount,
                 entitlement.runtimeLimit,
                 entitlement.runtimeStartsRemainingToday,
             )
+            val storageDetail = getString(
+                R.string.entitlement_detail_with_storage,
+                allowanceDetail,
+                entitlement.storageBytesRemaining.coerceAtLeast(0L) / (1024L * 1024L),
+            )
+            if (entitlement.source.equals("trial", ignoreCase = true)) {
+                getString(
+                    R.string.entitlement_detail_with_trial_time,
+                    storageDetail,
+                    (entitlement.trialRuntimeSecondsRemaining + 59L) / 60L,
+                )
+            } else {
+                storageDetail
+            }
         }
         binding.provisionRuntimeButton.isEnabled = entitlement?.canCreateRuntime ?: false
     }

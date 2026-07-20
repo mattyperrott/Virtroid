@@ -4,18 +4,61 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
+	"virtroid/backend/internal/nodeauth"
 )
+
+func TestRequireControlPlaneCallbackVerifiesBodyAndRejectsReplay(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	publicKey, err := nodeauth.PublicKeyMaterial(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("PublicKeyMaterial: %v", err)
+	}
+	node := &nodeAgent{cfg: config.NodeConfig{ControlPlaneCallbackPublicKey: publicKey}}
+	body := []byte(`{"runtime_id":"runtime-1"}`)
+	response := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/viewer/prepare", bytes.NewReader(body))
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	if err := callbackauth.ApplySignedHeaders(req, privateKey, body, timestamp, "0123456789abcdef"); err != nil {
+		t.Fatalf("ApplySignedHeaders: %v", err)
+	}
+	if !node.requireControlPlaneCallback(response, req) {
+		t.Fatalf("requireControlPlaneCallback rejected valid callback: status=%d body=%s", response.Code, response.Body.String())
+	}
+	restoredBody, err := io.ReadAll(req.Body)
+	if err != nil || !bytes.Equal(restoredBody, body) {
+		t.Fatalf("restored callback body = %q, err=%v", restoredBody, err)
+	}
+
+	replay := httptest.NewRequest(http.MethodPost, "/api/v1/internal/viewer/prepare", bytes.NewReader(body))
+	if err := callbackauth.ApplySignedHeaders(replay, privateKey, body, timestamp, "0123456789abcdef"); err != nil {
+		t.Fatalf("ApplySignedHeaders replay: %v", err)
+	}
+	replayResponse := httptest.NewRecorder()
+	if node.requireControlPlaneCallback(replayResponse, replay) || replayResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed callback accepted: status=%d body=%s", replayResponse.Code, replayResponse.Body.String())
+	}
+}
 
 func TestNormalizeViewerPrepareParamsDefaultsAndBounds(t *testing.T) {
 	maxSize, bitRate, err := normalizeViewerPrepareParams(0, 0, runtimeAssignment{

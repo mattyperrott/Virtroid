@@ -33,6 +33,8 @@ import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionViewerBinding
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.SnapshotRollbackGuard
+import io.virtroid.client.security.SnapshotRollbackException
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.viewer.ScrcpySessionHost
@@ -65,6 +67,7 @@ class SessionActivity : AppCompatActivity() {
     private var endingSession = false
     private var viewerSurface: Surface? = null
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var sessionStore: SessionStore
     private lateinit var appSettings: AppSettingsStore
@@ -159,6 +162,7 @@ class SessionActivity : AppCompatActivity() {
             baseUrl = sessionStore.baseUrl
         }
         identityPasswordStore = IdentityPasswordStore(this)
+        snapshotRollbackGuard = SnapshotRollbackGuard(this)
         activeSessionStore = ActiveSessionStore(this)
         appSettings = AppSettingsStore(this)
         appLogs = AppLogStore.get(this)
@@ -378,7 +382,9 @@ class SessionActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             runCatching {
-                api.getSessionState(baseUrl, accountId, deviceId, runtimeId, sessionId)
+                api.getSessionState(baseUrl, accountId, deviceId, runtimeId, sessionId).also {
+                    it.runtime?.let { runtime -> snapshotRollbackGuard.verifyAndRecord(accountId, runtime) }
+                }
             }.onSuccess {
                 if (it.canResumeRuntime(runtimeId)) {
                     heartbeatFailureCount = 0
@@ -392,7 +398,14 @@ class SessionActivity : AppCompatActivity() {
                     disconnectViewer()
                 }
             }.onFailure { error ->
-                if (error.isGoneSessionResponse()) {
+                if (error is SnapshotRollbackException) {
+                    appLogs.error(error.message ?: "Encrypted snapshot rollback detected", "security")
+                    activeSessionStore.clear()
+                    relayToken = ""
+                    markSessionUnavailable()
+                    disconnectViewer()
+                    toast(error.virtroidDisplayMessage(this@SessionActivity))
+                } else if (error.isGoneSessionResponse()) {
                     appLogs.warn("Session stream disconnected and backend session is gone: ${error.message}", "session")
                     activeSessionStore.clear()
                     relayToken = ""

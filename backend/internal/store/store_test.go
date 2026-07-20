@@ -1517,6 +1517,13 @@ func TestGetAccountEntitlementSummaryReportsRemainingTrialUse(t *testing.T) {
 	mock.ExpectQuery("runtime_start_events").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
+	mock.ExpectQuery("FROM sessions s").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(900)))
+	mock.ExpectQuery("SELECT blob_manifest_json").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_manifest_json"}).
+			AddRow(`{"version":3,"snapshot_id":"snapshot-a","generation":1,"total_bytes":8388608,"chunks":[{"size":8388608}]}`))
 
 	summary, err := st.GetAccountEntitlementSummary(context.Background(), accountID)
 	if err != nil {
@@ -1528,8 +1535,149 @@ func TestGetAccountEntitlementSummaryReportsRemainingTrialUse(t *testing.T) {
 	if summary.RuntimeStartsPerDay != 10 || summary.RuntimeStartsUsedToday != 4 || summary.RuntimeStartsRemainingToday != 6 {
 		t.Fatalf("start quota summary = limit %d used %d remaining %d; want 10, 4, 6", summary.RuntimeStartsPerDay, summary.RuntimeStartsUsedToday, summary.RuntimeStartsRemainingToday)
 	}
+	if summary.TrialRuntimeSecondsUsed != 900 || summary.TrialRuntimeSecondsRemaining != 2700 {
+		t.Fatalf("trial time summary = used %d remaining %d; want 900, 2700", summary.TrialRuntimeSecondsUsed, summary.TrialRuntimeSecondsRemaining)
+	}
+	if summary.StorageBytesUsed != 8388608 || summary.StorageBytesRemaining != 1065353216 {
+		t.Fatalf("storage summary = used %d remaining %d; want 8388608, 1065353216", summary.StorageBytesUsed, summary.StorageBytesRemaining)
+	}
 	if !summary.CanCreateRuntime || !summary.CanStartRuntime {
 		t.Fatalf("trial summary blocked create=%v start=%v; want both allowed", summary.CanCreateRuntime, summary.CanStartRuntime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestStoredBlobManifestBytesCountsFallbackAndValidatesChunks(t *testing.T) {
+	raw := `{
+		"version":3,"snapshot_id":"snapshot-new","generation":2,
+		"total_bytes":700,
+		"chunks":[{"size":400},{"size":300}],
+		"migration_fallback":{"version":3,"snapshot_id":"snapshot-old","generation":1,"total_bytes":200,"chunks":[{"size":200}]}
+	}`
+	used, err := storedBlobManifestBytes(raw)
+	if err != nil {
+		t.Fatalf("storedBlobManifestBytes returned error: %v", err)
+	}
+	if used != 900 {
+		t.Fatalf("stored bytes = %d, want 900", used)
+	}
+
+	if _, err := storedBlobManifestBytes(`{"version":3,"snapshot_id":"snapshot-a","generation":1,"total_bytes":700,"chunks":[{"size":699}]}`); err == nil {
+		t.Fatal("storedBlobManifestBytes accepted a mismatched chunk total")
+	}
+	if _, err := storedBlobManifestBytes(`{
+		"version":3,"snapshot_id":"snapshot-c","generation":3,"total_bytes":1,"chunks":[{"size":1}],
+		"migration_fallback":{"version":3,"snapshot_id":"snapshot-b","generation":2,"total_bytes":1,"chunks":[{"size":1}],
+		"migration_fallback":{"version":3,"snapshot_id":"snapshot-a","generation":1,"total_bytes":1,"chunks":[{"size":1}]}}
+	}`); err == nil {
+		t.Fatal("storedBlobManifestBytes accepted a nested migration fallback")
+	}
+}
+
+func TestValidateStoredBlobManifestAdvanceRejectsRollbackAndFork(t *testing.T) {
+	currentRaw := `{"version":3,"snapshot_id":"snapshot-2","generation":2,"total_bytes":1,"chunks":[{"size":1}]}`
+	cases := map[string]*storedBlobManifestUsage{
+		"rollback": {Version: 3, SnapshotID: "snapshot-1", Generation: 1, TotalBytes: 1, Chunks: []storedBlobChunkUsage{{Size: 1}}},
+		"fork":     {Version: 3, SnapshotID: "snapshot-fork", Generation: 2, TotalBytes: 1, Chunks: []storedBlobChunkUsage{{Size: 1}}},
+		"skip":     {Version: 3, SnapshotID: "snapshot-4", Generation: 4, TotalBytes: 1, Chunks: []storedBlobChunkUsage{{Size: 1}}},
+	}
+	for name, incoming := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := validateStoredBlobManifestAdvance(currentRaw, incoming); !errors.Is(err, ErrRuntimeSnapshotRollback) {
+				t.Fatalf("validateStoredBlobManifestAdvance error = %v, want %v", err, ErrRuntimeSnapshotRollback)
+			}
+		})
+	}
+	if err := validateStoredBlobManifestAdvance(currentRaw, &storedBlobManifestUsage{
+		Version: 3, SnapshotID: "snapshot-3", Generation: 3, TotalBytes: 1, Chunks: []storedBlobChunkUsage{{Size: 1}},
+	}); err != nil {
+		t.Fatalf("validateStoredBlobManifestAdvance rejected next generation: %v", err)
+	}
+	if err := validateStoredBlobManifestAdvance(currentRaw, &storedBlobManifestUsage{
+		Version: 3, SnapshotID: "snapshot-2", Generation: 2, TotalBytes: 1, Chunks: []storedBlobChunkUsage{{Size: 1}},
+	}); err != nil {
+		t.Fatalf("validateStoredBlobManifestAdvance rejected idempotent commit: %v", err)
+	}
+}
+
+func TestUpdateRuntimeObservationRejectsStorageQuota(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	accountID := "11111111-1111-1111-1111-111111111111"
+	manifest := `{"version":3,"snapshot_id":"snapshot-new","generation":1,"total_bytes":700,"chunks":[{"size":700}]}`
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT account_id").
+		WithArgs(runtimeID, "host-1", int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "blob_manifest_json"}).AddRow(accountID, nil))
+	mock.ExpectQuery("SELECT storage_bytes_limit").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"storage_bytes_limit"}).AddRow(int64(1000)))
+	mock.ExpectQuery("SELECT id, blob_manifest_json").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "blob_manifest_json"}).
+			AddRow("44444444-4444-4444-4444-444444444444", `{"version":3,"snapshot_id":"snapshot-other","generation":1,"total_bytes":400,"chunks":[{"size":400}]}`))
+	mock.ExpectRollback()
+
+	err = st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
+		HostID:              "host-1",
+		Status:              "stopped",
+		ConnectionStatus:    "offline",
+		BlobManifestJSON:    &manifest,
+		OperationGeneration: 7,
+	})
+	if !errors.Is(err, ErrRuntimeStorageQuota) {
+		t.Fatalf("UpdateRuntimeObservation error = %v, want %v", err, ErrRuntimeStorageQuota)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUpdateRuntimeObservationCommitsWithinStorageQuota(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	accountID := "11111111-1111-1111-1111-111111111111"
+	manifest := `{"version":3,"snapshot_id":"snapshot-new","generation":1,"total_bytes":500,"chunks":[{"size":500}]}`
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT account_id").
+		WithArgs(runtimeID, "host-1", int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "blob_manifest_json"}).AddRow(accountID, nil))
+	mock.ExpectQuery("SELECT storage_bytes_limit").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"storage_bytes_limit"}).AddRow(int64(1000)))
+	mock.ExpectQuery("SELECT id, blob_manifest_json").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "blob_manifest_json"}).
+			AddRow("44444444-4444-4444-4444-444444444444", `{"version":3,"snapshot_id":"snapshot-other","generation":1,"total_bytes":400,"chunks":[{"size":400}]}`))
+	mock.ExpectExec("UPDATE runtimes").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err = st.UpdateRuntimeObservation(context.Background(), runtimeID, RuntimeObservation{
+		HostID:              "host-1",
+		Status:              "stopped",
+		ConnectionStatus:    "offline",
+		BlobManifestJSON:    &manifest,
+		OperationGeneration: 7,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRuntimeObservation returned error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -1749,6 +1897,9 @@ func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtime_start_events").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("FROM sessions s").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(0)))
 	mock.ExpectQuery("SELECT h.id FROM hosts h").
 		WithArgs(hostID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(hostID))
@@ -1799,6 +1950,46 @@ func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 	}
 	if retried.ViewerPort == nil || *retried.ViewerPort != 46000 {
 		t.Fatalf("retry viewer_port = %v, want preserved 46000", retried.ViewerPort)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestEnsureRuntimeStartEntitlementRejectsExhaustedTrialTime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	now := time.Now().UTC()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT account_id, source, status").
+		WithArgs(accountID).
+		WillReturnRows(entitlementRows(accountID, now))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtime_start_events").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("FROM sessions s").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(3600)))
+	mock.ExpectRollback()
+
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := ensureRuntimeStartEntitlementTX(context.Background(), tx, accountID, runtimeID); !errors.Is(err, ErrRuntimeTrialTimeQuota) {
+		t.Fatalf("ensureRuntimeStartEntitlementTX error = %v, want %v", err, ErrRuntimeTrialTimeQuota)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -2362,6 +2553,12 @@ func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 			"min_sdk", "native_code", "license", "categories_json", "anti_features_json",
 			"recommended", "catalog_updated_at", "selected",
 		}))
+	mock.ExpectQuery("SELECT storage_bytes_limit").
+		WithArgs("11111111-1111-1111-1111-111111111111").
+		WillReturnRows(sqlmock.NewRows([]string{"storage_bytes_limit"}).AddRow(int64(1073741824)))
+	mock.ExpectQuery("SELECT blob_manifest_json").
+		WithArgs("11111111-1111-1111-1111-111111111111").
+		WillReturnRows(sqlmock.NewRows([]string{"blob_manifest_json"}))
 	mock.ExpectCommit()
 
 	runtimes, err := st.ListAssignedRuntimes(context.Background(), "host-1")
@@ -2373,6 +2570,10 @@ func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 	}
 	if runtimes[0].ViewerPort == nil || *runtimes[0].ViewerPort != 46000 {
 		t.Fatalf("viewer port = %v, want 46000", runtimes[0].ViewerPort)
+	}
+	if runtimes[0].StorageBytesLimit == nil || *runtimes[0].StorageBytesLimit != 1073741824 ||
+		runtimes[0].StorageBytesUsed == nil || *runtimes[0].StorageBytesUsed != 0 {
+		t.Fatalf("storage quota = limit %v used %v, want 1073741824 and 0", runtimes[0].StorageBytesLimit, runtimes[0].StorageBytesUsed)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -2523,13 +2724,15 @@ func TestCreateSessionRequiresUnrevokedDevice(t *testing.T) {
 
 	st := &Store{db: db}
 	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
 	deviceID := "22222222-2222-2222-2222-222222222222"
 	runtimeID := "44444444-4444-4444-4444-444444444444"
 
 	mock.ExpectQuery("d.revoked_at IS NULL").
 		WithArgs(runtimeID, deviceID).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
-			AddRow("running", "running", "online"))
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "status", "desired_state", "connection_status"}).
+			AddRow(accountID, "running", "running", "online"))
+	expectTrialTimeAvailable(mock, accountID, 0)
 	mock.ExpectQuery("INSERT INTO sessions").
 		WithArgs(sqlmock.AnyArg(), runtimeID, deviceID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -2560,6 +2763,36 @@ func TestCreateSessionRequiresUnrevokedDevice(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRejectsExhaustedTrialTime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+	mock.ExpectQuery("d.revoked_at IS NULL").
+		WithArgs(runtimeID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "status", "desired_state", "connection_status"}).
+			AddRow(accountID, "running", "running", "online"))
+	mock.ExpectQuery("SELECT source, trial_runtime_seconds").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"source", "trial_runtime_seconds"}).AddRow("trial", 3600))
+	mock.ExpectQuery("FROM sessions s").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(3600)))
+
+	if _, err := st.CreateSession(context.Background(), deviceID, runtimeID); !errors.Is(err, ErrRuntimeTrialTimeQuota) {
+		t.Fatalf("CreateSession error = %v, want %v", err, ErrRuntimeTrialTimeQuota)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestCreateSessionRejectsDifferentLiveActor(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -2568,13 +2801,15 @@ func TestCreateSessionRejectsDifferentLiveActor(t *testing.T) {
 	defer db.Close()
 
 	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
 	deviceID := "22222222-2222-2222-2222-222222222222"
 	runtimeID := "44444444-4444-4444-4444-444444444444"
 
 	mock.ExpectQuery("d.revoked_at IS NULL").
 		WithArgs(runtimeID, deviceID).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
-			AddRow("running", "running", "online"))
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "status", "desired_state", "connection_status"}).
+			AddRow(accountID, "running", "running", "online"))
+	expectTrialTimeAvailable(mock, accountID, 0)
 	mock.ExpectQuery("ON CONFLICT \\(runtime_id\\) WHERE status IN").
 		WithArgs(sqlmock.AnyArg(), runtimeID, deviceID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -2598,13 +2833,15 @@ func TestCreateSessionRejectsSameLiveActorWithoutRotatingToken(t *testing.T) {
 	defer db.Close()
 
 	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
 	deviceID := "22222222-2222-2222-2222-222222222222"
 	runtimeID := "44444444-4444-4444-4444-444444444444"
 
 	mock.ExpectQuery("d.revoked_at IS NULL").
 		WithArgs(runtimeID, deviceID).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
-			AddRow("running", "running", "online"))
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "status", "desired_state", "connection_status"}).
+			AddRow(accountID, "running", "running", "online"))
+	expectTrialTimeAvailable(mock, accountID, 0)
 	mock.ExpectQuery(`WHERE sessions.expires_at <= NOW\(\)`).
 		WithArgs(sqlmock.AnyArg(), runtimeID, deviceID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -2648,6 +2885,7 @@ func TestCreateSessionWithCapabilityDoesNotStoreDeviceID(t *testing.T) {
 		WithArgs(runtimeID, accountID, capabilityID).
 		WillReturnRows(sqlmock.NewRows([]string{"status", "desired_state", "connection_status"}).
 			AddRow("running", "running", "online"))
+	expectTrialTimeAvailable(mock, accountID, 0)
 	mock.ExpectQuery("INSERT INTO sessions").
 		WithArgs(sqlmock.AnyArg(), runtimeID, capabilityID, "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -2919,6 +3157,8 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 		WithArgs("120 seconds").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).
 			AddRow("22222222-2222-2222-2222-222222222222"))
+	mock.ExpectQuery("WITH usage AS").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("WITH latest_session").
 		WithArgs("120 seconds", "180 seconds").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).
@@ -2954,6 +3194,67 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 	}
 	if result.RevokedRuntimeCapabilities != 6 || result.PrunedRuntimeCapabilityNonces != 4 {
 		t.Fatalf("capability cleanup = %+v, want 6 revoked capabilities and 4 pruned nonces", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestReapStaleSessionsStopsRuntimeAtTrialTimeQuota(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	runtimeID := "55555555-5555-5555-5555-555555555555"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE sessions").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("UPDATE sessions").
+		WithArgs("120 seconds").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("WITH usage AS").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(runtimeID))
+	mock.ExpectExec("UPDATE sessions").
+		WithArgs(runtimeID, "trial runtime time quota reached").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO runtime_logs").
+		WithArgs(
+			runtimeID,
+			"system",
+			"warn",
+			"Runtime stop queued because the trial runtime time quota was reached.",
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("WITH latest_session").
+		WithArgs("120 seconds", "180 seconds").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WithArgs(runtimeID).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("UPDATE runtime_capabilities AS c").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec("UPDATE runtime_capabilities").
+		WillReturnResult(sqlmock.NewResult(0, 4))
+	mock.ExpectExec("DELETE FROM runtime_capability_nonces").
+		WillReturnResult(sqlmock.NewResult(0, 5))
+	mock.ExpectCommit()
+
+	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute, 3*time.Minute)
+	if err != nil {
+		t.Fatalf("ReapStaleSessions returned error: %v", err)
+	}
+	if result.ExpiredPendingSessions != 0 || result.StaleActiveSessions != 0 {
+		t.Fatalf("session counts = %+v, want no expired or stale sessions", result)
+	}
+	if len(result.StoppedRuntimeIDs) != 1 || result.StoppedRuntimeIDs[0] != runtimeID {
+		t.Fatalf("stopped runtime ids = %v, want [%s]", result.StoppedRuntimeIDs, runtimeID)
+	}
+	if result.RevokedRuntimeCapabilities != 9 || result.PrunedRuntimeCapabilityNonces != 5 {
+		t.Fatalf("capability cleanup = %+v, want 9 revoked capabilities and 5 pruned nonces", result)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -3262,6 +3563,15 @@ func entitlementRows(accountID string, now time.Time) *sqlmock.Rows {
 		now,
 		now,
 	)
+}
+
+func expectTrialTimeAvailable(mock sqlmock.Sqlmock, accountID string, used int64) {
+	mock.ExpectQuery("SELECT source, trial_runtime_seconds").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"source", "trial_runtime_seconds"}).AddRow("trial", 3600))
+	mock.ExpectQuery("FROM sessions s").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(used))
 }
 
 func runtimeColumnNames() []string {
