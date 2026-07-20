@@ -27,6 +27,14 @@
     <string name="account_storage_snapshots_unreported">Snapshot count unreported</string>
     <string name="account_storage_runway_unreported">Runway unreported</string>
     <string name="account_storage_sync_failed">Storage telemetry sync failed</string>
+    <string name="account_storage_backend_sia">Sia encrypted blobs</string>
+    <string name="account_storage_backend_local">Local encrypted blobs (development)</string>
+    <string name="account_storage_status_ready">Ready</string>
+    <string name="account_storage_status_degraded">Cleanup delayed</string>
+    <string name="account_storage_status_syncing">Sia syncing</string>
+    <string name="account_storage_status_operator_funding">Operator funding required</string>
+    <string name="account_storage_status_contracts">Storage contracts required</string>
+    <string name="account_storage_status_error">Storage error</string>
     <string name="account_fingerprint_copied">Device ID copied</string>
     <string name="account_device_key_copied">Device signing public key copied</string>
     <string name="account_linked_devices_title">Linked Devices</string>

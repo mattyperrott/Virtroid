@@ -159,10 +159,21 @@ class AccountIdentityActivity : AppCompatActivity() {
             runCatching {
                 api.getStorage(sessionStore.baseUrl, accountId, deviceId)
             }.onSuccess { storage ->
-                binding.storageBackendValue.text = storage.provider.ifBlank { "local" }
-                binding.storageReadyChip.text = storage.lastPreflightStatus
-                    ?.ifBlank { null }
-                    ?: storage.status.ifBlank { getString(R.string.account_storage_unavailable) }
+                binding.storageBackendValue.text = when (storage.provider.trim().lowercase(Locale.US)) {
+                    "sia-renterd" -> getString(R.string.account_storage_backend_sia)
+                    "local-disk" -> getString(R.string.account_storage_backend_local)
+                    else -> storage.provider.ifBlank { getString(R.string.account_storage_unavailable) }
+                }
+                val readiness = storage.lastPreflightStatus?.ifBlank { null } ?: storage.status
+                binding.storageReadyChip.text = when (readiness.trim().lowercase(Locale.US)) {
+                    "ready" -> getString(R.string.account_storage_status_ready)
+                    "degraded" -> getString(R.string.account_storage_status_degraded)
+                    "syncing" -> getString(R.string.account_storage_status_syncing)
+                    "funding_required" -> getString(R.string.account_storage_status_operator_funding)
+                    "contracts_required" -> getString(R.string.account_storage_status_contracts)
+                    "error" -> getString(R.string.account_storage_status_error)
+                    else -> readiness.ifBlank { getString(R.string.account_storage_unavailable) }
+                }
                 binding.storageCreditValue.text = getString(R.string.account_storage_operator_managed)
                 binding.storageUsageValue.text = "--"
                 binding.storageUsageUnit.text = ""

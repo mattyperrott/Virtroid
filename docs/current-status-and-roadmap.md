@@ -138,15 +138,21 @@ Implemented:
 - snapshots are chunked and represented by manifests
 - local disk blob store works as a dev fallback
 - renterd blob store can put/get/delete manifest-known chunks
-- account storage settings support `sia-renterd` plus user-funded mode
+- account storage status supports `sia-renterd` in operator-managed mode; user
+  wallet and seed mutation are deliberately disabled
 - deployment compose includes a renterd profile
+- new manifests use authenticated version-3 metadata and opaque object namespaces
+- failed manifest-known deletes are durably journaled and retried
+- local-to-renterd migration retains a fallback until a successful remote restore
 
 Still missing or partial:
 
 - renterd is not yet the default production path
 - no verified live renterd production smoke result in this current review
-- full remote garbage collection is not implemented because current renterd code avoids relying on prefix listing
-- manifest signing is not implemented
+- bounded prefix garbage collection is implemented for known runtime namespaces;
+  a fleet-wide reconciler for lost journals/unknown historical objects is still missing
+- version-3 manifests are HMAC-authenticated; legacy version-1/2 manifests remain
+  readable for migration
 - long-lived blob key custody is not final
 - the old generic "distributed storage node" spec should be replaced with renterd-specific behavior
 

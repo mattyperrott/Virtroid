@@ -308,6 +308,7 @@ type nodeAgent struct {
 	blobPreflightMu     sync.Mutex
 	blobPreflightReport blobPreflightReport
 	blobPreflightAt     time.Time
+	blobCleanupMu       sync.Mutex
 	runtimeBlobKeyMu    sync.Mutex
 	runtimeBlobKeys     map[string][]byte
 }
@@ -681,11 +682,16 @@ func (n *nodeAgent) cachedStoragePreflight(ctx context.Context) (blobPreflightRe
 
 func storagePreflightStatus(report blobPreflightReport) string {
 	if report.OK {
+		for _, check := range report.Checks {
+			if check.Name == "pending_deletions" && check.Status == "warn" {
+				return "degraded"
+			}
+		}
 		return "ready"
 	}
 	if strings.EqualFold(report.Store, blobStoreRenterd) {
 		for _, check := range report.Checks {
-			if (check.Name == "worker_url" || check.Name == "api_password") && check.Status == "fail" {
+			if (check.Name == "worker_url" || check.Name == "api_password" || check.Name == "redundancy" || check.Name == "autopilot" || check.Name == "bucket") && check.Status == "fail" {
 				return "error"
 			}
 			if check.Name == "consensus_state" && check.Status == "fail" {
@@ -696,7 +702,7 @@ func storagePreflightStatus(report blobPreflightReport) string {
 			}
 		}
 		for _, check := range report.Checks {
-			if check.Name == "wallet" && check.Status == "warn" {
+			if check.Name == "wallet" && check.Status == "fail" {
 				return "funding_required"
 			}
 			if check.Name == "active_contracts" && check.Status == "fail" {
@@ -1283,8 +1289,10 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 		status.ClearBlobManifest = true
 	}
 	if err := n.reportRuntimeStatus(ctx, runtime, status); err != nil {
-		cleanupErr := n.discardUncommittedBlob(persisted)
-		return errors.Join(fmt.Errorf("commit stopped runtime status: %w", err), cleanupErr)
+		// The control plane may have committed the manifest even if its response
+		// was lost. Preserve the completed snapshot; the next successful stop will
+		// prune this generation if the status update was not committed.
+		return fmt.Errorf("commit stopped runtime status while preserving the completed blob candidate: %w", err)
 	}
 	if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove plaintext userdata after manifest commit: %w", err)

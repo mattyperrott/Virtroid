@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -34,7 +35,10 @@ var errBlobSnapshotTooLarge = errors.New("encrypted snapshot exceeds maximum siz
 const (
 	snapshotMagic             = "VRTBLOB1"
 	runtimeSnapshotKeyContext = "VIRTROID-RUNTIME-SNAPSHOT-KEY-V2"
+	runtimeBlobNamespaceCtx   = "VIRTROID-RUNTIME-BLOB-NAMESPACE-V3"
+	runtimeManifestMACCtx     = "VIRTROID-RUNTIME-MANIFEST-MAC-V3"
 	runtimeBoundEncryption    = "aes-ctr+hmac-sha256+runtime-kdf-v2"
+	authenticatedEncryption   = "aes-ctr+hmac-sha256+runtime-kdf-v2+manifest-mac-v3"
 	snapshotTagSize           = sha256.Size
 	blobStoreLocal            = "local-disk"
 	blobStoreRenterd          = "sia-renterd"
@@ -56,23 +60,26 @@ type blobStore interface {
 	persistFromDir(ctx context.Context, runtimeID, dataDir string, masterKey []byte) (*blobManifest, error)
 	restoreToDir(ctx context.Context, runtimeID string, manifest *blobManifest, dataDir string, masterKey []byte) error
 	clearRuntime(ctx context.Context, runtimeID string) error
-	pruneRuntime(ctx context.Context, runtimeID, keepSnapshotID string) error
+	pruneRuntime(ctx context.Context, runtimeID, namespace, keepSnapshotID string) error
 	deleteManifest(ctx context.Context, manifest *blobManifest) error
 }
 
 type blobManifest struct {
-	Version     int         `json:"version"`
-	RuntimeID   string      `json:"runtime_id,omitempty"`
-	Store       string      `json:"store"`
-	Bucket      string      `json:"bucket,omitempty"`
-	ObjectType  string      `json:"object_type"`
-	SnapshotID  string      `json:"snapshot_id"`
-	CreatedAt   time.Time   `json:"created_at"`
-	ChunkSize   int64       `json:"chunk_size"`
-	TotalBytes  int64       `json:"total_bytes"`
-	Compression string      `json:"compression"`
-	Encryption  string      `json:"encryption"`
-	Chunks      []blobChunk `json:"chunks"`
+	Version           int           `json:"version"`
+	RuntimeID         string        `json:"runtime_id,omitempty"`
+	Namespace         string        `json:"namespace,omitempty"`
+	Store             string        `json:"store"`
+	Bucket            string        `json:"bucket,omitempty"`
+	ObjectType        string        `json:"object_type"`
+	SnapshotID        string        `json:"snapshot_id"`
+	CreatedAt         time.Time     `json:"created_at"`
+	ChunkSize         int64         `json:"chunk_size"`
+	TotalBytes        int64         `json:"total_bytes"`
+	Compression       string        `json:"compression"`
+	Encryption        string        `json:"encryption"`
+	Chunks            []blobChunk   `json:"chunks"`
+	ManifestMAC       string        `json:"manifest_mac,omitempty"`
+	MigrationFallback *blobManifest `json:"migration_fallback,omitempty"`
 }
 
 type blobChunk struct {
@@ -144,6 +151,8 @@ type renterdBlobStore struct {
 	contractSet   string
 	chunkSize     int64
 	httpClient    *http.Client
+	cleanupPath   string
+	cleanupMu     *sync.Mutex
 }
 
 func (n *nodeAgent) blobStores() map[string]blobStore {
@@ -164,6 +173,8 @@ func (n *nodeAgent) blobStores() map[string]blobStore {
 			contractSet:   strings.TrimSpace(n.cfg.RenterdContractSet),
 			chunkSize:     blobChunkSize,
 			httpClient:    &http.Client{Timeout: 10 * time.Minute},
+			cleanupPath:   filepath.Join(n.cfg.RuntimeRoot, "_blobstore", "pending-renterd-deletes.json"),
+			cleanupMu:     &n.blobCleanupMu,
 		}
 	}
 	return stores
@@ -261,7 +272,30 @@ func (n *nodeAgent) prepareSessionData(ctx context.Context, runtime runtimeAssig
 			return false, err
 		}
 		if err := store.restoreToDir(ctx, runtime.ID, manifest, dataDir, masterKey); err != nil {
-			return false, err
+			fallback := manifest.MigrationFallback
+			if fallback == nil {
+				return false, err
+			}
+			fallbackStore, fallbackErr := n.blobStoreForManifest(fallback)
+			if fallbackErr != nil {
+				return false, errors.Join(err, fallbackErr)
+			}
+			if resetErr := os.RemoveAll(dataDir); resetErr != nil {
+				return false, errors.Join(err, resetErr)
+			}
+			if resetErr := os.MkdirAll(dataDir, 0o755); resetErr != nil {
+				return false, errors.Join(err, resetErr)
+			}
+			if fallbackErr := fallbackStore.restoreToDir(ctx, runtime.ID, fallback, dataDir, masterKey); fallbackErr != nil {
+				return false, errors.Join(err, fmt.Errorf("restore migration fallback: %w", fallbackErr))
+			}
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Primary userdata blob restore failed; the verified migration fallback was restored.")
+		} else if fallback := manifest.MigrationFallback; fallback != nil {
+			if fallbackStore, fallbackErr := n.blobStoreForManifest(fallback); fallbackErr == nil {
+				if cleanupErr := fallbackStore.deleteManifest(context.WithoutCancel(ctx), fallback); cleanupErr != nil {
+					_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Primary userdata blob restored, but its encrypted migration fallback could not yet be deleted.")
+				}
+			}
 		}
 		if err := repairLegacyAndroidSystemOwnership(dataDir); err != nil {
 			return false, err
@@ -350,6 +384,22 @@ func (n *nodeAgent) persistSessionData(ctx context.Context, runtime runtimeAssig
 	if err != nil {
 		return nil, err
 	}
+	previous, err := parseBlobManifest(runtime.BlobManifestJSON)
+	if err != nil {
+		_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+		return nil, err
+	}
+	if previous != nil && previous.Store != manifest.Store {
+		manifest.MigrationFallback = previous
+	} else if previous != nil && previous.MigrationFallback != nil {
+		manifest.MigrationFallback = previous.MigrationFallback
+	}
+	if manifest.MigrationFallback != nil {
+		if err := authenticateBlobManifest(manifest, plan.masterKey, runtime.ID); err != nil {
+			_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+			return nil, err
+		}
+	}
 	now := time.Now().UTC()
 	return &persistedBlob{
 		Manifest:   manifest,
@@ -416,7 +466,8 @@ func (n *nodeAgent) cleanupBlobStorage(runtime runtimeAssignment, retained *blob
 	if err != nil {
 		return err
 	}
-	if previous != nil && (previous.Store != retained.Store || previous.Bucket != retained.Bucket || previous.SnapshotID != retained.SnapshotID) {
+	retainsPreviousAsFallback := sameBlobGeneration(previous, retained.MigrationFallback)
+	if previous != nil && !retainsPreviousAsFallback && (previous.Store != retained.Store || previous.Bucket != retained.Bucket || previous.SnapshotID != retained.SnapshotID) {
 		if err := validateBlobManifestForRuntime(previous, runtime.ID); err != nil {
 			return err
 		}
@@ -430,9 +481,12 @@ func (n *nodeAgent) cleanupBlobStorage(runtime runtimeAssignment, retained *blob
 	}
 	for kind, store := range stores {
 		if kind == retainedStore.kind() {
-			if err := store.pruneRuntime(context.Background(), runtime.ID, retained.SnapshotID); err != nil {
+			if err := store.pruneRuntime(context.Background(), runtime.ID, retained.Namespace, retained.SnapshotID); err != nil {
 				return err
 			}
+			continue
+		}
+		if retained.MigrationFallback != nil && kind == retained.MigrationFallback.Store {
 			continue
 		}
 		if err := store.clearRuntime(context.Background(), runtime.ID); err != nil {
@@ -457,7 +511,24 @@ func (n *nodeAgent) clearManifestChunks(runtime runtimeAssignment) error {
 	if err != nil {
 		return err
 	}
-	return store.deleteManifest(context.Background(), manifest)
+	if err := store.deleteManifest(context.Background(), manifest); err != nil {
+		return err
+	}
+	if fallback := manifest.MigrationFallback; fallback != nil {
+		fallbackStore, err := n.blobStoreForManifest(fallback)
+		if err != nil {
+			return err
+		}
+		return fallbackStore.deleteManifest(context.Background(), fallback)
+	}
+	return nil
+}
+
+func sameBlobGeneration(left, right *blobManifest) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Store == right.Store && left.Bucket == right.Bucket && left.RuntimeID == right.RuntimeID && left.Namespace == right.Namespace && left.SnapshotID == right.SnapshotID
 }
 
 func (n *nodeAgent) runtimeBlobKeyWithContext(ctx context.Context, runtime runtimeAssignment) ([]byte, error) {
@@ -653,7 +724,8 @@ func (s *localBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDir 
 	if err != nil {
 		return nil, err
 	}
-	runtimeBaseDir := filepath.Join(s.root, runtimeID)
+	namespace := deriveRuntimeBlobNamespace(masterKey, runtimeID)
+	runtimeBaseDir := filepath.Join(s.root, namespace)
 	if err := os.MkdirAll(runtimeBaseDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -670,8 +742,9 @@ func (s *localBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDir 
 	defer file.Close()
 
 	manifest = &blobManifest{
-		Version:     2,
+		Version:     3,
 		RuntimeID:   runtimeID,
+		Namespace:   namespace,
 		Store:       s.kind(),
 		ObjectType:  "runtime-userdata",
 		SnapshotID:  snapshotID,
@@ -679,7 +752,7 @@ func (s *localBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDir 
 		ChunkSize:   s.chunkSize,
 		TotalBytes:  totalBytes,
 		Compression: "gzip",
-		Encryption:  runtimeBoundEncryption,
+		Encryption:  authenticatedEncryption,
 	}
 	committed := false
 	defer func() {
@@ -716,7 +789,7 @@ func (s *localBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDir 
 		}
 		manifest.Chunks = append(manifest.Chunks, blobChunk{
 			Index:  index,
-			Key:    filepath.ToSlash(filepath.Join(runtimeID, snapshotID, chunkName)),
+			Key:    filepath.ToSlash(filepath.Join(namespace, snapshotID, chunkName)),
 			Size:   int64(readBytes),
 			SHA256: hex.EncodeToString(chunkSum[:]),
 		})
@@ -728,6 +801,9 @@ func (s *localBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDir 
 
 	if len(manifest.Chunks) == 0 {
 		return nil, errors.New("snapshot produced no chunks")
+	}
+	if err := authenticateBlobManifest(manifest, masterKey, runtimeID); err != nil {
+		return nil, fmt.Errorf("authenticate local blob manifest: %w", err)
 	}
 	if err := validateBlobManifestForRuntime(manifest, runtimeID); err != nil {
 		return nil, fmt.Errorf("validate completed local blob manifest: %w", err)
@@ -757,6 +833,9 @@ func (s *localBlobStore) restoreToDir(ctx context.Context, runtimeID string, man
 		return fmt.Errorf("unsupported blob store kind %q", manifest.Store)
 	}
 	if err := validateBlobManifestForRuntime(manifest, runtimeID); err != nil {
+		return err
+	}
+	if err := verifyBlobManifestAuthentication(manifest, masterKey, runtimeID); err != nil {
 		return err
 	}
 
@@ -832,10 +911,10 @@ func validateBlobManifestForRuntime(manifest *blobManifest, runtimeID string) er
 	if manifest == nil {
 		return errSnapshotMissing
 	}
-	if manifest.Version != 1 && manifest.Version != 2 {
+	if manifest.Version != 1 && manifest.Version != 2 && manifest.Version != 3 {
 		return fmt.Errorf("unsupported blob manifest version %d", manifest.Version)
 	}
-	if manifest.Version == 2 {
+	if manifest.Version >= 2 {
 		if strings.TrimSpace(manifest.RuntimeID) == "" {
 			return errors.New("runtime-bound blob manifest has no runtime id")
 		}
@@ -843,12 +922,30 @@ func validateBlobManifestForRuntime(manifest *blobManifest, runtimeID string) er
 			return fmt.Errorf("blob manifest runtime id %q does not match %q", manifest.RuntimeID, runtimeID)
 		}
 	}
+	if manifest.Version == 3 {
+		if len(manifest.Namespace) != sha256.Size*2 {
+			return errors.New("authenticated blob manifest has an invalid namespace")
+		}
+		if _, err := hex.DecodeString(manifest.Namespace); err != nil {
+			return errors.New("authenticated blob manifest namespace is not hexadecimal")
+		}
+		if len(manifest.ManifestMAC) != sha256.Size*2 {
+			return errors.New("authenticated blob manifest has an invalid manifest MAC")
+		}
+		if _, err := hex.DecodeString(manifest.ManifestMAC); err != nil {
+			return errors.New("authenticated blob manifest MAC is not hexadecimal")
+		}
+	} else if manifest.Namespace != "" || manifest.ManifestMAC != "" {
+		return errors.New("legacy blob manifest contains authenticated-manifest fields")
+	}
 	if manifest.ObjectType != "runtime-userdata" {
 		return fmt.Errorf("unsupported blob object type %q", manifest.ObjectType)
 	}
 	expectedEncryption := "aes-ctr+hmac-sha256"
 	if manifest.Version == 2 {
 		expectedEncryption = runtimeBoundEncryption
+	} else if manifest.Version == 3 {
+		expectedEncryption = authenticatedEncryption
 	}
 	if manifest.Encryption != expectedEncryption {
 		return fmt.Errorf("unsupported blob encryption %q", manifest.Encryption)
@@ -876,7 +973,7 @@ func validateBlobManifestForRuntime(manifest *blobManifest, runtimeID string) er
 		if chunk.Index != index {
 			return fmt.Errorf("blob manifest chunk index mismatch at %d", index)
 		}
-		if err := validateBlobChunkKey(runtimeID, manifest.SnapshotID, index, chunk.Key); err != nil {
+		if err := validateBlobChunkKey(manifest, runtimeID, index, chunk.Key); err != nil {
 			return err
 		}
 		if chunk.Size <= 0 || chunk.Size > manifest.ChunkSize || chunk.Size > maxBlobChunkSize {
@@ -892,6 +989,20 @@ func validateBlobManifestForRuntime(manifest *blobManifest, runtimeID string) er
 	}
 	if manifest.TotalBytes != totalBytes {
 		return fmt.Errorf("blob manifest byte total mismatch")
+	}
+	if manifest.MigrationFallback != nil {
+		if manifest.Version != 3 {
+			return errors.New("legacy blob manifest contains a migration fallback")
+		}
+		if manifest.MigrationFallback.MigrationFallback != nil {
+			return errors.New("blob manifest migration fallback cannot be nested")
+		}
+		if manifest.MigrationFallback.Store == manifest.Store {
+			return errors.New("blob manifest migration fallback must use a different store")
+		}
+		if err := validateBlobManifestForRuntime(manifest.MigrationFallback, runtimeID); err != nil {
+			return fmt.Errorf("validate blob migration fallback: %w", err)
+		}
 	}
 	return nil
 }
@@ -932,7 +1043,7 @@ func validateSnapshotID(snapshotID string) error {
 	return nil
 }
 
-func validateBlobChunkKey(runtimeID, snapshotID string, index int, key string) error {
+func validateBlobChunkKey(manifest *blobManifest, runtimeID string, index int, key string) error {
 	if strings.TrimSpace(key) == "" {
 		return fmt.Errorf("blob manifest chunk %d has empty key", index)
 	}
@@ -940,7 +1051,11 @@ func validateBlobChunkKey(runtimeID, snapshotID string, index int, key string) e
 		return fmt.Errorf("blob manifest chunk %d has invalid key %q", index, key)
 	}
 	if runtimeID != "" {
-		expected := filepath.ToSlash(filepath.Join(runtimeID, snapshotID, fmt.Sprintf("chunk-%05d.bin", index)))
+		prefix := runtimeID
+		if manifest != nil && manifest.Version == 3 {
+			prefix = manifest.Namespace
+		}
+		expected := filepath.ToSlash(filepath.Join(prefix, manifest.SnapshotID, fmt.Sprintf("chunk-%05d.bin", index)))
 		if key != expected {
 			return fmt.Errorf("blob manifest chunk %d key %q does not match expected runtime path", index, key)
 		}
@@ -974,6 +1089,19 @@ func (s *renterdBlobStore) preflight(ctx context.Context, report *blobPreflightR
 		return
 	}
 	report.addCheck("api_password", "pass", "configured")
+	if s.minShards < 0 || s.totalShards < 0 || (s.totalShards > 0 && s.minShards > s.totalShards) {
+		report.addCheck("redundancy", "fail", fmt.Sprintf("invalid min/total shard configuration %d/%d", s.minShards, s.totalShards))
+		return
+	}
+	if (s.minShards == 0) != (s.totalShards == 0) {
+		report.addCheck("redundancy", "fail", "min and total shards must either both be configured or both use renterd defaults")
+		return
+	}
+	if s.totalShards > 0 {
+		report.addCheck("redundancy", "pass", fmt.Sprintf("%d-of-%d shards", s.minShards, s.totalShards))
+	} else {
+		report.addCheck("redundancy", "pass", "renterd upload defaults")
+	}
 
 	var consensus map[string]any
 	if err := s.getRenterdJSON(ctx, "/api/bus/consensus/state", &consensus); err != nil {
@@ -984,6 +1112,44 @@ func (s *renterdBlobStore) preflight(ctx context.Context, report *blobPreflightR
 		report.addCheck("consensus_state", "pass", "synced")
 	} else {
 		report.addCheck("consensus_state", "warn", "endpoint reachable; synced field was not present")
+	}
+
+	var autopilot map[string]any
+	if err := s.getRenterdJSON(ctx, "/api/autopilot/state", &autopilot); err != nil {
+		report.addCheck("autopilot", "fail", err.Error())
+	} else if enabled, found := findBoolValue(autopilot, "enabled"); !found {
+		report.addCheck("autopilot", "fail", "autopilot state did not report whether maintenance is enabled")
+	} else if !enabled {
+		report.addCheck("autopilot", "fail", "renterd autopilot is disabled; contracts and data health will not be maintained")
+	} else {
+		report.addCheck("autopilot", "pass", "enabled")
+	}
+
+	var buckets []struct {
+		Name   string `json:"name"`
+		Policy struct {
+			PublicReadAccess bool `json:"publicReadAccess"`
+		} `json:"policy"`
+	}
+	if err := s.getRenterdJSON(ctx, "/api/bus/buckets", &buckets); err != nil {
+		report.addCheck("bucket", "fail", err.Error())
+	} else {
+		found := false
+		for _, bucket := range buckets {
+			if bucket.Name != s.bucketName() {
+				continue
+			}
+			found = true
+			if bucket.Policy.PublicReadAccess {
+				report.addCheck("bucket", "fail", fmt.Sprintf("bucket %q permits public reads", bucket.Name))
+			} else {
+				report.addCheck("bucket", "pass", fmt.Sprintf("bucket %q exists and is private", bucket.Name))
+			}
+			break
+		}
+		if !found {
+			report.addCheck("bucket", "fail", fmt.Sprintf("bucket %q does not exist", s.bucketName()))
+		}
 	}
 
 	var wallet map[string]any
@@ -998,20 +1164,51 @@ func (s *renterdBlobStore) preflight(ctx context.Context, report *blobPreflightR
 		if report.WalletAddress == "" {
 			report.WalletAddress = findStringValue(wallet, "address", "walletAddress", "receiveAddress")
 		}
-		report.addCheck("wallet", "warn", "wallet endpoint reachable; non-zero balance was not detected")
+		report.addCheck("wallet", "fail", "wallet endpoint reachable; non-zero spendable balance was not detected")
 	}
 	if report.WalletAddress == "" {
 		report.WalletAddress = s.fetchWalletAddress(ctx)
 	}
 
-	var contracts []json.RawMessage
-	if err := s.getRenterdJSON(ctx, "/api/bus/contracts/active", &contracts); err != nil {
+	contracts, err := s.activeContracts(ctx)
+	if err != nil {
 		report.addCheck("active_contracts", "fail", err.Error())
 	} else if len(contracts) == 0 {
 		report.addCheck("active_contracts", "fail", "no active renterd contracts")
+	} else if s.totalShards > 0 && len(contracts) < s.totalShards {
+		report.addCheck("active_contracts", "fail", fmt.Sprintf("%d active contracts; at least %d are required for configured total shards", len(contracts), s.totalShards))
 	} else {
 		report.addCheck("active_contracts", "pass", fmt.Sprintf("%d active contracts", len(contracts)))
 	}
+	if report.OK {
+		remaining, err := s.drainPendingDeletions(ctx)
+		switch {
+		case err != nil:
+			report.addCheck("pending_deletions", "warn", fmt.Sprintf("%d cleanup records remain: %v", remaining, err))
+		case remaining > 0:
+			report.addCheck("pending_deletions", "warn", fmt.Sprintf("%d cleanup records remain", remaining))
+		default:
+			report.addCheck("pending_deletions", "pass", "no deferred renterd deletions")
+		}
+	}
+}
+
+func (s *renterdBlobStore) activeContracts(ctx context.Context) ([]json.RawMessage, error) {
+	values := url.Values{}
+	values.Set("filtermode", "active")
+	var contracts []json.RawMessage
+	status, err := s.doRenterdRequest(ctx, http.MethodGet, "/api/bus/contracts", values, nil, "", &contracts)
+	if err == nil {
+		return contracts, nil
+	}
+	if status != http.StatusNotFound && status != http.StatusMethodNotAllowed {
+		return nil, err
+	}
+	var legacy []json.RawMessage
+	if legacyErr := s.getRenterdJSON(ctx, "/api/bus/contracts/active", &legacy); legacyErr != nil {
+		return nil, errors.Join(err, legacyErr)
+	}
+	return legacy, nil
 }
 
 func (s *renterdBlobStore) fetchWalletAddress(ctx context.Context) string {
@@ -1054,8 +1251,9 @@ func (s *renterdBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDi
 	defer file.Close()
 
 	manifest = &blobManifest{
-		Version:     2,
+		Version:     3,
 		RuntimeID:   runtimeID,
+		Namespace:   deriveRuntimeBlobNamespace(masterKey, runtimeID),
 		Store:       s.kind(),
 		Bucket:      s.bucketName(),
 		ObjectType:  "runtime-userdata",
@@ -1064,13 +1262,21 @@ func (s *renterdBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDi
 		ChunkSize:   s.chunkSize,
 		TotalBytes:  totalBytes,
 		Compression: "gzip",
-		Encryption:  runtimeBoundEncryption,
+		Encryption:  authenticatedEncryption,
 	}
+	cleanupCandidate := manifest
 	committed := false
 	defer func() {
-		if !committed && len(manifest.Chunks) > 0 {
-			cleanupErr := s.deleteManifest(context.WithoutCancel(ctx), manifest)
-			if cleanupErr != nil {
+		if !committed && len(cleanupCandidate.Chunks) > 0 {
+			cleanupManifest := *cleanupCandidate
+			cleanupManifest.Chunks = append([]blobChunk(nil), cleanupCandidate.Chunks...)
+			cleanupManifest.TotalBytes = 0
+			for _, chunk := range cleanupManifest.Chunks {
+				cleanupManifest.TotalBytes += chunk.Size
+			}
+			if cleanupAuthErr := authenticateBlobManifest(&cleanupManifest, masterKey, runtimeID); cleanupAuthErr != nil {
+				err = errors.Join(err, fmt.Errorf("authenticate partial renterd cleanup record: %w", cleanupAuthErr))
+			} else if cleanupErr := s.deleteManifest(context.WithoutCancel(ctx), &cleanupManifest); cleanupErr != nil {
 				err = errors.Join(err, fmt.Errorf("clean partial renterd snapshot: %w", cleanupErr))
 			}
 		}
@@ -1095,7 +1301,7 @@ func (s *renterdBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDi
 		chunkPayload := bytes.Clone(buffer[:readBytes])
 		chunkSum := sha256.Sum256(chunkPayload)
 		chunkName := fmt.Sprintf("chunk-%05d.bin", index)
-		chunkKey := filepath.ToSlash(filepath.Join(runtimeID, snapshotID, chunkName))
+		chunkKey := filepath.ToSlash(filepath.Join(manifest.Namespace, snapshotID, chunkName))
 		manifest.Chunks = append(manifest.Chunks, blobChunk{
 			Index:  index,
 			Key:    chunkKey,
@@ -1113,6 +1319,9 @@ func (s *renterdBlobStore) persistFromDir(ctx context.Context, runtimeID, dataDi
 
 	if len(manifest.Chunks) == 0 {
 		return nil, errors.New("snapshot produced no chunks")
+	}
+	if err := authenticateBlobManifest(manifest, masterKey, runtimeID); err != nil {
+		return nil, fmt.Errorf("authenticate renterd blob manifest: %w", err)
 	}
 	if err := validateBlobManifestForRuntime(manifest, runtimeID); err != nil {
 		return nil, fmt.Errorf("validate completed renterd blob manifest: %w", err)
@@ -1132,6 +1341,9 @@ func (s *renterdBlobStore) restoreToDir(ctx context.Context, runtimeID string, m
 		return fmt.Errorf("unsupported blob store kind %q", manifest.Store)
 	}
 	if err := validateBlobManifestForRuntime(manifest, runtimeID); err != nil {
+		return err
+	}
+	if err := verifyBlobManifestAuthentication(manifest, masterKey, runtimeID); err != nil {
 		return err
 	}
 
@@ -1166,15 +1378,19 @@ func (s *renterdBlobStore) clearRuntime(ctx context.Context, runtimeID string) e
 	return s.deletePrefix(ctx, runtimeID+"/")
 }
 
-func (s *renterdBlobStore) pruneRuntime(ctx context.Context, runtimeID, keepSnapshotID string) error {
+func (s *renterdBlobStore) pruneRuntime(ctx context.Context, runtimeID, namespace, keepSnapshotID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if runtimeID == "" || keepSnapshotID == "" {
 		return nil
 	}
-	runtimePrefix := filepath.ToSlash(filepath.Join(runtimeID)) + "/"
-	keepPrefix := filepath.ToSlash(filepath.Join(runtimeID, keepSnapshotID)) + "/"
+	prefixRoot := strings.TrimSpace(runtimeID)
+	if strings.TrimSpace(namespace) != "" {
+		prefixRoot = strings.TrimSpace(namespace)
+	}
+	runtimePrefix := filepath.ToSlash(filepath.Join(prefixRoot)) + "/"
+	keepPrefix := filepath.ToSlash(filepath.Join(prefixRoot, keepSnapshotID)) + "/"
 	keys, err := s.listObjectKeys(ctx, runtimePrefix)
 	if err != nil {
 		return err
@@ -1290,11 +1506,9 @@ func (s *renterdBlobStore) deleteManifest(ctx context.Context, manifest *blobMan
 	if manifest == nil {
 		return nil
 	}
-	bucket := manifestBucket(manifest, s.bucketName())
-	for _, chunk := range manifest.Chunks {
-		if err := s.deleteObject(ctx, bucket, chunk.Key); err != nil {
-			return err
-		}
+	if err := s.deleteManifestObjects(ctx, manifest); err != nil {
+		journalErr := s.enqueuePendingDeletion(manifest)
+		return errors.Join(err, journalErr)
 	}
 	return nil
 }
@@ -1693,11 +1907,15 @@ func (s *localBlobStore) clearRuntime(ctx context.Context, runtimeID string) err
 	return os.RemoveAll(filepath.Join(s.root, runtimeID))
 }
 
-func (s *localBlobStore) pruneRuntime(ctx context.Context, runtimeID, keepSnapshotID string) error {
+func (s *localBlobStore) pruneRuntime(ctx context.Context, runtimeID, namespace, keepSnapshotID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	runtimeDir := filepath.Join(s.root, runtimeID)
+	prefixRoot := strings.TrimSpace(runtimeID)
+	if strings.TrimSpace(namespace) != "" {
+		prefixRoot = strings.TrimSpace(namespace)
+	}
+	runtimeDir := filepath.Join(s.root, prefixRoot)
 	entries, err := os.ReadDir(runtimeDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -1954,6 +2172,72 @@ func deriveRuntimeSnapshotKey(masterKey []byte, runtimeID string) []byte {
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write([]byte(strings.TrimSpace(runtimeID)))
 	return mac.Sum(nil)
+}
+
+func deriveRuntimeBlobNamespace(masterKey []byte, runtimeID string) string {
+	mac := hmac.New(sha256.New, masterKey)
+	_, _ = mac.Write([]byte(runtimeBlobNamespaceCtx))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(strings.TrimSpace(runtimeID)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func runtimeManifestMACKey(masterKey []byte, runtimeID string) []byte {
+	mac := hmac.New(sha256.New, masterKey)
+	_, _ = mac.Write([]byte(runtimeManifestMACCtx))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(strings.TrimSpace(runtimeID)))
+	return mac.Sum(nil)
+}
+
+func blobManifestMACPayload(manifest *blobManifest) ([]byte, error) {
+	if manifest == nil {
+		return nil, errSnapshotMissing
+	}
+	unsigned := *manifest
+	unsigned.ManifestMAC = ""
+	return json.Marshal(unsigned)
+}
+
+func authenticateBlobManifest(manifest *blobManifest, masterKey []byte, runtimeID string) error {
+	if manifest == nil || manifest.Version != 3 {
+		return errors.New("only version 3 blob manifests can be authenticated")
+	}
+	payload, err := blobManifestMACPayload(manifest)
+	if err != nil {
+		return err
+	}
+	key := runtimeManifestMACKey(masterKey, runtimeID)
+	defer clearBytes(key)
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(payload)
+	manifest.ManifestMAC = hex.EncodeToString(mac.Sum(nil))
+	return nil
+}
+
+func verifyBlobManifestAuthentication(manifest *blobManifest, masterKey []byte, runtimeID string) error {
+	if manifest == nil || manifest.Version < 3 {
+		return nil
+	}
+	provided, err := hex.DecodeString(manifest.ManifestMAC)
+	if err != nil || len(provided) != sha256.Size {
+		return errors.New("blob manifest authentication is invalid")
+	}
+	payload, err := blobManifestMACPayload(manifest)
+	if err != nil {
+		return err
+	}
+	key := runtimeManifestMACKey(masterKey, runtimeID)
+	defer clearBytes(key)
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(provided, mac.Sum(nil)) {
+		return errors.New("blob manifest authentication failed")
+	}
+	if expected := deriveRuntimeBlobNamespace(masterKey, runtimeID); !hmac.Equal([]byte(manifest.Namespace), []byte(expected)) {
+		return errors.New("blob manifest namespace does not match the runtime key")
+	}
+	return nil
 }
 
 func snapshotKeyForManifest(masterKey []byte, runtimeID string, manifest *blobManifest) []byte {

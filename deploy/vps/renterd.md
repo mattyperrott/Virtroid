@@ -4,43 +4,34 @@ This deployment keeps `NODE_BLOB_STORE_KIND=local-disk` until renterd is fully
 configured, funded, synced, and has active contracts. Do not switch live runtime
 blob storage to `sia-renterd` before the smoke test passes.
 
-## Funding model
+## Architecture and funding
 
-The current production path uses an operator-pooled renterd wallet per runtime
-node. This matches how renterd forms storage contracts: the renterd daemon owns
-the wallet that pays hosts and stores encrypted runtime chunks.
+Sia is only the durable object store for encrypted runtime-userdata blobs. The
+VPS remains the current control plane and ReDroid runtime host. renterd must not
+receive Android API traffic, control-plane database data, runtime containers, or
+plaintext userdata.
+
+The current deployment uses an operator-managed renterd wallet. renterd owns the
+wallet that pays hosts and maintains storage contracts; it is infrastructure,
+not an account wallet or a user payment destination.
 
 The account-facing API still keeps storage metadata scoped to the account, but
 it does not claim per-account renterd custody:
 
 - renterd runs with a node/operator Sia wallet seed
-- the node reports renterd wallet funding, consensus, contract status, and the
-  configured deposit address through signed host heartbeats
+- the node reports renterd readiness, consensus, bucket, autopilot, wallet
+  funding, contract status, and deferred-delete health through signed host
+  heartbeats
 - the backend exposes that status through `GET /api/v1/me/storage`
-- the Android client shows direct SC funding status and copies the Sia deposit
-  address; it does not show a fake USDT/swap quote
+- the Android client shows storage readiness but never receives or copies the
+  operator wallet address
 - live runtime blobs stay on `local-disk` until renterd preflight and smoke
   tests pass, then new snapshots can be switched to `sia-renterd`
 
-A future per-account wallet model is still possible, but it requires explicit
-accounting, contract allocation, and wallet custody design. Do not store raw
-account wallet seeds in the control plane.
-
-If a user-owned seed backup is later added, the safe constraint remains:
-
-- the app generates or imports a user-owned Sia seed
-- the app encrypts that seed with the user's identity password before sending any
-  backup blob to the backend
-- the backend stores only the wallet address, funding status, provider choice,
-  and optional client-encrypted seed backup
-- live runtime blobs stay on `local-disk` until the account storage profile and
-  renterd preflight both report ready
-
-The signed account API for this state is:
+The signed account API for informational storage state is:
 
 ```text
 GET /api/v1/me/storage
-PUT /api/v1/me/storage
 ```
 
 For operator-pooled Sia storage, the account-facing state looks like:
@@ -49,11 +40,13 @@ For operator-pooled Sia storage, the account-facing state looks like:
 {
   "provider": "sia-renterd",
   "funding_model": "operator-pooled",
-  "funding_address": "<renterd deposit address>",
-  "wallet_address": "<renterd deposit address>",
-  "status": "funding_required"
+  "status": "ready",
+  "last_preflight_status": "ready"
 }
 ```
+
+Payment addresses and wallet seeds are never exposed by this endpoint. Funding
+is an operator action on the VPS.
 
 ## 1. Configure renterd secrets
 
@@ -66,13 +59,18 @@ RENTERD_SEED=<node/operator Sia wallet seed>
 NODE_SIA_RENTERD_WORKER_URL=http://renterd:9980
 NODE_SIA_RENTERD_PASSWORD=<same API password>
 NODE_SIA_RENTERD_BUCKET=virtroid
-NODE_SIA_RENTERD_WALLET_ADDRESS=<renterd receive address shown in the UI>
+NODE_SIA_RENTERD_WALLET_ADDRESS=<operator-only receive address, optional>
+NODE_SIA_RENTERD_MIN_SHARDS=<explicit positive integer>
+NODE_SIA_RENTERD_TOTAL_SHARDS=<explicit integer greater than or equal to min shards>
 ```
 
-The renterd seed controls the wallet used for storage contracts. Generate and
-back it up outside this repository before funding it. The wallet address is
-reported to the app through `NODE_SIA_RENTERD_WALLET_ADDRESS` unless the renterd
-API exposes a receive address that the node can discover automatically.
+The renterd seed controls the wallet used for storage contracts. Generate it on
+the VPS, back it up in an operator-controlled secret store, and never place it in
+source control or the Android client. `NODE_SIA_RENTERD_WALLET_ADDRESS` is
+operator-only telemetry and is redacted from account responses.
+Choose the shard policy from the number of active contracts and the desired
+redundancy; deployment validation intentionally does not invent production
+values.
 
 ## 2. Start renterd only
 
@@ -90,7 +88,7 @@ ready.
 Use the renterd UI or API on the VPS loopback port:
 
 ```bash
-ssh -L 9980:127.0.0.1:9980 codex@176.126.70.76
+ssh -L 9980:127.0.0.1:9980 virtroid@185.223.207.157
 ```
 
 Then open `http://127.0.0.1:9980` locally. Copy the renterd receive address into
@@ -114,8 +112,11 @@ The preflight checks:
 
 - worker API URL and API password are configured
 - consensus state endpoint is reachable and synced when reported by renterd
-- wallet endpoint is reachable and appears funded when balance is reported
-- active contracts endpoint is reachable and returns at least one contract
+- autopilot is enabled so contracts and data health are maintained
+- the configured bucket exists and does not permit public reads
+- the wallet endpoint reports a non-zero spendable balance
+- the active contract count can satisfy the configured total-shard count
+- durable deferred-delete records can be drained
 
 Then run the full encrypted write/restore smoke test:
 
@@ -134,8 +135,9 @@ Expected output:
 blob smoke test ok: store=sia-renterd
 ```
 
-This writes an encrypted test snapshot, restores it, compares restored files,
-and deletes the manifest-known test chunks.
+This writes an encrypted test snapshot with an authenticated manifest and opaque
+object namespace, restores it, compares restored files, and deletes the
+manifest-known test chunks. It never uploads plaintext userdata.
 
 ## 5. Switch live runtime blobs
 
@@ -154,4 +156,22 @@ sudo docker logs -f virtnoded
 ```
 
 Existing local-disk manifests remain restorable because each runtime manifest
-records its store kind. New snapshots will use `sia-renterd`.
+records its store kind. Each runtime migrates naturally after its first complete
+start/stop cycle under `sia-renterd`: the local encrypted snapshot is restored,
+a new authenticated Sia generation is committed, and the old local generation
+is retained inside the authenticated migration manifest. A successful Sia
+restore deletes that fallback; a failed Sia restore automatically uses it.
+Migrate runtimes in small batches and verify a fresh start before considering
+the migration complete.
+
+Failed Sia deletions are recorded at
+`/srv/virtroid/runtimes/_blobstore/pending-renterd-deletes.json` and retried by
+storage preflight. A pending backlog reports `degraded` instead of being hidden.
+
+## Future confidential runtimes
+
+The current VPS node is trusted with the short-lived runtime blob key because it
+hosts the runtime. A later confidential-VM runtime node can implement the same
+blob-store interface and receive lease-scoped key material after attestation.
+renterd remains only the encrypted object store; it does not become the control
+plane or runtime host.

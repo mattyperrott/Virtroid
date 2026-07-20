@@ -187,10 +187,11 @@ Runtime nodes may receive:
 - short-lived write token
 - lease-scoped persona/runtime material
 
-Runtime nodes must not receive:
+Attested third-party runtime nodes must not receive:
 
 - master user blob key
-- global Sia/renterd credential
+- global Sia/renterd credential; the current combined VPS node may hold it only
+  while it remains inside the explicitly trusted operator boundary
 - permanent operator credential
 - reusable account-wide snapshot secret
 
@@ -199,8 +200,11 @@ Runtime nodes must not receive:
 Sia/renterd is the production blob storage target.
 
 - Local disk is a development fallback only.
-- User-funded Sia/renterd mode is the long-term product path.
-- Storage settings must expose whether renterd is configured, funded, synced, and ready.
+- The current path uses an operator-managed renterd wallet. Sia is storage
+  infrastructure, not an account wallet or user payment surface.
+- Storage settings must expose whether renterd is configured, funded, synced,
+  maintaining contracts, private-bucket configured, and ready without exposing
+  an operator payment address to accounts.
 - Snapshot chunks should use renterd redundancy settings where available.
 - Deletion must remove manifest-known chunks and later support full remote garbage collection for old snapshots.
 - The client UI must not imply Sia provides plaintext privacy; encryption and key custody provide privacy.

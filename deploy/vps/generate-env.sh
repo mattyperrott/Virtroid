@@ -92,7 +92,7 @@ write_env_var() {
   write_env_var BACKEND_RUNTIME_IMAGE "${BACKEND_RUNTIME_IMAGE:-debian:bookworm-slim@sha256:REPLACE_WITH_64_HEX}"
   write_env_var NODE_RUNTIME_IMAGE "${NODE_RUNTIME_IMAGE:-redroid/redroid:14.0.0_64only-latest@sha256:REPLACE_WITH_64_HEX}"
   write_env_var HAPROXY_IMAGE "${HAPROXY_IMAGE:-haproxy:lts@sha256:REPLACE_WITH_64_HEX}"
-  write_env_var RENTERD_IMAGE "${RENTERD_IMAGE:-ghcr.io/siafoundation/renterd:v2.9.1@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var RENTERD_IMAGE "${RENTERD_IMAGE:-ghcr.io/siafoundation/renterd:2.9.3@sha256:72c589044aa47a09ab8349aad8b639a9cde2dd44bf27df73255d0f7bb29a2316}"
   write_env_var FALCO_IMAGE "${FALCO_IMAGE:-falcosecurity/falco:0.43.0@sha256:REPLACE_WITH_64_HEX}"
   write_env_var POSTGRES_DB virtroid
   write_env_var POSTGRES_USER virtroid

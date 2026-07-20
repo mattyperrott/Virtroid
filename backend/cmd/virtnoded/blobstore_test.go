@@ -212,37 +212,16 @@ func TestRuntimeBoundSnapshotRejectsCrossRuntimeTransplant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("persistFromDir: %v", err)
 	}
-	if manifest.Version != 2 || manifest.RuntimeID != "runtime-a" {
-		t.Fatalf("manifest domain = version %d runtime %q, want v2 runtime-a", manifest.Version, manifest.RuntimeID)
+	if manifest.Version != 3 || manifest.RuntimeID != "runtime-a" || manifest.Namespace == "" || manifest.ManifestMAC == "" {
+		t.Fatalf("manifest domain = version %d runtime %q namespace %q MAC %q, want authenticated v3 runtime-a", manifest.Version, manifest.RuntimeID, manifest.Namespace, manifest.ManifestMAC)
 	}
 
 	transplanted := *manifest
 	transplanted.RuntimeID = "runtime-b"
 	transplanted.Chunks = append([]blobChunk(nil), manifest.Chunks...)
-	for index := range transplanted.Chunks {
-		sourcePath, err := store.blobObjectPath(manifest.Chunks[index].Key)
-		if err != nil {
-			t.Fatalf("source blobObjectPath: %v", err)
-		}
-		transplanted.Chunks[index].Key = filepath.ToSlash(filepath.Join("runtime-b", manifest.SnapshotID, filepath.Base(manifest.Chunks[index].Key)))
-		targetPath, err := store.blobObjectPath(transplanted.Chunks[index].Key)
-		if err != nil {
-			t.Fatalf("target blobObjectPath: %v", err)
-		}
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-			t.Fatalf("mkdir transplanted generation: %v", err)
-		}
-		payload, err := os.ReadFile(sourcePath)
-		if err != nil {
-			t.Fatalf("read source chunk: %v", err)
-		}
-		if err := os.WriteFile(targetPath, payload, 0o600); err != nil {
-			t.Fatalf("write transplanted chunk: %v", err)
-		}
-	}
 
 	err = store.restoreToDir(context.Background(), "runtime-b", &transplanted, filepath.Join(root, "restore"), masterKey)
-	if err == nil || !strings.Contains(err.Error(), "integrity check failed") {
+	if err == nil || !strings.Contains(err.Error(), "manifest authentication failed") {
 		t.Fatalf("cross-runtime transplant error = %v, want runtime-bound integrity failure", err)
 	}
 }
@@ -762,6 +741,190 @@ func TestRenterdBlobStoreRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestRenterdFailedDeleteIsJournaledAndRetried(t *testing.T) {
+	server, objects := newRenterdTestServer(t, "secret")
+	root := t.TempDir()
+	store := &renterdBlobStore{
+		workerURL:   server.URL,
+		password:    "secret",
+		bucket:      "virtroid-test",
+		chunkSize:   32,
+		httpClient:  server.Client(),
+		cleanupPath: filepath.Join(root, "pending-deletes.json"),
+		cleanupMu:   &sync.Mutex{},
+	}
+	sourceDir := filepath.Join(root, "source")
+	writeFile(t, filepath.Join(sourceDir, "payload.txt"), strings.Repeat("deferred-delete", 32))
+	manifest, err := store.persistFromDir(context.Background(), "runtime-1", sourceDir, testBlobKey(9))
+	if err != nil {
+		t.Fatalf("persistFromDir: %v", err)
+	}
+
+	objects.mu.Lock()
+	objects.failDeletes = true
+	objects.mu.Unlock()
+	if err := store.deleteManifest(context.Background(), manifest); err == nil {
+		t.Fatal("deleteManifest succeeded while the test server rejected deletes")
+	}
+	pending, err := loadPendingBlobDeletions(store.cleanupPath)
+	if err != nil {
+		t.Fatalf("loadPendingBlobDeletions: %v", err)
+	}
+	if len(pending.Manifests) != 1 {
+		t.Fatalf("pending manifests = %d, want 1", len(pending.Manifests))
+	}
+
+	objects.mu.Lock()
+	objects.failDeletes = false
+	objects.mu.Unlock()
+	remaining, err := store.drainPendingDeletions(context.Background())
+	if err != nil {
+		t.Fatalf("drainPendingDeletions: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining pending deletions = %d, want 0", remaining)
+	}
+	objects.mu.Lock()
+	defer objects.mu.Unlock()
+	if len(objects.items) != 0 {
+		t.Fatalf("renterd objects remain after retry: %d", len(objects.items))
+	}
+}
+
+func TestRenterdPartialUploadCleanupIsJournaled(t *testing.T) {
+	server, objects := newRenterdTestServer(t, "secret")
+	root := t.TempDir()
+	store := &renterdBlobStore{
+		workerURL:   server.URL,
+		password:    "secret",
+		bucket:      "virtroid-test",
+		chunkSize:   32,
+		httpClient:  server.Client(),
+		cleanupPath: filepath.Join(root, "pending-deletes.json"),
+		cleanupMu:   &sync.Mutex{},
+	}
+	objects.mu.Lock()
+	objects.failPutsAfter = 1
+	objects.failDeletes = true
+	objects.mu.Unlock()
+	sourceDir := filepath.Join(root, "source")
+	writeFile(t, filepath.Join(sourceDir, "payload.txt"), strings.Repeat("partial-upload", 64))
+	if _, err := store.persistFromDir(context.Background(), "runtime-1", sourceDir, testBlobKey(3)); err == nil {
+		t.Fatal("persistFromDir succeeded after the test server rejected a later chunk")
+	}
+	pending, err := loadPendingBlobDeletions(store.cleanupPath)
+	if err != nil {
+		t.Fatalf("loadPendingBlobDeletions: %v", err)
+	}
+	if len(pending.Manifests) != 1 {
+		t.Fatalf("pending partial manifests = %d, want 1", len(pending.Manifests))
+	}
+	objects.mu.Lock()
+	objects.failDeletes = false
+	objects.failPutsAfter = 0
+	objects.mu.Unlock()
+	if remaining, err := store.drainPendingDeletions(context.Background()); err != nil || remaining != 0 {
+		t.Fatalf("drainPendingDeletions remaining=%d err=%v", remaining, err)
+	}
+}
+
+func TestAuthenticatedManifestRejectsMetadataTamperingBeforeDownload(t *testing.T) {
+	server, _ := newRenterdTestServer(t, "secret")
+	root := t.TempDir()
+	store := &renterdBlobStore{
+		workerURL:  server.URL,
+		password:   "secret",
+		bucket:     "virtroid-test",
+		chunkSize:  32,
+		httpClient: server.Client(),
+	}
+	sourceDir := filepath.Join(root, "source")
+	writeFile(t, filepath.Join(sourceDir, "payload.txt"), "private state")
+	key := testBlobKey(5)
+	manifest, err := store.persistFromDir(context.Background(), "runtime-private", sourceDir, key)
+	if err != nil {
+		t.Fatalf("persistFromDir: %v", err)
+	}
+	if strings.Contains(manifest.Chunks[0].Key, "runtime-private") {
+		t.Fatalf("opaque renterd object key leaked runtime id: %q", manifest.Chunks[0].Key)
+	}
+	tampered := *manifest
+	tampered.CreatedAt = tampered.CreatedAt.Add(time.Hour)
+	err = store.restoreToDir(context.Background(), "runtime-private", &tampered, filepath.Join(root, "restore"), key)
+	if err == nil || !strings.Contains(err.Error(), "manifest authentication failed") {
+		t.Fatalf("tampered manifest restore error = %v, want manifest authentication failure", err)
+	}
+}
+
+func TestLocalToRenterdMigrationRetainsFallbackUntilRemoteRestore(t *testing.T) {
+	server, _ := newRenterdTestServer(t, "secret")
+	root := t.TempDir()
+	runtimeID := "runtime-migration"
+	dataDir := filepath.Join(root, runtimeID, "data")
+	writeFile(t, filepath.Join(dataDir, "app", "state.db"), "durable user state")
+	key := testBlobKey(7)
+
+	localStore := &localBlobStore{
+		root:      filepath.Join(root, "_blobstore", "local"),
+		chunkSize: 32,
+	}
+	localManifest, err := localStore.persistFromDir(context.Background(), runtimeID, dataDir, key)
+	if err != nil {
+		t.Fatalf("persist local fallback: %v", err)
+	}
+	localFirstPath, err := localStore.blobObjectPath(localManifest.Chunks[0].Key)
+	if err != nil {
+		t.Fatalf("local fallback path: %v", err)
+	}
+
+	node := &nodeAgent{cfg: config.NodeConfig{
+		RuntimeRoot:      root,
+		BlobStoreKind:    blobStoreRenterd,
+		RenterdWorkerURL: server.URL,
+		RenterdPassword:  "secret",
+		RenterdBucket:    "virtroid-test",
+	}}
+	renterdStore := &renterdBlobStore{
+		workerURL:  server.URL,
+		password:   "secret",
+		bucket:     "virtroid-test",
+		chunkSize:  32,
+		httpClient: server.Client(),
+	}
+	runtime := runtimeAssignment{
+		ID:               runtimeID,
+		BlobAutoSnapshot: true,
+		BlobManifestJSON: stringPtr(marshalBlobManifest(localManifest)),
+	}
+	persisted, err := node.persistSessionData(context.Background(), runtime, &sessionPersistencePlan{
+		dataDir:   dataDir,
+		masterKey: append([]byte(nil), key...),
+		store:     renterdStore,
+	})
+	if err != nil {
+		t.Fatalf("persist remote migration generation: %v", err)
+	}
+	if !sameBlobGeneration(persisted.Manifest.MigrationFallback, localManifest) {
+		t.Fatal("remote manifest did not retain the local migration fallback")
+	}
+	if err := node.cleanupBlobStorage(runtime, persisted.Manifest); err != nil {
+		t.Fatalf("cleanupBlobStorage before restore: %v", err)
+	}
+	if _, err := os.Stat(localFirstPath); err != nil {
+		t.Fatalf("local migration fallback was removed before remote restore: %v", err)
+	}
+
+	runtime.BlobManifestJSON = stringPtr(marshalBlobManifest(persisted.Manifest))
+	node.cacheRuntimeBlobKey(runtimeID, key)
+	if _, err := node.prepareSessionData(context.Background(), runtime); err != nil {
+		t.Fatalf("prepareSessionData from renterd: %v", err)
+	}
+	assertFileContent(t, filepath.Join(dataDir, "app", "state.db"), "durable user state")
+	if _, err := os.Stat(localFirstPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("local migration fallback still exists after verified remote restore: %v", err)
+	}
+}
+
 func TestRenterdPreflightPassesWhenReady(t *testing.T) {
 	server := newRenterdPreflightServer(t, "secret", true, true)
 	node := &nodeAgent{
@@ -799,6 +962,44 @@ func TestRenterdPreflightFailsWithoutContracts(t *testing.T) {
 	if report.OK {
 		t.Fatalf("runBlobPreflight OK=true, want false")
 	}
+	assertPreflightStatus(t, report, "active_contracts", "fail")
+}
+
+func TestRenterdPreflightRejectsUnsafeBucketAndDisabledAutopilot(t *testing.T) {
+	server := newRenterdPreflightServerWithOptions(t, "secret", renterdPreflightOptions{
+		Synced:           true,
+		AutopilotEnabled: false,
+		BucketExists:     true,
+		BucketPublic:     true,
+		WalletSpendable:  "1000000000000000000000000",
+		ContractCount:    3,
+	})
+	node := &nodeAgent{cfg: configForRenterdTest(server.URL, "secret")}
+	report := node.runBlobPreflight(context.Background())
+	if report.OK {
+		t.Fatalf("runBlobPreflight OK=true, checks=%+v", report.Checks)
+	}
+	assertPreflightStatus(t, report, "autopilot", "fail")
+	assertPreflightStatus(t, report, "bucket", "fail")
+}
+
+func TestRenterdPreflightRequiresFundingAndEnoughContracts(t *testing.T) {
+	server := newRenterdPreflightServerWithOptions(t, "secret", renterdPreflightOptions{
+		Synced:           true,
+		AutopilotEnabled: true,
+		BucketExists:     true,
+		WalletSpendable:  "0",
+		ContractCount:    2,
+	})
+	cfg := configForRenterdTest(server.URL, "secret")
+	cfg.RenterdMinShards = 2
+	cfg.RenterdTotalShards = 3
+	node := &nodeAgent{cfg: cfg}
+	report := node.runBlobPreflight(context.Background())
+	if report.OK {
+		t.Fatalf("runBlobPreflight OK=true, checks=%+v", report.Checks)
+	}
+	assertPreflightStatus(t, report, "wallet", "fail")
 	assertPreflightStatus(t, report, "active_contracts", "fail")
 }
 
@@ -986,8 +1187,11 @@ func writeJSONForTest(t *testing.T, w http.ResponseWriter, payload any) {
 }
 
 type renterdTestObjects struct {
-	mu    sync.Mutex
-	items map[string][]byte
+	mu            sync.Mutex
+	items         map[string][]byte
+	failDeletes   bool
+	failPutsAfter int
+	puts          int
 }
 
 func newRenterdTestServer(t *testing.T, password string) (*httptest.Server, *renterdTestObjects) {
@@ -997,6 +1201,24 @@ func newRenterdTestServer(t *testing.T, password string) (*httptest.Server, *ren
 		_, gotPassword, ok := r.BasicAuth()
 		if !ok || gotPassword != password {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/bus/objects/") {
+			requestedPrefix := strings.TrimPrefix(r.URL.Path, "/api/bus/objects/")
+			bucketPrefix := r.URL.Query().Get("bucket") + "/"
+			objects.mu.Lock()
+			defer objects.mu.Unlock()
+			var listed []map[string]string
+			for storedKey := range objects.items {
+				if !strings.HasPrefix(storedKey, bucketPrefix) {
+					continue
+				}
+				key := strings.TrimPrefix(storedKey, bucketPrefix)
+				if strings.HasPrefix(key, requestedPrefix) {
+					listed = append(listed, map[string]string{"key": key})
+				}
+			}
+			writeJSONForTest(t, w, map[string]any{"hasMore": false, "objects": listed})
 			return
 		}
 		prefix := "/api/worker/objects/"
@@ -1010,12 +1232,17 @@ func newRenterdTestServer(t *testing.T, password string) (*httptest.Server, *ren
 		defer objects.mu.Unlock()
 		switch r.Method {
 		case http.MethodPut:
+			if objects.failPutsAfter > 0 && objects.puts >= objects.failPutsAfter {
+				http.Error(w, "upload unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			payload, err := io.ReadAll(r.Body)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			objects.items[objectKey] = payload
+			objects.puts++
 			w.WriteHeader(http.StatusCreated)
 		case http.MethodGet:
 			payload, ok := objects.items[objectKey]
@@ -1025,6 +1252,10 @@ func newRenterdTestServer(t *testing.T, password string) (*httptest.Server, *ren
 			}
 			_, _ = w.Write(payload)
 		case http.MethodDelete:
+			if objects.failDeletes {
+				http.Error(w, "delete unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			delete(objects.items, objectKey)
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -1036,6 +1267,29 @@ func newRenterdTestServer(t *testing.T, password string) (*httptest.Server, *ren
 }
 
 func newRenterdPreflightServer(t *testing.T, password string, synced bool, hasContracts bool) *httptest.Server {
+	contractCount := 0
+	if hasContracts {
+		contractCount = 1
+	}
+	return newRenterdPreflightServerWithOptions(t, password, renterdPreflightOptions{
+		Synced:           synced,
+		AutopilotEnabled: true,
+		BucketExists:     true,
+		WalletSpendable:  "1000000000000000000000000",
+		ContractCount:    contractCount,
+	})
+}
+
+type renterdPreflightOptions struct {
+	Synced           bool
+	AutopilotEnabled bool
+	BucketExists     bool
+	BucketPublic     bool
+	WalletSpendable  string
+	ContractCount    int
+}
+
+func newRenterdPreflightServerWithOptions(t *testing.T, password string, options renterdPreflightOptions) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, gotPassword, ok := r.BasicAuth()
@@ -1046,15 +1300,26 @@ func newRenterdPreflightServer(t *testing.T, password string, synced bool, hasCo
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/bus/consensus/state":
-			_ = json.NewEncoder(w).Encode(map[string]any{"synced": synced})
-		case "/api/bus/wallet":
-			_ = json.NewEncoder(w).Encode(map[string]any{"siacoins": "1000000000000000000000000"})
-		case "/api/bus/contracts/active":
-			if hasContracts {
-				_ = json.NewEncoder(w).Encode([]map[string]string{{"id": "contract-1"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"synced": options.Synced})
+		case "/api/autopilot/state":
+			_ = json.NewEncoder(w).Encode(map[string]any{"enabled": options.AutopilotEnabled})
+		case "/api/bus/buckets":
+			if !options.BucketExists {
+				_ = json.NewEncoder(w).Encode([]map[string]any{})
 				return
 			}
-			_ = json.NewEncoder(w).Encode([]map[string]string{})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"name": "virtroid-test", "policy": map[string]any{"publicReadAccess": options.BucketPublic}}})
+		case "/api/bus/wallet":
+			_ = json.NewEncoder(w).Encode(map[string]any{"spendable": options.WalletSpendable, "address": "addr:test"})
+		case "/api/bus/contracts":
+			if r.URL.Query().Get("filtermode") != "active" {
+				t.Fatalf("contracts filtermode = %q, want active", r.URL.Query().Get("filtermode"))
+			}
+			contracts := make([]map[string]string, 0, options.ContractCount)
+			for index := 0; index < options.ContractCount; index++ {
+				contracts = append(contracts, map[string]string{"id": fmt.Sprintf("contract-%d", index+1)})
+			}
+			_ = json.NewEncoder(w).Encode(contracts)
 		default:
 			http.NotFound(w, r)
 		}

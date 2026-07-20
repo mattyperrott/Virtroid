@@ -46,7 +46,7 @@ printf '%s\n' \
   "BACKEND_RUNTIME_IMAGE=debian:bookworm-slim@sha256:${digest}" \
   "NODE_RUNTIME_IMAGE=redroid/redroid:14.0.0_64only-latest@sha256:${digest}" \
   "HAPROXY_IMAGE=haproxy:lts@sha256:${digest}" \
-  "RENTERD_IMAGE=ghcr.io/siafoundation/renterd:v2.9.1@sha256:${digest}" \
+  "RENTERD_IMAGE=ghcr.io/siafoundation/renterd:2.9.3@sha256:${digest}" \
   "FALCO_IMAGE=falcosecurity/falco:0.43.0@sha256:${digest}" \
   "RENTERD_API_PASSWORD=test-password" \
   "RENTERD_SEED=test-seed" \
@@ -109,7 +109,9 @@ fi
 cp "${tmp_dir}/.env" "${tmp_dir}/renterd.env"
 printf '%s\n' \
   'NODE_BLOB_STORE_KIND=sia-renterd' \
-  'NODE_SIA_RENTERD_WORKER_URL=http://renterd:9980' >> "${tmp_dir}/renterd.env"
+  'NODE_SIA_RENTERD_WORKER_URL=http://renterd:9980' \
+  'NODE_SIA_RENTERD_MIN_SHARDS=2' \
+  'NODE_SIA_RENTERD_TOTAL_SHARDS=3' >> "${tmp_dir}/renterd.env"
 PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/renterd.env" VIRTROID_PROFILES=edge,renterd,falco "${script_dir}/deploy.sh" validate >/dev/null
 
 cp "${tmp_dir}/.env" "${tmp_dir}/mutable-image.env"

@@ -1770,7 +1770,8 @@ func (s *Store) applyLatestStoragePreflight(ctx context.Context, storage *Accoun
 	}
 	// A host heartbeat is node-controlled and is not an authenticated payment
 	// instruction. Never copy its wallet address into account-facing funding or
-	// wallet fields. Account wallet settings remain exclusively user supplied.
+	// wallet fields. The renterd wallet is operator infrastructure, not an
+	// account wallet.
 	storage.FundingAddress = nil
 	_ = kind
 }

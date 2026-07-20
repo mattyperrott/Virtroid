@@ -98,6 +98,19 @@ func TestStoragePreflightStatusReportsContractsAfterReachableConsensus(t *testin
 	}
 }
 
+func TestStoragePreflightStatusReportsDeferredDeletionBacklog(t *testing.T) {
+	status := storagePreflightStatus(blobPreflightReport{
+		Store: blobStoreRenterd,
+		OK:    true,
+		Checks: []blobPreflightCheck{
+			{Name: "pending_deletions", Status: "warn", Detail: "1 cleanup record remains"},
+		},
+	})
+	if status != "degraded" {
+		t.Fatalf("status = %q, want degraded", status)
+	}
+}
+
 func TestRuntimeAppsToInstallLoadsManifestDefaults(t *testing.T) {
 	pin := strings.Repeat("a", 64)
 	root := t.TempDir()

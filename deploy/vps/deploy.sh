@@ -407,6 +407,20 @@ validate_environment() {
         echo "the Compose renterd worker URL must be http://renterd:9980" >&2
         exit 1
       fi
+      if [ "${NODE_SIA_RENTERD_PASSWORD}" != "${RENTERD_API_PASSWORD}" ]; then
+        echo "NODE_SIA_RENTERD_PASSWORD must match RENTERD_API_PASSWORD for the local Compose renterd service" >&2
+        exit 1
+      fi
+      if [[ ! "${NODE_SIA_RENTERD_BUCKET}" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]]; then
+        echo "NODE_SIA_RENTERD_BUCKET must be a private S3-compatible bucket name" >&2
+        exit 1
+      fi
+      if [[ ! "${NODE_SIA_RENTERD_MIN_SHARDS}" =~ ^[1-9][0-9]*$ ]] ||
+         [[ ! "${NODE_SIA_RENTERD_TOTAL_SHARDS}" =~ ^[1-9][0-9]*$ ]] ||
+         [ "${NODE_SIA_RENTERD_MIN_SHARDS}" -gt "${NODE_SIA_RENTERD_TOTAL_SHARDS}" ]; then
+        echo "NODE_SIA_RENTERD_MIN_SHARDS and NODE_SIA_RENTERD_TOTAL_SHARDS must be explicit positive integers with min <= total" >&2
+        exit 1
+      fi
       ;;
     *)
       echo "unsupported NODE_BLOB_STORE_KIND=${NODE_BLOB_STORE_KIND}" >&2
