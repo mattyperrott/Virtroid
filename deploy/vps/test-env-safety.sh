@@ -292,6 +292,9 @@ fi
 grep -q '/usr/local/sbin/virtroid-release-on-vps' "${script_dir}/release-on-vps.sh"
 grep -q 'production VPS source repository must not have a Git remote' "${script_dir}/release-on-vps.sh"
 grep -q 'GitHub automation must not exist on the production VPS' "${script_dir}/release-on-vps.sh"
+grep -q 'installer_digest_before=' "${script_dir}/release-on-vps.sh"
+grep -q 'installer_digest_after=' "${script_dir}/release-on-vps.sh"
+grep -q 'installer_digest_after.*installer_digest_before' "${script_dir}/release-on-vps.sh"
 if grep -RniE 'restic|offsite|off-site' "${script_dir}" \
     --exclude=README.md \
     --exclude=test-env-safety.sh \

@@ -113,7 +113,15 @@ trap cleanup_stage EXIT HUP INT TERM
 rsync -a --one-file-system "${bundle_dir}/" "${stage}/"
 install -d -o root -g root -m 0700 "${stage}/tree"
 tar -xzf "${stage}/deployment-tree.tar.gz" -C "${stage}/tree"
+installer_digest_before="$(sha256sum /usr/local/sbin/virtroid-install-reviewed-deployment-tree | awk '{print $1}')"
 /usr/local/sbin/virtroid-install-reviewed-deployment-tree "${stage}/tree/vps" "${tree_digest}"
+installer_digest_after="$(sha256sum /usr/local/sbin/virtroid-install-reviewed-deployment-tree | awk '{print $1}')"
+if [ "${installer_digest_after}" != "${installer_digest_before}" ]; then
+  # The installer is itself part of the reviewed deployment tree. Re-run the
+  # newly installed copy before applying the release so additions to the
+  # runtime integration list cannot be skipped by the prior installer.
+  /usr/local/sbin/virtroid-install-reviewed-deployment-tree "${stage}/tree/vps" "${tree_digest}"
+fi
 VIRTROID_PROFILES=edge /usr/local/sbin/virtroid-apply-local-release "${stage}" "${expected_fingerprint}"
 trap - EXIT HUP INT TERM
 cleanup_stage
