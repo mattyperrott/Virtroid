@@ -44,6 +44,9 @@ install -m 0644 "${script_dir}/redroid-binderfs.service" /etc/systemd/system/red
 install -m 0644 "${script_dir}/fail2ban-virtroid.conf" /etc/fail2ban/jail.d/virtroid.conf
 install -m 0644 "${script_dir}/sshd-virtroid-hardening.conf" /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
 install -m 0755 "${script_dir}/virtroid-backup.sh" /usr/local/sbin/virtroid-backup.sh
+install -m 0755 "${script_dir}/configure-renterd-secrets.sh" /usr/local/sbin/virtroid-configure-renterd-secrets
+install -m 0755 "${script_dir}/renterd-admin.sh" /usr/local/sbin/virtroid-renterd-admin
+install -m 0755 "${script_dir}/renterd-smoke-test.sh" /usr/local/sbin/virtroid-renterd-smoke-test
 install -m 0755 "${script_dir}/derive-node-fingerprint.sh" /usr/local/sbin/virtroid-derive-node-fingerprint
 install -m 0755 "${script_dir}/create-deploy-user.sh" /usr/local/sbin/virtroid-create-deploy-user.sh
 install -m 0755 "${script_dir}/enable-key-only-ssh.sh" /usr/local/sbin/virtroid-enable-key-only-ssh.sh
@@ -52,6 +55,10 @@ install -m 0755 "${script_dir}/apply-local-release.sh" /usr/local/sbin/virtroid-
 install -m 0755 "${script_dir}/release-on-vps.sh" /usr/local/sbin/virtroid-release-on-vps
 install -d -o root -g root -m 0755 /usr/local/share/virtroid
 install -d -o root -g root -m 0700 /var/lib/virtroid-deploy
+install -d -o root -g root -m 0700 /etc/virtroid /etc/virtroid/secrets
+if [ ! -e /etc/virtroid/secrets/renterd-api-password ]; then
+  install -o root -g root -m 0400 /dev/null /etc/virtroid/secrets/renterd-api-password
+fi
 install -d -o root -g root -m 0700 /var/lib/virtroid-build /var/lib/virtroid-release-bundles
 install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 install -m 0755 "${script_dir}/certbot-deploy-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh

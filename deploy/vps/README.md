@@ -2,8 +2,10 @@
 
 > **Rollout status (2026-07-19):** The VPS runs schema `2026071903` with the
 > approved production node registry. Production builds, release bundles,
-> rollback state, secrets, and backups remain on the VPS. Developer machines
-> and source-hosting services are not release runners or backup targets.
+> rollback state, operational secrets, and local backups remain on the VPS.
+> A renterd recovery seed is the deliberate exception: two physical offline
+> copies must exist outside both the VPS and developer machines. Developer
+> machines and source-hosting services are not release runners or backup targets.
 
 This folder is intended to be deployable on a fresh Ubuntu VPS with:
 
@@ -79,8 +81,10 @@ local content/version ledger on the VPS. GitHub may hold a development copy for
 safekeeping, but the VPS never fetches from it and GitHub has no credential or
 release role.
 
-Only reviewed source code enters the offline checkout. Production secrets,
-database dumps, Docker image archives, and release state never leave the VPS.
+Only reviewed source code enters the offline checkout. Online production
+secrets, database dumps, Docker image archives, and release state never enter a
+developer checkout or source host. The renterd wallet seed has separate physical
+offline recovery copies as described in `renterd.md`.
 After updating the source snapshot, make a local VPS commit with no remote:
 
 ```bash
@@ -165,8 +169,9 @@ Host preparation also enables Fail2ban, conservative SSH attempt/grace limits,
 bounded container logs, and a daily root-only local backup timer. Daily backups
 refuse active sessions or running managed guests, drain ingress, and pause the
 control plane, node, and renterd writers while capturing a PostgreSQL dump,
-`/srv/virtroid`, renterd data when configured, the reviewed deploy tree, and
-current/previous release state. The first legacy-to-immutable backup also saves
+`/srv/virtroid`, renterd's MySQL databases and partial-slab data when configured,
+the reviewed deploy tree, and current/previous release state. The first
+legacy-to-immutable backup also saves
 the exact immutable Docker image IDs used by each backend container. Portable
 checksums cover the complete set, and the seven newest successful sets are kept
 under `/var/backups/virtroid`. They are rollback copies on the same host and
@@ -332,6 +337,12 @@ Optional profiles:
 sudo VIRTROID_PROFILES=edge,falco ./deploy.sh up
 sudo VIRTROID_PROFILES=edge,renterd ./deploy.sh up
 ```
+
+The renterd profile is fail-closed: it will not start until the installed
+ceremony helper verifies two offline seed copies, root-only mounted secret
+files, the immutable MySQL/renterd images, an operator funding assertion, and
+the approved 10-of-30 mainnet shard policy. Follow `renterd.md`; do not bypass
+the gate with raw Compose commands.
 
 ## Android Domain Note
 

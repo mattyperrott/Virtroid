@@ -141,6 +141,13 @@ Implemented:
 - account storage status supports `sia-renterd` in operator-managed mode; user
   wallet and seed mutation are deliberately disabled
 - deployment compose includes a renterd profile
+- renterd seed and API/database passwords use root-only mounted files instead of
+  Docker environment metadata; profile activation requires a recorded offline
+  seed-copy and funding ceremony
+- the production policy is pinned to renterd's mainnet 10-of-30 redundancy
+  default and requires at least 30 active contracts before smoke testing
+- the renterd profile uses an isolated MySQL database, a private bucket gate,
+  disabled S3/third-party explorer paths, and trusted smoke/cutover helpers
 - new manifests use authenticated version-3 metadata and opaque object namespaces
 - failed manifest-known deletes are durably journaled and retried
 - local-to-renterd migration retains a fallback until a successful remote restore
@@ -149,6 +156,8 @@ Still missing or partial:
 
 - renterd is not yet the default production path
 - no verified live renterd production smoke result in this current review
+- no operator-confirmed physical offline seed copies, mainnet SC funding, active
+  contract set, or off-machine encrypted renterd metadata backup yet
 - bounded prefix garbage collection is implemented for known runtime namespaces;
   a fleet-wide reconciler for lost journals/unknown historical objects is still missing
 - version-3 manifests are HMAC-authenticated; legacy version-1/2 manifests remain

@@ -165,7 +165,7 @@ func LoadNode() NodeConfig {
 		ADBHost:               envOrDefault("NODE_ADB_HOST", ""),
 		BlobStoreKind:         envOrDefault("NODE_BLOB_STORE_KIND", "local-disk"),
 		RenterdWorkerURL:      envOrDefault("NODE_SIA_RENTERD_WORKER_URL", ""),
-		RenterdPassword:       os.Getenv("NODE_SIA_RENTERD_PASSWORD"),
+		RenterdPassword:       secretFileOrEnv("NODE_SIA_RENTERD_PASSWORD_FILE", "NODE_SIA_RENTERD_PASSWORD"),
 		RenterdBucket:         envOrDefault("NODE_SIA_RENTERD_BUCKET", "virtroid"),
 		RenterdWalletAddress:  strings.TrimSpace(os.Getenv("NODE_SIA_RENTERD_WALLET_ADDRESS")),
 		RenterdMinShards:      renterdMinShards,
@@ -184,6 +184,18 @@ func LoadNode() NodeConfig {
 		BlobPreflightInterval: blobPreflightInterval,
 		RuntimeRoot:           envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtroid/runtimes"),
 	}
+}
+
+func secretFileOrEnv(fileKey, valueKey string) string {
+	path := strings.TrimSpace(os.Getenv(fileKey))
+	if path == "" {
+		return os.Getenv(valueKey)
+	}
+	value, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(value))
 }
 
 func envOrDefault(key, fallback string) string {

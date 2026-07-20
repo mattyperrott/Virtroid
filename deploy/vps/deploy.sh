@@ -308,10 +308,31 @@ validate_environment() {
     fi
   fi
   if profile_enabled renterd; then
-    require_env RENTERD_IMAGE RENTERD_API_PASSWORD RENTERD_SEED NODE_SIA_RENTERD_PASSWORD NODE_SIA_RENTERD_WORKER_URL
+    require_env \
+      RENTERD_IMAGE \
+      RENTERD_MYSQL_IMAGE \
+      RENTERD_CONFIG_FILE \
+      RENTERD_API_PASSWORD_FILE \
+      RENTERD_MYSQL_PASSWORD_FILE \
+      RENTERD_MYSQL_ROOT_PASSWORD_FILE
     if ! require_digest_image RENTERD_IMAGE; then
       invalid_image=1
     fi
+    if ! require_digest_image RENTERD_MYSQL_IMAGE; then
+      invalid_image=1
+    fi
+    if [ "${RENTERD_CONFIG_FILE}" != /etc/virtroid/secrets/renterd.yml ] ||
+       [ "${RENTERD_API_PASSWORD_FILE}" != /etc/virtroid/secrets/renterd-api-password ] ||
+       [ "${RENTERD_MYSQL_PASSWORD_FILE}" != /etc/virtroid/secrets/renterd-mysql-password ] ||
+       [ "${RENTERD_MYSQL_ROOT_PASSWORD_FILE}" != /etc/virtroid/secrets/renterd-mysql-root-password ]; then
+      echo "renterd must use the fixed root-owned secret paths under /etc/virtroid/secrets" >&2
+      exit 1
+    fi
+    if [ ! -x /usr/local/sbin/virtroid-configure-renterd-secrets ]; then
+      echo "the installed renterd secret-gate helper is missing" >&2
+      exit 1
+    fi
+    /usr/local/sbin/virtroid-configure-renterd-secrets verify-activation >/dev/null
   fi
   if profile_enabled falco && ! require_digest_image FALCO_IMAGE; then
     invalid_image=1
@@ -389,12 +410,14 @@ validate_environment() {
 
   case "${NODE_BLOB_STORE_KIND:-local-disk}" in
     local-disk)
-      if profile_enabled renterd; then
-        echo "the renterd profile requires NODE_BLOB_STORE_KIND=sia-renterd" >&2
+      if ! profile_enabled renterd && [ -n "${NODE_SIA_RENTERD_WORKER_URL:-}" ]; then
+        echo "NODE_SIA_RENTERD_WORKER_URL must be empty in local-disk mode" >&2
         exit 1
       fi
-      if [ -n "${NODE_SIA_RENTERD_WORKER_URL:-}" ]; then
-        echo "NODE_SIA_RENTERD_WORKER_URL must be empty in local-disk mode" >&2
+      if profile_enabled renterd &&
+         [ -n "${NODE_SIA_RENTERD_WORKER_URL:-}" ] &&
+         [ "${NODE_SIA_RENTERD_WORKER_URL}" != "http://renterd:9980" ]; then
+        echo "the staged renterd worker URL must be empty or http://renterd:9980" >&2
         exit 1
       fi
       ;;
@@ -407,10 +430,6 @@ validate_environment() {
         echo "the Compose renterd worker URL must be http://renterd:9980" >&2
         exit 1
       fi
-      if [ "${NODE_SIA_RENTERD_PASSWORD}" != "${RENTERD_API_PASSWORD}" ]; then
-        echo "NODE_SIA_RENTERD_PASSWORD must match RENTERD_API_PASSWORD for the local Compose renterd service" >&2
-        exit 1
-      fi
       if [[ ! "${NODE_SIA_RENTERD_BUCKET}" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]]; then
         echo "NODE_SIA_RENTERD_BUCKET must be a private S3-compatible bucket name" >&2
         exit 1
@@ -419,6 +438,15 @@ validate_environment() {
          [[ ! "${NODE_SIA_RENTERD_TOTAL_SHARDS}" =~ ^[1-9][0-9]*$ ]] ||
          [ "${NODE_SIA_RENTERD_MIN_SHARDS}" -gt "${NODE_SIA_RENTERD_TOTAL_SHARDS}" ]; then
         echo "NODE_SIA_RENTERD_MIN_SHARDS and NODE_SIA_RENTERD_TOTAL_SHARDS must be explicit positive integers with min <= total" >&2
+        exit 1
+      fi
+      if [ "${NODE_SIA_RENTERD_MIN_SHARDS}" -ne 10 ] ||
+         [ "${NODE_SIA_RENTERD_TOTAL_SHARDS}" -ne 30 ]; then
+        echo "this production deployment requires the approved mainnet 10-of-30 shard policy" >&2
+        exit 1
+      fi
+      if [[ ! "${NODE_SIA_RENTERD_WALLET_ADDRESS:-}" =~ ^[0-9a-f]{76}$ ]]; then
+        echo "NODE_SIA_RENTERD_WALLET_ADDRESS must match the offline-derived renterd address" >&2
         exit 1
       fi
       ;;
@@ -574,8 +602,8 @@ if profile_enabled edge; then
   pull_services+=(edge)
 fi
 if profile_enabled renterd; then
-  core_services+=(renterd)
-  pull_services+=(renterd)
+  core_services+=(renterd-mysql renterd)
+  pull_services+=(renterd-mysql renterd)
 fi
 if profile_enabled falco; then
   core_services+=(falco-forwarder falco)

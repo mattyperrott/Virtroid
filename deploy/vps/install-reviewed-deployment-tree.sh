@@ -171,6 +171,9 @@ read_state_value() {
 
 runtime_sources=(
   virtroid-backup.sh
+  configure-renterd-secrets.sh
+  renterd-admin.sh
+  renterd-smoke-test.sh
   derive-node-fingerprint.sh
   virtroid-binderfs-setup.sh
   create-deploy-user.sh
@@ -188,6 +191,9 @@ runtime_sources=(
 )
 runtime_destinations=(
   /usr/local/sbin/virtroid-backup.sh
+  /usr/local/sbin/virtroid-configure-renterd-secrets
+  /usr/local/sbin/virtroid-renterd-admin
+  /usr/local/sbin/virtroid-renterd-smoke-test
   /usr/local/sbin/virtroid-derive-node-fingerprint
   /usr/local/sbin/virtroid-binderfs-setup.sh
   /usr/local/sbin/virtroid-create-deploy-user.sh
@@ -204,7 +210,7 @@ runtime_destinations=(
   /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
 )
 runtime_modes=(
-  0755 0755 0755 0755 0755 0755 0755 0755
+  0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
   0644
   0644 0644 0644 0644 0644
   0755
@@ -237,12 +243,13 @@ fi
 
 required_tree_files=(
   .env.example README.md apply-local-release.sh build-local-release.sh
-  certbot-deploy-hook.sh create-deploy-user.sh
+  certbot-deploy-hook.sh configure-renterd-secrets.sh create-deploy-user.sh
   deploy.sh deployment-tree-digest.sh
   derive-node-fingerprint.sh docker-compose.yml enable-key-only-ssh.sh
   fail2ban-virtroid.conf generate-env.sh haproxy.cfg
   install-reviewed-deployment-tree.sh prepare-redroid-host.sh
-  release-on-vps.sh
+  release-on-vps.sh renterd-admin.sh renterd-mysql-init.sql
+  renterd-smoke-test.sh
   redroid-binderfs.service release.env.example renterd.md
   sshd-key-only.conf sshd-virtroid-hardening.conf test-compose-config.sh
   test-env-safety.sh test-node-fingerprint.sh
@@ -348,6 +355,19 @@ require_safe_file "${trusted_installer}"
 for safe_parent in /opt /opt/virtroid "${target_parent}" /usr/local /usr/local/sbin /usr/local/share /etc /etc/systemd /etc/systemd/system /etc/ssh /etc/ssh/sshd_config.d; do
   require_safe_directory "${safe_parent}"
 done
+install -d -o root -g root -m 0700 /etc/virtroid /etc/virtroid/secrets
+require_safe_directory /etc/virtroid
+require_safe_directory /etc/virtroid/secrets
+if [ -e /etc/virtroid/secrets/renterd-api-password ] ||
+   [ -L /etc/virtroid/secrets/renterd-api-password ]; then
+  require_safe_file /etc/virtroid/secrets/renterd-api-password
+  case "$(stat -c '%a' /etc/virtroid/secrets/renterd-api-password)" in
+    400|600) ;;
+    *) echo "renterd API password file has an unsafe mode" >&2; exit 1 ;;
+  esac
+else
+  install -o root -g root -m 0400 /dev/null /etc/virtroid/secrets/renterd-api-password
+fi
 [ -d "${target_dir}" ] && [ ! -L "${target_dir}" ] || {
   echo "production deployment tree is missing or is a symlink" >&2
   exit 1

@@ -93,6 +93,7 @@ write_env_var() {
   write_env_var NODE_RUNTIME_IMAGE "${NODE_RUNTIME_IMAGE:-redroid/redroid:14.0.0_64only-latest@sha256:REPLACE_WITH_64_HEX}"
   write_env_var HAPROXY_IMAGE "${HAPROXY_IMAGE:-haproxy:lts@sha256:REPLACE_WITH_64_HEX}"
   write_env_var RENTERD_IMAGE "${RENTERD_IMAGE:-ghcr.io/siafoundation/renterd:2.9.3@sha256:72c589044aa47a09ab8349aad8b639a9cde2dd44bf27df73255d0f7bb29a2316}"
+  write_env_var RENTERD_MYSQL_IMAGE "${RENTERD_MYSQL_IMAGE:-mysql:8.4@sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d}"
   write_env_var FALCO_IMAGE "${FALCO_IMAGE:-falcosecurity/falco:0.43.0@sha256:REPLACE_WITH_64_HEX}"
   write_env_var POSTGRES_DB virtroid
   write_env_var POSTGRES_USER virtroid
@@ -131,16 +132,17 @@ write_env_var() {
 
   write_env_var NODE_BLOB_STORE_KIND local-disk
   write_env_var NODE_SIA_RENTERD_WORKER_URL ""
-  write_env_var NODE_SIA_RENTERD_PASSWORD ""
   write_env_var NODE_SIA_RENTERD_BUCKET virtroid
   write_env_var NODE_SIA_RENTERD_WALLET_ADDRESS ""
-  write_env_var NODE_SIA_RENTERD_MIN_SHARDS ""
-  write_env_var NODE_SIA_RENTERD_TOTAL_SHARDS ""
+  write_env_var NODE_SIA_RENTERD_MIN_SHARDS 10
+  write_env_var NODE_SIA_RENTERD_TOTAL_SHARDS 30
   write_env_var NODE_SIA_RENTERD_CONTRACT_SET ""
   write_env_var NODE_BLOB_PREFLIGHT_INTERVAL 5m
 
-  write_env_var RENTERD_API_PASSWORD ""
-  write_env_var RENTERD_SEED ""
+  write_env_var RENTERD_CONFIG_FILE /etc/virtroid/secrets/renterd.yml
+  write_env_var RENTERD_API_PASSWORD_FILE /etc/virtroid/secrets/renterd-api-password
+  write_env_var RENTERD_MYSQL_PASSWORD_FILE /etc/virtroid/secrets/renterd-mysql-password
+  write_env_var RENTERD_MYSQL_ROOT_PASSWORD_FILE /etc/virtroid/secrets/renterd-mysql-root-password
   write_env_var RENTERD_LOG_LEVEL info
 } > "${env_file}"
 

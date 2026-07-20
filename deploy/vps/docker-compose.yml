@@ -104,7 +104,7 @@ services:
       NODE_DEFAULT_APP_PACKAGES: ${NODE_DEFAULT_APP_PACKAGES:-org.fdroid.basic}
       NODE_BLOB_STORE_KIND: ${NODE_BLOB_STORE_KIND:-local-disk}
       NODE_SIA_RENTERD_WORKER_URL: ${NODE_SIA_RENTERD_WORKER_URL:-}
-      NODE_SIA_RENTERD_PASSWORD: ${NODE_SIA_RENTERD_PASSWORD:-}
+      NODE_SIA_RENTERD_PASSWORD_FILE: /run/secrets/renterd-api-password
       NODE_SIA_RENTERD_BUCKET: ${NODE_SIA_RENTERD_BUCKET:-virtroid}
       NODE_SIA_RENTERD_WALLET_ADDRESS: ${NODE_SIA_RENTERD_WALLET_ADDRESS:-}
       NODE_SIA_RENTERD_MIN_SHARDS: ${NODE_SIA_RENTERD_MIN_SHARDS:-}
@@ -131,6 +131,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /dev/binderfs:/dev/binderfs:ro
       - /srv/virtroid:/srv/virtroid
+      - ${RENTERD_API_PASSWORD_FILE:-/etc/virtroid/secrets/renterd-api-password}:/run/secrets/renterd-api-password:ro
     mem_limit: "${VIRTNODED_MEMORY_LIMIT:-1g}"
     cpus: "${VIRTNODED_CPU_LIMIT:-2.0}"
     pids_limit: ${VIRTNODED_PIDS_LIMIT:-512}
@@ -174,6 +175,44 @@ services:
     networks:
       - database
 
+  renterd-mysql:
+    image: ${RENTERD_MYSQL_IMAGE:-virtroid-renterd-mysql-profile-disabled}
+    labels:
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
+    container_name: virtroid-renterd-mysql
+    restart: unless-stopped
+    profiles:
+      - renterd
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/renterd-mysql-root-password
+      MYSQL_DATABASE: renterd
+      MYSQL_USER: renterd
+      MYSQL_PASSWORD_FILE: /run/secrets/renterd-mysql-password
+      MYSQL_INITDB_SKIP_TZINFO: "1"
+    volumes:
+      - renterd-mysql-data:/var/lib/mysql
+      - ${RENTERD_MYSQL_ROOT_PASSWORD_FILE:-/etc/virtroid/secrets/renterd-mysql-root-password}:/run/secrets/renterd-mysql-root-password:ro
+      - ${RENTERD_MYSQL_PASSWORD_FILE:-/etc/virtroid/secrets/renterd-mysql-password}:/run/secrets/renterd-mysql-password:ro
+      - ./renterd-mysql-init.sql:/docker-entrypoint-initdb.d/10-renterd-metrics.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$(cat /run/secrets/renterd-mysql-password)\" mysqladmin ping -h 127.0.0.1 -u renterd --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: "${RENTERD_MYSQL_MEMORY_LIMIT:-2g}"
+    cpus: "${RENTERD_MYSQL_CPU_LIMIT:-2.0}"
+    pids_limit: ${RENTERD_MYSQL_PIDS_LIMIT:-512}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - renterd-database
+
   renterd:
     image: ${RENTERD_IMAGE:-virtroid-renterd-profile-disabled}
     labels:
@@ -182,15 +221,25 @@ services:
     restart: unless-stopped
     profiles:
       - renterd
+    depends_on:
+      renterd-mysql:
+        condition: service_healthy
     environment:
-      RENTERD_API_PASSWORD: ${RENTERD_API_PASSWORD:-}
-      RENTERD_SEED: ${RENTERD_SEED:-}
+      RENTERD_CONFIG_FILE: /run/secrets/renterd.yml
       RENTERD_LOG_LEVEL: ${RENTERD_LOG_LEVEL:-info}
     ports:
       - "127.0.0.1:9980:9980"
       - "127.0.0.1:9981:9981"
     volumes:
       - renterd-data:/data
+      - ${RENTERD_CONFIG_FILE:-/etc/virtroid/secrets/renterd.yml}:/run/secrets/renterd.yml:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     stop_grace_period: 5m
     mem_limit: "${RENTERD_MEMORY_LIMIT:-4g}"
     cpus: "${RENTERD_CPU_LIMIT:-4.0}"
@@ -203,6 +252,7 @@ services:
     networks:
       - renterd-egress
       - blob
+      - renterd-database
 
   edge:
     image: ${HAPROXY_IMAGE:-virtroid-edge-profile-disabled}
@@ -331,9 +381,12 @@ networks:
     driver: bridge
   renterd-egress:
     driver: bridge
+  renterd-database:
+    internal: true
   edge-egress:
     driver: bridge
 
 volumes:
   postgres-data:
   renterd-data:
+  renterd-mysql-data:

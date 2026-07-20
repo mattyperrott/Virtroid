@@ -26,6 +26,16 @@ grep -q '^BOOTSTRAP_ENABLED=false$' "${tmp_dir}/.env"
 grep -q '^NODE_DEVELOPMENT_ENROLLMENT_ENABLED=false$' "${tmp_dir}/.env"
 grep -q '^NODE_ALLOWED_ADVERTISE_ADDRS=virtnoded$' "${tmp_dir}/.env"
 grep -q '^NODE_SIA_RENTERD_WORKER_URL=$' "${tmp_dir}/.env"
+grep -q '^NODE_SIA_RENTERD_MIN_SHARDS=10$' "${tmp_dir}/.env"
+grep -q '^NODE_SIA_RENTERD_TOTAL_SHARDS=30$' "${tmp_dir}/.env"
+grep -q '^RENTERD_CONFIG_FILE=/etc/virtroid/secrets/renterd.yml$' "${tmp_dir}/.env"
+grep -q '^RENTERD_API_PASSWORD_FILE=/etc/virtroid/secrets/renterd-api-password$' "${tmp_dir}/.env"
+grep -q '^RENTERD_MYSQL_PASSWORD_FILE=/etc/virtroid/secrets/renterd-mysql-password$' "${tmp_dir}/.env"
+grep -q '^RENTERD_MYSQL_ROOT_PASSWORD_FILE=/etc/virtroid/secrets/renterd-mysql-root-password$' "${tmp_dir}/.env"
+if grep -Eq '^(RENTERD_SEED|RENTERD_API_PASSWORD|NODE_SIA_RENTERD_PASSWORD)=' "${tmp_dir}/.env"; then
+  echo "generated deployment environment still contains renterd secret values" >&2
+  exit 1
+fi
 grep -Eq '^HAPROXY_CERT_GID=[0-9]+$' "${tmp_dir}/.env"
 
 digest="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -47,10 +57,8 @@ printf '%s\n' \
   "NODE_RUNTIME_IMAGE=redroid/redroid:14.0.0_64only-latest@sha256:${digest}" \
   "HAPROXY_IMAGE=haproxy:lts@sha256:${digest}" \
   "RENTERD_IMAGE=ghcr.io/siafoundation/renterd:2.9.3@sha256:${digest}" \
-  "FALCO_IMAGE=falcosecurity/falco:0.43.0@sha256:${digest}" \
-  "RENTERD_API_PASSWORD=test-password" \
-  "RENTERD_SEED=test-seed" \
-  "NODE_SIA_RENTERD_PASSWORD=test-password" >> "${tmp_dir}/.env"
+  "RENTERD_MYSQL_IMAGE=mysql:8.4@sha256:${digest}" \
+  "FALCO_IMAGE=falcosecurity/falco:0.43.0@sha256:${digest}" >> "${tmp_dir}/.env"
 
 marker="${tmp_dir}/pwned"
 fake_bin="${tmp_dir}/bin"
@@ -110,9 +118,12 @@ cp "${tmp_dir}/.env" "${tmp_dir}/renterd.env"
 printf '%s\n' \
   'NODE_BLOB_STORE_KIND=sia-renterd' \
   'NODE_SIA_RENTERD_WORKER_URL=http://renterd:9980' \
-  'NODE_SIA_RENTERD_MIN_SHARDS=2' \
-  'NODE_SIA_RENTERD_TOTAL_SHARDS=3' >> "${tmp_dir}/renterd.env"
-PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/renterd.env" VIRTROID_PROFILES=edge,renterd,falco "${script_dir}/deploy.sh" validate >/dev/null
+  'NODE_SIA_RENTERD_WALLET_ADDRESS=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >> "${tmp_dir}/renterd.env"
+if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/renterd.env" VIRTROID_PROFILES=edge,renterd,falco \
+  "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
+  echo "renterd profile was accepted without the installed offline-backup and funding gate" >&2
+  exit 1
+fi
 
 cp "${tmp_dir}/.env" "${tmp_dir}/mutable-image.env"
 printf '%s\n' 'POSTGRES_IMAGE=postgres:18' >> "${tmp_dir}/mutable-image.env"
@@ -225,7 +236,21 @@ grep -q '^    log global$' "${script_dir}/haproxy.cfg"
 grep -q 'Strict-Transport-Security' "${script_dir}/haproxy.cfg"
 grep -q 'set-header X-Forwarded-For %\[src\]' "${script_dir}/haproxy.cfg"
 grep -q 'timeout http-request 10s' "${script_dir}/haproxy.cfg"
-grep -q 'core_services+=(renterd)' "${script_dir}/deploy.sh"
+grep -q 'core_services+=(renterd-mysql renterd)' "${script_dir}/deploy.sh"
+grep -q 'virtroid-configure-renterd-secrets verify-activation' "${script_dir}/deploy.sh"
+grep -q 'approved mainnet 10-of-30 shard policy' "${script_dir}/deploy.sh"
+grep -q 'RENTERD_CONFIG_FILE: /run/secrets/renterd.yml' "${script_dir}/docker-compose.yml"
+grep -q 'NODE_SIA_RENTERD_PASSWORD_FILE: /run/secrets/renterd-api-password' "${script_dir}/docker-compose.yml"
+if grep -Eq 'RENTERD_(SEED|API_PASSWORD):|NODE_SIA_RENTERD_PASSWORD:' "${script_dir}/docker-compose.yml"; then
+  echo "production Compose exposes renterd secrets in container metadata" >&2
+  exit 1
+fi
+grep -q 'virtroid-configure-renterd-secrets' "${script_dir}/install-reviewed-deployment-tree.sh"
+grep -q 'virtroid-renterd-admin' "${script_dir}/install-reviewed-deployment-tree.sh"
+grep -q 'virtroid-renterd-smoke-test' "${script_dir}/install-reviewed-deployment-tree.sh"
+grep -q 'OFFLINE COPIES VERIFIED' "${script_dir}/configure-renterd-secrets.sh"
+grep -q 'wallet_address_match' "${script_dir}/renterd-admin.sh"
+grep -q 'NODE_BLOB_SMOKE_TEST=1' "${script_dir}/renterd-smoke-test.sh"
 grep -q 'core_services+=(falco-forwarder falco)' "${script_dir}/deploy.sh"
 grep -q 'name: ${NODE_DOCKER_NETWORK:' "${script_dir}/docker-compose.yml"
 grep -q 'NODE_RUNTIME_NETWORK_MODE: ${NODE_RUNTIME_NETWORK_MODE:-per-runtime}' "${script_dir}/docker-compose.yml"

@@ -62,6 +62,14 @@ grep -q 'com.virtroid.schema-version: "2026071903"' "${tmp_dir}/rendered-compose
 grep -q 'virtroid-admin:' "${tmp_dir}/rendered-compose.yml"
 grep -q 'entrypoint:' "${tmp_dir}/rendered-compose.yml"
 grep -q 'no-new-privileges:true' "${tmp_dir}/rendered-compose.yml"
+grep -q 'RENTERD_CONFIG_FILE: /run/secrets/renterd.yml' "${tmp_dir}/rendered-compose.yml"
+grep -q 'NODE_SIA_RENTERD_PASSWORD_FILE: /run/secrets/renterd-api-password' "${tmp_dir}/rendered-compose.yml"
+grep -q 'MYSQL_ROOT_PASSWORD_FILE: /run/secrets/renterd-mysql-root-password' "${tmp_dir}/rendered-compose.yml"
+grep -q 'renterd-database:' "${tmp_dir}/rendered-compose.yml"
+if grep -Eq 'RENTERD_(SEED|API_PASSWORD):|NODE_SIA_RENTERD_PASSWORD:' "${tmp_dir}/rendered-compose.yml"; then
+  echo "rendered Compose contains renterd secrets in environment metadata" >&2
+  exit 1
+fi
 if grep -q '^    build:' "${tmp_dir}/rendered-compose.yml"; then
   echo "production Compose still contains an on-host image build" >&2
   exit 1

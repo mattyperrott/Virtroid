@@ -17,7 +17,7 @@ if [[ ! "${retention_days}" =~ ^[0-9]+$ ]] ||
   exit 1
 fi
 
-for command_name in awk curl cut date df docker du find flock install mktemp mv readlink seq sha256sum sleep sort stat sync tail tar tr; do
+for command_name in awk curl cut date df docker du find flock grep install mktemp mv readlink seq sha256sum sleep sort stat sync tail tar tr; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "missing backup command: ${command_name}" >&2
     exit 1
@@ -269,6 +269,13 @@ read_deploy_value() {
   read_file_value "${deploy_env}" "${wanted_key}"
 }
 
+for retired_secret_key in RENTERD_SEED RENTERD_API_PASSWORD NODE_SIA_RENTERD_PASSWORD; do
+  if [ -n "$(read_deploy_value "${retired_secret_key}")" ]; then
+    echo "backup refused because ${retired_secret_key} remains in the deployment environment" >&2
+    exit 1
+  fi
+done
+
 validate_infrastructure_container() {
   local container_name="$1"
   local image_key="$2"
@@ -423,9 +430,16 @@ validate_infrastructure_container virtroid-postgres POSTGRES_IMAGE
 validate_infrastructure_container virtroid-edge HAPROXY_IMAGE
 if [ "${blob_store_kind}" = sia-renterd ]; then
   require_container virtroid-renterd
+  require_container virtroid-renterd-mysql
 fi
 if docker inspect virtroid-renterd >/dev/null 2>&1; then
   validate_infrastructure_container virtroid-renterd RENTERD_IMAGE
+  require_container virtroid-renterd-mysql
+  validate_infrastructure_container virtroid-renterd-mysql RENTERD_MYSQL_IMAGE
+  if ! container_is_running virtroid-renterd-mysql; then
+    echo "renterd MySQL is not running" >&2
+    exit 1
+  fi
 fi
 if docker inspect virtroid-falco >/dev/null 2>&1; then
   validate_infrastructure_container virtroid-falco FALCO_IMAGE
@@ -570,6 +584,7 @@ validate_infrastructure_container virtroid-postgres POSTGRES_IMAGE
 validate_infrastructure_container virtroid-edge HAPROXY_IMAGE
 if docker inspect virtroid-renterd >/dev/null 2>&1; then
   validate_infrastructure_container virtroid-renterd RENTERD_IMAGE
+  validate_infrastructure_container virtroid-renterd-mysql RENTERD_MYSQL_IMAGE
 fi
 if docker inspect virtroid-falco >/dev/null 2>&1; then
   validate_infrastructure_container virtroid-falco FALCO_IMAGE
@@ -580,6 +595,7 @@ if [ "${prior_tree_required}" -eq 1 ]; then
   source_bytes=$((source_bytes + $(du -sb "${preinstall_tree_path}/vps" | awk '{print $1}')))
 fi
 renterd_volume_path=
+renterd_mysql_volume_path=
 if docker inspect virtroid-renterd >/dev/null 2>&1; then
   renterd_volume_path="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' virtroid-renterd)"
   case "${renterd_volume_path}" in
@@ -594,6 +610,19 @@ if docker inspect virtroid-renterd >/dev/null 2>&1; then
     exit 1
   }
   source_bytes=$((source_bytes + $(du -sb "${renterd_volume_path}" | awk '{print $1}')))
+  renterd_mysql_volume_path="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/mysql"}}{{.Source}}{{end}}{{end}}' virtroid-renterd-mysql)"
+  case "${renterd_mysql_volume_path}" in
+    /var/lib/docker/volumes/*/_data) ;;
+    *)
+      echo "renterd MySQL data volume is missing or outside Docker's managed volume root" >&2
+      exit 1
+      ;;
+  esac
+  [ -d "${renterd_mysql_volume_path}" ] && [ ! -L "${renterd_mysql_volume_path}" ] || {
+    echo "renterd MySQL data volume path is unsafe" >&2
+    exit 1
+  }
+  source_bytes=$((source_bytes + $(du -sb "${renterd_mysql_volume_path}" | awk '{print $1}')))
 fi
 available_bytes="$(df -B1 --output=avail "${backup_root}" | tail -n 1 | tr -d ' ')"
 database_bytes="$(docker exec virtroid-postgres psql -U "${postgres_user}" -d "${postgres_database}" -Atc \
@@ -686,6 +715,17 @@ write_legacy_release_state() {
 docker exec virtroid-postgres pg_dump -U "${postgres_user}" -d "${postgres_database}" --format=custom > "${partial_dir}/virtroid-postgres.dump"
 docker exec -i virtroid-postgres pg_restore --list < "${partial_dir}/virtroid-postgres.dump" >/dev/null
 docker exec -i virtroid-postgres pg_restore --file=/dev/null < "${partial_dir}/virtroid-postgres.dump"
+if docker inspect virtroid-renterd >/dev/null 2>&1; then
+  docker exec virtroid-renterd-mysql sh -c \
+    'MYSQL_PWD="$(cat /run/secrets/renterd-mysql-root-password)" exec mysqldump --single-transaction --routines --events --hex-blob --databases renterd renterd_metrics' \
+    > "${partial_dir}/renterd-mysql.sql"
+  [ -s "${partial_dir}/renterd-mysql.sql" ] &&
+    grep -q 'Current Database: `renterd`' "${partial_dir}/renterd-mysql.sql" &&
+    grep -q 'Current Database: `renterd_metrics`' "${partial_dir}/renterd-mysql.sql" || {
+      echo "renterd MySQL logical backup is incomplete" >&2
+      exit 1
+    }
+fi
 tar --xattrs --acls -C /srv -czf "${partial_dir}/srv-virtroid.tgz" virtroid
 tar -tzf "${partial_dir}/srv-virtroid.tgz" >/dev/null
 tar -C /opt/virtroid/deploy \
@@ -722,7 +762,7 @@ fi
   date -u +%FT%TZ
   docker inspect --format '{{.Name}} configured_image={{.Config.Image}} image_id={{.Image}} source={{index .Config.Labels "org.opencontainers.image.revision"}} schema={{index .Config.Labels "com.virtroid.schema-version"}} deployment_tree={{index .Config.Labels "com.virtroid.deployment-tree-sha256"}} restart={{.RestartCount}}' \
     virtroid-postgres virtroidd virtnoded virtroid-edge
-  for container_name in virtroid-renterd virtroid-falco virtroid-falco-forwarder; do
+  for container_name in virtroid-renterd-mysql virtroid-renterd virtroid-falco virtroid-falco-forwarder; do
     if docker inspect "${container_name}" >/dev/null 2>&1; then
       docker inspect --format '{{.Name}} configured_image={{.Config.Image}} image_id={{.Image}} source={{index .Config.Labels "org.opencontainers.image.revision"}} schema={{index .Config.Labels "com.virtroid.schema-version"}} deployment_tree={{index .Config.Labels "com.virtroid.deployment-tree-sha256"}} restart={{.RestartCount}}' \
         "${container_name}"
@@ -756,7 +796,7 @@ if [ "${previous_included}" -eq 1 ]; then
   checksum_files+=(release-previous.env)
 fi
 if [ -n "${renterd_volume_path}" ]; then
-  checksum_files+=(renterd-data.tgz)
+  checksum_files+=(renterd-data.tgz renterd-mysql.sql)
 fi
 if [ "${legacy_release}" -eq 1 ]; then
   checksum_files+=(legacy-backend-images.tar)

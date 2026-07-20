@@ -206,6 +206,14 @@ Sia/renterd is the production blob storage target.
   maintaining contracts, private-bucket configured, and ready without exposing
   an operator payment address to accounts.
 - Snapshot chunks should use renterd redundancy settings where available.
+- The initial mainnet policy uses 10 data shards and 30 total shards, requires at
+  least 30 active contracts, and must pass a live encrypted write/restore/delete
+  smoke test before activation.
+- The renterd hot-wallet seed must have two separate physical offline recovery
+  copies; its online copy and API/database passwords must use root-only mounted
+  files rather than container environment metadata.
+- renterd operational metadata and partial slabs require a consistent,
+  restorable off-machine backup; the wallet seed alone is not object recovery.
 - Deletion must remove manifest-known chunks and later support full remote garbage collection for old snapshots.
 - The client UI must not imply Sia provides plaintext privacy; encryption and key custody provide privacy.
 

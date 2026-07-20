@@ -1085,7 +1085,7 @@ func (s *renterdBlobStore) preflight(ctx context.Context, report *blobPreflightR
 	}
 	report.addCheck("worker_url", "pass", s.workerURL)
 	if strings.TrimSpace(s.password) == "" {
-		report.addCheck("api_password", "fail", "NODE_SIA_RENTERD_PASSWORD is required")
+		report.addCheck("api_password", "fail", "renterd API password secret is required")
 		return
 	}
 	report.addCheck("api_password", "pass", "configured")

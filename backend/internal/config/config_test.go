@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestBootstrapAndNodeAdvertiseDefaultsFailClosedInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
@@ -86,5 +90,27 @@ func TestAppCatalogSyncIsFailClosedByDefaultAndLoadsExplicitPin(t *testing.T) {
 	t.Setenv("APP_CATALOG_SYNC_ENABLED", "true")
 	if cfg := LoadServer(); !cfg.AppCatalogSyncEnabled {
 		t.Fatal("app catalog sync did not honor explicit opt-in")
+	}
+}
+
+func TestRenterdPasswordLoadsFromMountedSecretFile(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "renterd-api-password")
+	if err := os.WriteFile(secretPath, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NODE_SIA_RENTERD_PASSWORD_FILE", secretPath)
+	t.Setenv("NODE_SIA_RENTERD_PASSWORD", "environment-secret")
+
+	if cfg := LoadNode(); cfg.RenterdPassword != "file-secret" {
+		t.Fatalf("RenterdPassword = %q, want mounted file value", cfg.RenterdPassword)
+	}
+}
+
+func TestRenterdPasswordFileFailsClosed(t *testing.T) {
+	t.Setenv("NODE_SIA_RENTERD_PASSWORD_FILE", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("NODE_SIA_RENTERD_PASSWORD", "environment-secret")
+
+	if cfg := LoadNode(); cfg.RenterdPassword != "" {
+		t.Fatalf("RenterdPassword = %q, want no environment fallback for a configured missing secret file", cfg.RenterdPassword)
 	}
 }
