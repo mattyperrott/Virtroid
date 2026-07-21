@@ -967,6 +967,22 @@ func TestLocalToRenterdMigrationRetainsFallbackUntilRemoteRestore(t *testing.T) 
 	if _, err := os.Stat(localFirstPath); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("local migration fallback still exists after verified remote restore: %v", err)
 	}
+
+	writeFile(t, filepath.Join(dataDir, "app", "state.db"), "new durable user state")
+	next, err := node.persistSessionData(context.Background(), runtime, &sessionPersistencePlan{
+		dataDir:   dataDir,
+		masterKey: append([]byte(nil), key...),
+		store:     renterdStore,
+	})
+	if err != nil {
+		t.Fatalf("persist post-migration generation: %v", err)
+	}
+	if next.Manifest.MigrationFallback != nil {
+		t.Fatal("post-migration manifest retained the deleted local fallback")
+	}
+	if next.Manifest.Generation != persisted.Manifest.Generation+1 {
+		t.Fatalf("post-migration generation = %d, want %d", next.Manifest.Generation, persisted.Manifest.Generation+1)
+	}
 }
 
 func TestEnforceRuntimeStorageQuotaIncludesOtherRuntimesAndFallback(t *testing.T) {

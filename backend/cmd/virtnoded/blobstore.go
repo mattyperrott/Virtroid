@@ -402,8 +402,6 @@ func (n *nodeAgent) persistSessionData(ctx context.Context, runtime runtimeAssig
 	}
 	if previous != nil && previous.Store != manifest.Store {
 		manifest.MigrationFallback = previous
-	} else if previous != nil && previous.MigrationFallback != nil {
-		manifest.MigrationFallback = previous.MigrationFallback
 	}
 	if err := authenticateBlobManifest(manifest, plan.masterKey, runtime.ID); err != nil {
 		_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
