@@ -1,6 +1,5 @@
 package io.virtroid.client.security
 
-import java.security.SecureRandom
 import java.util.Arrays
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
@@ -68,9 +67,11 @@ internal object LocalVaultKeyEnvelope {
 
     private fun encrypt(plaintext: ByteArray, key: SecretKey): Wrapped {
         val cipher = Cipher.getInstance(AES_MODE)
-        val iv = ByteArray(GCM_IV_BYTES).also { SecureRandom().nextBytes(it) }
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        return Wrapped(iv = iv, ciphertext = cipher.doFinal(plaintext))
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        val ciphertext = cipher.doFinal(plaintext)
+        val iv = cipher.iv ?: throw IllegalStateException("AES-GCM provider did not return an IV")
+        require(iv.size == GCM_IV_BYTES) { "AES-GCM provider returned an invalid IV" }
+        return Wrapped(iv = iv, ciphertext = ciphertext)
     }
 
     private fun decrypt(wrapped: Wrapped, key: SecretKey): ByteArray? {

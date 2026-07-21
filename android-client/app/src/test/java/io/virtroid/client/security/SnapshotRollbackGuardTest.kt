@@ -1,6 +1,8 @@
 package io.virtroid.client.security
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SnapshotRollbackGuardTest {
@@ -22,5 +24,12 @@ class SnapshotRollbackGuardTest {
     fun acceptsNextGenerationAndIdempotentRead() {
         verifySnapshotAdvance(2, "snapshot-2", 3, "snapshot-3", "runtime-1")
         verifySnapshotAdvance(3, "snapshot-3", 3, "snapshot-3", "runtime-1")
+    }
+
+    @Test
+    fun expectedResetCompletesOnlyForEmptySnapshotState() {
+        assertTrue(isEmptySnapshotState(0, ""))
+        assertFalse(isEmptySnapshotState(0, "snapshot"))
+        assertFalse(isEmptySnapshotState(1, "snapshot-1"))
     }
 }

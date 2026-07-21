@@ -7,12 +7,18 @@
     android:layout_height="match_parent"
     android:background="@color/v_bg">
 
-    <LinearLayout
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:gravity="center_horizontal"
-        android:orientation="vertical"
-        android:paddingBottom="34dp">
+        android:clipToPadding="false"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingBottom="24dp">
 
         <LinearLayout
             android:id="@+id/pin_header"
@@ -20,7 +26,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:orientation="vertical"
-            android:paddingTop="98dp"
+            android:paddingTop="56dp"
             android:paddingBottom="0dp">
 
             <ImageView
@@ -55,7 +61,7 @@
                 android:id="@+id/pinDotsRow"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="50dp"
+                android:layout_marginTop="32dp"
                 android:gravity="center"
                 android:orientation="horizontal">
 
@@ -138,7 +144,7 @@
             android:id="@+id/pinPad"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="88dp"
+            android:layout_marginTop="48dp"
             android:gravity="center"
             android:orientation="vertical">
 
@@ -151,7 +157,10 @@
                 <FrameLayout
                     android:id="@+id/pinButton1"
                     style="@style/VirtroidPinKey">
-                    <TextView style="@style/VirtroidPinDigit" android:text="1" />
+                    <TextView
+                        style="@style/VirtroidPinDigit"
+                        android:text="1"
+                        android:translationY="0dp" />
                 </FrameLayout>
 
                 <Space android:layout_width="34dp" android:layout_height="1dp" />
@@ -176,7 +185,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
-                android:layout_marginTop="20dp"
+                android:layout_marginTop="12dp"
                 android:gravity="center"
                 android:orientation="horizontal">
 
@@ -209,7 +218,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
-                android:layout_marginTop="20dp"
+                android:layout_marginTop="12dp"
                 android:gravity="center"
                 android:orientation="horizontal">
 
@@ -242,7 +251,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
-                android:layout_marginTop="20dp"
+                android:layout_marginTop="12dp"
                 android:gravity="center"
                 android:orientation="horizontal">
 
@@ -251,7 +260,7 @@
                     android:layout_width="80dp"
                     android:layout_height="80dp"
                     android:background="@drawable/bg_transparent"
-                    android:contentDescription="@string/onboarding_device_fingerprint"
+                    android:contentDescription="@string/unlock_with_fingerprint"
                     android:padding="26dp"
                     android:src="@drawable/ic_fingerprint"
                     app:tint="@color/v_accent" />
@@ -261,7 +270,10 @@
                 <FrameLayout
                     android:id="@+id/pinButton0"
                     style="@style/VirtroidPinKey">
-                    <TextView style="@style/VirtroidPinDigit" android:text="0" />
+                    <TextView
+                        style="@style/VirtroidPinDigit"
+                        android:text="0"
+                        android:translationY="0dp" />
                 </FrameLayout>
 
                 <Space android:layout_width="34dp" android:layout_height="1dp" />
@@ -283,7 +295,7 @@
             android:layout_width="wrap_content"
             android:layout_height="44dp"
             android:layout_gravity="center"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="16dp"
             android:background="@drawable/bg_transparent"
             android:fontFamily="sans"
             android:gravity="center"
@@ -296,5 +308,6 @@
             android:textColor="@color/v_text_dim"
             android:textSize="12sp"
             android:textStyle="bold" />
-    </LinearLayout>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
 </FrameLayout>

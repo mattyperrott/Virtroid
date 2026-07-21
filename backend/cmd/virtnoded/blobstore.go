@@ -2438,6 +2438,14 @@ func (w *snapshotTarWalker) addEntry(sourceRoot *os.Root, archivePrefix string, 
 	if lstatInfo.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("snapshot source contains unsupported symlink %q", relativePath)
 	}
+	// Android leaves transient Unix-domain sockets such as ndebugsocket and
+	// unsolzygotesocket in /data after the guest stops. They carry no persistent
+	// state and cannot be represented safely in the encrypted tar snapshot, so
+	// omit them without opening or following them. Continue rejecting every
+	// other special file type below.
+	if lstatInfo.Mode()&os.ModeSocket != 0 {
+		return nil
+	}
 	if !lstatInfo.IsDir() && !lstatInfo.Mode().IsRegular() {
 		return fmt.Errorf("snapshot source contains unsupported special file %q", relativePath)
 	}

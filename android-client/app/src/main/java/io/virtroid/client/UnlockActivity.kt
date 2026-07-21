@@ -2,6 +2,7 @@ package io.virtroid.client
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.InputType
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
@@ -10,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import io.virtroid.client.data.AppLogStore
@@ -69,6 +71,7 @@ class UnlockActivity : AppCompatActivity() {
             binding.pinButton9 to "9",
         )
         pinButtons.forEach { (button, value) ->
+            button.contentDescription = value
             button.setOnClickListener { appendPin(value) }
         }
         binding.pinDeleteButton.setOnClickListener {
@@ -84,6 +87,7 @@ class UnlockActivity : AppCompatActivity() {
         showingPassphrase = appLockStore.mode == AppLockStore.LockMode.PASSPHRASE
         renderMode()
         renderBiometric()
+        updateDots()
     }
 
     private fun appendPin(value: String) {
@@ -126,10 +130,21 @@ class UnlockActivity : AppCompatActivity() {
     private fun renderMode() {
         val passphraseOnly = appLockStore.mode == AppLockStore.LockMode.PASSPHRASE
         val effectivePassphrase = passphraseOnly || showingPassphrase
+        binding.passphraseInput.inputType = if (passphraseOnly) {
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        } else {
+            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        }
+        binding.passphraseInput.hint = getString(
+            if (passphraseOnly) R.string.unlock_enter_passphrase else R.string.lock_pin_field_hint,
+        )
         binding.passphraseSection.isVisible = effectivePassphrase
         binding.pinPad.isVisible = !effectivePassphrase
         binding.pinDotsRow.isVisible = !effectivePassphrase
         binding.switchUnlockModeText.isVisible = !passphraseOnly
+        binding.switchUnlockModeText.text = getString(
+            if (effectivePassphrase) R.string.unlock_use_pin_pad else R.string.unlock_use_keyboard,
+        )
         renderBiometric()
     }
 
@@ -139,7 +154,7 @@ class UnlockActivity : AppCompatActivity() {
             appLockStore.mode == AppLockStore.LockMode.PIN &&
             BiometricManager.from(this).canAuthenticate(BIOMETRIC_AUTHENTICATORS) ==
             BiometricManager.BIOMETRIC_SUCCESS
-        binding.buttonFingerprint.isVisible = !showingPassphrase && canUseBiometric
+        binding.buttonFingerprint.isInvisible = !showingPassphrase || !canUseBiometric
     }
 
     private fun unlockWithBiometric() {
@@ -190,6 +205,10 @@ class UnlockActivity : AppCompatActivity() {
     }
 
     private fun updateDots() {
+        binding.pinDotsRow.contentDescription = getString(
+            R.string.lock_pin_progress,
+            pinBuffer.length,
+        )
         val dots = listOf(binding.pinDot1, binding.pinDot2, binding.pinDot3, binding.pinDot4, binding.pinDot5, binding.pinDot6)
         dots.forEachIndexed { index, view ->
             view.setBackgroundResource(

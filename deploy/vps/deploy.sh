@@ -426,10 +426,13 @@ validate_environment() {
     echo "NODE_AGENT_CONTAINER_NAME must match the Compose node container name: virtnoded" >&2
     exit 1
   fi
-  if [ "${BOOTSTRAP_ENABLED}" != "false" ]; then
-    echo "BOOTSTRAP_ENABLED must remain false until production bootstrap has a durable invite or billing gate" >&2
-    exit 1
-  fi
+	case "${BOOTSTRAP_ENABLED}" in
+		true|false) ;;
+		*)
+			echo "BOOTSTRAP_ENABLED must be true or false" >&2
+			exit 1
+			;;
+	esac
   if [ "${NODE_ALLOWED_ADVERTISE_ADDRS}" != "${NODE_ADVERTISE_ADDR}" ]; then
     echo "NODE_ALLOWED_ADVERTISE_ADDRS must exactly match NODE_ADVERTISE_ADDR for this single-node Compose deployment" >&2
     exit 1

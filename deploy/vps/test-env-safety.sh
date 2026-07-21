@@ -22,7 +22,7 @@ grep -q '^PUBLIC_BASE_URL=https://virtroid.example$' "${tmp_dir}/.env"
 grep -q '^NODE_ID=node-1$' "${tmp_dir}/.env"
 grep -q '^NODE_RUNTIME_NETWORK_MODE=per-runtime$' "${tmp_dir}/.env"
 grep -q '^NODE_AGENT_CONTAINER_NAME=virtnoded$' "${tmp_dir}/.env"
-grep -q '^BOOTSTRAP_ENABLED=false$' "${tmp_dir}/.env"
+grep -q '^BOOTSTRAP_ENABLED=true$' "${tmp_dir}/.env"
 grep -q '^NODE_DEVELOPMENT_ENROLLMENT_ENABLED=false$' "${tmp_dir}/.env"
 grep -Eq '^CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
 grep -Eq '^CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
@@ -143,10 +143,10 @@ if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/shared-network.env" 
   exit 1
 fi
 
-cp "${tmp_dir}/.env" "${tmp_dir}/open-bootstrap.env"
-printf '%s\n' 'BOOTSTRAP_ENABLED=true' >> "${tmp_dir}/open-bootstrap.env"
-if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/open-bootstrap.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
-  echo "production bootstrap was allowed without a durable gate" >&2
+cp "${tmp_dir}/.env" "${tmp_dir}/invalid-bootstrap.env"
+printf '%s\n' 'BOOTSTRAP_ENABLED=invalid' >> "${tmp_dir}/invalid-bootstrap.env"
+if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/invalid-bootstrap.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
+  echo "invalid bootstrap setting was accepted" >&2
   exit 1
 fi
 

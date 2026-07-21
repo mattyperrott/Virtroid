@@ -16,6 +16,7 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -54,6 +55,7 @@ class AppInstallActivity : AppCompatActivity() {
     }
     private val iconDownloadSemaphore = Semaphore(ICON_DOWNLOAD_CONCURRENCY)
     private val selectionIcons = mutableMapOf<String, ImageView>()
+    private val selectionRows = mutableMapOf<String, View>()
     private var searchJob: Job? = null
     private var loadedInitialSelections = false
 
@@ -62,6 +64,7 @@ class AppInstallActivity : AppCompatActivity() {
         enableSecureWindow()
         binding = ScreenAppInstallBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.appsCard.clipToOutline = true
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         sessionStore = SessionStore(this)
@@ -218,12 +221,21 @@ class AppInstallActivity : AppCompatActivity() {
 
         binding.recommendedHeader.visibility = if (recommended.isNotEmpty()) View.VISIBLE else View.GONE
         binding.allAvailableHeader.visibility = if (available.isNotEmpty()) View.VISIBLE else View.GONE
-        binding.recommendedCount.text = getString(R.string.app_install_count, recommended.size)
-        binding.allAvailableCount.text = getString(R.string.app_install_count, available.size)
+        binding.recommendedCount.text = resources.getQuantityString(
+            R.plurals.app_install_count,
+            recommended.size,
+            recommended.size,
+        )
+        binding.allAvailableCount.text = resources.getQuantityString(
+            R.plurals.app_install_count,
+            available.size,
+            available.size,
+        )
         binding.appEmptyText.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
         binding.appEmptyText.text = getString(R.string.app_install_empty)
 
         selectionIcons.clear()
+        selectionRows.clear()
         renderAppRows(binding.recommendedList, recommended)
         renderAppRows(binding.allAvailableList, available)
     }
@@ -251,10 +263,12 @@ class AppInstallActivity : AppCompatActivity() {
                 toggleSelection(app.packageName)
             }
         }
+        selectionRows[app.packageName] = row
+        updateSelectionAccessibility(row, app, app.packageName in selectedPackages)
 
         val iconShell = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
-            background = getDrawable(R.drawable.bg_surface_light_24)
+            background = ContextCompat.getDrawable(context, R.drawable.bg_surface_light_24)
         }
         val iconPlaceholder = TextView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -340,6 +354,23 @@ class AppInstallActivity : AppCompatActivity() {
         selectionIcons[packageName]?.let { icon ->
             updateSelectionIcon(icon, packageName in selectedPackages)
         }
+        val app = catalog.firstOrNull { it.packageName == packageName }
+        val row = selectionRows[packageName]
+        if (app != null && row != null) {
+            updateSelectionAccessibility(row, app, packageName in selectedPackages)
+        }
+    }
+
+    private fun updateSelectionAccessibility(view: View, app: AppCatalogEntry, selected: Boolean) {
+        val state = getString(
+            if (selected) R.string.app_install_selected else R.string.app_install_not_selected,
+        )
+        view.contentDescription = getString(
+            R.string.app_install_accessibility_selection,
+            app.displayName,
+            state,
+        )
+        ViewCompat.setStateDescription(view, state)
     }
 
     private fun updateSelectionIcon(view: ImageView, selected: Boolean) {

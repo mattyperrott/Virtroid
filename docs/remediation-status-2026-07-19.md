@@ -44,8 +44,9 @@ HTTPS ingress last.
   link, special-file, sparse-file, and cross-runtime states.
 - Production runtime images require immutable digests and configured resource
   limits; preinstalled apps require pinned artifacts and package verification.
-- Public bootstrap, development node enrollment, unpinned catalog updates, and
-  unsafe password-verifier replacement fail closed.
+- Development node enrollment, unpinned catalog updates, and unsafe
+  password-verifier replacement fail closed. Public account creation is
+  intentional and requires proof from the submitted Android signing key.
 - Schema `2026071903` requires active operator-approved node keys and records
   append-only registry audit actions.
 - Android release signing fails closed, v1 signing is disabled, sensitive local
@@ -130,9 +131,12 @@ state records the new immutable source and image.
   lineage. Operator-pinned hashes and package-name checks are containment, not
   complete publisher identity.
 - **Abuse and resource enforcement:** stored-byte and cumulative trial-time
-  quotas are now enforced, but host-filesystem capacity/reservation controls,
-  durable invite or billing controls, and production scheduler policy remain.
-  Public bootstrap must remain off.
+  quotas are now enforced. Public bootstrap requires a fresh signed
+  proof-of-possession from the submitted Android Keystore key, creates no
+  runtime, bounds request size, and uses transient rate limiting without storing
+  IP identity metadata. Host-filesystem capacity/reservation controls, billing
+  controls, Sybil resistance for free trials, and production scheduler policy
+  remain.
 - **Rollback assurance:** manifest monotonicity and a device-local Android
   high-water mark now block ordinary rollback/fork responses. Cross-device or
   malicious-control-plane rollback resistance still requires an external

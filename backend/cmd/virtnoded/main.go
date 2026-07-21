@@ -2302,7 +2302,7 @@ func (n *nodeAgent) adbPush(ctx context.Context, serial string, localPath string
 }
 
 func (n *nodeAgent) adbShellCapture(ctx context.Context, serial string, shellCmd string) (string, error) {
-	cmd := exec.CommandContext(ctx, n.cfg.ADBPath, "-s", serial, "shell", "sh", "-c", shellCmd)
+	cmd := exec.CommandContext(ctx, n.cfg.ADBPath, adbShellArgs(serial, shellCmd)...)
 	output, err := cmd.CombinedOutput()
 	trimmed := strings.TrimSpace(string(output))
 	if err != nil {
@@ -2312,6 +2312,15 @@ func (n *nodeAgent) adbShellCapture(ctx context.Context, serial string, shellCmd
 		return trimmed, err
 	}
 	return trimmed, nil
+}
+
+func adbShellArgs(serial, shellCmd string) []string {
+	// ADB already executes the final argument through the device shell. Passing
+	// `sh -c` as separate arguments makes only the first word the command string;
+	// redirects and conditionals then run outside that command. Keep the entire
+	// validated command in one remote-shell argument so probes such as `pm path`
+	// return their real result.
+	return []string{"-s", serial, "shell", shellCmd}
 }
 
 func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse) error {

@@ -54,7 +54,10 @@
     <string name="account_revoke_device_done">Device revoked</string>
     <string name="account_apps_title">Install Apps</string>
     <string name="account_apps_subtitle">Choose F-Droid apps for this account</string>
-    <string name="account_apps_selected_count">%1$d apps selected</string>
+    <plurals name="account_apps_selected_count">
+        <item quantity="one">%1$d app selected</item>
+        <item quantity="other">%1$d apps selected</item>
+    </plurals>
     <string name="account_apps_selected_none">No apps selected</string>
     <string name="account_apps_catalog_unavailable">App catalog unavailable</string>
     <string name="app_install_title">Install Apps</string>
@@ -62,12 +65,19 @@
     <string name="app_install_search_hint">Search applications...</string>
     <string name="app_install_recommended">RECOMMENDED</string>
     <string name="app_install_all_available">ALL AVAILABLE</string>
-    <string name="app_install_count">%1$d apps</string>
+    <plurals name="app_install_count">
+        <item quantity="one">%1$d app</item>
+        <item quantity="other">%1$d apps</item>
+    </plurals>
+    <string name="app_install_count_placeholder">0 apps</string>
     <string name="app_install_done">Done</string>
     <string name="app_install_version_size">Version %1$s • %2$s</string>
     <string name="app_install_empty">No apps matched your search.</string>
     <string name="app_install_saved">App selections saved</string>
     <string name="app_install_loading">Loading app catalog...</string>
+    <string name="app_install_selected">selected</string>
+    <string name="app_install_not_selected">not selected</string>
+    <string name="app_install_accessibility_selection">%1$s, %2$s</string>
     <string name="account_wipe_local_title">Clear Local Runtime Artifacts</string>
     <string name="account_wipe_local_body">Clears local caches, temporary files, transfer artifacts, and active session handles. Account and device identity stay linked.</string>
     <string name="account_wipe_local_done">Cleared %1$d local items</string>
@@ -88,6 +98,8 @@
     <string name="identity_password_title">Identity Password</string>
     <string name="identity_password_prompt">Choose the password used for blob encryption and runtime authentication</string>
     <string name="identity_password_field_hint">Identity password</string>
+    <string name="password_show">Show password</string>
+    <string name="password_hide">Hide password</string>
     <string name="identity_password_confirm_field_hint">Confirm identity password</string>
     <string name="identity_password_mismatch">Identity passwords did not match</string>
     <string name="identity_password_required">Identity password is required</string>
@@ -187,8 +199,12 @@
     <string name="runtime_connect_display">Connect</string>
     <string name="runtime_start">Start Session</string>
     <string name="runtime_stop">Stop</string>
+    <string name="runtime_stopped">Runtime stopped</string>
     <string name="runtime_delete">Delete</string>
     <string name="runtime_controls">Controls</string>
+    <string name="controls_edit_runtime">Edit runtime name</string>
+    <string name="controls_runtime_name_hint">Runtime name</string>
+    <string name="controls_runtime_name_required">Runtime name is required</string>
     <string name="runtime_secure_route">Trusted operator</string>
     <string name="runtime_connectivity_online">Online</string>
     <string name="runtime_connectivity_starting">Starting</string>
@@ -355,6 +371,8 @@
     <string name="session_home">Home</string>
     <string name="session_apps">Apps</string>
     <string name="session_disconnect">Shutdown runtime</string>
+    <string name="session_shutdown_confirm_title">Shut down this runtime?</string>
+    <string name="session_shutdown_confirm_body">The session will close and the runtime will save its encrypted state before stopping.</string>
     <string name="session_back_to_app">Back to app</string>
     <string name="session_secure_online">Connected</string>
     <string name="session_camera">Camera</string>
@@ -400,8 +418,12 @@
     <string name="unlock_title">Unlock Identity</string>
     <string name="unlock_subtitle">Decrypting local state</string>
     <string name="unlock_use_passphrase">USE PASSPHRASE INSTEAD</string>
+    <string name="unlock_use_keyboard">USE KEYBOARD INSTEAD</string>
+    <string name="unlock_use_pin_pad">USE PIN PAD</string>
     <string name="unlock_enter_passphrase">Enter passphrase</string>
     <string name="unlock_continue">Unlock</string>
+    <string name="unlock_with_fingerprint">Unlock with fingerprint</string>
+    <string name="lock_pin_progress">%1$d of 6 PIN digits entered</string>
     <string name="biometric_unlock_title">Unlock Virtroid</string>
     <string name="biometric_unlock_subtitle">Decrypt the local vault with device biometrics.</string>
     <string name="biometric_unlock_use_pin">Use PIN</string>
@@ -452,6 +474,7 @@
     <string name="privacy_cache_cleared">Local cache cleared</string>
     <string name="privacy_cache_clear_failed">Some cache items could not be cleared</string>
     <string name="privacy_pin_setup_body">Enter a new 6-digit app lock PIN.</string>
+    <string name="privacy_app_lock_setup_failed">Could not enable app lock on this device.</string>
     <string name="privacy_telemetry_secured">Encrypted</string>
     <string name="privacy_telemetry_disabled">Disabled</string>
     <string name="privacy_telemetry_setup_needed">Setup Needed</string>
@@ -460,6 +483,7 @@
     <string name="privacy_telemetry_verified">LINKED</string>
     <string name="privacy_telemetry_unlinked">UNLINKED</string>
     <string name="privacy_telemetry_never">Never</string>
+    <string name="accessibility_setting_value">%1$s, %2$s</string>
 
     <string name="new_runtime_storage_behavior">STORAGE BEHAVIOR</string>
     <string name="new_runtime_persistent_title">Persistent runtime data</string>

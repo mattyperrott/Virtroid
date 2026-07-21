@@ -185,6 +185,7 @@
 
                 <LinearLayout
                     android:id="@+id/passphraseOptionCard"
+                    android:contentDescription="@string/onboarding_passphrase_title"
                     android:layout_width="match_parent"
                     android:layout_height="116dp"
                     android:background="@drawable/bg_surface_stroke_24"

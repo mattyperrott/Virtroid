@@ -53,7 +53,7 @@ docker compose \
   -f "${script_dir}/docker-compose.yml" \
   config --quiet
 
-grep -q 'BOOTSTRAP_ENABLED: "false"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'BOOTSTRAP_ENABLED: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_ALLOWED_ADVERTISE_ADDRS: virtnoded' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_RUNTIME_NETWORK_MODE: per-runtime' "${tmp_dir}/rendered-compose.yml"
 grep -q 'image: virtroid-backend:release-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"

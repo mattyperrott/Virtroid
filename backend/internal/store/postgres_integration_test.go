@@ -71,8 +71,11 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM operator_registry_audit WHERE operator_id = $1`, operatorID)
 		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM node_operators WHERE id = $1`, operatorID)
 	})
-	if _, err := st.BootstrapAccountWithIdentity(ctx, accountID, deviceID, "CI device", "ci-public-key", CreateRuntimeInput{}); err != nil {
-		t.Fatalf("bootstrap account: %v", err)
+	devicePublicKey := integrationNodePublicKey(t)
+	if _, err := st.BootstrapAccountWithIdentity(
+		ctx, accountID, deviceID, "CI device", devicePublicKey, CreateRuntimeInput{},
+	); err != nil {
+		t.Fatalf("bootstrap public account: %v", err)
 	}
 	runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{Name: "CI runtime"})
 	if err != nil {

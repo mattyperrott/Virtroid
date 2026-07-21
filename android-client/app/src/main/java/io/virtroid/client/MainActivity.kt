@@ -437,36 +437,51 @@ class MainActivity : AppCompatActivity() {
             connectRuntime(runtime)
         }
         cardBinding.deleteRuntimeButton.setOnClickListener {
-            mutateRuntime(getString(R.string.status_deleting_runtime)) {
-                val accountId = requireAccountId() ?: return@mutateRuntime
-                val deviceId = requireDeviceId() ?: return@mutateRuntime
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                val state = runCatching {
-                    api.getRuntimeState(currentBaseUrl(), accountId, deviceId, runtime.id)
-                }.getOrNull()
-                if (state?.canWipe != false) {
-                    api.wipeRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
-                    snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
-                }
-                activeSessionStore.loadForRuntime(runtime.id)?.let {
-                    activeSessionStore.clear()
-                }
-                api.deleteRuntime(
-                    currentBaseUrl(),
-                    accountId,
-                    deviceId,
-                    runtime.id,
-                    blobAccessKey,
-                )
-                snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
-                identityPasswordStore.saveConfigured(accountId, deviceId)
-            }
+            confirmRuntimeDelete(runtime)
         }
         cardBinding.actionControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtime.id))
         }
         cardBinding.liveRuntimeControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtime.id))
+        }
+    }
+
+    private fun confirmRuntimeDelete(runtime: RuntimeSummary) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.controls_delete_confirm_title))
+            .setMessage(getString(R.string.controls_delete_confirm_body))
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.controls_confirm)) { _, _ ->
+                deleteRuntime(runtime)
+            }
+            .show()
+    }
+
+    private fun deleteRuntime(runtime: RuntimeSummary) {
+        mutateRuntime(getString(R.string.status_deleting_runtime)) {
+            val accountId = requireAccountId() ?: return@mutateRuntime
+            val deviceId = requireDeviceId() ?: return@mutateRuntime
+            val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+            val state = runCatching {
+                api.getRuntimeState(currentBaseUrl(), accountId, deviceId, runtime.id)
+            }.getOrNull()
+            if (state?.canWipe != false) {
+                api.wipeRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
+                snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
+            }
+            activeSessionStore.loadForRuntime(runtime.id)?.let {
+                activeSessionStore.clear()
+            }
+            api.deleteRuntime(
+                currentBaseUrl(),
+                accountId,
+                deviceId,
+                runtime.id,
+                blobAccessKey,
+            )
+            snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
+            identityPasswordStore.saveConfigured(accountId, deviceId)
         }
     }
 

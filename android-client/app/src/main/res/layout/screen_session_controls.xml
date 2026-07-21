@@ -107,7 +107,7 @@
                         android:layout_width="40dp"
                         android:layout_height="40dp"
                         android:background="@drawable/bg_surface_light_circle"
-                        android:contentDescription="@string/runtime_controls"
+                        android:contentDescription="@string/controls_edit_runtime"
                         android:padding="11dp"
                         android:src="@drawable/ic_tune"
                         app:tint="@color/v_text_muted" />
@@ -260,8 +260,7 @@
                     android:orientation="horizontal"
                     android:background="@drawable/bg_surface_24"
                     android:padding="16dp"
-                    android:layout_marginBottom="12dp"
-                    android:visibility="gone">
+                    android:layout_marginBottom="12dp">
                     <ImageView
                         android:id="@+id/item_build_info_icon"
                         android:layout_width="48dp"
@@ -293,13 +292,13 @@
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/displayOutputRow"
+                    android:contentDescription="@string/controls_display_title"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
                     android:background="@drawable/bg_surface_24"
                     android:padding="16dp"
-                    android:visibility="gone"
                     android:layout_marginBottom="12dp">
                     <ImageView
                         android:id="@+id/item_display_output_icon"
@@ -379,6 +378,7 @@
                     </LinearLayout>
                     <FrameLayout
                         android:id="@+id/cameraPassthroughSwitch"
+                        android:contentDescription="@string/new_runtime_camera_passthrough_unavailable"
                         android:layout_width="52dp"
                         android:layout_height="30dp"
                         android:background="@drawable/bg_switch_track_on"
@@ -395,6 +395,7 @@
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/consoleLogsRow"
+                    android:contentDescription="@string/controls_logs_title"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
@@ -455,6 +456,7 @@
                     android:visibility="gone" />
                 <LinearLayout
                     android:id="@+id/restartPersonaRow"
+                    android:contentDescription="@string/controls_restart_title"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
@@ -501,6 +503,7 @@
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/wipeRow"
+                    android:contentDescription="@string/controls_wipe_title"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
@@ -551,6 +554,7 @@
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/destroyRow"
+                    android:contentDescription="@string/controls_destroy_title"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"

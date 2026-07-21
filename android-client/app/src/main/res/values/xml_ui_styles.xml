@@ -307,6 +307,7 @@
             name="android:textSize">
             24sp
         </item>
+        <item name="android:translationY">-1dp</item>
     </style>
     <style
         name="VirtroidPinLetters">
@@ -346,6 +347,7 @@
             name="android:textSize">
             10sp
         </item>
+        <item name="android:translationY">-1dp</item>
     </style>
 
     <style name="VirtroidSectionLabel">

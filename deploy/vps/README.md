@@ -1,6 +1,7 @@
 # Virtroid VPS Deploy
 
-> **Rollout status (2026-07-19):** The VPS runs schema `2026071903` with the
+> **Release target (2026-07-21):** The public signed-bootstrap release uses schema
+> `2026072102`. The previously verified node-registry release used schema `2026071903` with the
 > approved production node registry. Production builds, release bundles,
 > rollback state, operational secrets, and local backups remain on the VPS.
 > A renterd recovery seed is the deliberate exception: two physical offline
@@ -65,13 +66,19 @@ The final helper disables direct root SSH and all password authentication. It
 refuses to run unless the deploy account has a valid authorized key and rolls
 back if SSH validation or reload fails.
 
-The generated production configuration keeps public account bootstrap disabled
-and disables shared-secret node self-enrollment. Production node requests are
+The generated production configuration enables public account bootstrap and
+disables shared-secret node self-enrollment. Production node requests are
 accepted only after an operator-controlled node/key approval exists. The
 control plane signs node callbacks with a separate P-256 key, and nodes accept
 only pinned, fresh, non-replayed callback signatures.
-Do not enable `BOOTSTRAP_ENABLED` until a durable invite or billing gate exists;
-`deploy.sh` rejects that unsafe setting for this topology.
+Public bootstrap does not require operator approval or a shared secret. Every
+request must carry a fresh signature from the P-256 Android Keystore key whose
+public half is in that exact request body; account ID, device ID, request path,
+timestamp, nonce, and body hash are all covered. Bootstrap creates only the
+account, default entitlement, and signing device--never a runtime. Request-size
+limits and a bounded transient rate limiter reduce anonymous abuse without
+persisting IP addresses as identity metadata. Set `BOOTSTRAP_ENABLED=false`
+only for an intentional maintenance freeze.
 
 ## VPS-local releases
 
@@ -133,9 +140,10 @@ They use the same maintenance lock, accept only the installed root-owned tree,
 verify the active local image ID, and cannot race a backup. Normal releases use
 the bundle helpers above.
 
-The node-registry migration to schema `2026071903` has completed. Retained VPS
-backups remain the recovery boundary; an older schema image must never be
-started automatically against a newer database.
+The node-registry migration used schema `2026071903`; public signed bootstrap
+uses `2026072102`. Retained VPS backups remain the recovery
+boundary; an older schema image must never be started automatically against a
+newer database.
 
 Put a full PEM bundle at `/srv/virtroid/tls/virtroid.pem`. It must contain the
 certificate chain and private key in one file:

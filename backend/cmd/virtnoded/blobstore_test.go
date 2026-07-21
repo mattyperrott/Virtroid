@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -291,6 +292,46 @@ func TestSnapshotWriterRejectsSpecialSourceWithoutOpeningIt(t *testing.T) {
 	err := addDirectoryToTar(context.Background(), tar.NewWriter(&archive), root)
 	if err == nil || !strings.Contains(err.Error(), "unsupported special file") {
 		t.Fatalf("addDirectoryToTar error = %v, want unsupported special file", err)
+	}
+}
+
+func TestSnapshotWriterSkipsTransientUnixSocket(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "virtroid-socket-snapshot-")
+	if err != nil {
+		t.Fatalf("create short source directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	writeFile(t, filepath.Join(root, "persistent.txt"), "keep")
+	socketPath := filepath.Join(root, "ndebugsocket")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("create source Unix socket: %v", err)
+	}
+	defer listener.Close()
+
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := addDirectoryToTar(context.Background(), writer, root); err != nil {
+		t.Fatalf("addDirectoryToTar: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	reader := tar.NewReader(bytes.NewReader(archive.Bytes()))
+	var names []string
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read archive: %v", err)
+		}
+		names = append(names, header.Name)
+	}
+	if len(names) != 1 || names[0] != "persistent.txt" {
+		t.Fatalf("archive entries = %#v, want only persistent.txt", names)
 	}
 }
 

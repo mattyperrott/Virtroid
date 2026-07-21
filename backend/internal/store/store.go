@@ -30,8 +30,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026071903
-	schemaVersionLabel               = "approved node and operator trust registry 2026-07-19"
+	currentSchemaVersion       int64 = 2026072102
+	schemaVersionLabel               = "public bootstrap with device proof of possession 2026-07-21"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -41,11 +41,12 @@ const (
 )
 
 const (
-	defaultAndroidImage  = "redroid/redroid:14.0.0_64only-latest"
-	viewerPortStart      = 46000
-	viewerPortEnd        = 46099
-	sessionAttachTTL     = 2 * time.Minute
-	runtimeCapabilityTTL = 24 * time.Hour
+	defaultAndroidImage        = "redroid/redroid:14.0.0_64only-latest"
+	viewerPortStart            = 46000
+	viewerPortEnd              = 46099
+	sessionAttachTTL           = 2 * time.Minute
+	runtimeCapabilityTTL       = 24 * time.Hour
+	idleRuntimeLastActivitySQL = "GREATEST(r.updated_at, COALESCE(ls.last_session_at, r.updated_at))"
 	// Keep this aligned with the Android client's MAX_CATALOG_ITEMS bound so a
 	// valid server response is never rejected solely because of cardinality.
 	catalogResponseLimit = 250
@@ -5177,7 +5178,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		      WHERE r.deleted_at IS NULL
 		        AND r.desired_state = 'running'
 		        AND r.status IN ('starting', 'running', 'error')
-		        AND COALESCE(ls.last_session_at, r.updated_at) < NOW() - $2::interval
+		        AND `+idleRuntimeLastActivitySQL+` < NOW() - $2::interval
 		        AND NOT EXISTS (
 		            SELECT 1
 		              FROM sessions live
@@ -6970,7 +6971,11 @@ func buildRuntimeState(runtime Runtime, hasActiveSession bool, currentDeviceSess
 	hostAssigned := valueOrEmpty(runtime.HostID) != ""
 
 	canConnect := runtimeReady && !deleted
-	canStart := !deleted && !runtimeReady && !isBusy
+	// A failed runtime can remain assigned while the node is still stopping its
+	// guest and persisting encrypted userdata. Do not advertise it as startable
+	// until that recovery cleanup has completed; otherwise clients can race a
+	// new start against the outstanding stop and retain stale lifecycle state.
+	canStart := !deleted && !runtimeReady && !isBusy && (!hostAssigned || runtimeStoppedForSession(runtime))
 	canStop := !deleted && hostAssigned && !runtimeStoppedForSession(runtime) &&
 		effectiveState != "stopping" &&
 		effectiveState != "wiping" &&

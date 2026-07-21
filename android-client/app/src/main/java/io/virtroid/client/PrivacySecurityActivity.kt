@@ -61,6 +61,12 @@ class PrivacySecurityActivity : AppCompatActivity() {
         binding.uiInactivityTimeoutRow.setOnClickListener { chooseInactivityTimeout() }
         binding.forceClearCacheButton.setOnClickListener { forceClearCache() }
 
+        binding.requirePinSwitch.contentDescription = getString(R.string.privacy_require_pin_biometric)
+        binding.biometricUnlockSwitch.contentDescription = getString(R.string.privacy_biometric_vault_unlock)
+        binding.requireUnlockResumeSwitch.contentDescription = getString(R.string.privacy_require_unlock_resume)
+        binding.blockScreenCaptureSwitch.contentDescription = getString(R.string.privacy_block_screen_capture)
+        binding.autoClearClipboardSwitch.contentDescription = getString(R.string.privacy_auto_clear_clipboard)
+
         binding.requirePinSwitch.setOnCheckedChangeListener { _, checked ->
             if (!bindingSettings) {
                 lifecycleScope.launch { setAppLockEnabled(checked) }
@@ -120,11 +126,26 @@ class PrivacySecurityActivity : AppCompatActivity() {
         binding.blockScreenCaptureSwitch.isChecked = appSettings.blockScreenCapture
         binding.autoClearClipboardSwitch.isChecked = appSettings.autoClearClipboard
         binding.autoLockTimerValue.text = appSettings.autoLockLabel()
+        binding.autoLockTimerRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            getString(R.string.privacy_auto_lock_timer),
+            binding.autoLockTimerValue.text,
+        )
         binding.failedAttemptsValue.text = getString(
             R.string.privacy_failed_attempts_value,
             appSettings.failedAttemptsThreshold,
         )
+        binding.failedAttemptsRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            getString(R.string.privacy_failed_attempts_backoff),
+            binding.failedAttemptsValue.text,
+        )
         binding.uiInactivityTimeoutValue.text = appSettings.uiInactivityLabel()
+        binding.uiInactivityTimeoutRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            getString(R.string.privacy_ui_inactivity_timeout),
+            binding.uiInactivityTimeoutValue.text,
+        )
         bindingSettings = false
         renderTelemetry()
     }
@@ -170,7 +191,14 @@ class PrivacySecurityActivity : AppCompatActivity() {
                 renderSettings()
                 return
             }
-            appLockStore.saveCredential(AppLockStore.LockMode.PIN, pin)
+            runCatching {
+                appLockStore.saveCredential(AppLockStore.LockMode.PIN, pin)
+            }.onFailure { error ->
+                appLogs.error("App lock setup failed: ${error.message}", "auth")
+                toast(getString(R.string.privacy_app_lock_setup_failed))
+                renderSettings()
+                return
+            }
         }
         appLockStore.setEnabled(true)
         appSettings.biometricUnlockEnabled = false

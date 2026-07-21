@@ -146,6 +146,36 @@ class AccountIdentityActivity : AppCompatActivity() {
             getString(R.string.account_identity_not_linked)
         }
         binding.identityLastSyncValue.text = getString(R.string.account_storage_not_synced)
+
+        binding.itemAccountId.contentDescription = accessibilityLabel(
+            binding.itemAccountIdTitle.text,
+            binding.itemAccountIdSubtitle.text,
+        )
+        binding.itemDeviceFingerprint.contentDescription = accessibilityLabel(
+            binding.itemDeviceFingerprintTitle.text,
+            binding.itemDeviceFingerprintSubtitle.text,
+        )
+        binding.itemIdentityPassword.contentDescription = accessibilityLabel(
+            binding.itemIdentityPasswordTitle.text,
+            binding.itemIdentityPasswordSubtitle.text,
+        )
+        binding.itemDeviceSigningKey.contentDescription = accessibilityLabel(
+            binding.itemDeviceSigningKeyTitle.text,
+            binding.itemDeviceSigningKeySubtitle.text,
+        )
+        binding.itemLinkedDevices.contentDescription = accessibilityLabel(
+            binding.itemLinkedDevicesTitle.text,
+            binding.itemLinkedDevicesSubtitle.text,
+        )
+        updateAppInstallerAccessibility()
+        binding.itemWipeUserData.contentDescription = accessibilityLabel(
+            binding.wipeUserDataTitle.text,
+            binding.wipeUserDataDescription.text,
+        )
+        binding.itemDeleteIdentity.contentDescription = accessibilityLabel(
+            binding.deleteIdentityTitle.text,
+            binding.deleteIdentityDescription.text,
+        )
     }
 
     private fun refreshStorage() {
@@ -218,14 +248,31 @@ class AccountIdentityActivity : AppCompatActivity() {
             }.onSuccess { apps ->
                 val selectedCount = apps.count { it.selected }
                 binding.itemInstallAppsSubtitle.text = if (selectedCount > 0) {
-                    getString(R.string.account_apps_selected_count, selectedCount)
+                    resources.getQuantityString(
+                        R.plurals.account_apps_selected_count,
+                        selectedCount,
+                        selectedCount,
+                    )
                 } else {
                     getString(R.string.account_apps_selected_none)
                 }
+                updateAppInstallerAccessibility()
             }.onFailure {
                 binding.itemInstallAppsSubtitle.text = getString(R.string.account_apps_catalog_unavailable)
+                updateAppInstallerAccessibility()
             }
         }
+    }
+
+    private fun updateAppInstallerAccessibility() {
+        binding.itemInstallApps.contentDescription = accessibilityLabel(
+            binding.itemInstallAppsTitle.text,
+            binding.itemInstallAppsSubtitle.text,
+        )
+    }
+
+    private fun accessibilityLabel(title: CharSequence, detail: CharSequence): String {
+        return getString(R.string.accessibility_setting_value, title, detail)
     }
 
     private fun openAppInstaller() {

@@ -94,6 +94,15 @@ func TestNodeRegistrySchemaIsSeparateFromHeartbeatHosts(t *testing.T) {
 	}
 }
 
+func TestPublicBootstrapSchemaRemovesOperatorInvitationTable(t *testing.T) {
+	if !strings.Contains(schemaSQL, "DROP TABLE IF EXISTS enrollment_invitations") {
+		t.Fatal("schema does not remove the obsolete operator invitation table")
+	}
+	if strings.Contains(schemaSQL, "CREATE TABLE IF NOT EXISTS enrollment_invitations") {
+		t.Fatal("schema recreates the obsolete operator invitation table")
+	}
+}
+
 func TestNodeRegistryRejectsInvalidInputsBeforeDatabaseMutation(t *testing.T) {
 	st := &Store{}
 	if _, err := st.ApproveOperator(context.Background(), ApproveOperatorInput{
@@ -2213,6 +2222,30 @@ func TestGetRuntimeStateReportsConnectableRuntimeAndCurrentSession(t *testing.T)
 	}
 }
 
+func TestBuildRuntimeStateBlocksStartUntilFailedRuntimeCleanupFinishes(t *testing.T) {
+	hostID := "host-1"
+	lastError := "snapshot still pending"
+	assigned := buildRuntimeState(Runtime{
+		Status:           "error",
+		DesiredState:     "stopped",
+		ConnectionStatus: "offline",
+		HostID:           &hostID,
+		LastError:        &lastError,
+	}, false, sql.NullString{})
+	if assigned.CanStart || !assigned.CanStop || assigned.EffectiveState != "error" {
+		t.Fatalf("assigned failed runtime state = %+v, want recovery stop only", assigned)
+	}
+
+	cleaned := buildRuntimeState(Runtime{
+		Status:           "stopped",
+		DesiredState:     "stopped",
+		ConnectionStatus: "offline",
+	}, false, sql.NullString{})
+	if !cleaned.CanStart || cleaned.CanStop || cleaned.EffectiveState != "stopped" {
+		t.Fatalf("cleaned stopped runtime state = %+v, want start only", cleaned)
+	}
+}
+
 func TestGetRuntimeStateReportsDeletingRuntimeAsBusy(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -3197,6 +3230,13 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestIdleRuntimeReaperUsesNewestRuntimeOrSessionActivity(t *testing.T) {
+	const want = "GREATEST(r.updated_at, COALESCE(ls.last_session_at, r.updated_at))"
+	if idleRuntimeLastActivitySQL != want {
+		t.Fatalf("idle runtime last-activity expression = %q, want %q", idleRuntimeLastActivitySQL, want)
 	}
 }
 

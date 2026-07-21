@@ -108,6 +108,20 @@ func TestRuntimeAppsToInstallMergesDefaultsAndSelections(t *testing.T) {
 	}
 }
 
+func TestADBShellArgsKeepsCompoundCommandInOneRemoteArgument(t *testing.T) {
+	command := "pm path 'org.fdroid.basic' >/dev/null 2>&1 && echo installed || true"
+	args := adbShellArgs("10.0.0.8:5555", command)
+	want := []string{"-s", "10.0.0.8:5555", "shell", command}
+	if len(args) != len(want) {
+		t.Fatalf("adbShellArgs = %#v, want %#v", args, want)
+	}
+	for index := range want {
+		if args[index] != want[index] {
+			t.Fatalf("adbShellArgs[%d] = %q, want %q", index, args[index], want[index])
+		}
+	}
+}
+
 func TestStoragePreflightStatusKeepsUnreachableRenterdAsError(t *testing.T) {
 	status := storagePreflightStatus(blobPreflightReport{
 		Store: blobStoreRenterd,

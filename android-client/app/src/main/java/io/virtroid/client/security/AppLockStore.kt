@@ -26,6 +26,9 @@ class AppLockStore(context: Context) {
         val salt = Base64.encodeToString(saltBytes, B64_FLAGS)
         val vaultSalt = newVaultSalt()
         val hash = deriveCredentialHash(saltBytes, secret)
+        if (!SecureLocalVault.get(appContext).unlockOrCreate(secret, vaultSalt)) {
+            throw IllegalStateException("could not initialize secure local vault")
+        }
         prefs.edit()
             .putString(KEY_MODE, mode.value)
             .putString(KEY_SALT, salt)
@@ -36,9 +39,6 @@ class AppLockStore(context: Context) {
             .remove(KEY_FAILED_ATTEMPTS)
             .remove(KEY_LOCKED_UNTIL)
             .apply()
-        if (!SecureLocalVault.get(appContext).unlockOrCreate(secret, vaultSalt)) {
-            throw IllegalStateException("could not initialize secure local vault")
-        }
         biometricVaultKeyStore.clear()
         appSettings.biometricUnlockEnabled = false
         LocalVaultMigration.migrateUnlocked(appContext)

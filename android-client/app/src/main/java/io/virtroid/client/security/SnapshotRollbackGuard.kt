@@ -18,6 +18,12 @@ class SnapshotRollbackGuard(context: Context) {
         }
         val key = recordKey(accountId, runtime.id)
         val previous = readRecord(key)
+        val resetKey = resetRecordKey(key)
+        if (prefs.getBoolean(resetKey, false) && isEmptySnapshotState(generation, snapshotId)) {
+            removeRecord(key)
+            prefs.edit().remove(resetKey).apply()
+            return
+        }
         verifySnapshotAdvance(previous?.generation, previous?.snapshotId, generation, snapshotId, runtime.id)
         if (generation > 0L && (previous == null || generation > previous.generation)) {
             writeRecord(key, SnapshotRecord(generation, snapshotId))
@@ -25,8 +31,18 @@ class SnapshotRollbackGuard(context: Context) {
     }
 
     @Synchronized
+    fun expectRuntimeReset(accountId: String, runtimeId: String) {
+        prefs.edit().putBoolean(resetRecordKey(recordKey(accountId, runtimeId)), true).apply()
+    }
+
+    @Synchronized
     fun clearRuntime(accountId: String, runtimeId: String) {
         val key = recordKey(accountId, runtimeId)
+        removeRecord(key)
+        prefs.edit().remove(resetRecordKey(key)).apply()
+    }
+
+    private fun removeRecord(key: String) {
         if (vault.isUnlocked) {
             vault.remove(NAMESPACE, key)
         }
@@ -62,6 +78,8 @@ class SnapshotRollbackGuard(context: Context) {
 
     private fun recordKey(accountId: String, runtimeId: String): String = "$accountId:$runtimeId"
 
+    private fun resetRecordKey(recordKey: String): String = "reset:$recordKey"
+
     private data class SnapshotRecord(val generation: Long, val snapshotId: String)
 
     private companion object {
@@ -90,4 +108,8 @@ internal fun verifySnapshotAdvance(
     if (generation == previousGeneration && generation > 0L && snapshotId != previousSnapshotId) {
         throw SnapshotRollbackException("A conflicting encrypted snapshot was returned for runtime $runtimeId.")
     }
+}
+
+internal fun isEmptySnapshotState(generation: Long, snapshotId: String): Boolean {
+    return generation == 0L && snapshotId.isBlank()
 }

@@ -260,7 +260,7 @@ class VirtroidApi(
         runtimeProfile: DeviceRuntimeProfile,
     ): BootstrapResult =
         withContext(Dispatchers.IO) {
-            val requestBody = JSONObject()
+            val requestJson = JSONObject()
                 .put("account_id", accountId)
                 .put("device_id", deviceId)
                 .put("device_name", deviceName)
@@ -270,11 +270,20 @@ class VirtroidApi(
                 .put("height_px", runtimeProfile.heightPx)
                 .put("density_dpi", runtimeProfile.densityDpi)
                 .toString()
-                .toRequestBody(JSON_MEDIA_TYPE)
+            val requestBytes = requestJson.toByteArray(Charsets.UTF_8)
+            val requestBody = requestJson.toRequestBody(JSON_MEDIA_TYPE)
 
             val requestBuilder = Request.Builder()
                 .url(normalizeBaseUrl(baseUrl) + "/api/v1/bootstrap")
                 .post(requestBody)
+
+            deviceIdentityStore.signedHeaders(
+                method = "POST",
+                requestUri = "/api/v1/bootstrap",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = requestBytes,
+            ).forEach { (name, value) -> requestBuilder.header(name, value) }
 
             val payload = executeJson(requestBuilder.build())
 
@@ -675,8 +684,8 @@ class VirtroidApi(
                     name = item.optString("name").ifBlank { "Linked device" },
                     publicKey = item.optString("public_key"),
                     createdAt = item.optString("created_at"),
-                    lastSeenAt = item.optString("last_seen_at").ifBlank { null },
-                    revokedAt = item.optString("revoked_at").ifBlank { null },
+                    lastSeenAt = item.nullableString("last_seen_at"),
+                    revokedAt = item.nullableString("revoked_at"),
                 )
             }
         }
@@ -1060,7 +1069,7 @@ class VirtroidApi(
     private fun parseError(body: String): Pair<String?, String> {
         return runCatching {
             val payload = JSONObject(body)
-            payload.optString("code").ifBlank { null } to
+            payload.nullableString("code") to
                 payload.optString("error").ifBlank { body }.take(MAX_ERROR_MESSAGE_CHARS)
         }.getOrDefault(null to body.take(MAX_ERROR_MESSAGE_CHARS))
     }
@@ -1082,7 +1091,7 @@ class VirtroidApi(
             status = optString("status", ""),
             desiredState = optString("desired_state", ""),
             connectionStatus = optString("connection_status", ""),
-            hostId = optString("host_id").ifBlank { null },
+            hostId = nullableString("host_id"),
             personaVersion = optInt("persona_version", 0),
             androidImage = optString("android_image"),
             androidVersion = optString("android_version"),
@@ -1094,19 +1103,19 @@ class VirtroidApi(
             fileMode = optString("file_mode", "upload-only"),
             blobAutoSnapshot = optBoolean("blob_auto_snapshot", true),
             blobRetainDays = optInt("blob_retain_days", 7),
-            blobLastSnapshotAt = optString("blob_last_snapshot_at").ifBlank { null },
-            blobSnapshotId = blobManifest?.optString("snapshot_id")?.ifBlank { null },
+            blobLastSnapshotAt = nullableString("blob_last_snapshot_at"),
+            blobSnapshotId = blobManifest?.nullableString("snapshot_id"),
             blobSnapshotGeneration = blobManifest?.optLong("generation", 0L) ?: 0L,
-            startedAt = optString("started_at").ifBlank { null },
+            startedAt = nullableString("started_at"),
             loadAverage = if (has("load_average") && !isNull("load_average")) optDouble("load_average") else null,
             adbPort = optInt("adb_port").takeIf { has("adb_port") && !isNull("adb_port") },
             viewerPort = optInt("viewer_port").takeIf { has("viewer_port") && !isNull("viewer_port") },
-            lastError = optString("last_error").ifBlank { null },
-            personaBrand = persona?.optString("brand")?.ifBlank { null },
-            personaModel = persona?.optString("model")?.ifBlank { null },
-            personaManufacturer = persona?.optString("manufacturer")?.ifBlank { null },
-            personaRelease = persona?.optString("release")?.ifBlank { null },
-            personaFingerprint = persona?.optString("fingerprint")?.ifBlank { null },
+            lastError = nullableString("last_error"),
+            personaBrand = persona?.nullableString("brand"),
+            personaModel = persona?.nullableString("model"),
+            personaManufacturer = persona?.nullableString("manufacturer"),
+            personaRelease = persona?.nullableString("release"),
+            personaFingerprint = persona?.nullableString("fingerprint"),
         )
     }
 
@@ -1121,8 +1130,8 @@ class VirtroidApi(
             canResume = optBoolean("can_resume", false),
             runtimeReady = optBoolean("runtime_ready", false),
             isExpired = optBoolean("is_expired", false),
-            endedAt = session.optString("ended_at").ifBlank { null },
-            endReason = session.optString("end_reason").ifBlank { null },
+            endedAt = session.nullableString("ended_at"),
+            endReason = session.nullableString("end_reason"),
             runtime = runtime,
         )
     }
@@ -1134,14 +1143,14 @@ class VirtroidApi(
             runtimeReady = optBoolean("runtime_ready", false),
             hasActiveSession = optBoolean("has_active_session", false),
             hasCurrentDeviceSession = optBoolean("has_current_device_session", false),
-            currentDeviceSessionId = optString("current_device_session_id").ifBlank { null },
+            currentDeviceSessionId = nullableString("current_device_session_id"),
             canConnect = optBoolean("can_connect", false),
             canStart = optBoolean("can_start", false),
             canStop = optBoolean("can_stop", false),
             canWipe = optBoolean("can_wipe", false),
             canDelete = optBoolean("can_delete", false),
             isBusy = optBoolean("is_busy", false),
-            blockedReason = optString("blocked_reason").ifBlank { null },
+            blockedReason = nullableString("blocked_reason"),
         )
     }
 
@@ -1149,13 +1158,13 @@ class VirtroidApi(
         return AccountStorage(
             provider = optString("provider", "local-disk"),
             fundingModel = optString("funding_model", "operator"),
-            walletAddress = optString("wallet_address").ifBlank { null },
-            fundingAddress = optString("funding_address").ifBlank { null },
+            walletAddress = nullableString("wallet_address"),
+            fundingAddress = nullableString("funding_address"),
             status = optString("status", "not_configured"),
             encryptedSeedBackedUp = optBoolean("encrypted_seed_backed_up", false),
-            lastPreflightStatus = optString("last_preflight_status").ifBlank { null },
-            lastPreflightJson = optString("last_preflight_json").ifBlank { null },
-            lastPreflightAt = optString("last_preflight_at").ifBlank { null },
+            lastPreflightStatus = nullableString("last_preflight_status"),
+            lastPreflightJson = nullableString("last_preflight_json"),
+            lastPreflightAt = nullableString("last_preflight_at"),
         )
     }
 
@@ -1179,13 +1188,13 @@ class VirtroidApi(
             trialRuntimeSeconds = optInt("trial_runtime_seconds", 0),
             trialRuntimeSecondsUsed = optLong("trial_runtime_seconds_used", 0L),
             trialRuntimeSecondsRemaining = optLong("trial_runtime_seconds_remaining", 0L),
-            expiresAt = optString("expires_at").ifBlank { null },
+            expiresAt = nullableString("expires_at"),
             canCreateRuntime = optBoolean("can_create_runtime", false),
             canStartRuntime = optBoolean("can_start_runtime", false),
-            createRuntimeBlockedCode = optString("create_runtime_blocked_code").ifBlank { null },
-            createRuntimeBlockedReason = optString("create_runtime_blocked_reason").ifBlank { null },
-            startRuntimeBlockedCode = optString("start_runtime_blocked_code").ifBlank { null },
-            startRuntimeBlockedReason = optString("start_runtime_blocked_reason").ifBlank { null },
+            createRuntimeBlockedCode = nullableString("create_runtime_blocked_code"),
+            createRuntimeBlockedReason = nullableString("create_runtime_blocked_reason"),
+            startRuntimeBlockedCode = nullableString("start_runtime_blocked_code"),
+            startRuntimeBlockedReason = nullableString("start_runtime_blocked_reason"),
         )
     }
 
@@ -1195,15 +1204,15 @@ class VirtroidApi(
             source = optString("source", "fdroid"),
             displayName = optString("display_name").ifBlank { optString("package_name") },
             summary = optString("summary"),
-            iconUrl = optString("icon_url").ifBlank { null },
+            iconUrl = nullableString("icon_url"),
             versionName = optString("version_name"),
             versionCode = optLong("version_code", 0L),
             apkSizeBytes = optLong("apk_size_bytes", 0L),
             minSdk = optInt("min_sdk", 0),
-            nativeCode = optString("native_code").ifBlank { null },
+            nativeCode = nullableString("native_code"),
             recommended = optBoolean("recommended", false),
             selected = optBoolean("selected", false),
-            catalogUpdatedAt = optString("catalog_updated_at").ifBlank { null },
+            catalogUpdatedAt = nullableString("catalog_updated_at"),
         )
     }
 
@@ -1228,4 +1237,11 @@ class VirtroidApi(
         val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
         val registeredRuntimeCapabilities = mutableSetOf<String>()
     }
+}
+
+private fun JSONObject.nullableString(name: String): String? {
+    if (!has(name) || isNull(name)) {
+        return null
+    }
+    return optString(name).takeIf { it.isNotBlank() }
 }

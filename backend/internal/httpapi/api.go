@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
@@ -432,35 +433,45 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 		BlobRetainDays   int    `json:"blob_retain_days"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "bootstrap request body is too large"})
 			return
 		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read bootstrap request body"})
+		return
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
 
+	defaults := store.CreateRuntimeInput{
+		Name:             req.RuntimeName,
+		AndroidImage:     req.AndroidImage,
+		AndroidVersion:   req.AndroidVersion,
+		WidthPx:          req.WidthPx,
+		HeightPx:         req.HeightPx,
+		DensityDpi:       req.DensityDpi,
+		AudioEnabled:     req.AudioEnabled,
+		CameraMode:       req.CameraMode,
+		FileMode:         req.FileMode,
+		BlobAutoSnapshot: req.BlobAutoSnapshot,
+		BlobRetainDays:   req.BlobRetainDays,
+	}
+	if !verifyBootstrapProof(r, body, req.AccountID, req.DeviceID, req.PublicKey) {
+		writeAPIError(w, http.StatusUnauthorized, "bootstrap_proof_invalid", "valid device signing proof is required")
+		return
+	}
 	result, err := a.store.BootstrapAccountWithIdentity(
 		r.Context(),
 		req.AccountID,
 		req.DeviceID,
 		req.DeviceName,
 		req.PublicKey,
-		store.CreateRuntimeInput{
-			Name:             req.RuntimeName,
-			AndroidImage:     req.AndroidImage,
-			AndroidVersion:   req.AndroidVersion,
-			WidthPx:          req.WidthPx,
-			HeightPx:         req.HeightPx,
-			DensityDpi:       req.DensityDpi,
-			AudioEnabled:     req.AudioEnabled,
-			CameraMode:       req.CameraMode,
-			FileMode:         req.FileMode,
-			BlobAutoSnapshot: req.BlobAutoSnapshot,
-			BlobRetainDays:   req.BlobRetainDays,
-		},
+		defaults,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -468,6 +479,55 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, result)
+}
+
+func verifyBootstrapProof(r *http.Request, body []byte, accountID, deviceID, publicKeyMaterial string) bool {
+	headerAccountID := strings.TrimSpace(r.Header.Get("X-Virtroid-Account-ID"))
+	headerDeviceID := strings.TrimSpace(r.Header.Get("X-Virtroid-Device-ID"))
+	timestampRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Timestamp"))
+	nonce := strings.TrimSpace(r.Header.Get("X-Virtroid-Nonce"))
+	bodyHash := strings.TrimSpace(r.Header.Get("X-Virtroid-Body-SHA256"))
+	signatureRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Signature"))
+	if headerAccountID == "" || headerDeviceID == "" || timestampRaw == "" || nonce == "" || bodyHash == "" || signatureRaw == "" {
+		return false
+	}
+	if headerAccountID != strings.TrimSpace(accountID) || headerDeviceID != strings.TrimSpace(deviceID) {
+		return false
+	}
+	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
+	if err != nil {
+		return false
+	}
+	if skew := time.Since(time.Unix(timestamp, 0)); skew > 5*time.Minute || skew < -5*time.Minute {
+		return false
+	}
+	if len(nonce) < 16 || len(nonce) > 128 {
+		return false
+	}
+	actualBodyHashBytes := sha256.Sum256(body)
+	actualBodyHash := base64.RawURLEncoding.EncodeToString(actualBodyHashBytes[:])
+	if subtle.ConstantTimeCompare([]byte(bodyHash), []byte(actualBodyHash)) != 1 {
+		return false
+	}
+	publicKey, err := parseECDSAPublicKeyMaterial(publicKeyMaterial)
+	if err != nil || publicKey.Curve.Params().Name != "P-256" {
+		return false
+	}
+	signatureDER, err := base64.RawURLEncoding.DecodeString(signatureRaw)
+	if err != nil {
+		return false
+	}
+	canonical := signedRequestCanonical(
+		r.Method,
+		r.URL.RequestURI(),
+		headerAccountID,
+		headerDeviceID,
+		timestampRaw,
+		nonce,
+		bodyHash,
+	)
+	digest := sha256.Sum256([]byte(canonical))
+	return ecdsa.VerifyASN1(publicKey, digest[:], signatureDER)
 }
 
 func bootstrapClientKey(r *http.Request, trustProxyHeaders bool) string {

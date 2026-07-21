@@ -132,8 +132,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:background="@drawable/bg_surface_stroke_32"
-                    android:clipToOutline="true">
+                    android:background="@drawable/bg_surface_stroke_32">
 
                     <LinearLayout
                         android:id="@+id/recommended_header"
@@ -164,7 +163,7 @@
                             android:background="@drawable/bg_chip_dark"
                             android:paddingStart="14dp"
                             android:paddingEnd="14dp"
-                            android:text="@string/app_install_count"
+                            android:text="@string/app_install_count_placeholder"
                             android:textColor="@color/v_text_muted"
                             android:textSize="14sp"
                             android:textStyle="bold"
@@ -208,7 +207,7 @@
                             android:background="@drawable/bg_chip_dark"
                             android:paddingStart="14dp"
                             android:paddingEnd="14dp"
-                            android:text="@string/app_install_count"
+                            android:text="@string/app_install_count_placeholder"
                             android:textColor="@color/v_text_muted"
                             android:textSize="14sp"
                             android:textStyle="bold"

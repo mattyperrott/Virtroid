@@ -145,8 +145,9 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="Audio Passthrough" />
-                        <Switch
+                        <com.google.android.material.switchmaterial.SwitchMaterial
                             android:id="@+id/audioPassthroughSwitch"
+                            android:contentDescription="@string/new_runtime_audio_passthrough"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:checked="false"
@@ -174,8 +175,9 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="Camera Passthrough" />
-                        <Switch
+                        <com.google.android.material.switchmaterial.SwitchMaterial
                             android:id="@+id/cameraPassthroughSwitch"
+                            android:contentDescription="@string/new_runtime_camera_passthrough_unavailable"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:checked="false"

@@ -4,8 +4,11 @@ import android.app.Dialog
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.text.InputType
+import android.text.method.PasswordTransformationMethod
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import io.virtroid.client.R
 import io.virtroid.client.databinding.DialogIdentityPasswordSetupBinding
 import io.virtroid.client.databinding.DialogSecureTextEntryBinding
@@ -23,6 +26,7 @@ private suspend fun AppCompatActivity.promptSecureEntry(
     binding.dialogBodyText.text = body
     binding.dialogInputLayout.hint = fieldHint
     binding.dialogInput.inputType = inputType
+    binding.dialogInputLayout.configureAccessiblePasswordToggle(binding.dialogInput)
 
     val dialog = Dialog(this).apply {
         setContentView(binding.root)
@@ -87,6 +91,8 @@ suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
         val binding = DialogIdentityPasswordSetupBinding.inflate(layoutInflater)
         binding.passwordInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         binding.passwordConfirmInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        binding.passwordInputLayout.configureAccessiblePasswordToggle(binding.passwordInput)
+        binding.passwordConfirmInputLayout.configureAccessiblePasswordToggle(binding.passwordConfirmInput)
 
         val dialog = Dialog(this).apply {
             setContentView(binding.root)
@@ -139,3 +145,27 @@ suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         continuation.invokeOnCancellation { dialog.dismiss() }
     }
+
+private fun TextInputLayout.configureAccessiblePasswordToggle(input: TextInputEditText) {
+    fun updateDescription() {
+        val passwordIsVisible = input.transformationMethod == null
+        endIconContentDescription = context.getString(
+            if (passwordIsVisible) R.string.password_hide else R.string.password_show,
+        )
+    }
+
+    setEndIconOnClickListener {
+        val selectionStart = input.selectionStart
+        val selectionEnd = input.selectionEnd
+        input.transformationMethod = if (input.transformationMethod == null) {
+            PasswordTransformationMethod.getInstance()
+        } else {
+            null
+        }
+        if (selectionStart >= 0 && selectionEnd >= 0) {
+            input.setSelection(selectionStart, selectionEnd)
+        }
+        updateDescription()
+    }
+    updateDescription()
+}

@@ -83,7 +83,14 @@ class ControlsActivity : AppCompatActivity() {
         }
 
         binding.controlsBackButton.setOnClickListener { finish() }
-        binding.controlsConnectButton.setOnClickListener { connectOrStart() }
+        binding.controlsConnectButton.setOnClickListener {
+            if (runtimeState.shouldOfferRecoveryStop()) {
+                stopFailedRuntime()
+            } else {
+                connectOrStart()
+            }
+        }
+        binding.buttonEditRuntime.setOnClickListener { showRenameDialog() }
         binding.displayOutputRow.setOnClickListener { showDisplayDialog() }
         binding.consoleLogsRow.setOnClickListener { toggleLogs() }
         binding.restartPersonaRow.setOnClickListener { confirmRestartPersona() }
@@ -147,9 +154,16 @@ class ControlsActivity : AppCompatActivity() {
             runtime.densityDpi,
         )
         val lifecycleBusy = state?.isBusy ?: runtime.isLifecycleBusy()
+        val recoveryStop = state.shouldOfferRecoveryStop()
         val canConnectOrStart = state?.let {
-            it.canConnect || it.canStart || it.effectiveState.equals("starting", ignoreCase = true)
+            recoveryStop || it.canConnect || it.canStart || it.effectiveState.equals("starting", ignoreCase = true)
         } ?: (!lifecycleBusy || runtime.isReadyForSession())
+        binding.controlsConnectButton.contentDescription = getString(
+            if (recoveryStop) R.string.runtime_stop else R.string.controls_connect,
+        )
+        binding.controlsConnectButton.setImageResource(
+            if (recoveryStop) R.drawable.ic_power else R.drawable.ic_hexagon,
+        )
         binding.controlsConnectButton.isEnabled = canConnectOrStart && connectOrStartJob?.isActive != true
         binding.restartPersonaRow.isEnabled = !lifecycleBusy && connectOrStartJob?.isActive != true &&
             (state?.let { it.canStop || it.canStart } ?: true)
@@ -207,8 +221,39 @@ class ControlsActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun showRenameDialog() {
+        val current = runtime ?: return
+        val nameInput = EditText(this).apply {
+            hint = getString(R.string.controls_runtime_name_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setText(current.name)
+            selectAll()
+            setTextColor(ContextCompat.getColor(context, R.color.virtroid_on_surface))
+            setHintTextColor(ContextCompat.getColor(context, R.color.virtroid_on_surface_muted))
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.controls_edit_runtime))
+            .setView(nameInput)
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.controls_confirm), null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val updatedName = nameInput.text?.toString()?.trim().orEmpty()
+                if (updatedName.isBlank()) {
+                    toast(getString(R.string.controls_runtime_name_required))
+                } else {
+                    dialog.dismiss()
+                    updateRuntime(current, name = updatedName)
+                }
+            }
+        }
+        dialog.show()
+    }
+
     private fun updateRuntime(
         current: RuntimeSummary,
+        name: String = current.name,
         widthPx: Int = current.widthPx,
         heightPx: Int = current.heightPx,
         densityDpi: Int = current.densityDpi,
@@ -223,7 +268,7 @@ class ControlsActivity : AppCompatActivity() {
                     deviceId = deviceId,
                     runtimeId = current.id,
                     update = RuntimeUpdate(
-                        name = current.name,
+                        name = name,
                         androidImage = current.androidImage,
                         androidVersion = current.androidVersion,
                         widthPx = widthPx,
@@ -370,7 +415,7 @@ class ControlsActivity : AppCompatActivity() {
                         identityPasswordStore.saveConfigured(accountId, deviceId)
                         updated
                     }.onSuccess {
-                        snapshotRollbackGuard.clearRuntime(accountId, current.id)
+                        snapshotRollbackGuard.expectRuntimeReset(accountId, current.id)
                         activeSessionStore.loadForRuntime(current.id)?.let {
                             activeSessionStore.clear()
                         }
@@ -437,6 +482,38 @@ class ControlsActivity : AppCompatActivity() {
                     runtime?.let { bindRuntime(it, runtimeState) }
                 }
             }
+        }
+    }
+
+    private fun stopFailedRuntime() {
+        val current = runtime ?: return
+        if (connectOrStartJob?.isActive == true) {
+            return
+        }
+        binding.controlsConnectButton.isEnabled = false
+        connectOrStartJob = lifecycleScope.launch {
+            runCatching {
+                val accountId = sessionStore.accountId ?: throw IOException(getString(R.string.account_missing))
+                val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
+                val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, current.id)
+                if (!state.shouldOfferRecoveryStop()) {
+                    throw IOException(state.blockedReason ?: getString(R.string.runtime_shutdown_in_progress))
+                }
+                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                api.stopRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                activeSessionStore.loadForRuntime(current.id)?.let { activeSessionStore.clear() }
+                waitForRuntimeStartable(accountId, deviceId, current.id)
+            }.onSuccess { stopped ->
+                runtime = stopped.runtime
+                runtimeState = stopped
+                bindRuntime(stopped.runtime, stopped)
+                toast(getString(R.string.runtime_stopped))
+            }.onFailure {
+                toast(it.virtroidDisplayMessage(this@ControlsActivity))
+                loadRuntime()
+            }
+            connectOrStartJob = null
+            runtime?.let { bindRuntime(it, runtimeState) }
         }
     }
 
@@ -672,6 +749,13 @@ class ControlsActivity : AppCompatActivity() {
             desiredState.equals("running", ignoreCase = true) &&
             connectionStatus.equals("online", ignoreCase = true) &&
             !hostId.isNullOrBlank()
+    }
+
+    private fun RuntimeState?.shouldOfferRecoveryStop(): Boolean {
+        return this != null &&
+            canStop &&
+            !canConnect &&
+            !effectiveState.equals("starting", ignoreCase = true)
     }
 
     private fun RuntimeSummary.lifecycleLabel(): String {

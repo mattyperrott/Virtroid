@@ -1,6 +1,7 @@
 package io.virtroid.client.security
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.security.SecureRandom
@@ -50,6 +51,26 @@ class LocalVaultKeyEnvelopeTest {
                 secretKey,
                 copiedDeviceHardwareKey,
             ),
+        )
+    }
+
+    @Test
+    fun repeatedWrappingUsesFreshProviderGeneratedIvs() {
+        val dataKey = randomBytes(32)
+        val secretKey = randomBytes(32)
+        val hardwareKey = aesKey()
+
+        val first = LocalVaultKeyEnvelope.wrapHardwareSecretBoundDataKey(dataKey, secretKey, hardwareKey)
+        val second = LocalVaultKeyEnvelope.wrapHardwareSecretBoundDataKey(dataKey, secretKey, hardwareKey)
+
+        assertFalse(first.iv.contentEquals(second.iv))
+        assertArrayEquals(
+            dataKey,
+            LocalVaultKeyEnvelope.unwrapHardwareSecretBoundDataKey(first, secretKey, hardwareKey),
+        )
+        assertArrayEquals(
+            dataKey,
+            LocalVaultKeyEnvelope.unwrapHardwareSecretBoundDataKey(second, secretKey, hardwareKey),
         )
     }
 

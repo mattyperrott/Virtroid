@@ -2,6 +2,7 @@ package io.virtroid.client
 
 import android.os.Bundle
 import android.view.LayoutInflater
+import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -9,7 +10,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.databinding.RuntimeCardBinding
 
 class UiPreviewActivity : AppCompatActivity() {
@@ -34,6 +37,21 @@ class UiPreviewActivity : AppCompatActivity() {
                 finish()
                 return
             }
+            "alert_dialog" -> {
+                setContentView(R.layout.screen_my_runtimes)
+                window.decorView.post {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle(getString(R.string.session_prepare_failed_title))
+                        .setMessage(
+                            "Reconcile failed: selected app package identity verification failed: " +
+                                "installed artifact did not provide the expected package: org.fdroid.basic",
+                        )
+                        .setNegativeButton(getString(R.string.controls_cancel), null)
+                        .setPositiveButton(getString(R.string.session_prepare_retry), null)
+                        .show()
+                }
+                return
+            }
         }
         val layout = when (screen) {
             "identity_provisioning" -> R.layout.screen_identity_provisioning
@@ -45,11 +63,18 @@ class UiPreviewActivity : AppCompatActivity() {
             "session_viewer" -> R.layout.screen_session_viewer
             "privacy_security" -> R.layout.screen_privacy_security
             "system_logs" -> R.layout.screen_system_logs
+            "system_logs_static" -> R.layout.screen_system_logs
             else -> R.layout.screen_my_runtimes
         }
         setContentView(layout)
+        window.decorView.post {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         when (screen) {
             "my_runtimes" -> previewRuntimes()
+            "pin_authentication" -> {
+                findViewById<View>(R.id.button_fingerprint)?.isInvisible = true
+            }
         }
     }
 

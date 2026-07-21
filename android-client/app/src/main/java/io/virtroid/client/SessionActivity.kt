@@ -25,6 +25,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
@@ -179,7 +180,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionTitleText.text = title
         binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
         binding.sessionBackToAppButton.setOnClickListener { navigateBackToApp() }
-        binding.sessionDisconnectButton.setOnClickListener { endSessionAndFinish() }
+        binding.sessionDisconnectButton.setOnClickListener { confirmSessionShutdown() }
         binding.sessionControlsButton.setOnClickListener {
             startActivity(ControlsActivity.createIntent(this, runtimeId))
         }
@@ -420,6 +421,20 @@ class SessionActivity : AppCompatActivity() {
 
     private fun endSessionAndFinish() {
         endSessionAndFinish(AppSettingsStore.SESSION_END_USER)
+    }
+
+    private fun confirmSessionShutdown() {
+        if (endingSession) {
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.session_shutdown_confirm_title))
+            .setMessage(getString(R.string.session_shutdown_confirm_body))
+            .setNegativeButton(getString(R.string.controls_cancel), null)
+            .setPositiveButton(getString(R.string.session_disconnect)) { _, _ ->
+                endSessionAndFinish()
+            }
+            .show()
     }
 
     private fun endSessionAndFinish(reason: String) {

@@ -2,13 +2,24 @@ package httpapi
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/store"
@@ -186,6 +197,150 @@ func TestBootstrapProductionFailsClosedWhenDisabled(t *testing.T) {
 	}
 	if payload["code"] != "bootstrap_disabled" {
 		t.Fatalf("payload = %#v, want stable bootstrap-disabled code", payload)
+	}
+}
+
+func TestPublicBootstrapRequiresSigningKeyProof(t *testing.T) {
+	handler := New(config.ServerConfig{
+		AppEnv:                      "production",
+		BootstrapEnabled:            true,
+		BootstrapRateLimitPerMinute: 5,
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(`{
+		"account_id":"11111111-1111-1111-1111-111111111111",
+		"device_id":"22222222-2222-2222-2222-222222222222",
+		"device_name":"Pixel",
+		"public_key":"not-a-key"
+	}`))
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("bootstrap status = %d, want %d", resp.Code, http.StatusUnauthorized)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["code"] != "bootstrap_proof_invalid" {
+		t.Fatalf("payload = %#v, want stable proof failure", payload)
+	}
+}
+
+func TestVerifyBootstrapProofAcceptsExactSignedBodyAndRejectsTampering(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(publicKeyDER)
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	body := []byte(`{"account_id":"11111111-1111-1111-1111-111111111111"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(string(body)))
+	timestamp := time.Now().Unix()
+	timestampRaw := strconv.FormatInt(timestamp, 10)
+	nonce := "33333333-3333-4333-8333-333333333333"
+	bodyDigest := sha256.Sum256(body)
+	bodyHash := base64.RawURLEncoding.EncodeToString(bodyDigest[:])
+	canonical := signedRequestCanonical(http.MethodPost, "/api/v1/bootstrap", accountID, deviceID, timestampRaw, nonce, bodyHash)
+	canonicalDigest := sha256.Sum256([]byte(canonical))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, canonicalDigest[:])
+	if err != nil {
+		t.Fatalf("SignASN1: %v", err)
+	}
+	req.Header.Set("X-Virtroid-Account-ID", accountID)
+	req.Header.Set("X-Virtroid-Device-ID", deviceID)
+	req.Header.Set("X-Virtroid-Timestamp", timestampRaw)
+	req.Header.Set("X-Virtroid-Nonce", nonce)
+	req.Header.Set("X-Virtroid-Body-SHA256", bodyHash)
+	req.Header.Set("X-Virtroid-Signature", base64.RawURLEncoding.EncodeToString(signature))
+
+	if !verifyBootstrapProof(req, body, accountID, deviceID, publicKey) {
+		t.Fatal("verifyBootstrapProof rejected valid proof")
+	}
+	tampered := append([]byte(nil), body...)
+	tampered[0] ^= 1
+	if verifyBootstrapProof(req, tampered, accountID, deviceID, publicKey) {
+		t.Fatal("verifyBootstrapProof accepted a tampered request body")
+	}
+}
+
+func TestPublicSignedBootstrapPostgresIntegration(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	defer st.Close()
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(publicKeyDER)
+	accountID := uuid.NewString()
+	deviceID := uuid.NewString()
+	defer func() {
+		if err := st.DeleteAccount(context.Background(), accountID); err != nil && !errors.Is(err, store.ErrAccountNotFound) {
+			t.Errorf("cleanup account: %v", err)
+		}
+	}()
+	body := []byte(fmt.Sprintf(
+		`{"account_id":%q,"device_id":%q,"device_name":"Public client","public_key":%q}`,
+		accountID,
+		deviceID,
+		publicKey,
+	))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(string(body)))
+	timestampRaw := strconv.FormatInt(time.Now().Unix(), 10)
+	nonce := uuid.NewString()
+	bodyDigest := sha256.Sum256(body)
+	bodyHash := base64.RawURLEncoding.EncodeToString(bodyDigest[:])
+	canonical := signedRequestCanonical(http.MethodPost, "/api/v1/bootstrap", accountID, deviceID, timestampRaw, nonce, bodyHash)
+	canonicalDigest := sha256.Sum256([]byte(canonical))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, canonicalDigest[:])
+	if err != nil {
+		t.Fatalf("SignASN1: %v", err)
+	}
+	req.Header.Set("X-Virtroid-Account-ID", accountID)
+	req.Header.Set("X-Virtroid-Device-ID", deviceID)
+	req.Header.Set("X-Virtroid-Timestamp", timestampRaw)
+	req.Header.Set("X-Virtroid-Nonce", nonce)
+	req.Header.Set("X-Virtroid-Body-SHA256", bodyHash)
+	req.Header.Set("X-Virtroid-Signature", base64.RawURLEncoding.EncodeToString(signature))
+	resp := httptest.NewRecorder()
+	New(config.ServerConfig{
+		AppEnv:                      "production",
+		BootstrapEnabled:            true,
+		BootstrapRateLimitPerMinute: 5,
+	}, st).ServeHTTP(resp, req)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("public bootstrap status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var payload store.BootstrapResult
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode bootstrap response: %v", err)
+	}
+	if payload.Account.ID != accountID || payload.Device.ID != deviceID || payload.Runtime != nil {
+		t.Fatalf("unexpected public bootstrap result: %+v", payload)
 	}
 }
 

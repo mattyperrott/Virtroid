@@ -118,6 +118,11 @@ CREATE TABLE IF NOT EXISTS devices (
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS blob_key_verifier TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
+-- Schema 2026072102 removes the short-lived operator invitation experiment.
+-- Public identity creation is intentional and is protected by signed device
+-- proof-of-possession at the HTTP boundary instead of central approval.
+DROP TABLE IF EXISTS enrollment_invitations;
+
 CREATE TABLE IF NOT EXISTS account_storage (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     provider TEXT NOT NULL DEFAULT 'local-disk',

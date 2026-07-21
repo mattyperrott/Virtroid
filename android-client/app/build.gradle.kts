@@ -35,6 +35,9 @@ val releaseArtifactTaskNames = setOf("assembleRelease", "packageRelease", "bundl
 val defaultControlPlaneUrl = signingValue("VIRTROID_DEFAULT_CONTROL_PLANE_URL")
     ?: "https://virtroid.network"
 val defaultControlPlaneUsesCleartext = defaultControlPlaneUrl.startsWith("http://", ignoreCase = true)
+val debugControlPlaneUrl = signingValue("VIRTROID_DEBUG_CONTROL_PLANE_URL")
+    ?: defaultControlPlaneUrl
+val debugControlPlaneUsesCleartext = debugControlPlaneUrl.startsWith("http://", ignoreCase = true)
 
 android {
     namespace = "io.virtroid.client"
@@ -66,7 +69,8 @@ android {
 
     buildTypes {
         debug {
-            manifestPlaceholders["usesCleartextTraffic"] = true
+            buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(debugControlPlaneUrl))
+            manifestPlaceholders["usesCleartextTraffic"] = debugControlPlaneUsesCleartext
         }
 
         release {

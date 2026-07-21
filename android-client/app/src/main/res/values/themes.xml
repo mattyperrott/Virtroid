@@ -5,6 +5,13 @@
         <item name="colorSecondary">@color/virtroid_secondary</item>
         <item name="colorSurface">@color/virtroid_surface</item>
         <item name="colorOnSurface">@color/virtroid_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/virtroid_on_surface_variant</item>
+        <item name="colorSurfaceVariant">@color/virtroid_surface_alt</item>
+        <item name="colorSurfaceContainerLowest">@color/virtroid_surface</item>
+        <item name="colorSurfaceContainerLow">@color/virtroid_surface_elevated</item>
+        <item name="colorSurfaceContainer">@color/virtroid_surface_alt</item>
+        <item name="colorSurfaceContainerHigh">@color/virtroid_card_surface</item>
+        <item name="colorSurfaceContainerHighest">@color/virtroid_card_surface_soft</item>
         <item name="colorError">@color/virtroid_error</item>
         <item name="android:windowBackground">@color/virtroid_surface</item>
         <item name="android:statusBarColor" tools:targetApi="l">@android:color/transparent</item>
@@ -16,6 +23,14 @@
         <item name="materialButtonStyle">@style/VirtroidButton.Primary</item>
         <item name="materialButtonOutlinedStyle">@style/VirtroidButton.Secondary</item>
         <item name="textInputStyle">@style/Widget.Virtroid.TextInputLayout</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Virtroid.MaterialAlertDialog</item>
+    </style>
+
+    <style name="ThemeOverlay.Virtroid.MaterialAlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorPrimary">@color/virtroid_primary</item>
+        <item name="colorOnSurface">@color/virtroid_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/virtroid_on_surface_variant</item>
+        <item name="colorSurfaceContainerHigh">@color/virtroid_card_surface</item>
     </style>
 
     <style name="Theme.Virtroid.Modal" parent="Theme.Virtroid">
