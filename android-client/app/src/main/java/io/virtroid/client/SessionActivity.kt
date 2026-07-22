@@ -624,7 +624,7 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun showEndingError(error: Throwable) {
-        val message = error.message ?: getString(R.string.status_error)
+        val message = error.virtroidDisplayMessage(this)
         binding.sessionSubtitleText.text = message
         toast(message)
     }

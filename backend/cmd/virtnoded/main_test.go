@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +83,18 @@ func TestNormalizeViewerPrepareParamsRejectsOutOfRangeValues(t *testing.T) {
 	}
 	if _, _, err := normalizeViewerPrepareParams(viewerDefaultMaxSize, viewerMaxBitRate+1, runtimeAssignment{}); err == nil || !strings.Contains(err.Error(), "bit_rate") {
 		t.Fatalf("oversized bit_rate error = %v, want bit_rate rejection", err)
+	}
+}
+
+func TestViewerServiceReuseRequiresEncryptedAndPlaintextListeners(t *testing.T) {
+	condition := viewerServiceReuseListenerCondition()
+	for _, port := range []int{encryptedViewerPort, scrcpyPlainPort} {
+		if !strings.Contains(condition, fmt.Sprintf("grep -q ':%d'", port)) {
+			t.Fatalf("viewer reuse condition %q does not require listener %d", condition, port)
+		}
+	}
+	if count := strings.Count(condition, "ss -ltn"); count != 2 {
+		t.Fatalf("viewer reuse condition checks %d listeners, want 2: %q", count, condition)
 	}
 }
 

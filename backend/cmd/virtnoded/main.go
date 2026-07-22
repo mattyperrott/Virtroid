@@ -3169,6 +3169,14 @@ func (n *nodeAgent) setContainerProp(ctx context.Context, containerName, key, va
 	return err
 }
 
+func viewerServiceReuseListenerCondition() string {
+	return fmt.Sprintf(
+		"ss -ltn 2>/dev/null | grep -q ':%d' && ss -ltn 2>/dev/null | grep -q ':%d'",
+		encryptedViewerPort,
+		scrcpyPlainPort,
+	)
+}
+
 func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clientIP string, maxSize, bitRate int) error {
 	clientIP = strings.TrimSpace(clientIP)
 	if clientIP == "" {
@@ -3180,7 +3188,7 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 			"current_size=$(getprop virtroid.viewer.max_size); "+
 			"current_bitrate=$(getprop virtroid.viewer.bit_rate); "+
 			"svc=$(getprop init.svc.virtroid_viewer); "+
-			"if [ \"$svc\" = \"running\" ] && [ \"$current_ip\" = \"$desired_ip\" ] && [ \"$current_size\" = \"$desired_size\" ] && [ \"$current_bitrate\" = \"$desired_bitrate\" ] && [ -s \"$public_key\" ] && ss -ltn 2>/dev/null | grep -q ':%d'; then exit 0; fi; "+
+			"if [ \"$svc\" = \"running\" ] && [ \"$current_ip\" = \"$desired_ip\" ] && [ \"$current_size\" = \"$desired_size\" ] && [ \"$current_bitrate\" = \"$desired_bitrate\" ] && [ -s \"$public_key\" ] && %s; then exit 0; fi; "+
 			"rm -f /data/local/tmp/virtroid-viewer.log \"$public_key\"; "+
 			"setprop virtroid.viewer.client_ip %s; "+
 			"setprop virtroid.viewer.max_size %d; "+
@@ -3207,7 +3215,7 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 		maxSize,
 		bitRate,
 		shellEscape(viewerPublicKeyPath),
-		encryptedViewerPort,
+		viewerServiceReuseListenerCondition(),
 		shellEscape(clientIP),
 		maxSize,
 		bitRate,

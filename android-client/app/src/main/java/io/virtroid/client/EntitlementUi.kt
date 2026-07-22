@@ -3,6 +3,7 @@ package io.virtroid.client
 import android.content.Context
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.VirtroidApiException
+import io.virtroid.client.security.IdentityPasswordStore
 
 internal fun EntitlementSummary.createRuntimeBlockedMessage(context: Context): String? {
     if (canCreateRuntime) {
@@ -29,6 +30,9 @@ internal fun EntitlementSummary.startRuntimeBlockedMessage(context: Context): St
 }
 
 internal fun Throwable.virtroidDisplayMessage(context: Context): String {
+    if (isIdentityAuthenticationFailure()) {
+        IdentityPasswordStore(context).clearUnlocked()
+    }
     val code = (this as? VirtroidApiException)?.code
     val rawMessage = message.orEmpty()
     return when (code) {
@@ -49,6 +53,12 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
             else -> rawMessage.ifBlank { context.getString(R.string.status_error) }
         }
     }
+}
+
+internal fun Throwable.isIdentityAuthenticationFailure(): Boolean {
+    val apiError = this as? VirtroidApiException
+    return apiError?.errorMessage?.equals("identity authentication failed", ignoreCase = true) == true ||
+        message.orEmpty().equals("identity authentication failed", ignoreCase = true)
 }
 
 internal fun Throwable.isGoneSessionResponse(): Boolean {

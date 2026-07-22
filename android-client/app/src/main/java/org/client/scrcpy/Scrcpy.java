@@ -82,7 +82,7 @@ public class Scrcpy extends Service {
 
     private DataInputStream socketInputStream = null;
     private DataOutputStream socketOutputStream = null;
-    private Socket activeSocket = null;
+    private volatile Socket activeSocket = null;
 
     @Override
     public void onCreate() {
@@ -190,12 +190,7 @@ public class Scrcpy extends Service {
     public void StopService() {
         LetServceRunning.set(false);
         stopForegroundCompat();
-        if (activeSocket != null) {
-            try {
-                activeSocket.close();
-            } catch (IOException ignore) {
-            }
-        }
+        closeActiveSocketAsync();
         if (videoDecoder != null) {
             videoDecoder.stop();
         }
@@ -208,12 +203,7 @@ public class Scrcpy extends Service {
     @Override
     public void onDestroy() {
         LetServceRunning.set(false);
-        if (activeSocket != null) {
-            try {
-                activeSocket.close();
-            } catch (IOException ignore) {
-            }
-        }
+        closeActiveSocketAsync();
         if (videoDecoder != null) {
             videoDecoder.stop();
         }
@@ -222,6 +212,22 @@ public class Scrcpy extends Service {
         }
         stopForegroundCompat();
         super.onDestroy();
+    }
+
+    private void closeActiveSocketAsync() {
+        Socket socket = activeSocket;
+        activeSocket = null;
+        if (socket == null) {
+            return;
+        }
+        Thread closeThread = new Thread(() -> {
+            try {
+                socket.close();
+            } catch (IOException e) {
+                debugLog("close active socket failed", e);
+            }
+        }, "virtroid-viewer-socket-close");
+        closeThread.start();
     }
 
     private void ensureForeground() {
