@@ -1234,6 +1234,12 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(runtime.Status), "stopped") &&
+		strings.EqualFold(strings.TrimSpace(runtime.DesiredState), "stopped") {
+		// A fully stopped runtime has no node work left that can consume the
+		// duplicate request's short-lived envelope.
+		a.activeBlobKeys.clear(runtimeID)
+	}
 
 	writeJSON(w, http.StatusAccepted, runtime)
 }
@@ -2786,6 +2792,8 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusConflict, store.RuntimeBlobOwnerCode, err.Error())
 	case store.ErrRuntimeCleanupPending:
 		writeAPIError(w, http.StatusConflict, store.RuntimeCleanupPendingCode, err.Error())
+	case store.ErrRuntimeNotReady:
+		writeAPIError(w, http.StatusConflict, store.RuntimeNotReadyCode, err.Error())
 	case store.ErrRuntimeEntitlement:
 		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeEntitlementRequiredCode, err.Error())
 	case store.ErrRuntimeQuota:

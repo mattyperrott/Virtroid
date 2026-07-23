@@ -2454,6 +2454,73 @@ func TestRuntimeBlobKeyTargetWipeUsesLocalBlobOwnerHost(t *testing.T) {
 	}
 }
 
+func TestRuntimeBlobKeyTargetDuplicateStopUsesLocalBlobOwnerHost(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	blobHostID := "host-blob"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeRowsWithBlob(now, runtimeID, accountID, "stopped", "stopped", "offline", nil, nil, "local-disk", `{"store":"local-disk"}`, blobHostID))
+	mock.ExpectQuery("SELECT h.id, h.name, h.advertise_addr").
+		WithArgs(blobHostID).
+		WillReturnRows(hostRows(now, blobHostID, "node-public-key"))
+	mock.ExpectCommit()
+
+	_, host, err := st.RuntimeBlobKeyTarget(context.Background(), accountID, runtimeID, "stop")
+	if err != nil {
+		t.Fatalf("RuntimeBlobKeyTarget returned error: %v", err)
+	}
+	if host.ID != blobHostID {
+		t.Fatalf("host.ID = %q, want %q", host.ID, blobHostID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestAttachStorageQuotaSkipsDeletingRuntimeWithoutEntitlement(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	mock.ExpectRollback()
+
+	runtimes := []Runtime{{
+		ID:           "33333333-3333-3333-3333-333333333333",
+		AccountID:    "11111111-1111-1111-1111-111111111111",
+		Status:       "deleting",
+		DesiredState: "deleted",
+	}}
+	if err := attachStorageQuotaToRuntimesTX(context.Background(), tx, runtimes); err != nil {
+		t.Fatalf("attachStorageQuotaToRuntimesTX returned error: %v", err)
+	}
+	if runtimes[0].StorageBytesLimit != nil || runtimes[0].StorageBytesUsed != nil {
+		t.Fatalf("deleting runtime unexpectedly received quota data: %+v", runtimes[0])
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestRuntimeBlobKeyTargetRejectsHostlessLocalBlobWithoutOwner(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

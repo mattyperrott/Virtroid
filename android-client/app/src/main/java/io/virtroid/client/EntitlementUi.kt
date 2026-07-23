@@ -32,6 +32,7 @@ internal fun EntitlementSummary.startRuntimeBlockedMessage(context: Context): St
 internal fun Throwable.virtroidDisplayMessage(context: Context): String {
     if (isIdentityAuthenticationFailure()) {
         IdentityPasswordStore(context).clearUnlocked()
+        return context.getString(R.string.identity_password_incorrect)
     }
     val code = (this as? VirtroidApiException)?.code
     val rawMessage = message.orEmpty()

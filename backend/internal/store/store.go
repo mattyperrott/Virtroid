@@ -113,6 +113,7 @@ const (
 	NoReadyHostCode                 = "no_ready_host"
 	RuntimeBlobOwnerCode            = "runtime_blob_owner_unknown"
 	RuntimeCleanupPendingCode       = "runtime_cleanup_pending"
+	RuntimeNotReadyCode             = "runtime_not_ready"
 )
 
 type BootstrapResult struct {
@@ -4063,10 +4064,11 @@ func (s *Store) RuntimeBlobKeyTarget(ctx context.Context, accountID, runtimeID, 
 	case "start":
 		hostID, err = runtimeStartHostTX(ctx, tx, runtime)
 	case "stop":
-		hostID = valueOrEmpty(runtime.HostID)
-		if hostID == "" {
-			return Runtime{}, Host{}, ErrRuntimeNotReady
-		}
+		// A duplicate stop can race with the node finishing its snapshot and
+		// clearing host_id. Use the snapshot owner (or another ready host when
+		// there is no node-local blob) so the request remains a controlled,
+		// authenticated idempotent mutation instead of failing with a 500.
+		hostID, err = runtimeCleanupHostTX(ctx, tx, runtime)
 	case "wipe":
 		hostID, err = runtimeCleanupHostTX(ctx, tx, runtime)
 	case "delete":
@@ -5317,6 +5319,15 @@ func attachStorageQuotaToRuntimesTX(ctx context.Context, tx *sql.Tx, runtimes []
 	}
 	quotasByAccount := make(map[string]storageQuota)
 	for i := range runtimes {
+		// Account deletion deliberately removes entitlement rows before the
+		// assigned node has erased containers and encrypted blobs. Cleanup work
+		// does not consume quota and must remain visible to the node, otherwise
+		// one deleted account blocks the complete assignment feed and deadlocks
+		// its own cleanup.
+		if strings.EqualFold(strings.TrimSpace(runtimes[i].DesiredState), "deleted") ||
+			strings.EqualFold(strings.TrimSpace(runtimes[i].Status), "deleting") {
+			continue
+		}
 		accountID := strings.TrimSpace(runtimes[i].AccountID)
 		quota, ok := quotasByAccount[accountID]
 		if !ok {

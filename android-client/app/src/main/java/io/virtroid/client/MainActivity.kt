@@ -250,7 +250,6 @@ class MainActivity : AppCompatActivity() {
         latestEntitlement = entitlement
         latestRuntimes = runtimes
         latestRuntimeStates = stateByRuntimeId
-        renderEntitlement(entitlement)
         binding.runtimeListContainer.removeAllViews()
         binding.runtimeEmptyText.isVisible = runtimes.isEmpty()
         binding.runtimeEmptyText.text = if (runtimes.isEmpty()) {
@@ -295,49 +294,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         renderRuntimes(latestRuntimes)
-    }
-
-    private fun renderEntitlement(entitlement: EntitlementSummary?) {
-        binding.entitlementPanel.isVisible = entitlement != null
-        if (entitlement == null) {
-            binding.createRuntimeButton.isEnabled = !binding.progressIndicator.isVisible
-            return
-        }
-
-        binding.entitlementTitleText.text = when (entitlement.source.lowercase(Locale.US)) {
-            "trial" -> getString(
-                R.string.entitlement_trial_title,
-                entitlement.runtimeLimit,
-                entitlement.runtimeStartsPerDay,
-            )
-            else -> getString(
-                R.string.entitlement_plan_title,
-                entitlement.source.ifBlank { entitlement.status }.replaceFirstChar { it.titlecase(Locale.US) },
-                entitlement.runtimeLimit,
-                entitlement.runtimeStartsPerDay,
-            )
-        }
-        val allowanceDetail = getString(
-            R.string.entitlement_detail,
-            entitlement.runtimeCount,
-            entitlement.runtimeLimit,
-            entitlement.runtimeStartsRemainingToday,
-        )
-        val storageDetail = getString(
-            R.string.entitlement_detail_with_storage,
-            allowanceDetail,
-            entitlement.storageBytesRemaining.coerceAtLeast(0L) / (1024L * 1024L),
-        )
-        binding.entitlementDetailText.text = if (entitlement.source.equals("trial", ignoreCase = true)) {
-            getString(
-                R.string.entitlement_detail_with_trial_time,
-                storageDetail,
-                (entitlement.trialRuntimeSecondsRemaining + 59L) / 60L,
-            )
-        } else {
-            storageDetail
-        }
-        binding.createRuntimeButton.isEnabled = !binding.progressIndicator.isVisible && entitlement.canCreateRuntime
     }
 
     private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary, state: RuntimeState?) {

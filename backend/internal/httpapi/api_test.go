@@ -662,6 +662,23 @@ func TestRuntimeMutationErrorsIncludeStableCodes(t *testing.T) {
 	}
 }
 
+func TestRuntimeNotReadyIsAControlledConflict(t *testing.T) {
+	resp := httptest.NewRecorder()
+
+	writeRuntimeMutationError(resp, store.ErrRuntimeNotReady)
+
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", resp.Code, http.StatusConflict)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["code"] != store.RuntimeNotReadyCode {
+		t.Fatalf("code = %q, want %q", payload["code"], store.RuntimeNotReadyCode)
+	}
+}
+
 func TestRuntimeMutationUnexpectedErrorIsNotExposed(t *testing.T) {
 	resp := httptest.NewRecorder()
 
