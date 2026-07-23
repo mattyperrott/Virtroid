@@ -95,9 +95,10 @@
     <string name="lock_passphrase_prompt">Choose a passphrase</string>
     <string name="lock_pin_mismatch">PINs did not match</string>
     <string name="lock_passphrase_empty">Passphrase cannot be empty</string>
-    <string name="identity_password_title">Identity Password</string>
-    <string name="identity_password_prompt">Choose the password used for blob encryption and runtime authentication</string>
-    <string name="identity_password_field_hint">Identity password</string>
+    <string name="identity_password_title">Blob Encryption Password</string>
+    <string name="identity_password_prompt">Enter the longer blob encryption password created during onboarding. This is not your 6-digit App Lock PIN.</string>
+    <string name="identity_password_field_hint">Blob encryption password</string>
+    <string name="identity_password_incorrect">That blob encryption password is incorrect. Do not enter your 6-digit App Lock PIN.</string>
     <string name="password_show">Show password</string>
     <string name="password_hide">Hide password</string>
     <string name="identity_password_confirm_field_hint">Confirm identity password</string>
@@ -153,13 +154,9 @@
     <string name="home_access">Access</string>
     <string name="home_empty_title">No runtimes yet</string>
     <string name="home_empty_subtitle">Create your first cloud phone to get started.</string>
-    <string name="entitlement_trial_title">Trial: %1$d runtimes, %2$d starts/day</string>
-    <string name="entitlement_plan_title">%1$s: %2$d runtimes, %3$d starts/day</string>
-    <string name="entitlement_trial_title_fallback">Trial runtime allowance</string>
     <string name="entitlement_detail">%1$d of %2$d runtimes used • %3$d starts left today</string>
     <string name="entitlement_detail_with_storage">%1$s • %2$d MiB encrypted storage left</string>
     <string name="entitlement_detail_with_trial_time">%1$s • %2$d trial minutes left</string>
-    <string name="entitlement_detail_fallback">Runtime allowance loading…</string>
     <string name="entitlement_unavailable">Runtime allowance is unavailable.</string>
     <string name="entitlement_required">Storage or plan setup is required before creating runtimes.</string>
     <string name="entitlement_runtime_quota_reached">Runtime limit reached for this account.</string>
