@@ -402,7 +402,7 @@ public class Scrcpy extends Service {
         DataInputStream dataInputStream = null;
         DataOutputStream dataOutputStream = null;
         Socket socket = null;
-        boolean firstConnect = true;
+        boolean relayTokenConsumed = false;
         int attempts = 50;
         while (attempts > 0 && LetServceRunning.get()) {
             try {
@@ -415,19 +415,12 @@ public class Scrcpy extends Service {
 
                 debugLog("Connected to relay");
                 performRelayHandshake(socket, ip, port);
+                relayTokenConsumed = true;
                 ViewerEncryption.Streams encryptedStreams = ViewerEncryption.open(socket, viewerPublicKey);
 
-                // 能够正常进行连接，说明可能建立了 tcp 连接，需要等待数据
-                // 一次等待时间为 2s ，最多等待五次，也就是 10秒
-                if (firstConnect) {  // 此处有 while 循环，不能一直设置为10
-                    firstConnect = false;
-                    // waitResolutionCount 为 10，等待100ms 也就是共计一秒钟，设置attempts 为 5，也就是 5秒后则退出
-                    attempts = 5;
-                }
                 socket.setSoTimeout(10_000);
                 dataInputStream = new DataInputStream(encryptedStreams.input);
                 dataOutputStream = new DataOutputStream(encryptedStreams.output);
-                attempts = 0;
                 byte[] buf = new byte[8];
                 dataInputStream.readFully(buf, 0, 8);
                 socket.setSoTimeout(0);
@@ -453,11 +446,20 @@ public class Scrcpy extends Service {
 
             } catch (Exception e) {
                 debugLog("viewer connection failed", e);
+                socket_status = false;
                 if (LetServceRunning.get()) {
+                    // Relay tokens are single-use. Once the encrypted stream was
+                    // established, the activity must issue a fresh token before
+                    // reconnecting; retrying this token would only hammer the
+                    // relay and leave a frozen surface marked connected.
+                    if (relayTokenConsumed) {
+                        if (serviceCallbacks != null) {
+                            serviceCallbacks.errorDisconnect();
+                        }
+                        return;
+                    }
                     attempts--;
-                    if (attempts < 0) {
-                        socket_status = false;
-
+                    if (attempts <= 0) {
                         if (serviceCallbacks != null) {
                             serviceCallbacks.errorDisconnect();
                         }
@@ -583,7 +585,7 @@ public class Scrcpy extends Service {
         return false;
     }
 
-    private void loop(DataInputStream dataInputStream, DataOutputStream dataOutputStream, int delay) throws InterruptedException {
+    private void loop(DataInputStream dataInputStream, DataOutputStream dataOutputStream, int delay) throws IOException, InterruptedException {
         VideoPacket.StreamSettings streamSettings = null;
         byte[] packetSize = new byte[4];
 
@@ -712,7 +714,10 @@ public class Scrcpy extends Service {
 
                 }
             } catch (IOException e) {
-                debugLog("viewer loop I/O failed", e);
+                // The outer connection loop owns reconnect policy. Propagating
+                // EOF avoids an unbounded busy loop over a dead encrypted
+                // stream and lets the activity obtain a fresh relay token.
+                throw e;
             } finally {
                 if (waitEvent) {
                     Thread.sleep(5);
