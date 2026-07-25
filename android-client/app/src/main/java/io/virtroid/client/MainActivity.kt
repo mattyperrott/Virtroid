@@ -472,16 +472,19 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 runCatching {
                     val state = api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)
-                    val relayToken = if (state.canResumeRuntime(runtime.id)) {
+                    val relayRefresh = if (state.canResumeRuntime(runtime.id)) {
                         api.issueSessionRelayToken(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)
                     } else {
-                        ""
+                        null
                     }
-                    state to relayToken
+                    state to relayRefresh
                 }.onSuccess {
-                    val (state, relayToken) = it
-                    if (state.canResumeRuntime(runtime.id) && relayToken.isNotBlank()) {
-                        val updatedSession = session.copy(relayToken = relayToken)
+                    val (state, relayRefresh) = it
+                    if (state.canResumeRuntime(runtime.id) && relayRefresh != null) {
+                        val updatedSession = session.copy(
+                            relayToken = relayRefresh.relayToken,
+                            viewerPublicKey = relayRefresh.viewerPublicKey,
+                        )
                         activeSessionStore.save(updatedSession)
                         appLogs.info("Returning to active session for ${runtime.name}", "session")
                         startActivity(SessionActivity.createIntent(this@MainActivity, updatedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))

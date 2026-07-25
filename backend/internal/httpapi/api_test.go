@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/store"
 )
@@ -455,6 +458,78 @@ func TestValidateNodeAdvertiseAddrDevelopmentAllowsSyntacticHost(t *testing.T) {
 	}
 	if got != "node.dev.internal" {
 		t.Fatalf("validateNodeAdvertiseAddr = %q, want node.dev.internal", got)
+	}
+}
+
+func TestPrepareViewerSendsSignedReconnectParametersAndReturnsFreshKey(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("MarshalPKCS8PrivateKey: %v", err)
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	publicKeyMaterial := base64.StdEncoding.EncodeToString(publicKeyDER)
+
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/viewer/prepare" {
+			t.Fatalf("request = %s %s, want viewer prepare POST", r.Method, r.URL.Path)
+		}
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			t.Fatalf("read body: %v", readErr)
+		}
+		if verifyErr := callbackauth.Verify(
+			publicKeyMaterial,
+			r.Method,
+			r.URL.RequestURI(),
+			r.Header.Get(callbackauth.HeaderTimestamp),
+			r.Header.Get(callbackauth.HeaderNonce),
+			r.Header.Get(callbackauth.HeaderBodySHA256),
+			r.Header.Get(callbackauth.HeaderSignature),
+		); verifyErr != nil {
+			t.Fatalf("verify callback signature: %v", verifyErr)
+		}
+		var request struct {
+			RuntimeID string `json:"runtime_id"`
+			MaxSize   int    `json:"max_size"`
+			BitRate   int    `json:"bit_rate"`
+		}
+		if decodeErr := json.Unmarshal(body, &request); decodeErr != nil {
+			t.Fatalf("decode body: %v", decodeErr)
+		}
+		if request.RuntimeID != "runtime-reconnect" || request.MaxSize != 1600 || request.BitRate != viewerReconnectBitRate {
+			t.Fatalf("prepare request = %#v", request)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"viewer_public_key": "fresh-viewer-key"})
+	}))
+	defer node.Close()
+
+	host, portRaw, err := net.SplitHostPort(node.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener address: %v", err)
+	}
+	port, err := strconv.Atoi(portRaw)
+	if err != nil {
+		t.Fatalf("parse listener port: %v", err)
+	}
+	api := &API{cfg: config.ServerConfig{
+		AppEnv:                         "production",
+		NodeAllowedAdvertiseAddrs:      []string{host},
+		ControlPlaneCallbackPrivateKey: base64.StdEncoding.EncodeToString(privateKeyDER),
+	}}
+
+	got, err := api.prepareViewer(context.Background(), host, port, "runtime-reconnect", 1600, viewerReconnectBitRate)
+	if err != nil {
+		t.Fatalf("prepareViewer: %v", err)
+	}
+	if got != "fresh-viewer-key" {
+		t.Fatalf("viewer public key = %q, want fresh-viewer-key", got)
 	}
 }
 

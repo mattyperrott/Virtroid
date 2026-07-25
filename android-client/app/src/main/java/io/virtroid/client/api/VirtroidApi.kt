@@ -66,6 +66,11 @@ data class SessionLaunch(
     val viewerAddress: String,
 )
 
+data class SessionRelayRefresh(
+    val relayToken: String,
+    val viewerPublicKey: String,
+)
+
 data class SessionState(
     val sessionId: String,
     val runtimeId: String,
@@ -748,7 +753,7 @@ class VirtroidApi(
         deviceId: String,
         runtimeId: String,
         sessionId: String,
-    ): String = withContext(Dispatchers.IO) {
+    ): SessionRelayRefresh = withContext(Dispatchers.IO) {
         val payload = executeJson(
             capabilityJsonRequest(
                 baseUrl = baseUrl,
@@ -757,7 +762,12 @@ class VirtroidApi(
                 runtimeId = runtimeId,
             ),
         )
-        payload.getJSONObject("session").getString("relay_token")
+        SessionRelayRefresh(
+            relayToken = payload.getJSONObject("session").getString("relay_token"),
+            viewerPublicKey = payload.optString("viewer_public_key").ifBlank {
+                throw IOException("viewer identity key is required")
+            },
+        )
     }
 
     suspend fun endSession(

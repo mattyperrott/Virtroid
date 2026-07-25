@@ -76,6 +76,8 @@ class SessionActivity : AppCompatActivity() {
     private var lastInteractionAtMs = System.currentTimeMillis()
     private var inactivityJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var viewerReconnectJob: Job? = null
+    private var viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
     private var sessionUnavailable = false
     private var heartbeatFailureCount = 0
 
@@ -83,6 +85,7 @@ class SessionActivity : AppCompatActivity() {
         override fun onConnected(remoteWidth: Int, remoteHeight: Int) {
             runOnUiThread {
                 appLogs.info("Session stream connected for $runtimeName", "session")
+                viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
                 binding.sessionSubtitleText.text = getString(
                     R.string.session_secure_online_with_resolution,
                     remoteWidth,
@@ -112,6 +115,8 @@ class SessionActivity : AppCompatActivity() {
                     getString(R.string.session_failed_message_inline, message)
                 }
                 if (!endingSession) {
+                    viewerReconnectDelayMs =
+                        (viewerReconnectDelayMs * 2).coerceAtMost(VIEWER_RECONNECT_MAX_DELAY_MS)
                     appLogs.error("Session stream disconnected: $message", "session")
                     binding.sessionStreamStatusText.text = if (sessionUnavailable) {
                         getString(R.string.session_heartbeat_stale)
@@ -185,6 +190,7 @@ class SessionActivity : AppCompatActivity() {
             startActivity(ControlsActivity.createIntent(this, runtimeId))
         }
         binding.sessionRetryButton.setOnClickListener {
+            viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
             retryViewerConnection()
         }
         binding.sessionUploadButton.isVisible = false
@@ -280,6 +286,7 @@ class SessionActivity : AppCompatActivity() {
     override fun onDestroy() {
         inactivityJob?.cancel()
         heartbeatJob?.cancel()
+        viewerReconnectJob?.cancel()
         disconnectViewer()
         super.onDestroy()
     }
@@ -341,9 +348,12 @@ class SessionActivity : AppCompatActivity() {
         sessionHost = null
     }
 
-    private fun retryViewerConnection() {
+    private fun retryViewerConnection(delayMs: Long = 0L) {
         if (sessionUnavailable) {
             toast(getString(R.string.session_heartbeat_stale))
+            return
+        }
+        if (viewerReconnectJob?.isActive == true) {
             return
         }
         val surface = viewerSurface ?: return
@@ -354,11 +364,15 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionStreamProgress.isVisible = true
         binding.sessionStreamStatusOverlay.isVisible = true
         binding.sessionRetryButton.isVisible = false
-        lifecycleScope.launch {
+        viewerReconnectJob = lifecycleScope.launch {
+            if (delayMs > 0L) {
+                delay(delayMs)
+            }
             runCatching {
                 api.issueSessionRelayToken(baseUrl, accountId, deviceId, runtimeId, sessionId)
-            }.onSuccess { freshRelayToken ->
-                relayToken = freshRelayToken
+            }.onSuccess { refresh ->
+                relayToken = refresh.relayToken
+                viewerPublicKey = refresh.viewerPublicKey
                 persistActiveSession()
                 connectViewer(surface)
             }.onFailure { error ->
@@ -368,6 +382,7 @@ class SessionActivity : AppCompatActivity() {
                 binding.sessionRetryButton.isVisible = true
                 toast(error.virtroidDisplayMessage(this@SessionActivity))
             }
+            viewerReconnectJob = null
         }
     }
 
@@ -670,6 +685,9 @@ class SessionActivity : AppCompatActivity() {
         val heartbeatAt = LocalTime.now().format(HEARTBEAT_TIME_FORMAT)
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_accent)
         binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_ok, heartbeatAt)
+        if (!endingSession && !sessionUnavailable && sessionHost == null && viewerSurface != null) {
+            retryViewerConnection(viewerReconnectDelayMs)
+        }
     }
 
     private fun markHeartbeatRetrying() {
@@ -790,6 +808,8 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_BASE_URL = "base_url"
         private const val SESSION_HEARTBEAT_INTERVAL_MS = 20_000L
         private const val HEARTBEAT_RETRY_VISIBLE_THRESHOLD = 2
+        private const val VIEWER_RECONNECT_INITIAL_DELAY_MS = 1_000L
+        private const val VIEWER_RECONNECT_MAX_DELAY_MS = 10_000L
         private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182
         private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 

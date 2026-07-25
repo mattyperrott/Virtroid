@@ -100,6 +100,7 @@ const activeBlobKeyHandoffTTL = 2 * time.Minute
 const bootstrapRateLimitWindow = time.Minute
 const defaultBootstrapMaxBodyBytes = 32 * 1024
 const viewerPrepareProxyTimeout = 90 * time.Second
+const viewerReconnectBitRate = 4_000_000
 const blobKeyEnvelopeAlgorithm = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
 const maxAPIRequestBodyBytes int64 = 2 << 20
 
@@ -1600,8 +1601,45 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var session store.Session
+	var state store.SessionState
 	var err error
+	if actor.capability {
+		state, err = a.store.GetSessionStateWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
+	} else {
+		state, err = a.store.GetSessionState(r.Context(), actor.accountID, actor.deviceID, r.PathValue("id"))
+	}
+	if err != nil {
+		if err == store.ErrSessionNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeInternalAPIError(w, "session_state_lookup_failed", err)
+		return
+	}
+	if !state.CanResume || state.Runtime.HostID == nil || state.Runtime.ViewerPort == nil {
+		writeAPIError(w, http.StatusConflict, "session_not_resumable", "session is not resumable")
+		return
+	}
+
+	host, err := a.store.GetHost(r.Context(), *state.Runtime.HostID)
+	if err != nil {
+		writeInternalAPIError(w, "session_host_lookup_failed", err)
+		return
+	}
+	viewerPublicKey, err := a.prepareViewer(
+		r.Context(),
+		host.AdvertiseAddr,
+		host.RelayPort,
+		state.Runtime.ID,
+		max(state.Runtime.WidthPx, state.Runtime.HeightPx),
+		viewerReconnectBitRate,
+	)
+	if err != nil {
+		writeServerAPIError(w, http.StatusBadGateway, "viewer_reprepare_failed", "upstream service error", err)
+		return
+	}
+
+	var session store.Session
 	if actor.capability {
 		session, err = a.store.IssueSessionRelayTokenWithCapability(r.Context(), actor.accountID, actor.capabilityID, r.PathValue("id"))
 	} else {
@@ -1616,7 +1654,10 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{"session": session})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"session":           session,
+		"viewer_public_key": viewerPublicKey,
+	})
 }
 
 func (a *API) heartbeatMySession(w http.ResponseWriter, r *http.Request) {
