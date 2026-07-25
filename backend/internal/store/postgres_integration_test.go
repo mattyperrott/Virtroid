@@ -28,7 +28,9 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	defer st.Close()
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
 
 	// Multiple replicas may start together during a deploy. The advisory lock
 	// must serialize the idempotent schema batch without partial DDL failures.
@@ -63,13 +65,7 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 	nodeID := "ci-node-" + uuid.NewString()
 	operatorID := "ci-operator-" + uuid.NewString()
 	t.Cleanup(func() {
-		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM accounts WHERE id = $1`, accountID)
-		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM node_request_nonces WHERE node_id = $1`, nodeID)
-		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM hosts WHERE id = $1`, nodeID)
-		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM node_registry_audit WHERE node_id = $1`, nodeID)
-		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM approved_nodes WHERE node_id = $1`, nodeID)
-		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM operator_registry_audit WHERE operator_id = $1`, operatorID)
-		_, _ = st.db.ExecContext(context.Background(), `DELETE FROM node_operators WHERE id = $1`, operatorID)
+		cleanupPostgresIntegrationFixture(t, st, accountID, nodeID, operatorID)
 	})
 	devicePublicKey := integrationNodePublicKey(t)
 	if _, err := st.BootstrapAccountWithIdentity(
@@ -188,7 +184,9 @@ func TestPostgresSnapshotGenerationRejectionIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	defer st.Close()
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
 	if err := st.EnsureSchema(ctx); err != nil {
 		t.Fatalf("ensure schema: %v", err)
 	}
@@ -198,15 +196,7 @@ func TestPostgresSnapshotGenerationRejectionIntegration(t *testing.T) {
 	nodeID := "snapshot-qa-node-" + uuid.NewString()
 	operatorID := "snapshot-qa-operator-" + uuid.NewString()
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM accounts WHERE id = $1`, accountID)
-		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM node_request_nonces WHERE node_id = $1`, nodeID)
-		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM hosts WHERE id = $1`, nodeID)
-		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM node_registry_audit WHERE node_id = $1`, nodeID)
-		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM approved_nodes WHERE node_id = $1`, nodeID)
-		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM operator_registry_audit WHERE operator_id = $1`, operatorID)
-		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM node_operators WHERE id = $1`, operatorID)
+		cleanupPostgresIntegrationFixture(t, st, accountID, nodeID, operatorID)
 	})
 
 	devicePublicKey := integrationNodePublicKey(t)
@@ -311,7 +301,9 @@ func TestPostgresApprovedNodeRegistryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	defer st.Close()
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
 	if err := st.EnsureSchema(ctx); err != nil {
 		t.Fatalf("ensure schema: %v", err)
 	}
@@ -469,7 +461,9 @@ func TestPostgresOperatorLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	defer st.Close()
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
 	if err := st.EnsureSchema(ctx); err != nil {
 		t.Fatalf("ensure schema: %v", err)
 	}
@@ -611,6 +605,29 @@ func TestPostgresOperatorLifecycleIntegration(t *testing.T) {
 	for index := range wantAudit {
 		if audit[index] != wantAudit[index] {
 			t.Fatalf("operator audit[%d] = %+v, want %+v", index, audit[index], wantAudit[index])
+		}
+	}
+}
+
+func cleanupPostgresIntegrationFixture(t *testing.T, st *Store, accountID, nodeID, operatorID string) {
+	t.Helper()
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cleanupCancel()
+	for _, cleanup := range []struct {
+		label string
+		query string
+		arg   string
+	}{
+		{label: "account", query: `DELETE FROM accounts WHERE id = $1`, arg: accountID},
+		{label: "node nonces", query: `DELETE FROM node_request_nonces WHERE node_id = $1`, arg: nodeID},
+		{label: "host", query: `DELETE FROM hosts WHERE id = $1`, arg: nodeID},
+		{label: "node audit", query: `DELETE FROM node_registry_audit WHERE node_id = $1`, arg: nodeID},
+		{label: "approved node", query: `DELETE FROM approved_nodes WHERE node_id = $1`, arg: nodeID},
+		{label: "operator audit", query: `DELETE FROM operator_registry_audit WHERE operator_id = $1`, arg: operatorID},
+		{label: "operator", query: `DELETE FROM node_operators WHERE id = $1`, arg: operatorID},
+	} {
+		if _, err := st.db.ExecContext(cleanupCtx, cleanup.query, cleanup.arg); err != nil {
+			t.Errorf("clean up PostgreSQL integration %s: %v", cleanup.label, err)
 		}
 	}
 }
