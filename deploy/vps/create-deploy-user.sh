@@ -109,6 +109,10 @@ fi
 sudo -u "${deploy_user}" -H docker version --format '{{.Server.Version}}' >/dev/null
 sudo -u "${deploy_user}" -H sudo -n true
 
+if [ -s "${deploy_home}/.ssh/authorized_keys" ]; then
+  passwd --lock root >/dev/null
+fi
+
 printf 'deploy user ready: %s uid=%s groups=%s\n' \
   "${deploy_user}" "${deploy_uid}" "$(id -Gn "${deploy_user}")"
 if [ ! -s "${deploy_home}/.ssh/authorized_keys" ]; then
