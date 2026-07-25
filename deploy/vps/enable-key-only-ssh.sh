@@ -86,4 +86,20 @@ if ! systemctl reload ssh; then
   exit 1
 fi
 
+verify_helper=/usr/local/sbin/virtroid-verify-host-hardening
+if [ ! -x "${verify_helper}" ]; then
+  rollback
+  systemctl reload ssh || true
+  echo "host hardening verifier is missing: ${verify_helper}" >&2
+  exit 1
+fi
+if ! VIRTROID_REQUIRE_ROOT_LOCKED=true \
+     VIRTROID_REQUIRE_KEY_ONLY_SSH=true \
+     "${verify_helper}"; then
+  rollback
+  systemctl reload ssh || true
+  echo "host hardening verification failed and SSH configuration was rolled back" >&2
+  exit 1
+fi
+
 echo "key-only SSH enabled; verify a fresh deploy-user login before closing the current root session"

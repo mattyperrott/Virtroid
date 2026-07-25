@@ -63,7 +63,7 @@ if [ "${source_dir}" = "${target_dir}" ]; then
   exit 1
 fi
 
-for command_name in auditctl augenrules awk chmod chown cmp cp date dirname fail2ban-client find flock install mktemp mv readlink rsync sha256sum sort sshd stat sync systemctl tr; do
+for command_name in aa-enabled auditctl augenrules awk chmod chown cmp cp date dirname docker fail2ban-client find flock grep install mountpoint mktemp mv passwd readlink rsync sed sha256sum sort sshd stat sync systemctl tr ufw; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "missing reviewed-tree installation command: ${command_name}" >&2
     exit 1
@@ -178,6 +178,8 @@ runtime_sources=(
   virtroid-binderfs-setup.sh
   create-deploy-user.sh
   enable-key-only-ssh.sh
+  configure-host-firewall.sh
+  verify-host-hardening.sh
   install-reviewed-deployment-tree.sh
   apply-local-release.sh
   release-on-vps.sh
@@ -190,6 +192,7 @@ runtime_sources=(
   sshd-virtroid-hardening.conf
   sysctl-virtroid-hardening.conf
   certbot-deploy-hook.sh
+  unattended-upgrades-virtroid.conf
 )
 runtime_destinations=(
   /usr/local/sbin/virtroid-backup.sh
@@ -200,6 +203,8 @@ runtime_destinations=(
   /usr/local/sbin/virtroid-binderfs-setup.sh
   /usr/local/sbin/virtroid-create-deploy-user.sh
   /usr/local/sbin/virtroid-enable-key-only-ssh.sh
+  /usr/local/sbin/virtroid-configure-host-firewall
+  /usr/local/sbin/virtroid-verify-host-hardening
   /usr/local/sbin/virtroid-install-reviewed-deployment-tree
   /usr/local/sbin/virtroid-apply-local-release
   /usr/local/sbin/virtroid-release-on-vps
@@ -212,12 +217,13 @@ runtime_destinations=(
   /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
   /etc/sysctl.d/99-virtroid-hardening.conf
   /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
+  /etc/apt/apt.conf.d/52virtroid-unattended-upgrades
 )
 runtime_modes=(
-  0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
+  0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
   0644
   0644 0644 0644 0644 0640 0644 0644
-  0755
+  0755 0644
 )
 
 retired_runtime_destinations=(
@@ -247,7 +253,8 @@ fi
 
 required_tree_files=(
   .env.example README.md apply-local-release.sh build-local-release.sh
-  certbot-deploy-hook.sh configure-renterd-secrets.sh create-deploy-user.sh
+  certbot-deploy-hook.sh configure-host-firewall.sh
+  configure-renterd-secrets.sh create-deploy-user.sh
   deploy.sh deployment-tree-digest.sh
   derive-node-fingerprint.sh docker-compose.yml enable-key-only-ssh.sh
   fail2ban-virtroid.conf audit-virtroid.rules generate-env.sh haproxy.cfg
@@ -259,6 +266,7 @@ required_tree_files=(
   sysctl-virtroid-hardening.conf
   test-env-safety.sh test-node-fingerprint.sh
   test-certbot-deploy-hook.sh
+  unattended-upgrades-virtroid.conf verify-host-hardening.sh
   virtroid-backup.service virtroid-backup.sh
   virtroid-backup.timer virtroid-binderfs-setup.sh
 )
@@ -292,6 +300,7 @@ install_runtime_copies() {
   done
   systemctl daemon-reload
   sysctl --system >/dev/null
+  systemctl enable --now apparmor
   systemctl enable --now auditd
   augenrules --load
   auditctl -s >/dev/null
@@ -299,6 +308,12 @@ install_runtime_copies() {
   fail2ban-client -t >/dev/null
   systemctl reload ssh
   systemctl reload fail2ban
+  systemctl enable --now ufw
+  systemctl enable --now unattended-upgrades
+  systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+  VIRTROID_REQUIRE_ROOT_LOCKED=true \
+    VIRTROID_REQUIRE_KEY_ONLY_SSH=true \
+    /usr/local/sbin/virtroid-verify-host-hardening
 }
 
 verify_runtime_copies() {
@@ -354,6 +369,7 @@ restore_runtime_copies() {
   done
   systemctl daemon-reload || restore_status=1
   sysctl --system >/dev/null || restore_status=1
+  systemctl enable --now apparmor || restore_status=1
   systemctl enable --now auditd || restore_status=1
   augenrules --load || restore_status=1
   auditctl -s >/dev/null || restore_status=1
@@ -361,11 +377,19 @@ restore_runtime_copies() {
   systemctl reload ssh || restore_status=1
   fail2ban-client -t >/dev/null || restore_status=1
   systemctl reload fail2ban || restore_status=1
+  systemctl enable --now ufw || restore_status=1
+  systemctl enable --now unattended-upgrades || restore_status=1
+  systemctl enable --now apt-daily.timer apt-daily-upgrade.timer || restore_status=1
+  if [ -x /usr/local/sbin/virtroid-verify-host-hardening ]; then
+    VIRTROID_REQUIRE_ROOT_LOCKED=true \
+      VIRTROID_REQUIRE_KEY_ONLY_SSH=true \
+      /usr/local/sbin/virtroid-verify-host-hardening || restore_status=1
+  fi
   return "${restore_status}"
 }
 
 require_safe_file "${trusted_installer}"
-for safe_parent in /opt /opt/virtroid "${target_parent}" /usr/local /usr/local/sbin /usr/local/share /etc /etc/systemd /etc/systemd/system /etc/ssh /etc/ssh/sshd_config.d /etc/sysctl.d; do
+for safe_parent in /opt /opt/virtroid "${target_parent}" /usr/local /usr/local/sbin /usr/local/share /etc /etc/apt /etc/apt/apt.conf.d /etc/systemd /etc/systemd/system /etc/ssh /etc/ssh/sshd_config.d /etc/sysctl.d; do
   require_safe_directory "${safe_parent}"
 done
 install -d -o root -g root -m 0700 /etc/virtroid /etc/virtroid/secrets
@@ -410,6 +434,7 @@ fi
 require_safe_directory "${backup_root}"
 
 for destination_dir in \
+  /etc/apt /etc/apt/apt.conf.d \
   /usr/local/share/virtroid \
   /etc/audit /etc/audit/rules.d \
   /etc/fail2ban /etc/fail2ban/jail.d \

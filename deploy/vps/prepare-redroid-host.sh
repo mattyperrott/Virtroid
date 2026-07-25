@@ -19,9 +19,12 @@ fi
 apt-get update
 apt-get install -y \
   adb \
+  apparmor \
+  apparmor-utils \
   auditd \
   audispd-plugins \
   ca-certificates \
+  certbot \
   curl \
   docker-compose-v2 \
   docker.io \
@@ -31,6 +34,8 @@ apt-get install -y \
   openssl \
   python3 \
   rsync \
+  ufw \
+  unattended-upgrades \
   "linux-modules-extra-${current_kernel}"
 
 if [ -n "${next_kernel}" ] && [ "${next_kernel}" != "${current_kernel}" ]; then
@@ -54,6 +59,8 @@ install -m 0755 "${script_dir}/renterd-smoke-test.sh" /usr/local/sbin/virtroid-r
 install -m 0755 "${script_dir}/derive-node-fingerprint.sh" /usr/local/sbin/virtroid-derive-node-fingerprint
 install -m 0755 "${script_dir}/create-deploy-user.sh" /usr/local/sbin/virtroid-create-deploy-user.sh
 install -m 0755 "${script_dir}/enable-key-only-ssh.sh" /usr/local/sbin/virtroid-enable-key-only-ssh.sh
+install -m 0755 "${script_dir}/configure-host-firewall.sh" /usr/local/sbin/virtroid-configure-host-firewall
+install -m 0755 "${script_dir}/verify-host-hardening.sh" /usr/local/sbin/virtroid-verify-host-hardening
 install -m 0755 "${script_dir}/install-reviewed-deployment-tree.sh" /usr/local/sbin/virtroid-install-reviewed-deployment-tree
 install -m 0755 "${script_dir}/apply-local-release.sh" /usr/local/sbin/virtroid-apply-local-release
 install -m 0755 "${script_dir}/release-on-vps.sh" /usr/local/sbin/virtroid-release-on-vps
@@ -69,8 +76,11 @@ install -m 0755 "${script_dir}/certbot-deploy-hook.sh" /etc/letsencrypt/renewal-
 install -m 0644 "${script_dir}/sshd-key-only.conf" /usr/local/share/virtroid/sshd-key-only.conf
 install -m 0644 "${script_dir}/virtroid-backup.service" /etc/systemd/system/virtroid-backup.service
 install -m 0644 "${script_dir}/virtroid-backup.timer" /etc/systemd/system/virtroid-backup.timer
+install -m 0644 "${script_dir}/unattended-upgrades-virtroid.conf" \
+  /etc/apt/apt.conf.d/52virtroid-unattended-upgrades
 
 systemctl daemon-reload
+systemctl enable --now apparmor
 systemctl enable --now docker
 systemctl enable --now redroid-binderfs.service
 sysctl --system >/dev/null
@@ -79,7 +89,11 @@ augenrules --load
 sshd -t
 systemctl reload ssh
 systemctl enable --now fail2ban
+systemctl enable --now ufw
+systemctl enable --now unattended-upgrades
+systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
 systemctl enable --now virtroid-backup.timer
+/usr/local/sbin/virtroid-configure-host-firewall
 
 if ! mountpoint -q /dev/binderfs; then
   echo "binderfs did not mount" >&2
@@ -112,3 +126,5 @@ printf 'docker group id: '
 getent group docker | cut -d: -f3
 printf 'HAProxy certificate group id: '
 printf '%s\n' "${haproxy_cert_gid}"
+
+/usr/local/sbin/virtroid-verify-host-hardening

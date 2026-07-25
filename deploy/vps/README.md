@@ -46,6 +46,16 @@ sudo VIRTROID_AUTHORIZED_KEY_FILE=/tmp/virtroid-deploy.pub \
   bash ./create-deploy-user.sh
 ```
 
+Host preparation installs and enables Docker, binderfs, AppArmor, auditd,
+Fail2ban, UFW, unattended security upgrades, the local backup timer, and the
+reviewed sysctl/SSH hardening. UFW is configured deny-by-default with only
+OpenSSH, HTTPS, and HTTP for Certbot's standalone HTTP-01 renewal allowed.
+Set `VIRTROID_ALLOW_HTTP_ACME=false` when certificates are managed without
+HTTP-01. If an existing server has additional UFW rules, preparation refuses
+to replace them; after reviewing the provider's access requirements, an
+intentional fresh-host reset can be requested with
+`VIRTROID_FIREWALL_RESET=true`.
+
 The default deploy account is `virtroid`. Its password is locked and SSH must
 use the installed public key. The deployment tree and environment remain
 root-owned; the account uses passwordless sudo for release and host
@@ -60,11 +70,32 @@ SSH. Keep the original root session open until the second fresh login succeeds:
 ssh -i ~/.ssh/virtroid-cp-ed25519 virtroid@your-server.example
 sudo -n true
 sudo /opt/virtroid/deploy/vps/enable-key-only-ssh.sh
+sudo VIRTROID_REQUIRE_ROOT_LOCKED=true \
+  VIRTROID_REQUIRE_KEY_ONLY_SSH=true \
+  /usr/local/sbin/virtroid-verify-host-hardening
 ```
 
 The final helper disables direct root SSH and all password authentication. It
 refuses to run unless the deploy account has a valid authorized key and rolls
-back if SSH validation or reload fails.
+back if SSH validation, reload, or the complete host-hardening verification
+fails. Once the deploy key and passwordless sudo are proven, the root password
+is locked as well.
+
+The source-controlled host-hardening inputs are:
+
+- `configure-host-firewall.sh` for the exact UFW policy;
+- `unattended-upgrades-virtroid.conf` for security-update scheduling;
+- `sshd-key-only.conf` and `sshd-virtroid-hardening.conf`;
+- `sysctl-virtroid-hardening.conf`, including the documented ReDroid BPF
+  compatibility exception;
+- `audit-virtroid.rules` and `fail2ban-virtroid.conf`;
+- `docker-compose.yml` for read-only filesystems, dropped capabilities,
+  no-new-privileges, loopback bindings, resource limits, and bounded logs;
+- `verify-host-hardening.sh`, which checks the effective host and running
+  container state rather than trusting the files alone.
+
+Reviewed releases reinstall these files atomically and rerun the verifier, so
+manual VPS drift cannot silently become the expected production state.
 
 The generated production configuration enables public account bootstrap and
 disables shared-secret node self-enrollment. Production node requests are
