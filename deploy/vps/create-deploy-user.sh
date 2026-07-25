@@ -113,6 +113,15 @@ if [ -s "${deploy_home}/.ssh/authorized_keys" ]; then
   passwd --lock root >/dev/null
 fi
 
+verify_helper=/usr/local/sbin/virtroid-verify-host-hardening
+if [ ! -x "${verify_helper}" ]; then
+  echo "host hardening verifier is missing: ${verify_helper}" >&2
+  exit 1
+fi
+VIRTROID_REQUIRE_ROOT_LOCKED=true \
+  VIRTROID_REQUIRE_KEY_ONLY_SSH=false \
+  "${verify_helper}"
+
 printf 'deploy user ready: %s uid=%s groups=%s\n' \
   "${deploy_user}" "${deploy_uid}" "$(id -Gn "${deploy_user}")"
 if [ ! -s "${deploy_home}/.ssh/authorized_keys" ]; then
