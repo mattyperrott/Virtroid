@@ -176,6 +176,129 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 	}
 }
 
+func TestPostgresSnapshotGenerationRejectionIntegration(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	defer st.Close()
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	accountID := uuid.NewString()
+	deviceID := uuid.NewString()
+	nodeID := "snapshot-qa-node-" + uuid.NewString()
+	operatorID := "snapshot-qa-operator-" + uuid.NewString()
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM accounts WHERE id = $1`, accountID)
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM node_request_nonces WHERE node_id = $1`, nodeID)
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM hosts WHERE id = $1`, nodeID)
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM node_registry_audit WHERE node_id = $1`, nodeID)
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM approved_nodes WHERE node_id = $1`, nodeID)
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM operator_registry_audit WHERE operator_id = $1`, operatorID)
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM node_operators WHERE id = $1`, operatorID)
+	})
+
+	devicePublicKey := integrationNodePublicKey(t)
+	if _, err := st.BootstrapAccountWithIdentity(
+		ctx, accountID, deviceID, "Snapshot generation QA", devicePublicKey, CreateRuntimeInput{},
+	); err != nil {
+		t.Fatalf("bootstrap disposable account: %v", err)
+	}
+	runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{Name: "Snapshot generation QA"})
+	if err != nil {
+		t.Fatalf("create disposable runtime: %v", err)
+	}
+	approvedNode, err := st.ApproveNode(ctx, ApproveNodeInput{
+		NodeID:       nodeID,
+		OperatorID:   operatorID,
+		OperatorName: "Snapshot generation QA operator",
+		PublicKey:    integrationNodePublicKey(t),
+		Actor:        "postgres-integration-test",
+		Reason:       "isolated snapshot generation rejection fixture",
+	})
+	if err != nil {
+		t.Fatalf("approve disposable node: %v", err)
+	}
+	if _, err := st.UpsertHostHeartbeat(ctx, HostHeartbeat{
+		ID:            nodeID,
+		Name:          "Snapshot generation QA node",
+		AdvertiseAddr: "snapshot-qa.invalid",
+		RelayPort:     8090,
+		DockerSocket:  true,
+		Binder:        true,
+		PublicKey:     approvedNode.Keys[0].PublicKey,
+		BlobStoreKind: "local-disk",
+	}); err != nil {
+		t.Fatalf("register disposable node: %v", err)
+	}
+	runtime, err = st.StartRuntimeOnHost(ctx, accountID, runtime.ID, nodeID)
+	if err != nil {
+		t.Fatalf("assign disposable runtime: %v", err)
+	}
+
+	storeKind := "local-disk"
+	generationOne := `{"version":3,"snapshot_id":"snapshot-generation-1","generation":1,"total_bytes":1,"chunks":[{"size":1}]}`
+	generationTwo := `{"version":3,"snapshot_id":"snapshot-generation-2","generation":2,"total_bytes":1,"chunks":[{"size":1}]}`
+	for _, snapshot := range []struct {
+		label    string
+		manifest string
+	}{
+		{label: "generation one", manifest: generationOne},
+		{label: "generation two", manifest: generationTwo},
+	} {
+		if err := st.UpdateRuntimeObservation(ctx, runtime.ID, RuntimeObservation{
+			HostID:              nodeID,
+			Status:              "running",
+			ConnectionStatus:    "online",
+			BlobStoreKind:       &storeKind,
+			BlobManifestJSON:    &snapshot.manifest,
+			OperationGeneration: runtime.OperationGeneration,
+		}); err != nil {
+			t.Fatalf("commit %s: %v", snapshot.label, err)
+		}
+	}
+
+	rejected := map[string]string{
+		"rollback": `{"version":3,"snapshot_id":"snapshot-rollback","generation":1,"total_bytes":1,"chunks":[{"size":1}]}`,
+		"fork":     `{"version":3,"snapshot_id":"snapshot-fork","generation":2,"total_bytes":1,"chunks":[{"size":1}]}`,
+		"skip":     `{"version":3,"snapshot_id":"snapshot-skip","generation":4,"total_bytes":1,"chunks":[{"size":1}]}`,
+	}
+	for name, manifest := range rejected {
+		t.Run(name, func(t *testing.T) {
+			err := st.UpdateRuntimeObservation(ctx, runtime.ID, RuntimeObservation{
+				HostID:              nodeID,
+				Status:              "running",
+				ConnectionStatus:    "online",
+				BlobStoreKind:       &storeKind,
+				BlobManifestJSON:    &manifest,
+				OperationGeneration: runtime.OperationGeneration,
+			})
+			if !errors.Is(err, ErrRuntimeSnapshotRollback) {
+				t.Fatalf("snapshot %s error = %v, want %v", name, err, ErrRuntimeSnapshotRollback)
+			}
+		})
+	}
+
+	stored, err := st.GetRuntime(ctx, accountID, runtime.ID)
+	if err != nil {
+		t.Fatalf("read disposable runtime after rejections: %v", err)
+	}
+	if stored.BlobManifestJSON == nil || *stored.BlobManifestJSON != generationTwo {
+		t.Fatalf("stored snapshot changed after rejected generation: %v", stored.BlobManifestJSON)
+	}
+}
+
 func TestPostgresApprovedNodeRegistryIntegration(t *testing.T) {
 	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
 	if databaseURL == "" {
