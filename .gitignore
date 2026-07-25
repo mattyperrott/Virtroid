@@ -12,6 +12,8 @@
 /deploy/vps/restic.env
 /deploy/vps/restic-password
 /backend/falco-forwarder
+/backend/lifecycleqa
+/backend/viewercrypt
 /backend/virtnoded
 /backend/virtroid-viewercrypt
 /backend/virtroidd
