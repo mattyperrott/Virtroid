@@ -296,7 +296,9 @@ grep -q '^PermitRootLogin no$' "${script_dir}/sshd-key-only.conf"
 grep -q '^PasswordAuthentication no$' "${script_dir}/sshd-key-only.conf"
 grep -q '^kernel.kptr_restrict = 2$' "${script_dir}/sysctl-virtroid-hardening.conf"
 grep -q '^kernel.yama.ptrace_scope = 2$' "${script_dir}/sysctl-virtroid-hardening.conf"
-grep -q '^kernel.unprivileged_bpf_disabled = 1$' "${script_dir}/sysctl-virtroid-hardening.conf"
+if grep -q '^kernel\.unprivileged_bpf_disabled[[:space:]]*=' "${script_dir}/sysctl-virtroid-hardening.conf"; then
+  fail "ReDroid requires the host default for kernel.unprivileged_bpf_disabled"
+fi
 grep -q '^net.ipv4.conf.all.send_redirects = 0$' "${script_dir}/sysctl-virtroid-hardening.conf"
 grep -q 'sysctl-virtroid-hardening.conf.*99-virtroid-hardening.conf' "${script_dir}/prepare-redroid-host.sh"
 grep -q 'audit-virtroid.rules.*99-virtroid-hardening.rules' "${script_dir}/prepare-redroid-host.sh"
