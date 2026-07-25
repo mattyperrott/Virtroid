@@ -66,6 +66,13 @@ services:
     mem_limit: "${VIRTROIDD_MEMORY_LIMIT:-512m}"
     cpus: "${VIRTROIDD_CPU_LIMIT:-1.0}"
     pids_limit: ${VIRTROIDD_PIDS_LIMIT:-256}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
     logging:
       driver: local
       options:
