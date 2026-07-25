@@ -63,7 +63,7 @@ if [ "${source_dir}" = "${target_dir}" ]; then
   exit 1
 fi
 
-for command_name in awk chmod chown cmp cp date dirname fail2ban-client find flock install mktemp mv readlink rsync sha256sum sort sshd stat sync systemctl tr; do
+for command_name in auditctl augenrules awk chmod chown cmp cp date dirname fail2ban-client find flock install mktemp mv readlink rsync sha256sum sort sshd stat sync systemctl tr; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "missing reviewed-tree installation command: ${command_name}" >&2
     exit 1
@@ -186,6 +186,7 @@ runtime_sources=(
   virtroid-backup.service
   virtroid-backup.timer
   fail2ban-virtroid.conf
+  audit-virtroid.rules
   sshd-virtroid-hardening.conf
   sysctl-virtroid-hardening.conf
   certbot-deploy-hook.sh
@@ -207,6 +208,7 @@ runtime_destinations=(
   /etc/systemd/system/virtroid-backup.service
   /etc/systemd/system/virtroid-backup.timer
   /etc/fail2ban/jail.d/virtroid.conf
+  /etc/audit/rules.d/99-virtroid-hardening.rules
   /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
   /etc/sysctl.d/99-virtroid-hardening.conf
   /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
@@ -214,7 +216,7 @@ runtime_destinations=(
 runtime_modes=(
   0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
   0644
-  0644 0644 0644 0644 0644 0644
+  0644 0644 0644 0644 0640 0644 0644
   0755
 )
 
@@ -248,7 +250,7 @@ required_tree_files=(
   certbot-deploy-hook.sh configure-renterd-secrets.sh create-deploy-user.sh
   deploy.sh deployment-tree-digest.sh
   derive-node-fingerprint.sh docker-compose.yml enable-key-only-ssh.sh
-  fail2ban-virtroid.conf generate-env.sh haproxy.cfg
+  fail2ban-virtroid.conf audit-virtroid.rules generate-env.sh haproxy.cfg
   install-reviewed-deployment-tree.sh prepare-redroid-host.sh
   release-on-vps.sh renterd-admin.sh renterd-mysql-init.sql
   renterd-smoke-test.sh
@@ -290,6 +292,9 @@ install_runtime_copies() {
   done
   systemctl daemon-reload
   sysctl --system >/dev/null
+  systemctl enable --now auditd
+  augenrules --load
+  auditctl -s >/dev/null
   sshd -t
   fail2ban-client -t >/dev/null
   systemctl reload ssh
@@ -349,6 +354,9 @@ restore_runtime_copies() {
   done
   systemctl daemon-reload || restore_status=1
   sysctl --system >/dev/null || restore_status=1
+  systemctl enable --now auditd || restore_status=1
+  augenrules --load || restore_status=1
+  auditctl -s >/dev/null || restore_status=1
   sshd -t || restore_status=1
   systemctl reload ssh || restore_status=1
   fail2ban-client -t >/dev/null || restore_status=1
@@ -403,6 +411,7 @@ require_safe_directory "${backup_root}"
 
 for destination_dir in \
   /usr/local/share/virtroid \
+  /etc/audit /etc/audit/rules.d \
   /etc/fail2ban /etc/fail2ban/jail.d \
   /etc/letsencrypt /etc/letsencrypt/renewal-hooks /etc/letsencrypt/renewal-hooks/deploy; do
   install -d -o root -g root -m 0755 "${destination_dir}"

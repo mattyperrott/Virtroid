@@ -1,0 +1,24 @@
+# Record changes to host identity, privilege, remote-access, and firewall state.
+-w /etc/passwd -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/sudoers -p wa -k privilege
+-w /etc/sudoers.d/ -p wa -k privilege
+-w /etc/ssh/sshd_config -p wa -k remote-access
+-w /etc/ssh/sshd_config.d/ -p wa -k remote-access
+-w /etc/ufw/ -p wa -k firewall
+
+# Record changes to reviewed Virtroid configuration, secrets, release state,
+# and service definitions without logging ordinary runtime-data reads/writes.
+-w /etc/virtroid/ -p wa -k virtroid-secrets
+-w /opt/virtroid/deploy/vps/ -p wa -k virtroid-deployment
+-w /var/lib/virtroid-deploy/ -p wa -k virtroid-release
+-w /usr/local/sbin/ -p wa -k privileged-tools
+-w /etc/systemd/system/ -p wa -k service-config
+
+# Record attempts to change the host identity. A failure mode of 1 keeps the
+# server available while making audit subsystem failures visible.
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k host-identity
+-a always,exit -F arch=b32 -S sethostname,setdomainname -k host-identity
+-f 1
