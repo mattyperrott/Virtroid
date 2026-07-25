@@ -22,6 +22,8 @@ grep -q '^PUBLIC_BASE_URL=https://virtroid.example$' "${tmp_dir}/.env"
 grep -q '^NODE_ID=node-1$' "${tmp_dir}/.env"
 grep -q '^NODE_RUNTIME_NETWORK_MODE=per-runtime$' "${tmp_dir}/.env"
 grep -q '^NODE_AGENT_CONTAINER_NAME=virtnoded$' "${tmp_dir}/.env"
+grep -q '^NODE_MIN_FREE_DISK_BYTES=10737418240$' "${tmp_dir}/.env"
+grep -q '^NODE_MIN_FREE_DISK_PERCENT=5$' "${tmp_dir}/.env"
 grep -q '^BOOTSTRAP_ENABLED=true$' "${tmp_dir}/.env"
 grep -q '^NODE_DEVELOPMENT_ENROLLMENT_ENABLED=false$' "${tmp_dir}/.env"
 grep -Eq '^CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
@@ -150,6 +152,20 @@ if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/invalid-bootstrap.en
   exit 1
 fi
 
+cp "${tmp_dir}/.env" "${tmp_dir}/unsafe-disk-bytes.env"
+printf '%s\n' 'NODE_MIN_FREE_DISK_BYTES=1048576' >> "${tmp_dir}/unsafe-disk-bytes.env"
+if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/unsafe-disk-bytes.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
+  echo "unsafe minimum free-disk byte floor was accepted" >&2
+  exit 1
+fi
+
+cp "${tmp_dir}/.env" "${tmp_dir}/unsafe-disk-percent.env"
+printf '%s\n' 'NODE_MIN_FREE_DISK_PERCENT=0' >> "${tmp_dir}/unsafe-disk-percent.env"
+if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/unsafe-disk-percent.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
+  echo "unsafe minimum free-disk percentage floor was accepted" >&2
+  exit 1
+fi
+
 cp "${tmp_dir}/.env" "${tmp_dir}/open-node-enrollment.env"
 printf '%s\n' 'NODE_DEVELOPMENT_ENROLLMENT_ENABLED=true' >> "${tmp_dir}/open-node-enrollment.env"
 if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/open-node-enrollment.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
@@ -258,6 +274,8 @@ grep -q 'NODE_BLOB_SMOKE_TEST=1' "${script_dir}/renterd-smoke-test.sh"
 grep -q 'core_services+=(falco-forwarder falco)' "${script_dir}/deploy.sh"
 grep -q 'name: ${NODE_DOCKER_NETWORK:' "${script_dir}/docker-compose.yml"
 grep -q 'NODE_RUNTIME_NETWORK_MODE: ${NODE_RUNTIME_NETWORK_MODE:-per-runtime}' "${script_dir}/docker-compose.yml"
+grep -q 'NODE_MIN_FREE_DISK_BYTES: ${NODE_MIN_FREE_DISK_BYTES:-10737418240}' "${script_dir}/docker-compose.yml"
+grep -q 'NODE_MIN_FREE_DISK_PERCENT: ${NODE_MIN_FREE_DISK_PERCENT:-5}' "${script_dir}/docker-compose.yml"
 grep -q 'NODE_ALLOWED_ADVERTISE_ADDRS: ${NODE_ALLOWED_ADVERTISE_ADDRS:' "${script_dir}/docker-compose.yml"
 grep -q 'NODE_DEVELOPMENT_ENROLLMENT_ENABLED: "false"' "${script_dir}/docker-compose.yml"
 if grep -q 'NODE_REGISTRATION_SECRET:' "${script_dir}/docker-compose.yml"; then
@@ -271,8 +289,15 @@ fi
 grep -q 'HAPROXY_CERT_GID:?set HAPROXY_CERT_GID' "${script_dir}/docker-compose.yml"
 grep -q 'chmod 0640 "${temp_pem}"' "${script_dir}/certbot-deploy-hook.sh"
 grep -q '^MaxAuthTries 3$' "${script_dir}/sshd-virtroid-hardening.conf"
+grep -q '^AllowTcpForwarding no$' "${script_dir}/sshd-virtroid-hardening.conf"
+grep -q '^AllowStreamLocalForwarding no$' "${script_dir}/sshd-virtroid-hardening.conf"
+grep -q '^ClientAliveInterval 300$' "${script_dir}/sshd-virtroid-hardening.conf"
 grep -q '^PermitRootLogin no$' "${script_dir}/sshd-key-only.conf"
 grep -q '^PasswordAuthentication no$' "${script_dir}/sshd-key-only.conf"
+grep -q '^kernel.kptr_restrict = 2$' "${script_dir}/sysctl-virtroid-hardening.conf"
+grep -q '^kernel.yama.ptrace_scope = 2$' "${script_dir}/sysctl-virtroid-hardening.conf"
+grep -q '^net.ipv4.conf.all.send_redirects = 0$' "${script_dir}/sysctl-virtroid-hardening.conf"
+grep -q 'sysctl-virtroid-hardening.conf.*99-virtroid-hardening.conf' "${script_dir}/prepare-redroid-host.sh"
 grep -q 'authorized key file must contain exactly one public key' "${script_dir}/create-deploy-user.sh"
 grep -q 'sudo -u "${deploy_user}" -H docker version' "${script_dir}/create-deploy-user.sh"
 if grep -q 'chown -R "${deploy_user}' "${script_dir}/create-deploy-user.sh"; then

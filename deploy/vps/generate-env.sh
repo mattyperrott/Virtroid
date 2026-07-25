@@ -136,6 +136,8 @@ write_env_var() {
   write_env_var NODE_RUNTIME_NANO_CPUS 2000000000
   write_env_var NODE_RUNTIME_PIDS_LIMIT 4096
   write_env_var NODE_RUNTIME_SHM_BYTES 268435456
+  write_env_var NODE_MIN_FREE_DISK_BYTES 10737418240
+  write_env_var NODE_MIN_FREE_DISK_PERCENT 5
 
   write_env_var APP_CATALOG_SYNC_ENABLED false
   write_env_var APP_CATALOG_SYNC_URL https://f-droid.org/repo/index-v2.json

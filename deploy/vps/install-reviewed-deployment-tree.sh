@@ -187,6 +187,7 @@ runtime_sources=(
   virtroid-backup.timer
   fail2ban-virtroid.conf
   sshd-virtroid-hardening.conf
+  sysctl-virtroid-hardening.conf
   certbot-deploy-hook.sh
 )
 runtime_destinations=(
@@ -207,12 +208,13 @@ runtime_destinations=(
   /etc/systemd/system/virtroid-backup.timer
   /etc/fail2ban/jail.d/virtroid.conf
   /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
+  /etc/sysctl.d/99-virtroid-hardening.conf
   /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
 )
 runtime_modes=(
   0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
   0644
-  0644 0644 0644 0644 0644
+  0644 0644 0644 0644 0644 0644
   0755
 )
 
@@ -252,6 +254,7 @@ required_tree_files=(
   renterd-smoke-test.sh
   redroid-binderfs.service release.env.example renterd.md
   sshd-key-only.conf sshd-virtroid-hardening.conf test-compose-config.sh
+  sysctl-virtroid-hardening.conf
   test-env-safety.sh test-node-fingerprint.sh
   test-certbot-deploy-hook.sh
   virtroid-backup.service virtroid-backup.sh
@@ -286,6 +289,7 @@ install_runtime_copies() {
     fi
   done
   systemctl daemon-reload
+  sysctl --system >/dev/null
   sshd -t
   fail2ban-client -t >/dev/null
   systemctl reload ssh
@@ -344,6 +348,7 @@ restore_runtime_copies() {
     fi
   done
   systemctl daemon-reload || restore_status=1
+  sysctl --system >/dev/null || restore_status=1
   sshd -t || restore_status=1
   systemctl reload ssh || restore_status=1
   fail2ban-client -t >/dev/null || restore_status=1
@@ -352,7 +357,7 @@ restore_runtime_copies() {
 }
 
 require_safe_file "${trusted_installer}"
-for safe_parent in /opt /opt/virtroid "${target_parent}" /usr/local /usr/local/sbin /usr/local/share /etc /etc/systemd /etc/systemd/system /etc/ssh /etc/ssh/sshd_config.d; do
+for safe_parent in /opt /opt/virtroid "${target_parent}" /usr/local /usr/local/sbin /usr/local/share /etc /etc/systemd /etc/systemd/system /etc/ssh /etc/ssh/sshd_config.d /etc/sysctl.d; do
   require_safe_directory "${safe_parent}"
 done
 install -d -o root -g root -m 0700 /etc/virtroid /etc/virtroid/secrets

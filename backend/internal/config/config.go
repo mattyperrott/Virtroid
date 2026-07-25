@@ -62,6 +62,8 @@ type NodeConfig struct {
 	ReconcileInterval             time.Duration
 	BlobPreflightInterval         time.Duration
 	RuntimeRoot                   string
+	MinFreeDiskBytes              int64
+	MinFreeDiskPercent            int
 }
 
 func LoadServer() ServerConfig {
@@ -126,6 +128,8 @@ func LoadNode() NodeConfig {
 	defaultHeartbeat, _ := time.ParseDuration("30s")
 	defaultReconcile, _ := time.ParseDuration("10s")
 	defaultBlobPreflight, _ := time.ParseDuration("5m")
+	const defaultMinFreeDiskBytes int64 = 10 << 30
+	const defaultMinFreeDiskPercent = 5
 
 	heartbeatInterval, err := time.ParseDuration(envOrDefault("NODE_HEARTBEAT_INTERVAL", "30s"))
 	if err != nil {
@@ -152,6 +156,14 @@ func LoadNode() NodeConfig {
 	renterdTotalShards, err := parseEnvInt("NODE_SIA_RENTERD_TOTAL_SHARDS", 0)
 	if err != nil {
 		renterdTotalShards = 0
+	}
+	minFreeDiskBytes, err := parseEnvInt64("NODE_MIN_FREE_DISK_BYTES", defaultMinFreeDiskBytes)
+	if err != nil || minFreeDiskBytes < 0 {
+		minFreeDiskBytes = defaultMinFreeDiskBytes
+	}
+	minFreeDiskPercent, err := parseEnvInt("NODE_MIN_FREE_DISK_PERCENT", defaultMinFreeDiskPercent)
+	if err != nil || minFreeDiskPercent < 0 || minFreeDiskPercent > 100 {
+		minFreeDiskPercent = defaultMinFreeDiskPercent
 	}
 
 	return NodeConfig{
@@ -183,6 +195,8 @@ func LoadNode() NodeConfig {
 		ReconcileInterval:             reconcileInterval,
 		BlobPreflightInterval:         blobPreflightInterval,
 		RuntimeRoot:                   envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtroid/runtimes"),
+		MinFreeDiskBytes:              minFreeDiskBytes,
+		MinFreeDiskPercent:            minFreeDiskPercent,
 	}
 }
 
@@ -211,6 +225,18 @@ func parseEnvInt(key string, fallback int) (int, error) {
 		return fallback, nil
 	}
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback, err
+	}
+	return parsed, nil
+}
+
+func parseEnvInt64(key string, fallback int64) (int64, error) {
+	value := envOrDefault(key, "")
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return fallback, err
 	}

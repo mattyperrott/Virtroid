@@ -56,6 +56,8 @@ docker compose \
 grep -q 'BOOTSTRAP_ENABLED: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_ALLOWED_ADVERTISE_ADDRS: virtnoded' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_RUNTIME_NETWORK_MODE: per-runtime' "${tmp_dir}/rendered-compose.yml"
+grep -q 'NODE_MIN_FREE_DISK_BYTES: "10737418240"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'NODE_MIN_FREE_DISK_PERCENT: "5"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'image: virtroid-backend:release-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"
 grep -q 'com.virtroid.source-sha: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"
 grep -q 'com.virtroid.schema-version: "2026071903"' "${tmp_dir}/rendered-compose.yml"
