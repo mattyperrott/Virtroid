@@ -314,6 +314,8 @@ grep -q 'read_only: true' "${script_dir}/docker-compose.yml"
 grep -q 'no-new-privileges:true' "${script_dir}/docker-compose.yml"
 grep -q 'authorized key file must contain exactly one public key' "${script_dir}/create-deploy-user.sh"
 grep -q 'sudo -u "${deploy_user}" -H docker version' "${script_dir}/create-deploy-user.sh"
+grep -q 'if \[ -s "${deploy_home}/.ssh/authorized_keys" \]; then' "${script_dir}/create-deploy-user.sh"
+grep -q 'passwd --lock root' "${script_dir}/create-deploy-user.sh"
 if grep -q 'chown -R "${deploy_user}' "${script_dir}/create-deploy-user.sh"; then
   echo "deploy-user setup makes the reviewed deployment tree user-writable" >&2
   exit 1
