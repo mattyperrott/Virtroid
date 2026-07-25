@@ -69,40 +69,21 @@ The deployed architecture includes:
 ### Runtime lifecycle
 
 ```mermaid
-flowchart TD
-    subgraph Bootstrap["1. Identity and provisioning"]
-        direction LR
-        A(["Create account"]) --> B["Register signing device"]
-        B --> C["Create Android runtime"]
-    end
+flowchart LR
+    A(["Set up identity<br/>Account + signing device"])
+    B["Create Android runtime"]
+    C["Start runtime<br/>Open encrypted viewer"]
+    D[("Stop runtime<br/>Save encrypted snapshot")]
+    E{"Next action"}
 
-    subgraph Session["2. Active session"]
-        direction LR
-        D["Start runtime"] --> E["Open encrypted viewer"]
-        E --> F(["Use remote Android"])
-    end
+    A --> B --> C --> D --> E
 
-    subgraph Persistence["3. Stop and persist"]
-        direction LR
-        G["Stop runtime"] --> H[("Encrypt and save snapshot")]
-    end
-
-    C --> D
-    F --> G
-    H --> I{"Choose next action"}
-
-    I -->|Restore| R["Restore latest snapshot"]
-    R --> D
-
-    I -->|Persona restart| P["Replace persona state"]
-    P --> C
-
-    I -->|Factory reset| X["Erase runtime data"]
-    X --> C
-
-    I -->|Delete| J["Remove containers, networks, sessions, and stored state"]
-    J --> K(["Runtime deleted"])
+    E -->|Restore| R["Start saved runtime"]
+    E -->|Persona restart| P["Create replacement runtime"]
+    E -->|Factory reset| F["Create clean runtime"]
+    E -->|Delete| X(["Remove all runtime resources"])
 ```
+
 ---
 
 ## Feature Matrix
