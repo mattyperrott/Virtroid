@@ -33,6 +33,7 @@ import (
 var errSnapshotMissing = errors.New("snapshot missing")
 var errBlobSnapshotTooLarge = errors.New("encrypted snapshot exceeds maximum size")
 var errRuntimeStorageQuotaExceeded = errors.New("encrypted snapshot exceeds the account storage quota")
+var errInsufficientDiskHeadroom = errors.New("insufficient host disk headroom")
 
 const (
 	snapshotMagic             = "VRTBLOB1"
@@ -140,8 +141,17 @@ type blobPreflightCheck struct {
 }
 
 type localBlobStore struct {
-	root      string
-	chunkSize int64
+	root           string
+	chunkSize      int64
+	minFreeBytes   int64
+	minFreePercent int
+}
+
+type diskHeadroomStatus struct {
+	TotalBytes     uint64
+	AvailableBytes uint64
+	RequiredBytes  uint64
+	OK             bool
 }
 
 type renterdBlobStore struct {
@@ -161,8 +171,10 @@ type renterdBlobStore struct {
 func (n *nodeAgent) blobStores() map[string]blobStore {
 	stores := map[string]blobStore{
 		blobStoreLocal: &localBlobStore{
-			root:      filepath.Join(n.cfg.RuntimeRoot, "_blobstore", "local"),
-			chunkSize: blobChunkSize,
+			root:           filepath.Join(n.cfg.RuntimeRoot, "_blobstore", "local"),
+			chunkSize:      blobChunkSize,
+			minFreeBytes:   n.cfg.MinFreeDiskBytes,
+			minFreePercent: n.cfg.MinFreeDiskPercent,
 		},
 	}
 	if strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" {
@@ -757,6 +769,17 @@ func (s *localBlobStore) preflight(ctx context.Context, report *blobPreflightRep
 		report.addCheck("root", "fail", err.Error())
 		return
 	}
+	headroom, err := inspectDiskHeadroom(s.root, s.minFreeBytes, s.minFreePercent)
+	if err != nil {
+		report.addCheck("disk_headroom", "fail", err.Error())
+		return
+	}
+	headroomDetail := formatDiskHeadroom(headroom, s.minFreeBytes, s.minFreePercent)
+	if !headroom.OK {
+		report.addCheck("disk_headroom", "fail", headroomDetail)
+		return
+	}
+	report.addCheck("disk_headroom", "pass", headroomDetail)
 	testPath := filepath.Join(s.root, ".preflight")
 	if err := os.WriteFile(testPath, []byte("ok\n"), 0o600); err != nil {
 		report.addCheck("write", "fail", err.Error())
@@ -766,6 +789,87 @@ func (s *localBlobStore) preflight(ctx context.Context, report *blobPreflightRep
 		report.addCheck("cleanup", "warn", err.Error())
 	}
 	report.addCheck("local_disk", "pass", s.root)
+}
+
+func (n *nodeAgent) ensureRuntimeDiskHeadroom() error {
+	if err := os.MkdirAll(n.cfg.RuntimeRoot, 0o755); err != nil {
+		return fmt.Errorf("prepare runtime root for disk headroom check: %w", err)
+	}
+	headroom, err := inspectDiskHeadroom(
+		n.cfg.RuntimeRoot,
+		n.cfg.MinFreeDiskBytes,
+		n.cfg.MinFreeDiskPercent,
+	)
+	if err != nil {
+		return fmt.Errorf("inspect runtime filesystem headroom: %w", err)
+	}
+	if !headroom.OK {
+		return fmt.Errorf(
+			"%w: %s",
+			errInsufficientDiskHeadroom,
+			formatDiskHeadroom(headroom, n.cfg.MinFreeDiskBytes, n.cfg.MinFreeDiskPercent),
+		)
+	}
+	return nil
+}
+
+func inspectDiskHeadroom(path string, minFreeBytes int64, minFreePercent int) (diskHeadroomStatus, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return diskHeadroomStatus{}, err
+	}
+	blockSize := uint64(stat.Bsize)
+	totalBytes := saturatingMultiplyUint64(uint64(stat.Blocks), blockSize)
+	availableBytes := saturatingMultiplyUint64(uint64(stat.Bavail), blockSize)
+	return evaluateDiskHeadroom(totalBytes, availableBytes, minFreeBytes, minFreePercent)
+}
+
+func evaluateDiskHeadroom(
+	totalBytes uint64,
+	availableBytes uint64,
+	minFreeBytes int64,
+	minFreePercent int,
+) (diskHeadroomStatus, error) {
+	if minFreeBytes < 0 {
+		return diskHeadroomStatus{}, errors.New("minimum free disk bytes cannot be negative")
+	}
+	if minFreePercent < 0 || minFreePercent > 100 {
+		return diskHeadroomStatus{}, errors.New("minimum free disk percent must be between 0 and 100")
+	}
+	requiredBytes := uint64(minFreeBytes)
+	percent := uint64(minFreePercent)
+	percentBytes := (totalBytes/100)*percent + ((totalBytes%100)*percent+99)/100
+	if percentBytes > requiredBytes {
+		requiredBytes = percentBytes
+	}
+	return diskHeadroomStatus{
+		TotalBytes:     totalBytes,
+		AvailableBytes: availableBytes,
+		RequiredBytes:  requiredBytes,
+		OK:             availableBytes >= requiredBytes,
+	}, nil
+}
+
+func saturatingMultiplyUint64(left, right uint64) uint64 {
+	if left == 0 || right == 0 {
+		return 0
+	}
+	maxUint64 := ^uint64(0)
+	if left > maxUint64/right {
+		return maxUint64
+	}
+	return left * right
+}
+
+func formatDiskHeadroom(status diskHeadroomStatus, minFreeBytes int64, minFreePercent int) string {
+	return fmt.Sprintf(
+		"available_bytes=%d required_bytes=%d total_bytes=%d configured_min_bytes=%d configured_min_percent=%d",
+		status.AvailableBytes,
+		status.RequiredBytes,
+		status.TotalBytes,
+		minFreeBytes,
+		minFreePercent,
+	)
 }
 
 func defaultBlobBucket(bucket string) string {

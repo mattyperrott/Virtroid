@@ -1083,6 +1083,9 @@ func (n *nodeAgent) ensureRuntimeProvisioned(ctx context.Context, runtime runtim
 		})
 	}
 
+	if err := n.ensureRuntimeDiskHeadroom(); err != nil {
+		return fmt.Errorf("provision runtime: %w", err)
+	}
 	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
 	if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("clear offline runtime data dir: %w", err)
@@ -1201,6 +1204,9 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			ContainerName:    stringPtr(containerName),
 			ADBPort:          &adbPort,
 		})
+	}
+	if err := n.ensureRuntimeDiskHeadroom(); err != nil {
+		return fmt.Errorf("start or restore runtime: %w", err)
 	}
 	if hadContainer {
 		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Removing stale offline container before persona rotation.")

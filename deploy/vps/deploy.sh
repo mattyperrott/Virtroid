@@ -306,7 +306,9 @@ validate_environment() {
     NODE_RUNTIME_IMAGE \
     NODE_DOCKER_NETWORK \
     NODE_RUNTIME_NETWORK_MODE \
-    NODE_AGENT_CONTAINER_NAME
+    NODE_AGENT_CONTAINER_NAME \
+    NODE_MIN_FREE_DISK_BYTES \
+    NODE_MIN_FREE_DISK_PERCENT
 
   require_generated_hex_secret POSTGRES_PASSWORD
   require_p256_private_key NODE_PRIVATE_KEY_B64
@@ -424,6 +426,17 @@ validate_environment() {
   fi
   if [ "${NODE_AGENT_CONTAINER_NAME}" != "virtnoded" ]; then
     echo "NODE_AGENT_CONTAINER_NAME must match the Compose node container name: virtnoded" >&2
+    exit 1
+  fi
+  if [[ ! "${NODE_MIN_FREE_DISK_BYTES}" =~ ^[0-9]+$ ]] ||
+     [ "${NODE_MIN_FREE_DISK_BYTES}" -lt 1073741824 ]; then
+    echo "NODE_MIN_FREE_DISK_BYTES must be a decimal value of at least 1073741824 (1 GiB)" >&2
+    exit 1
+  fi
+  if [[ ! "${NODE_MIN_FREE_DISK_PERCENT}" =~ ^[0-9]+$ ]] ||
+     [ "${NODE_MIN_FREE_DISK_PERCENT}" -lt 1 ] ||
+     [ "${NODE_MIN_FREE_DISK_PERCENT}" -gt 50 ]; then
+    echo "NODE_MIN_FREE_DISK_PERCENT must be a decimal value between 1 and 50" >&2
     exit 1
   fi
 	case "${BOOTSTRAP_ENABLED}" in

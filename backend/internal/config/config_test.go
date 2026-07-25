@@ -114,3 +114,50 @@ func TestRenterdPasswordFileFailsClosed(t *testing.T) {
 		t.Fatalf("RenterdPassword = %q, want no environment fallback for a configured missing secret file", cfg.RenterdPassword)
 	}
 }
+
+func TestNodeDiskHeadroomDefaultsAndOverrides(t *testing.T) {
+	t.Setenv("NODE_MIN_FREE_DISK_BYTES", "")
+	t.Setenv("NODE_MIN_FREE_DISK_PERCENT", "")
+	cfg := LoadNode()
+	if cfg.MinFreeDiskBytes != 10<<30 {
+		t.Fatalf("MinFreeDiskBytes = %d, want %d", cfg.MinFreeDiskBytes, int64(10<<30))
+	}
+	if cfg.MinFreeDiskPercent != 5 {
+		t.Fatalf("MinFreeDiskPercent = %d, want 5", cfg.MinFreeDiskPercent)
+	}
+
+	t.Setenv("NODE_MIN_FREE_DISK_BYTES", "21474836480")
+	t.Setenv("NODE_MIN_FREE_DISK_PERCENT", "8")
+	cfg = LoadNode()
+	if cfg.MinFreeDiskBytes != 20<<30 {
+		t.Fatalf("MinFreeDiskBytes = %d, want %d", cfg.MinFreeDiskBytes, int64(20<<30))
+	}
+	if cfg.MinFreeDiskPercent != 8 {
+		t.Fatalf("MinFreeDiskPercent = %d, want 8", cfg.MinFreeDiskPercent)
+	}
+}
+
+func TestNodeDiskHeadroomInvalidValuesFailToSafeDefaults(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		bytes   string
+		percent string
+	}{
+		{name: "negative", bytes: "-1", percent: "-1"},
+		{name: "overflow", bytes: "9223372036854775808", percent: "101"},
+		{name: "malformed", bytes: "ten-gib", percent: "five"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("NODE_MIN_FREE_DISK_BYTES", test.bytes)
+			t.Setenv("NODE_MIN_FREE_DISK_PERCENT", test.percent)
+			cfg := LoadNode()
+			if cfg.MinFreeDiskBytes != 10<<30 || cfg.MinFreeDiskPercent != 5 {
+				t.Fatalf(
+					"disk headroom = %d bytes/%d percent, want safe defaults",
+					cfg.MinFreeDiskBytes,
+					cfg.MinFreeDiskPercent,
+				)
+			}
+		})
+	}
+}

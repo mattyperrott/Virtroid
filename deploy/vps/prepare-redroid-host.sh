@@ -43,6 +43,7 @@ install -m 0755 "${script_dir}/virtroid-binderfs-setup.sh" /usr/local/sbin/virtr
 install -m 0644 "${script_dir}/redroid-binderfs.service" /etc/systemd/system/redroid-binderfs.service
 install -m 0644 "${script_dir}/fail2ban-virtroid.conf" /etc/fail2ban/jail.d/virtroid.conf
 install -m 0644 "${script_dir}/sshd-virtroid-hardening.conf" /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
+install -m 0644 "${script_dir}/sysctl-virtroid-hardening.conf" /etc/sysctl.d/99-virtroid-hardening.conf
 install -m 0755 "${script_dir}/virtroid-backup.sh" /usr/local/sbin/virtroid-backup.sh
 install -m 0755 "${script_dir}/configure-renterd-secrets.sh" /usr/local/sbin/virtroid-configure-renterd-secrets
 install -m 0755 "${script_dir}/renterd-admin.sh" /usr/local/sbin/virtroid-renterd-admin
@@ -69,6 +70,7 @@ install -m 0644 "${script_dir}/virtroid-backup.timer" /etc/systemd/system/virtro
 systemctl daemon-reload
 systemctl enable --now docker
 systemctl enable --now redroid-binderfs.service
+sysctl --system >/dev/null
 sshd -t
 systemctl reload ssh
 systemctl enable --now fail2ban

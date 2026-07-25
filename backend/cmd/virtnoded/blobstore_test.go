@@ -174,6 +174,73 @@ func TestLocalBlobStoreDetectsChunkTampering(t *testing.T) {
 	assertFileContent(t, filepath.Join(restoreDir, "keep.txt"), "existing")
 }
 
+func TestEvaluateDiskHeadroomUsesStricterByteOrPercentRequirement(t *testing.T) {
+	status, err := evaluateDiskHeadroom(1_001, 100, 50, 10)
+	if err != nil {
+		t.Fatalf("evaluateDiskHeadroom: %v", err)
+	}
+	if status.RequiredBytes != 101 {
+		t.Fatalf("RequiredBytes = %d, want rounded-up 10 percent = 101", status.RequiredBytes)
+	}
+	if status.OK {
+		t.Fatal("disk headroom accepted available bytes below the percentage requirement")
+	}
+
+	status, err = evaluateDiskHeadroom(1_000, 499, 500, 1)
+	if err != nil {
+		t.Fatalf("evaluateDiskHeadroom byte threshold: %v", err)
+	}
+	if status.RequiredBytes != 500 || status.OK {
+		t.Fatalf("byte threshold status = %+v, want required=500 and OK=false", status)
+	}
+
+	status, err = evaluateDiskHeadroom(1_000, 500, 500, 1)
+	if err != nil || !status.OK {
+		t.Fatalf("exact disk headroom threshold = %+v, err=%v, want OK", status, err)
+	}
+}
+
+func TestEvaluateDiskHeadroomRejectsInvalidConfiguration(t *testing.T) {
+	if _, err := evaluateDiskHeadroom(1_000, 1_000, -1, 5); err == nil {
+		t.Fatal("negative minimum bytes were accepted")
+	}
+	if _, err := evaluateDiskHeadroom(1_000, 1_000, 0, 101); err == nil {
+		t.Fatal("minimum percent above 100 was accepted")
+	}
+}
+
+func TestLocalBlobStorePreflightRejectsInsufficientDiskHeadroom(t *testing.T) {
+	store := &localBlobStore{
+		root:           filepath.Join(t.TempDir(), "blobstore"),
+		chunkSize:      blobChunkSize,
+		minFreeBytes:   1 << 62,
+		minFreePercent: 0,
+	}
+	report := blobPreflightReport{Store: blobStoreLocal, OK: true}
+	store.preflight(context.Background(), &report)
+	if report.OK {
+		t.Fatalf("local preflight OK=true, checks=%+v", report.Checks)
+	}
+	assertPreflightStatus(t, report, "disk_headroom", "fail")
+	if _, err := os.Stat(filepath.Join(store.root, ".preflight")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("preflight write marker exists after headroom failure, err=%v", err)
+	}
+}
+
+func TestLocalBlobStorePreflightPassesWithDisabledThresholds(t *testing.T) {
+	store := &localBlobStore{
+		root:      filepath.Join(t.TempDir(), "blobstore"),
+		chunkSize: blobChunkSize,
+	}
+	report := blobPreflightReport{Store: blobStoreLocal, OK: true}
+	store.preflight(context.Background(), &report)
+	if !report.OK {
+		t.Fatalf("local preflight OK=false, checks=%+v", report.Checks)
+	}
+	assertPreflightStatus(t, report, "disk_headroom", "pass")
+	assertPreflightStatus(t, report, "local_disk", "pass")
+}
+
 func TestLocalBlobStoreRejectsTraversalChunkKey(t *testing.T) {
 	store := &localBlobStore{root: t.TempDir(), chunkSize: 16}
 	manifest := &blobManifest{
