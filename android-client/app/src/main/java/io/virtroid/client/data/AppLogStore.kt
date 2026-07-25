@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
-import java.time.Instant
 import java.util.UUID
 
 class AppLogStore private constructor(context: Context) {
@@ -29,7 +28,7 @@ class AppLogStore private constructor(context: Context) {
             message = sanitizeMessage(message),
             criticalResolved = false,
         )
-        val next = (_entries.value + entry).takeLast(MAX_ENTRIES)
+        val next = AppLogState.append(_entries.value, entry, MAX_ENTRIES)
         persist(next)
     }
 
@@ -42,31 +41,16 @@ class AppLogStore private constructor(context: Context) {
     fun critical(message: String, source: String = "app") = log(AppLogLevel.CRITICAL, message, source)
 
     fun unresolvedCriticalCount(): Int {
-        return _entries.value.count { it.level.countsForBadge && !it.criticalResolved }
-    }
-
-    fun markCriticalResolved() {
-        val next = _entries.value.map {
-            if (it.level.countsForBadge) it.copy(criticalResolved = true) else it
-        }
-        persist(next)
+        return AppLogState.unresolvedCriticalCount(_entries.value)
     }
 
     fun clearAll() {
-        _entries.value = emptyList()
-        securePrefs.putString(KEY_ENTRIES, "[]")
+        _entries.value = AppLogState.clear()
+        securePrefs.clear(KEY_ENTRIES)
         prefs.edit().remove(KEY_ENTRIES).apply()
         if (vault.isUnlocked) {
             vault.clearNamespace(NAMESPACE)
         }
-    }
-
-    fun exportText(filter: AppLogFilter = AppLogFilter.ALL): String {
-        return _entries.value
-            .filter { filter.matches(it.level) }
-            .joinToString("\n") { entry ->
-                "${Instant.ofEpochMilli(entry.timestampMs)} ${entry.level.name}/${entry.source}: ${entry.message}"
-            }
     }
 
     private fun persist(next: List<AppLogEntry>) {
@@ -196,6 +180,22 @@ data class AppLogEntry(
     val message: String,
     val criticalResolved: Boolean,
 )
+
+internal object AppLogState {
+    fun append(entries: List<AppLogEntry>, entry: AppLogEntry, maxEntries: Int): List<AppLogEntry> {
+        return (entries + entry).takeLast(maxEntries)
+    }
+
+    fun clear(): List<AppLogEntry> = emptyList()
+
+    fun unresolvedCriticalCount(entries: List<AppLogEntry>): Int {
+        return entries.count { it.level.countsForBadge && !it.criticalResolved }
+    }
+
+    fun visibleEntries(entries: List<AppLogEntry>, filter: AppLogFilter): List<AppLogEntry> {
+        return entries.filter { filter.matches(it.level) }
+    }
+}
 
 enum class AppLogLevel {
     INFO,

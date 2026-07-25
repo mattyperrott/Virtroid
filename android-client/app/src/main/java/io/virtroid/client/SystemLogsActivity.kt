@@ -22,6 +22,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import io.virtroid.client.data.AppLogEntry
 import io.virtroid.client.data.AppLogFilter
 import io.virtroid.client.data.AppLogLevel
+import io.virtroid.client.data.AppLogState
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.databinding.ScreenSystemLogsBinding
 import io.virtroid.client.security.copySensitiveToClipboard
@@ -35,7 +36,6 @@ class SystemLogsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSystemLogsBinding
     private lateinit var appLogs: AppLogStore
     private var activeFilter = AppLogFilter.ALL
-    private var viewerClearedAtMs = 0L
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SS")
         .withZone(ZoneId.systemDefault())
 
@@ -47,11 +47,6 @@ class SystemLogsActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         appLogs = AppLogStore.get(this)
-        activeFilter = if (intent.getBooleanExtra(EXTRA_ERRORS_ONLY, false)) {
-            AppLogFilter.ERRORS
-        } else {
-            AppLogFilter.ALL
-        }
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.systemLogsRoot) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -64,13 +59,11 @@ class SystemLogsActivity : AppCompatActivity() {
         binding.filterErrorsButton.setOnClickListener { setFilter(AppLogFilter.ERRORS) }
         binding.filterWarnButton.setOnClickListener { setFilter(AppLogFilter.WARN) }
         binding.copyLogsButton.setOnClickListener { copyLogs() }
-        binding.clearLogViewerButton.setOnClickListener {
-            clearLogViewer()
+        binding.clearLogsButton.setOnClickListener {
+            clearLogs()
         }
         startLivePulse()
         renderFilterState()
-        appLogs.info("System logs screen opened", "logs")
-        appLogs.info("Live app log capture attached", "logs")
         renderLogs(appLogs.entries.value)
 
         lifecycleScope.launch {
@@ -189,16 +182,13 @@ class SystemLogsActivity : AppCompatActivity() {
         toast(getString(R.string.system_logs_copied))
     }
 
-    private fun clearLogViewer() {
-        viewerClearedAtMs = System.currentTimeMillis()
-        renderLogs(appLogs.entries.value)
-        toast(getString(R.string.system_logs_viewer_cleared))
+    private fun clearLogs() {
+        appLogs.clearAll()
+        toast(getString(R.string.system_logs_cleared))
     }
 
     private fun visibleEntries(entries: List<AppLogEntry>): List<AppLogEntry> {
-        return entries.filter { entry ->
-            activeFilter.matches(entry.level) && entry.timestampMs > viewerClearedAtMs
-        }
+        return AppLogState.visibleEntries(entries, activeFilter)
     }
 
     private fun startLivePulse() {
@@ -217,11 +207,6 @@ class SystemLogsActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val EXTRA_ERRORS_ONLY = "errors_only"
-
-        fun createIntent(context: Context, errorsOnly: Boolean = false): Intent {
-            return Intent(context, SystemLogsActivity::class.java)
-                .putExtra(EXTRA_ERRORS_ONLY, errorsOnly)
-        }
+        fun createIntent(context: Context): Intent = Intent(context, SystemLogsActivity::class.java)
     }
 }

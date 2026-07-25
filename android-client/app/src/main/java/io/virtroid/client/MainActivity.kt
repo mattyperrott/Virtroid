@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.notificationButton.setOnClickListener {
-            startActivity(SystemLogsActivity.createIntent(this, errorsOnly = true))
+            startActivity(SystemLogsActivity.createIntent(this))
         }
         binding.createRuntimeButton.setOnClickListener {
             openNewRuntime()

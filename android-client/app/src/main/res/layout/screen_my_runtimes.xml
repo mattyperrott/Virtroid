@@ -63,7 +63,7 @@
                     android:layout_height="48dp"
                     android:layout_gravity="center"
                     android:background="@drawable/bg_surface_circle"
-                    android:contentDescription="@string/system_logs_open_errors"
+                    android:contentDescription="@string/system_logs_open"
                     android:padding="13dp"
                     android:src="@drawable/ic_bell"
                     app:tint="@color/v_text_primary" />

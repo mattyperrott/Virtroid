@@ -434,11 +434,9 @@
     <string name="system_logs_copy">Copy logs</string>
     <string name="system_logs_copied">Logs copied</string>
     <string name="system_logs_empty">No matching app logs yet.</string>
-    <string name="system_logs_open_errors">Open critical app logs</string>
-    <string name="system_logs_acknowledge">Acknowledge critical alerts</string>
-    <string name="system_logs_acknowledged">Critical alerts acknowledged</string>
-    <string name="system_logs_clear_viewer">Clear visible logs</string>
-    <string name="system_logs_viewer_cleared">Log viewer cleared</string>
+    <string name="system_logs_open">Open app logs</string>
+    <string name="system_logs_clear">Clear all logs</string>
+    <string name="system_logs_cleared">All logs cleared</string>
 
     <string name="privacy_title">Privacy &amp; Security</string>
     <string name="privacy_security_telemetry">Security Telemetry</string>
