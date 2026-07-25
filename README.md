@@ -1,0 +1,1016 @@
+<div align="center">
+
+# Virtroid
+
+### Private, remotely hosted Android environments
+
+Securely create, control, reset, and destroy isolated Android runtimes from the Virtroid mobile client.
+
+[![Go](https://img.shields.io/badge/Backend-Go-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Android](https://img.shields.io/badge/Client-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
+[![Docker](https://img.shields.io/badge/Runtime-Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![ReDroid](https://img.shields.io/badge/Android_Runtime-ReDroid-orange)](https://github.com/remote-android/redroid-doc)
+[![Project Status](https://img.shields.io/badge/Status-Active_Development-yellow)](#project-status)
+
+[Overview](#overview) ·
+[Features](#feature-matrix) ·
+[Architecture](#architecture) ·
+[Security](#security-model) ·
+[Development](#development) ·
+[Deployment](#vps-deployment) ·
+[Roadmap](#roadmap)
+
+</div>
+
+---
+
+## Overview
+
+**Virtroid** is a remote Android platform that provisions isolated Android environments on server infrastructure and allows users to securely control them from an Android client.
+
+The physical phone does not host the virtual Android system.
+
+Instead, the phone acts as an authenticated controller and encrypted viewer for an independently hosted Android runtime.
+
+This separates:
+
+* Physical device state
+* Remote Android state
+* Installed applications
+* Application data
+* Runtime storage
+* Android build identity
+* Runtime network identity
+* Persona lifecycle
+
+> [!IMPORTANT]
+> Virtroid is currently a **trusted-operator remote Android system**.
+>
+> It does not yet provide confidential-computing protection against a compromised runtime server or privileged infrastructure operator.
+
+---
+
+## Project Status
+
+Virtroid currently operates as a working **single-VPS remote Android development system**.
+
+The deployed architecture includes:
+
+* Android client application
+* Go control plane
+* Go runtime node agent
+* ReDroid Android containers
+* PostgreSQL
+* HAProxy
+* Encrypted local runtime snapshots
+* Signed device, node, capability, and callback requests
+
+### Runtime lifecycle
+
+```mermaid
+flowchart TD
+    A[Create account] --> B[Register signing device]
+    B --> C[Create Android runtime]
+    C --> D[Start runtime]
+    D --> E[Create encrypted viewer session]
+    E --> F[Use remote Android environment]
+    F --> G[Stop runtime]
+    G --> H[Encrypt and save snapshot]
+    H --> I{Next action}
+    I -->|Restore| D
+    I -->|Persona restart| C
+    I -->|Factory reset| C
+    I -->|Delete| J[Remove runtime resources]
+```
+
+---
+
+## Feature Matrix
+
+| Capability                   |       Status      | Notes                                                   |
+| :--------------------------- | :---------------: | :------------------------------------------------------ |
+| Signed account bootstrap     |   ✅ Implemented   | Device proof-of-possession protects later API requests  |
+| Trusted-device management    |   ✅ Implemented   | Devices can be listed and revoked                       |
+| Runtime creation             |   ✅ Implemented   | Creates independently managed Android environments      |
+| Runtime start and stop       |   ✅ Implemented   | Proven on the current single-node deployment            |
+| Remote Android viewer        |   ✅ Implemented   | Encrypted viewer sessions over TLS                      |
+| Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
+| Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
+| Runtime deletion             |   ✅ Implemented   | Includes explicit cleanup obligations                   |
+| Account deletion             |   ✅ Implemented   | Includes relational and runtime cleanup                 |
+| Local application lock       |   ✅ Implemented   | Includes retry controls and biometric support           |
+| Encrypted client state       |   ✅ Implemented   | Protected using Android Keystore-backed controls        |
+| F-Droid application catalog  |   ✅ Implemented   | Catalog entries include pinned APK hashes               |
+| F-Droid installation         |     🟡 Partial    | Happy path implemented; broader failure testing remains |
+| Encrypted local snapshots    |   ✅ Implemented   | Current production persistence mechanism                |
+| Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
+| Reproducible VPS deployment  |   ✅ Implemented   | Hardened release and verification scripts included      |
+| Camera passthrough           | ❌ Not implemented | Existing fields and controls are scaffolding only       |
+| Active-runtime file import   | ❌ Not implemented | Viewer action remains unavailable                       |
+| Confidential VM isolation    | ❌ Not implemented | ReDroid currently runs on a trusted VPS                 |
+| Hardware attestation         | ❌ Not implemented | Design and proof-of-concept work only                   |
+| Operator-blind persistence   | ❌ Not implemented | Runtime host participates in snapshot operations        |
+| Multi-node scheduling        |    🗓️ Planned    | Current deployment uses one approved node               |
+| Operator control-panel UI    | ❌ Not implemented | Current control plane is API infrastructure             |
+
+> [!NOTE]
+> See [`docs/current-status-and-roadmap.md`](docs/current-status-and-roadmap.md) for the authoritative implementation status and current engineering priorities.
+
+---
+
+## Core Design
+
+### Remote Android isolation
+
+Virtroid does not emulate Android locally on the user’s phone.
+
+Each Android environment runs separately on remote infrastructure.
+
+```text
+Physical Android phone
+        │
+        │ Signed control requests
+        │ Encrypted viewer transport
+        ▼
+Remote Android runtime
+```
+
+Applications running inside the remote environment do not directly operate inside the physical device’s Android installation.
+
+---
+
+### Disposable personas
+
+Virtroid is designed around independently managed Android personas.
+
+A persona can be:
+
+* Created
+* Started
+* Stopped
+* Restored
+* Restarted
+* Factory reset
+* Deleted
+
+Each lifecycle action is treated as an explicit backend operation rather than an informal container restart.
+
+---
+
+### Cryptographic device identity
+
+After bootstrap, requests are authenticated using a signing key held by the Android device.
+
+Signed requests cover security-relevant fields including:
+
+```text
+Account ID
+Device ID
+Request path
+Timestamp
+Nonce
+Request body hash
+```
+
+The backend enforces:
+
+* Bounded timestamps
+* Nonce validation
+* Replay rejection
+* Body-integrity verification
+* Device ownership checks
+
+---
+
+### Scoped capabilities
+
+Runtime and viewer operations use scoped capabilities instead of broad, permanent authority.
+
+Capabilities can be bound to:
+
+* Account
+* Device
+* Runtime
+* Session
+* Requested operation
+* Expiration time
+
+This limits the authority of an intercepted or misused credential.
+
+---
+
+### Explicit cleanup obligations
+
+Lifecycle operations create explicit cleanup obligations for resources such as:
+
+* Runtime containers
+* Docker networks
+* Viewer sessions
+* Relay credentials
+* Capabilities
+* Snapshot state
+* Runtime directories
+* Database records
+* Temporary application artifacts
+
+Cleanup is part of the lifecycle model rather than an optional maintenance task.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Client["Virtroid Android Client"]
+        CK[Device signing key]
+        CV[Secure local vault]
+        CL[Application lock]
+        CR[Runtime controls]
+        CW[Encrypted viewer]
+    end
+
+    subgraph Edge["Public Edge"]
+        HP[HAProxy<br/>HTTPS and TLS relay]
+    end
+
+    subgraph Services["Private Loopback Services"]
+        CP[virtroidd<br/>Control plane]
+        NA[virtnoded<br/>Runtime node agent]
+    end
+
+    subgraph Data["State and Runtime"]
+        PG[(PostgreSQL)]
+        RD[ReDroid containers]
+        SS[(Encrypted snapshots)]
+        APK[Approved APK storage]
+    end
+
+    Client -->|HTTPS| HP
+    HP --> CP
+    HP --> NA
+    CP --> PG
+    CP --> NA
+    NA --> RD
+    NA --> SS
+    NA --> APK
+```
+
+### Component responsibilities
+
+| Component            | Responsibility                                                                      |
+| :------------------- | :---------------------------------------------------------------------------------- |
+| **Android client**   | Device identity, onboarding, runtime controls, local security, and remote viewer    |
+| **HAProxy**          | Public HTTPS termination and controlled ingress                                     |
+| **`virtroidd`**      | Accounts, devices, entitlements, runtimes, capabilities, sessions, and policy       |
+| **`virtnoded`**      | ReDroid lifecycle, application installation, relay handling, snapshots, and cleanup |
+| **PostgreSQL**       | Authoritative control-plane and lifecycle state                                     |
+| **ReDroid**          | Remote Android runtime containers                                                   |
+| **Snapshot storage** | Encrypted stopped-runtime persistence                                               |
+
+---
+
+## Control Plane
+
+The control plane is responsible for:
+
+* Public account bootstrap
+* Device registration
+* Device revocation
+* Entitlement enforcement
+* Runtime records
+* Runtime capability issuance
+* Viewer-session authorization
+* Operator authorization
+* Node authorization
+* Runtime image allowlisting
+* Trial-time enforcement
+* Runtime limits
+* Start-rate limits
+* Storage quotas
+* Cleanup tracking
+* Audit state
+
+The term **control plane** refers to the backend service infrastructure.
+
+It does not currently refer to a graphical operator dashboard.
+
+---
+
+## Runtime Node
+
+The runtime node agent is responsible for:
+
+* Creating ReDroid containers
+* Starting Android runtimes
+* Stopping Android runtimes
+* Managing runtime-specific Docker resources
+* Opening viewer relay sessions
+* Installing approved applications
+* Encrypting runtime snapshots
+* Restoring runtime snapshots
+* Enforcing snapshot generations
+* Running cleanup obligations
+* Sending signed lifecycle callbacks
+
+> [!WARNING]
+> The current node agent and ReDroid deployment operate within a privileged host trust boundary.
+
+---
+
+## Android Client
+
+The Android client currently provides:
+
+* Signed onboarding
+* Device proof-of-possession
+* Runtime creation
+* Runtime startup
+* Runtime stop
+* Runtime reset actions
+* Encrypted viewer sessions
+* Trusted-device management
+* F-Droid catalog selection
+* Local application lock
+* Biometric unlock support
+* Secure-window protection
+* Keystore-protected secrets
+* Encrypted local state
+* Security and lifecycle logs
+
+---
+
+## Security Model
+
+Virtroid currently provides protections against several classes of client-side, network-level, and lifecycle attacks.
+
+### Implemented controls
+
+#### Device and request security
+
+* P-256 device signing keys
+* Signed request bodies
+* Request timestamps
+* Request nonces
+* Body-hash verification
+* Replay rejection
+* Trusted-device revocation
+
+#### Runtime authorization
+
+* Runtime-scoped capabilities
+* Session-specific authorization
+* Capability expiration
+* Approved node registry
+* Approved operator registry
+* Runtime image allowlisting
+
+#### Node communication
+
+* Signed node requests
+* Signed control-plane callbacks
+* Freshness validation
+* Callback replay protection
+* Pinned node identities
+
+#### Viewer security
+
+* TLS transport
+* Encrypted viewer sessions
+* Hashed relay tokens
+* Relay-token expiration
+* Explicit heartbeat and close flows
+
+#### Snapshot security
+
+* Encryption at rest
+* Authenticated manifests
+* Monotonic snapshot generations
+* Rollback rejection
+* Generation-reuse rejection
+* Storage-quota enforcement
+* Free-disk headroom enforcement
+
+#### Android client security
+
+* Android Keystore integration
+* Encrypted local application state
+* Application lock
+* Retry controls
+* Biometric authentication
+* Secure-window handling
+
+#### Deployment security
+
+* Loopback-bound internal services
+* Deny-by-default firewall policy
+* Key-only SSH support
+* Disabled direct root SSH
+* AppArmor
+* Auditd
+* Fail2ban
+* Unattended security updates
+* Bounded container logs
+* Immutable release-state verification
+* Reproducible host-hardening checks
+
+---
+
+## Current Trust Boundary
+
+The runtime host remains trusted.
+
+The current ReDroid environment runs on infrastructure controlled by the Virtroid operator. The node can access the live Android plaintext and participates in restoring and saving encrypted runtime state.
+
+A sufficiently privileged attacker may compromise an active runtime through:
+
+* VPS administrator access
+* Node-agent compromise
+* Docker control
+* Host-level instrumentation
+* Host memory inspection
+* ReDroid container inspection
+* Malicious infrastructure changes
+
+### Virtroid must not currently be described as
+
+* Trustless
+* Host-blind
+* Operator-blind
+* Anonymous by architecture
+* Confidential computing
+* Fully end-to-end encrypted
+* Protected from a malicious runtime host
+
+> [!CAUTION]
+> Transport encryption protects data in transit.
+>
+> Snapshot encryption protects stopped-runtime files at rest.
+>
+> Neither mechanism currently makes the active Android environment confidential from the runtime host.
+
+---
+
+## Snapshot Protection
+
+Stopped Android environments can be persisted as encrypted snapshots.
+
+The current snapshot implementation includes:
+
+```text
+Runtime state
+    │
+    ▼
+Authenticated snapshot generation
+    │
+    ▼
+Encrypted snapshot files
+    │
+    ▼
+Authenticated manifest
+    │
+    ▼
+Generation and rollback validation
+```
+
+### Snapshot protections
+
+* Encryption at rest
+* Authenticated metadata
+* Authenticated manifests
+* Monotonic generations
+* Rollback detection
+* Reused-generation rejection
+* Storage quota checks
+* Disk headroom checks
+* Lifecycle cleanup tracking
+
+Snapshots are currently stored on the same VPS as the control plane and runtime node.
+
+This is encrypted local persistence, not independent or operator-blind storage.
+
+---
+
+## Application Installation
+
+Virtroid supports installation from an approved F-Droid catalog.
+
+Catalog entries include:
+
+* Package name
+* Display name
+* Version information
+* Source classification
+* APK SHA-256 digest
+
+The runtime node installs only approved and hash-pinned artifacts.
+
+### Local application manifest
+
+Locally supplied APK or APKM artifacts must be referenced by an approved manifest.
+
+```json
+{
+  "version": 1,
+  "apps": [
+    {
+      "package_name": "example.package",
+      "display_name": "Example App",
+      "artifact": "example.apk",
+      "install_mode": "single",
+      "sha256": "<64-character-lowercase-sha256>",
+      "default": false,
+      "set_as_home": false
+    }
+  ]
+}
+```
+
+Artifacts are rejected when they are:
+
+* Missing from the manifest
+* Referenced using an invalid path
+* Hash mismatched
+* Unsupported by the declared install mode
+* Not approved for the runtime
+
+---
+
+## Repository Structure
+
+```text
+Virtroid/
+├── android-client/          # Virtroid Android client
+├── backend/
+│   ├── cmd/                 # Go service and administration entry points
+│   ├── internal/            # Backend domain and infrastructure logic
+│   ├── go.mod
+│   └── go.sum
+├── deploy/
+│   └── vps/                 # VPS deployment and hardening system
+└── docs/                    # Status, specifications, audits, and design notes
+    └── runtime-poc/         # Experimental confidential-runtime research
+```
+
+| Path                           | Purpose                                                           |
+| :----------------------------- | :---------------------------------------------------------------- |
+| [`android-client/`](android-client/)         | Android client source, resources, tests, and build configuration  |
+| [`backend/cmd/`](backend/cmd/)                 | Backend service and administration command entry points           |
+| [`backend/internal/`](backend/internal/)       | Security, lifecycle, storage, persistence, and runtime logic      |
+| [`deploy/vps/`](deploy/vps/)   | VPS preparation, release, backup, rollback, and hardening         |
+| [`docs/`](docs/)               | Authoritative status, product specifications, audits, and history |
+| [`docs/runtime-poc/`](docs/runtime-poc/) | Experimental confidential-runtime and network designs             |
+
+---
+
+## Documentation
+
+### Authoritative documents
+
+| Document                                                                     | Purpose                                            |
+| :--------------------------------------------------------------------------- | :------------------------------------------------- |
+| [`docs/README.md`](docs/README.md)                             | Documentation index and authority guidance         |
+| [`docs/current-status-and-roadmap.md`](docs/current-status-and-roadmap.md)   | Verified implementation and live deployment status |
+| [`docs/audit-progress-2026-07-25.md`](docs/audit-progress-2026-07-25.md)     | Current remediation and release ledger             |
+| [`docs/final-product-specification.md`](docs/final-product-specification.md) | Intended final product behavior                    |
+| [`deploy/vps/README.md`](deploy/vps/README.md)                               | Production VPS release and operations procedure    |
+
+### Documentation categories
+
+Virtroid documentation uses three distinct categories:
+
+| Category         | Meaning                                                                |
+| :--------------- | :--------------------------------------------------------------------- |
+| **Implemented**  | Present in the repository and verified by tests or live operation      |
+| **Target**       | Intended product behavior that is not fully implemented                |
+| **Experimental** | Research or proof-of-concept work that is not production functionality |
+
+> [!NOTE]
+> Historical audits and specifications are retained for provenance.
+>
+> They should not be treated as evidence that a feature is currently deployed.
+
+---
+
+## Development
+
+### Requirements
+
+Backend development typically requires:
+
+* Go
+* Docker
+* Docker Compose
+* PostgreSQL tooling where applicable
+
+Android development typically requires:
+
+* Android Studio
+* Android SDK
+* Java Development Kit
+* The repository Gradle wrapper
+
+---
+
+### Backend validation
+
+Run the backend validation suite from the repository root:
+
+```bash
+cd backend
+
+go test -count=1 ./...
+go test -race -count=1 ./...
+go vet ./...
+go build ./cmd/...
+govulncheck ./...
+```
+
+Validation also covers deployment-related behavior such as:
+
+* Shell syntax
+* Environment safety
+* Docker Compose configuration
+* Migration behavior
+* Release-state verification
+* Host-hardening configuration
+
+---
+
+### Android validation
+
+Use the included Gradle wrapper.
+
+Example:
+
+```bash
+cd android-client
+
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+./gradlew lintRelease
+./gradlew assembleDebug
+```
+
+The Android validation gate includes:
+
+* Debug unit tests
+* Debug lint
+* Release lint
+* Debug APK assembly
+* Release security-manifest verification
+
+> [!TIP]
+> Use the project Gradle wrapper instead of a separately installed Gradle version.
+
+---
+
+## VPS Deployment
+
+Virtroid’s production deployment procedure targets a fresh Ubuntu VPS.
+
+### Host components
+
+* Docker
+* Docker Compose
+* BinderFS
+* ReDroid-compatible kernel configuration
+* HAProxy
+* PostgreSQL
+* AppArmor
+* Auditd
+* Fail2ban
+* UFW
+* Unattended security upgrades
+
+Review the full deployment guide before preparing a server:
+
+**[`deploy/vps/README.md`](deploy/vps/README.md)**
+
+---
+
+### Default production layout
+
+```text
+/opt/virtroid-source
+    Root-owned offline production source checkout
+
+/opt/virtroid/deploy/vps/.env
+    Deployment configuration
+
+/var/lib/virtroid-release-bundles
+    Root-only release image archives
+
+/srv/virtroid
+    Runtime state, assets, certificates, and snapshots
+
+/srv/virtroid/tls/virtroid.pem
+    HAProxy certificate chain and private key bundle
+```
+
+---
+
+### Simplified host preparation
+
+```bash
+cd /opt/virtroid/deploy/vps
+
+sudo bash ./prepare-redroid-host.sh
+
+sudo ./generate-env.sh \
+  https://your-domain.example \
+  your-node-id
+
+sudo VIRTROID_AUTHORIZED_KEY_FILE=/path/to/deploy-key.pub \
+  bash ./create-deploy-user.sh
+```
+
+After testing a fresh key-based login:
+
+```bash
+sudo /opt/virtroid/deploy/vps/enable-key-only-ssh.sh
+```
+
+Run the hardening verifier:
+
+```bash
+sudo VIRTROID_REQUIRE_ROOT_LOCKED=true \
+  VIRTROID_REQUIRE_KEY_ONLY_SSH=true \
+  /usr/local/sbin/virtroid-verify-host-hardening
+```
+
+---
+
+### Production release model
+
+Production releases are intentionally built and applied on the protected VPS.
+
+The release process verifies conditions including:
+
+* No configured Git remote
+* No `.github` directory
+* Root-owned production source
+* Clean source checkout
+* No group-writable source
+* No world-writable source
+* Approved image identity
+* Approved database schema
+* Node-key fingerprint
+* Node heartbeat
+* HTTPS health
+
+Run a reviewed VPS-local release with:
+
+```bash
+sudo /usr/local/sbin/virtroid-release-on-vps
+```
+
+> [!WARNING]
+> Do not expose the following directly to the public internet:
+>
+> * `virtroidd`
+> * `virtnoded`
+> * PostgreSQL
+> * Docker
+> * ADB
+> * ReDroid management interfaces
+
+---
+
+## Operational Security Notes
+
+### Internal service bindings
+
+Production internal services should remain bound to host loopback interfaces.
+
+```text
+Public internet
+      │
+      ▼
+HAProxy :443
+      │
+      ├── virtroidd :8080 on loopback
+      └── virtnoded :8090 on loopback
+```
+
+### Backups
+
+The current deployment supports VPS-local, root-only, checksummed backups.
+
+These backups:
+
+* Remain on the same VPS
+* Do not provide off-site disaster recovery
+* May retain deleted account data until backup rotation
+* Must not be copied into the repository
+* Must not be uploaded to hosted source control
+
+### Production secrets
+
+Never commit:
+
+* `.env` files
+* TLS private keys
+* Database dumps
+* Runtime snapshots
+* Node private keys
+* Operator private keys
+* Release bundles
+* Wallet recovery seeds
+* Production backup archives
+
+---
+
+## Camera Passthrough
+
+Camera passthrough is **not currently implemented**.
+
+Existing database fields and disabled interface controls are only scaffolding.
+
+A complete implementation requires:
+
+1. Android client camera permission
+2. CameraX capture pipeline
+3. Session-bound upstream media transport
+4. Bounded memory buffering
+5. Bandwidth and backpressure controls
+6. Node-side video decoding
+7. Per-runtime V4L2 devices
+8. Compatible ReDroid camera HAL
+9. Privacy indicators
+10. Immediate cleanup on disconnect or stop
+11. Cross-runtime isolation testing
+
+```mermaid
+flowchart LR
+    PC[Physical phone camera] --> CX[CameraX capture]
+    CX --> ET[Encrypted session transport]
+    ET --> ND[Node decoder]
+    ND --> V4[V4L2 loopback device]
+    V4 --> AR[Remote Android camera HAL]
+```
+
+> [!CAUTION]
+> Even after basic passthrough is implemented, camera frames would remain visible to the trusted runtime host unless confidential-runtime isolation is also implemented.
+
+---
+
+## Roadmap
+
+### Milestone 0 — Maintenance release
+
+* Review final changes
+* Complete Android acceptance testing
+* Deploy current backend dependency fixes
+* Repeat VPS health verification
+* Repeat runtime smoke tests
+
+### Milestone 1 — Runtime reliability
+
+* Repeated create, start, stop, and delete testing
+* Concurrent lifecycle requests
+* Viewer network-loss recovery
+* Control-plane restart testing
+* Node restart testing
+* Provisioning interruption testing
+* Snapshot-save interruption testing
+* Snapshot fork rejection
+* Snapshot corruption rejection
+* Disk-pressure testing
+* Storage-quota testing
+* Trial-expiry testing
+* Full orphan audits after each injected failure
+
+### Milestone 2 — Camera feasibility
+
+* Build disposable V4L2 test environment
+* Validate a compatible ReDroid camera HAL
+* Test Camera2 enumeration
+* Test preview and still capture
+* Test rotation and reconnection
+* Test per-runtime device isolation
+* Prove complete media cleanup
+
+### Milestone 3 — Confidential runtimes
+
+* Package Android runtime inside a full VM
+* Evaluate confidential VM technologies
+* Measure runtime images
+* Implement remote attestation
+* Issue attested runtime leases
+* Bind key release to verified measurements
+* Separate runtime nodes from the control-plane host
+* Document infrastructure visibility boundaries
+
+### Deferred
+
+* Production Sia or renterd cutover
+* Multi-operator scheduling
+* Public anonymity claims
+* Public trustlessness claims
+* End-to-end confidentiality claims
+
+---
+
+## Intended Uses
+
+Virtroid is an engineering and research platform for controlled remote Android environments.
+
+Potential legitimate uses include:
+
+* Mobile application testing
+* Disposable development environments
+* Remote Android workspaces
+* Quality-assurance automation
+* Device-fleet simulation
+* Segregated application personas
+* Mobile security research
+* Contained malware analysis
+* Runtime lifecycle experimentation
+
+Users are responsible for compliance with:
+
+* Applicable laws
+* Organizational policies
+* Third-party service terms
+* Platform rules
+* Data-protection requirements
+
+---
+
+## Contributing
+
+Before proposing a change:
+
+1. Read the current status and roadmap.
+2. Distinguish implemented behavior from target architecture.
+3. Include tests for security-sensitive changes.
+4. Preserve request-signing and replay protections.
+5. Preserve explicit cleanup semantics.
+6. Do not introduce unpinned runtime images.
+7. Do not introduce unpinned application artifacts.
+8. Update authoritative documentation when capability status changes.
+9. Do not describe dormant fields or UI controls as implemented features.
+
+### Security-sensitive changes should document
+
+* Threat assumptions
+* Trust-boundary changes
+* Failure behavior
+* Cleanup behavior
+* Test coverage
+* Migration requirements
+* Deployment implications
+* Rollback behavior
+
+---
+
+## Security Reporting
+
+Do not publish active production secrets, private keys, credentials, runtime data, or exploit details in a public issue.
+
+A dedicated private security-reporting process should be added before accepting external vulnerability reports.
+
+---
+
+## License
+
+No open-source license is currently declared in this repository.
+
+Unless a license is added, public visibility does not grant permission to:
+
+* Copy the source
+* Modify the source
+* Redistribute the source
+* Sell the source
+* Use the source commercially
+* Publish derivative works
+
+All rights remain with the repository owner under default copyright law.
+
+---
+
+## Disclaimer
+
+Virtroid is under active development.
+
+Security properties, supported features, schemas, interfaces, deployment procedures, and architecture may change.
+
+Do not rely on Virtroid for high-risk or production-sensitive workloads without independently reviewing:
+
+* The source code
+* Current deployment configuration
+* Current threat model
+* Current audit findings
+* Runtime-host trust assumptions
+* Backup and recovery limitations
+
+---
+
+<div align="center">
+
+**Virtroid**
+
+Remote Android environments with explicit lifecycle control and security-focused infrastructure.
+
+</div>
