@@ -43,6 +43,7 @@ type qaClient struct {
 	deviceKey  *ecdsa.PrivateKey
 	accountID  string
 	deviceID   string
+	bootstrapInvite string
 	blobKey    []byte
 	verifier   string
 	runtimeID  string
@@ -107,6 +108,7 @@ func main() {
 
 	var (
 		baseURL    = flag.String("base-url", "https://virtroid.network", "Virtroid control-plane base URL")
+		bootstrapInviteEnv = flag.String("bootstrap-invite-env", "VIRTROID_BOOTSTRAP_INVITE", "environment variable containing the one-time bootstrap invitation")
 		concurrent = flag.Int("concurrency", 8, "number of concurrent duplicate mutations")
 		confirm    = flag.Bool("confirm-disposable", false, "required acknowledgement that the generated account is disposable")
 		scenario   = flag.String("scenario", "lifecycle", "test scenario: lifecycle, snapshot-corruption, or quota")
@@ -125,9 +127,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--scenario must be lifecycle, snapshot-corruption, or quota")
 		os.Exit(2)
 	}
+	bootstrapInviteEnvName := strings.TrimSpace(*bootstrapInviteEnv)
+	if bootstrapInviteEnvName == "" {
+		fmt.Fprintln(os.Stderr, "--bootstrap-invite-env must name an environment variable")
+		os.Exit(2)
+	}
+	bootstrapInvite := strings.TrimSpace(os.Getenv(bootstrapInviteEnvName))
+	if bootstrapInvite == "" {
+		fmt.Fprintf(os.Stderr, "%s must contain a one-time bootstrap invitation\n", bootstrapInviteEnvName)
+		os.Exit(2)
+	}
 
 	ctx := context.Background()
-	client, err := newQAClient(*baseURL)
+	client, err := newQAClient(*baseURL, bootstrapInvite)
 	if err != nil {
 		fatal(err)
 	}
@@ -550,7 +562,7 @@ func waitForFaultSignal(expected string) error {
 	return nil
 }
 
-func newQAClient(rawBaseURL string) (*qaClient, error) {
+func newQAClient(rawBaseURL string, bootstrapInvite string) (*qaClient, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawBaseURL))
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Path != "" {
 		return nil, errors.New("--base-url must be an HTTPS origin without a path")
@@ -570,6 +582,7 @@ func newQAClient(rawBaseURL string) (*qaClient, error) {
 		deviceKey: deviceKey,
 		accountID: uuid.NewString(),
 		deviceID:  uuid.NewString(),
+		bootstrapInvite: strings.TrimSpace(bootstrapInvite),
 		blobKey:   blobKey,
 		verifier:  base64.RawURLEncoding.EncodeToString(verifierDigest[:]),
 	}, nil
@@ -585,6 +598,7 @@ func (c *qaClient) bootstrap(ctx context.Context) error {
 		"device_id":    c.deviceID,
 		"device_name":  "Lifecycle QA",
 		"public_key":   base64.StdEncoding.EncodeToString(publicDER),
+		"invite_token": c.bootstrapInvite,
 		"runtime_name": "Lifecycle QA",
 		"width_px":     800,
 		"height_px":    1600,
@@ -597,6 +611,7 @@ func (c *qaClient) bootstrap(ctx context.Context) error {
 	if status != http.StatusCreated {
 		return responseError("bootstrap", status, payload)
 	}
+	c.bootstrapInvite = ""
 	return nil
 }
 

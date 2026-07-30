@@ -25,6 +25,8 @@ grep -q '^NODE_AGENT_CONTAINER_NAME=virtnoded$' "${tmp_dir}/.env"
 grep -q '^NODE_MIN_FREE_DISK_BYTES=10737418240$' "${tmp_dir}/.env"
 grep -q '^NODE_MIN_FREE_DISK_PERCENT=5$' "${tmp_dir}/.env"
 grep -q '^BOOTSTRAP_ENABLED=true$' "${tmp_dir}/.env"
+grep -q '^BOOTSTRAP_REQUIRE_INVITE=true$' "${tmp_dir}/.env"
+grep -q '^RUNTIME_LOG_RETENTION=720h$' "${tmp_dir}/.env"
 grep -q '^NODE_DEVELOPMENT_ENROLLMENT_ENABLED=false$' "${tmp_dir}/.env"
 grep -Eq '^CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
 grep -Eq '^CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
@@ -57,7 +59,7 @@ export VIRTROID_RELEASE_ENV_FILE="${release_env_file}"
 printf '%s\n' \
   "POSTGRES_IMAGE=postgres:18@sha256:${digest}" \
   "GO_BUILD_IMAGE=golang:1.26.5-bookworm@sha256:${digest}" \
-  "BACKEND_RUNTIME_IMAGE=debian:bookworm-slim@sha256:${digest}" \
+  "BACKEND_RUNTIME_IMAGE=alpine:3.23@sha256:${digest}" \
   "NODE_RUNTIME_IMAGE=redroid/redroid:14.0.0_64only-latest@sha256:${digest}" \
   "HAPROXY_IMAGE=haproxy:lts@sha256:${digest}" \
   "RENTERD_IMAGE=ghcr.io/siafoundation/renterd:2.9.3@sha256:${digest}" \
@@ -149,6 +151,13 @@ cp "${tmp_dir}/.env" "${tmp_dir}/invalid-bootstrap.env"
 printf '%s\n' 'BOOTSTRAP_ENABLED=invalid' >> "${tmp_dir}/invalid-bootstrap.env"
 if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/invalid-bootstrap.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
   echo "invalid bootstrap setting was accepted" >&2
+  exit 1
+fi
+
+cp "${tmp_dir}/.env" "${tmp_dir}/public-bootstrap.env"
+printf '%s\n' 'BOOTSTRAP_REQUIRE_INVITE=false' >> "${tmp_dir}/public-bootstrap.env"
+if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/public-bootstrap.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
+  echo "production deployment accepted anonymous public bootstrap" >&2
   exit 1
 fi
 
@@ -323,6 +332,11 @@ grep -q 'verify-host-hardening.sh' "${script_dir}/install-reviewed-deployment-tr
 grep -q 'systemctl enable --now unattended-upgrades' "${script_dir}/install-reviewed-deployment-tree.sh"
 grep -q 'read_only: true' "${script_dir}/docker-compose.yml"
 grep -q 'no-new-privileges:true' "${script_dir}/docker-compose.yml"
+grep -q 'use_backend virtnoded_relay if relay_connect relay_path' "${script_dir}/haproxy.cfg"
+if grep -q 'use_backend virtnoded_relay if relay_connect$' "${script_dir}/haproxy.cfg"; then
+  echo "HAProxy routes CONNECT requests outside the relay path to the node agent" >&2
+  exit 1
+fi
 grep -q 'authorized key file must contain exactly one public key' "${script_dir}/create-deploy-user.sh"
 grep -q 'sudo -u "${deploy_user}" -H docker version' "${script_dir}/create-deploy-user.sh"
 grep -q 'if \[ -s "${deploy_home}/.ssh/authorized_keys" \]; then' "${script_dir}/create-deploy-user.sh"

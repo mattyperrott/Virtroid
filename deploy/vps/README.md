@@ -1,7 +1,8 @@
 # Virtroid VPS Deploy
 
-> **Release target (2026-07-21):** The public signed-bootstrap release uses schema
-> `2026072102`. The previously verified node-registry release used schema `2026071903` with the
+> **Release target (2026-07-30):** Invite-gated signed bootstrap uses schema
+> `2026073001`. The previously deployed public-bootstrap release used schema
+> `2026072102`, and the node-registry release used schema `2026071903`, with the
 > approved production node registry. Production builds, release bundles,
 > rollback state, operational secrets, and local backups remain on the VPS.
 > A renterd recovery seed is the deliberate exception: two physical offline
@@ -97,19 +98,47 @@ The source-controlled host-hardening inputs are:
 Reviewed releases reinstall these files atomically and rerun the verifier, so
 manual VPS drift cannot silently become the expected production state.
 
-The generated production configuration enables public account bootstrap and
-disables shared-secret node self-enrollment. Production node requests are
+The generated production configuration enables the signed bootstrap endpoint,
+requires an operator-created invitation for every new account/device, and
+disables shared-secret node self-enrollment.
+Production node requests are
 accepted only after an operator-controlled node/key approval exists. The
 control plane signs node callbacks with a separate P-256 key, and nodes accept
 only pinned, fresh, non-replayed callback signatures.
-Public bootstrap does not require operator approval or a shared secret. Every
-request must carry a fresh signature from the P-256 Android Keystore key whose
+The operator CLI generates 256-bit, one-time invitations with a bounded expiry.
+The database stores only each token's SHA-256 digest, expiry, label, creator,
+and consumption record. Every bootstrap request must carry the plaintext
+invitation plus a fresh signature from the P-256 Android Keystore key whose
 public half is in that exact request body; account ID, device ID, request path,
-timestamp, nonce, and body hash are all covered. Bootstrap creates only the
-account, default entitlement, and signing device--never a runtime. Request-size
-limits and a bounded transient rate limiter reduce anonymous abuse without
-persisting IP addresses as identity metadata. Set `BOOTSTRAP_ENABLED=false`
-only for an intentional maintenance freeze.
+timestamp, nonce, invitation, and body hash are all covered. The server consumes
+the invitation and creates the account, default entitlement, and signing device
+inside one database transaction. A failed registration rolls back consumption;
+a successful registration makes the invitation unusable. Bootstrap never
+creates a runtime. The authenticated device creates runtimes afterward under
+the account entitlement and quota controls.
+
+## Creating a bootstrap invitation
+
+Run the operator command from the protected current image while PostgreSQL is
+running:
+
+```bash
+sudo docker compose \
+  --env-file /opt/virtroid/deploy/vps/.env \
+  --env-file /var/lib/virtroid-deploy/current.env \
+  -f /opt/virtroid/deploy/vps/docker-compose.yml \
+  run --rm --no-deps -T virtroid-admin bootstrap-invite \
+  --ttl 30m \
+  --label 'pixel-9-onboarding-01' \
+  --actor 'security-admin@example'
+```
+
+The command prints the plaintext `invite_token` exactly once along with its ID
+and expiry. Deliver only that token to the intended user over an appropriate
+secure channel. Do not paste command output into logs, tickets, shell scripts,
+or source control. If it expires or is consumed, generate a replacement; tokens
+cannot be recovered from the database. The Android onboarding screen submits
+the token inside its signed bootstrap body and clears the field after success.
 
 ## VPS-local releases
 
@@ -172,7 +201,8 @@ verify the active local image ID, and cannot race a backup. Normal releases use
 the bundle helpers above.
 
 The node-registry migration used schema `2026071903`; public signed bootstrap
-uses `2026072102`. Retained VPS backups remain the recovery
+used `2026072102`; invite-gated bootstrap uses `2026073001`. Retained VPS
+backups remain the recovery
 boundary; an older schema image must never be started automatically against a
 newer database.
 
@@ -193,9 +223,13 @@ sudo install -m 0755 ./certbot-deploy-hook.sh \
   /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
 ```
 
-The hook verifies the renewed certificate and matching private key, replaces
-the combined PEM atomically with mode `0640`, validates HAProxy, restarts only
-the edge container, and waits for HTTPS health.
+Configure the Virtroid lineage to reuse its private key on renewal (Certbot's
+`--reuse-key` option). The hook verifies the renewed certificate and matching
+private key, refuses an unexpected public-key rotation so Android certificate
+pins cannot be broken silently, replaces the combined PEM atomically with mode
+`0640`, validates HAProxy, restarts only the edge container, and waits for
+HTTPS health. A planned key rotation must update and ship overlapping Android
+pins before the new key is deployed.
 
 The direct release helper starts:
 

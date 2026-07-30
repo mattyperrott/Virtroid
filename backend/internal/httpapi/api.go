@@ -98,6 +98,7 @@ type blobKeyEnvelope struct {
 
 const activeBlobKeyHandoffTTL = 2 * time.Minute
 const bootstrapRateLimitWindow = time.Minute
+const defaultBootstrapRateLimitClients = 4096
 const defaultBootstrapMaxBodyBytes = 32 * 1024
 const viewerPrepareProxyTimeout = 90 * time.Second
 const viewerReconnectBitRate = 4_000_000
@@ -119,10 +120,11 @@ const (
 )
 
 type bootstrapRateLimiter struct {
-	mu      sync.Mutex
-	max     int
-	window  time.Duration
-	clients map[string]bootstrapRateLimitEntry
+	mu         sync.Mutex
+	max        int
+	maxClients int
+	window     time.Duration
+	clients    map[string]bootstrapRateLimitEntry
 }
 
 type bootstrapRateLimitEntry struct {
@@ -135,9 +137,10 @@ func newBootstrapRateLimiter(max int, window time.Duration) *bootstrapRateLimite
 		window = bootstrapRateLimitWindow
 	}
 	return &bootstrapRateLimiter{
-		max:     max,
-		window:  window,
-		clients: map[string]bootstrapRateLimitEntry{},
+		max:        max,
+		maxClients: defaultBootstrapRateLimitClients,
+		window:     window,
+		clients:    map[string]bootstrapRateLimitEntry{},
 	}
 }
 
@@ -154,7 +157,22 @@ func (l *bootstrapRateLimiter) allow(client string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	entry := l.clients[client]
+	for key, candidate := range l.clients {
+		if !candidate.reset.After(now) {
+			delete(l.clients, key)
+		}
+	}
+
+	entry, found := l.clients[client]
+	if !found && l.maxClients > 0 && len(l.clients) >= l.maxClients {
+		var oldestReset time.Time
+		for _, candidate := range l.clients {
+			if oldestReset.IsZero() || candidate.reset.Before(oldestReset) {
+				oldestReset = candidate.reset
+			}
+		}
+		return false, time.Until(oldestReset).Round(time.Second)
+	}
 	if entry.reset.IsZero() || !entry.reset.After(now) {
 		l.clients[client] = bootstrapRateLimitEntry{count: 1, reset: now.Add(l.window)}
 		return true, 0
@@ -294,6 +312,11 @@ func (v *activeBlobKeyVault) clearAccount(accountID string) {
 }
 
 func New(cfg config.ServerConfig, st *store.Store) http.Handler {
+	if !strings.EqualFold(cfg.AppEnv, "development") {
+		// Keep production invite-gated even when a caller constructs ServerConfig
+		// directly instead of using config.LoadServer.
+		cfg.BootstrapRequireInvite = true
+	}
 	bootstrapMaxBodyBytes := cfg.BootstrapMaxBodyBytes
 	if bootstrapMaxBodyBytes <= 0 {
 		bootstrapMaxBodyBytes = defaultBootstrapMaxBodyBytes
@@ -358,7 +381,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
 	mux.HandleFunc("POST /api/v1/internal/security/events", api.securityEventAppend)
 
-	return withJSON(mux)
+	return withRecovery(withJSON(mux))
 }
 
 func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
@@ -421,6 +444,7 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 		DeviceID         string `json:"device_id"`
 		DeviceName       string `json:"device_name"`
 		PublicKey        string `json:"public_key"`
+		InviteToken      string `json:"invite_token"`
 		RuntimeName      string `json:"runtime_name"`
 		AndroidImage     string `json:"android_image"`
 		AndroidVersion   string `json:"android_version"`
@@ -466,15 +490,42 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "bootstrap_proof_invalid", "valid device signing proof is required")
 		return
 	}
-	result, err := a.store.BootstrapAccountWithIdentity(
-		r.Context(),
-		req.AccountID,
-		req.DeviceID,
-		req.DeviceName,
-		req.PublicKey,
-		defaults,
-	)
+	var result store.BootstrapResult
+	if a.cfg.BootstrapRequireInvite {
+		inviteToken := strings.TrimSpace(req.InviteToken)
+		if inviteToken == "" {
+			writeAPIError(w, http.StatusForbidden, "bootstrap_invite_required", "a valid bootstrap invitation is required")
+			return
+		}
+		if len(inviteToken) > 256 {
+			writeAPIError(w, http.StatusForbidden, "bootstrap_invite_invalid", "bootstrap invitation is invalid, expired, or already used")
+			return
+		}
+		inviteTokenSHA256 := sha256.Sum256([]byte(inviteToken))
+		result, err = a.store.BootstrapAccountWithInvitation(
+			r.Context(),
+			req.AccountID,
+			req.DeviceID,
+			req.DeviceName,
+			req.PublicKey,
+			inviteTokenSHA256[:],
+			defaults,
+		)
+	} else {
+		result, err = a.store.BootstrapAccountWithIdentity(
+			r.Context(),
+			req.AccountID,
+			req.DeviceID,
+			req.DeviceName,
+			req.PublicKey,
+			defaults,
+		)
+	}
 	if err != nil {
+		if errors.Is(err, store.ErrBootstrapInviteInvalid) {
+			writeAPIError(w, http.StatusForbidden, "bootstrap_invite_invalid", "bootstrap invitation is invalid, expired, or already used")
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
@@ -829,8 +880,12 @@ func (a *API) revokeMyDevice(w http.ResponseWriter, r *http.Request) {
 
 	device, stoppedRuntimeIDs, err := a.store.RevokeDevice(r.Context(), accountID, r.PathValue("device_id"))
 	if err != nil {
-		if err == store.ErrDeviceNotFound {
+		switch err {
+		case store.ErrDeviceNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		case store.ErrLastActiveDevice:
+			writeAPIError(w, http.StatusConflict, "last_active_device", err.Error())
 			return
 		}
 		writeInternalAPIError(w, "device_revoke_failed", err)
@@ -2866,6 +2921,22 @@ func withJSON(next http.Handler) http.Handler {
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxAPIRequestBodyBytes)
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf(
+					"http handler panic method=%s path=%s",
+					safeLogValue(r.Method),
+					safeLogValue(r.URL.Path),
+				)
+				writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "internal server error")
+			}
+		}()
 		next.ServeHTTP(w, r)
 	})
 }

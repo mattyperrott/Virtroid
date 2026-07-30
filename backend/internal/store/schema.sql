@@ -6,6 +6,30 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
+-- Bootstrap invitations authorize exactly one new account/device transaction.
+-- Only the SHA-256 digest is retained; the plaintext token is returned once by
+-- the operator CLI and is never stored by the control plane.
+CREATE TABLE IF NOT EXISTS bootstrap_invitations (
+    id UUID PRIMARY KEY,
+    token_sha256 BYTEA NOT NULL UNIQUE CHECK (OCTET_LENGTH(token_sha256) = 32),
+    label TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL CHECK (BTRIM(created_by) <> ''),
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ,
+    -- Retain the consumed account identifier as audit metadata even if the
+    -- account is later deleted.
+    consumed_account_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (expires_at > created_at),
+    CHECK (
+        (consumed_at IS NULL AND consumed_account_id IS NULL)
+        OR (consumed_at IS NOT NULL AND consumed_account_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_bootstrap_invitations_active_expiry
+    ON bootstrap_invitations (expires_at) WHERE consumed_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS hosts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -118,9 +142,9 @@ CREATE TABLE IF NOT EXISTS devices (
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS blob_key_verifier TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
--- Schema 2026072102 removes the short-lived operator invitation experiment.
--- Public identity creation is intentional and is protected by signed device
--- proof-of-possession at the HTTP boundary instead of central approval.
+-- The former enrollment-invitation experiment used a different trust model.
+-- Keep removing that obsolete table; bootstrap_invitations above is the
+-- audited, hashed, single-use replacement.
 DROP TABLE IF EXISTS enrollment_invitations;
 
 CREATE TABLE IF NOT EXISTS account_storage (

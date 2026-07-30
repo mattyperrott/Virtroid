@@ -204,6 +204,40 @@
             <TextView
                 style="@style/VirtroidSectionLabel"
                 android:layout_marginTop="32dp"
+                android:text="@string/privacy_operator_visibility_title" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_settings_section"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    style="@style/VirtroidSettingsTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/privacy_operator_visibility_summary" />
+
+                <TextView
+                    style="@style/VirtroidSettingsSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/privacy_operator_visibility_body" />
+
+                <TextView
+                    style="@style/VirtroidSettingsSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/privacy_operator_retention_body" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/VirtroidSectionLabel"
+                android:layout_marginTop="32dp"
                 android:text="@string/privacy_app_lock_auth" />
 
             <LinearLayout

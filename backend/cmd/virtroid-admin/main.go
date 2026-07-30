@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,7 +20,13 @@ import (
 	"virtroid/backend/internal/store"
 )
 
-const defaultRotationOverlap = 15 * time.Minute
+const (
+	defaultRotationOverlap     = 15 * time.Minute
+	defaultBootstrapInviteTTL  = 30 * time.Minute
+	minimumBootstrapInviteTTL  = time.Minute
+	maximumBootstrapInviteTTL  = 7 * 24 * time.Hour
+	bootstrapInviteRandomBytes = 32
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -30,7 +39,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("command is required: approve, list, operator-approve, operator-revoke, public-key, revoke, or rotate")
+		return errors.New("command is required: approve, bootstrap-invite, list, operator-approve, operator-revoke, public-key, revoke, or rotate")
 	}
 	// Public-key derivation intentionally has no database dependency. This lets
 	// an operator inspect a candidate image against the node's existing private
@@ -65,6 +74,8 @@ func prepareDatabaseCommand(args []string, stderr io.Writer) (databaseCommand, e
 	switch args[0] {
 	case "approve":
 		return prepareApprove(args[1:], stderr)
+	case "bootstrap-invite":
+		return prepareBootstrapInvite(args[1:], stderr)
 	case "list":
 		return prepareList(args[1:], stderr)
 	case "operator-approve":
@@ -76,8 +87,86 @@ func prepareDatabaseCommand(args []string, stderr io.Writer) (databaseCommand, e
 	case "rotate":
 		return prepareRotate(args[1:], stderr)
 	default:
-		return nil, fmt.Errorf("unsupported command %q: use approve, list, operator-approve, operator-revoke, public-key, revoke, or rotate", args[0])
+		return nil, fmt.Errorf("unsupported command %q: use approve, bootstrap-invite, list, operator-approve, operator-revoke, public-key, revoke, or rotate", args[0])
 	}
+}
+
+func prepareBootstrapInvite(args []string, stderr io.Writer) (databaseCommand, error) {
+	flags := flag.NewFlagSet("bootstrap-invite", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	ttl := flags.Duration("ttl", defaultBootstrapInviteTTL, "validity window between 1m and 168h")
+	label := flags.String("label", "", "optional device or recipient label")
+	actor := flags.String("actor", defaultActor(), "operator creating the invitation")
+	jsonOutput := flags.Bool("json", false, "emit JSON")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	if flags.NArg() != 0 {
+		return nil, errors.New("bootstrap-invite does not accept positional arguments")
+	}
+	if *ttl < minimumBootstrapInviteTTL || *ttl > maximumBootstrapInviteTTL {
+		return nil, fmt.Errorf("bootstrap-invite --ttl must be between %s and %s", minimumBootstrapInviteTTL, maximumBootstrapInviteTTL)
+	}
+	normalizedLabel := strings.TrimSpace(*label)
+	normalizedActor := strings.TrimSpace(*actor)
+	if normalizedActor == "" {
+		return nil, errors.New("bootstrap-invite --actor is required")
+	}
+	if len([]rune(normalizedActor)) > 128 {
+		return nil, errors.New("bootstrap-invite --actor is too long")
+	}
+	if len([]rune(normalizedLabel)) > 128 {
+		return nil, errors.New("bootstrap-invite --label is too long")
+	}
+
+	return func(ctx context.Context, registry *store.Store, stdout io.Writer) error {
+		token, tokenSHA256, err := generateBootstrapInviteToken()
+		if err != nil {
+			return fmt.Errorf("generate bootstrap invitation: %w", err)
+		}
+		invitation, err := registry.CreateBootstrapInvitation(
+			ctx,
+			tokenSHA256,
+			normalizedLabel,
+			normalizedActor,
+			time.Now().UTC().Add(*ttl),
+		)
+		if err != nil {
+			return fmt.Errorf("create bootstrap invitation: %w", err)
+		}
+		result := struct {
+			InviteToken string                    `json:"invite_token"`
+			Invitation  store.BootstrapInvitation `json:"invitation"`
+		}{
+			InviteToken: token,
+			Invitation:  invitation,
+		}
+		if *jsonOutput {
+			encoder := json.NewEncoder(stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(result)
+		}
+		fmt.Fprintf(
+			stdout,
+			"invite_token=%s\ninvite_id=%s\nexpires_at=%s\nlabel=%s\ncreated_by=%s\n",
+			result.InviteToken,
+			result.Invitation.ID,
+			result.Invitation.ExpiresAt.UTC().Format(time.RFC3339),
+			result.Invitation.Label,
+			result.Invitation.CreatedBy,
+		)
+		return nil
+	}, nil
+}
+
+func generateBootstrapInviteToken() (string, []byte, error) {
+	randomBytes := make([]byte, bootstrapInviteRandomBytes)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", nil, err
+	}
+	token := base64.RawURLEncoding.EncodeToString(randomBytes)
+	tokenSHA256 := sha256.Sum256([]byte(token))
+	return token, tokenSHA256[:], nil
 }
 
 func runPublicKey(args []string, stdout, stderr io.Writer) error {

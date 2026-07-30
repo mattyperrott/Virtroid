@@ -104,6 +104,20 @@
                     android:id="@+id/pinDot6"
                     android:layout_width="14dp"
                     android:layout_height="14dp"
+                    android:layout_marginEnd="14dp"
+                    android:background="@drawable/bg_pin_dot_inactive" />
+
+                <View
+                    android:id="@+id/pinDot7"
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:layout_marginEnd="14dp"
+                    android:background="@drawable/bg_pin_dot_inactive" />
+
+                <View
+                    android:id="@+id/pinDot8"
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
                     android:background="@drawable/bg_pin_dot_inactive" />
             </LinearLayout>
         </LinearLayout>

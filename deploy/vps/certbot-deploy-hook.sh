@@ -213,6 +213,15 @@ fi
 if [ -e "${pem_path}" ] || [ -L "${pem_path}" ]; then
   [ -f "${pem_path}" ] && [ ! -L "${pem_path}" ] ||
     die "existing HAProxy PEM must be a regular non-symlink file"
+  if ! existing_public_key="$(
+    "${openssl_binary}" x509 -in "${pem_path}" -pubkey -noout |
+      "${openssl_binary}" pkey -pubin -outform DER |
+      "${openssl_binary}" dgst -sha256
+  )"; then
+    die "existing HAProxy PEM does not contain a readable certificate public key"
+  fi
+  [ "${existing_public_key}" = "${cert_public_key}" ] ||
+    die "renewed certificate rotates the pinned public key; renew with Certbot key reuse and update client pins deliberately before any planned rotation"
   old_pem="$(mktemp "${pem_dir}/.virtroid.pem.previous.XXXXXX")"
   cp -p "${pem_path}" "${old_pem}"
   had_old_pem=1

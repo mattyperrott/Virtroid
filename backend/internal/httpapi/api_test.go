@@ -104,6 +104,52 @@ func TestAPIRequestBodyLimitRejectsDeclaredOversizeBeforeHandler(t *testing.T) {
 	}
 }
 
+func TestRecoveryMiddlewareReturnsStableInternalError(t *testing.T) {
+	handler := withRecovery(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("sensitive panic detail")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/runtimes", nil)
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", resp.Code, http.StatusInternalServerError)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["code"] != "internal_server_error" || strings.Contains(resp.Body.String(), "sensitive") {
+		t.Fatalf("payload = %#v, want stable redacted internal error", payload)
+	}
+}
+
+func TestBootstrapRateLimiterPrunesExpiredEntriesAndCapsClients(t *testing.T) {
+	limiter := newBootstrapRateLimiter(5, time.Hour)
+	limiter.maxClients = 2
+	limiter.clients["expired"] = bootstrapRateLimitEntry{
+		count: 1,
+		reset: time.Now().Add(-time.Second),
+	}
+
+	if allowed, _ := limiter.allow("client-a"); !allowed {
+		t.Fatal("first client was unexpectedly rejected")
+	}
+	if _, found := limiter.clients["expired"]; found {
+		t.Fatal("expired client was not pruned")
+	}
+	if allowed, _ := limiter.allow("client-b"); !allowed {
+		t.Fatal("second client was unexpectedly rejected")
+	}
+	if allowed, _ := limiter.allow("client-c"); allowed {
+		t.Fatal("new client was accepted after the bounded limiter reached capacity")
+	}
+	if len(limiter.clients) != limiter.maxClients {
+		t.Fatalf("client map size = %d, want bounded size %d", len(limiter.clients), limiter.maxClients)
+	}
+}
+
 func TestIdentityPasswordRotationFailsClosedBeforeStoreMutation(t *testing.T) {
 	// A nil store makes any accidental authentication, verifier lookup, or
 	// mutation call panic. The route must reject before touching persistence.
@@ -232,6 +278,44 @@ func TestPublicBootstrapRequiresSigningKeyProof(t *testing.T) {
 	}
 }
 
+func TestProductionBootstrapRequiresInviteAfterValidDeviceProof(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(publicKeyDER)
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	body := []byte(fmt.Sprintf(
+		`{"account_id":%q,"device_id":%q,"device_name":"Pixel","public_key":%q}`,
+		accountID,
+		deviceID,
+		publicKey,
+	))
+	req := newSignedBootstrapRequest(t, body, accountID, deviceID, privateKey)
+	resp := httptest.NewRecorder()
+	New(config.ServerConfig{
+		AppEnv:                      "production",
+		BootstrapEnabled:            true,
+		BootstrapRateLimitPerMinute: 5,
+	}, nil).ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("bootstrap status = %d body=%s, want %d", resp.Code, resp.Body.String(), http.StatusForbidden)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["code"] != "bootstrap_invite_required" {
+		t.Fatalf("payload = %#v, want stable invite-required code", payload)
+	}
+}
+
 func TestVerifyBootstrapProofAcceptsExactSignedBodyAndRejectsTampering(t *testing.T) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -274,7 +358,7 @@ func TestVerifyBootstrapProofAcceptsExactSignedBodyAndRejectsTampering(t *testin
 	}
 }
 
-func TestPublicSignedBootstrapPostgresIntegration(t *testing.T) {
+func TestInviteGatedSignedBootstrapPostgresIntegration(t *testing.T) {
 	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
@@ -301,17 +385,68 @@ func TestPublicSignedBootstrapPostgresIntegration(t *testing.T) {
 	publicKey := base64.StdEncoding.EncodeToString(publicKeyDER)
 	accountID := uuid.NewString()
 	deviceID := uuid.NewString()
+	inviteToken := "integration-" + uuid.NewString()
+	inviteTokenSHA256 := sha256.Sum256([]byte(inviteToken))
+	if _, err := st.CreateBootstrapInvitation(
+		ctx,
+		inviteTokenSHA256[:],
+		"HTTP integration test",
+		"test-suite",
+		time.Now().UTC().Add(5*time.Minute),
+	); err != nil {
+		t.Fatalf("create bootstrap invitation: %v", err)
+	}
 	defer func() {
 		if err := st.DeleteAccount(context.Background(), accountID); err != nil && !errors.Is(err, store.ErrAccountNotFound) {
 			t.Errorf("cleanup account: %v", err)
 		}
 	}()
 	body := []byte(fmt.Sprintf(
-		`{"account_id":%q,"device_id":%q,"device_name":"Public client","public_key":%q}`,
+		`{"account_id":%q,"device_id":%q,"device_name":"Invited client","public_key":%q,"invite_token":%q}`,
 		accountID,
 		deviceID,
 		publicKey,
+		inviteToken,
 	))
+	req := newSignedBootstrapRequest(t, body, accountID, deviceID, privateKey)
+	resp := httptest.NewRecorder()
+	New(config.ServerConfig{
+		AppEnv:                      "production",
+		BootstrapEnabled:            true,
+		BootstrapRequireInvite:      true,
+		BootstrapRateLimitPerMinute: 5,
+	}, st).ServeHTTP(resp, req)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("invite-gated bootstrap status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var payload store.BootstrapResult
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode bootstrap response: %v", err)
+	}
+	if payload.Account.ID != accountID || payload.Device.ID != deviceID || payload.Runtime != nil {
+		t.Fatalf("unexpected invite-gated bootstrap result: %+v", payload)
+	}
+	if _, err := st.BootstrapAccountWithInvitation(
+		ctx,
+		uuid.NewString(),
+		uuid.NewString(),
+		"Replay attempt",
+		publicKey,
+		inviteTokenSHA256[:],
+		store.CreateRuntimeInput{},
+	); !errors.Is(err, store.ErrBootstrapInviteInvalid) {
+		t.Fatalf("reusing consumed invitation returned %v, want %v", err, store.ErrBootstrapInviteInvalid)
+	}
+}
+
+func newSignedBootstrapRequest(
+	t *testing.T,
+	body []byte,
+	accountID string,
+	deviceID string,
+	privateKey *ecdsa.PrivateKey,
+) *http.Request {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", strings.NewReader(string(body)))
 	timestampRaw := strconv.FormatInt(time.Now().Unix(), 10)
 	nonce := uuid.NewString()
@@ -329,22 +464,7 @@ func TestPublicSignedBootstrapPostgresIntegration(t *testing.T) {
 	req.Header.Set("X-Virtroid-Nonce", nonce)
 	req.Header.Set("X-Virtroid-Body-SHA256", bodyHash)
 	req.Header.Set("X-Virtroid-Signature", base64.RawURLEncoding.EncodeToString(signature))
-	resp := httptest.NewRecorder()
-	New(config.ServerConfig{
-		AppEnv:                      "production",
-		BootstrapEnabled:            true,
-		BootstrapRateLimitPerMinute: 5,
-	}, st).ServeHTTP(resp, req)
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("public bootstrap status = %d body=%s", resp.Code, resp.Body.String())
-	}
-	var payload store.BootstrapResult
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode bootstrap response: %v", err)
-	}
-	if payload.Account.ID != accountID || payload.Device.ID != deviceID || payload.Runtime != nil {
-		t.Fatalf("unexpected public bootstrap result: %+v", payload)
-	}
+	return req
 }
 
 func TestBootstrapRateLimitsBeforeStore(t *testing.T) {

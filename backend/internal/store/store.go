@@ -30,8 +30,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026072102
-	schemaVersionLabel               = "public bootstrap with device proof of possession 2026-07-21"
+	currentSchemaVersion       int64 = 2026073001
+	schemaVersionLabel               = "invite-gated bootstrap with atomic consumption 2026-07-30"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -63,6 +63,7 @@ type Store struct {
 var (
 	ErrNoReadyHost             = errors.New("no redroid-capable host available")
 	ErrDeviceNotFound          = errors.New("device not found")
+	ErrLastActiveDevice        = errors.New("the last active device cannot be revoked; delete the account instead")
 	ErrRuntimeNotFound         = errors.New("runtime not found")
 	ErrRuntimeNotReady         = errors.New("runtime is not ready for sessions")
 	ErrSessionNotFound         = errors.New("session not found")
@@ -97,6 +98,7 @@ var (
 	ErrNodeOperatorRevoked     = errors.New("node operator is revoked")
 	ErrNodeKeyRotationOverlap  = errors.New("node key rotation overlap is outside the allowed range")
 	ErrNodeKeyAlreadyActive    = errors.New("node key is already active")
+	ErrBootstrapInviteInvalid  = errors.New("bootstrap invitation is invalid, expired, or already used")
 )
 
 const MaxNodeKeyRotationOverlap = 24 * time.Hour
@@ -120,6 +122,16 @@ type BootstrapResult struct {
 	Account Account  `json:"account"`
 	Device  Device   `json:"device"`
 	Runtime *Runtime `json:"runtime,omitempty"`
+}
+
+type BootstrapInvitation struct {
+	ID                string     `json:"id"`
+	Label             string     `json:"label"`
+	CreatedBy         string     `json:"created_by"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	ConsumedAt        *time.Time `json:"consumed_at,omitempty"`
+	ConsumedAccountID *string    `json:"consumed_account_id,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 type Account struct {
@@ -610,6 +622,7 @@ type SessionReapResult struct {
 	StaleActiveSessions           int      `json:"stale_active_sessions"`
 	RevokedRuntimeCapabilities    int      `json:"revoked_runtime_capabilities"`
 	PrunedRuntimeCapabilityNonces int      `json:"pruned_runtime_capability_nonces"`
+	PrunedBlobKeyHandoffs         int      `json:"pruned_blob_key_handoffs"`
 	StoppedRuntimeIDs             []string `json:"stopped_runtime_ids"`
 }
 
@@ -719,6 +732,34 @@ func (s *Store) BootstrapAccountWithIdentity(
 	deviceID string,
 	deviceName string,
 	publicKey string,
+	defaults CreateRuntimeInput,
+) (BootstrapResult, error) {
+	return s.bootstrapAccountWithIdentity(ctx, accountID, deviceID, deviceName, publicKey, nil, defaults)
+}
+
+func (s *Store) BootstrapAccountWithInvitation(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	deviceName string,
+	publicKey string,
+	invitationTokenSHA256 []byte,
+	defaults CreateRuntimeInput,
+) (BootstrapResult, error) {
+	if len(invitationTokenSHA256) != sha256.Size {
+		return BootstrapResult{}, ErrBootstrapInviteInvalid
+	}
+	tokenDigest := append([]byte(nil), invitationTokenSHA256...)
+	return s.bootstrapAccountWithIdentity(ctx, accountID, deviceID, deviceName, publicKey, tokenDigest, defaults)
+}
+
+func (s *Store) bootstrapAccountWithIdentity(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	deviceName string,
+	publicKey string,
+	invitationTokenSHA256 []byte,
 	_ CreateRuntimeInput,
 ) (BootstrapResult, error) {
 	if strings.TrimSpace(deviceName) == "" {
@@ -743,6 +784,22 @@ func (s *Store) BootstrapAccountWithIdentity(
 	defer tx.Rollback()
 
 	var result BootstrapResult
+	var invitationID string
+	if invitationTokenSHA256 != nil {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id
+			FROM bootstrap_invitations
+			WHERE token_sha256 = $1
+			  AND consumed_at IS NULL
+			  AND expires_at > NOW()
+			FOR UPDATE
+		`, invitationTokenSHA256).Scan(&invitationID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return BootstrapResult{}, ErrBootstrapInviteInvalid
+			}
+			return BootstrapResult{}, err
+		}
+	}
 
 	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO accounts (id) VALUES ($1) RETURNING id, created_at`,
@@ -776,11 +833,74 @@ func (s *Store) BootstrapAccountWithIdentity(
 		return BootstrapResult{}, err
 	}
 
+	if invitationID != "" {
+		consumed, err := tx.ExecContext(ctx, `
+			UPDATE bootstrap_invitations
+			SET consumed_at = NOW(),
+			    consumed_account_id = $1
+			WHERE id = $2
+			  AND consumed_at IS NULL
+			  AND expires_at > NOW()
+		`, accountID, invitationID)
+		if err != nil {
+			return BootstrapResult{}, err
+		}
+		consumedRows, err := consumed.RowsAffected()
+		if err != nil {
+			return BootstrapResult{}, err
+		}
+		if consumedRows != 1 {
+			return BootstrapResult{}, ErrBootstrapInviteInvalid
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return BootstrapResult{}, err
 	}
 
 	return result, nil
+}
+
+func (s *Store) CreateBootstrapInvitation(
+	ctx context.Context,
+	tokenSHA256 []byte,
+	label string,
+	createdBy string,
+	expiresAt time.Time,
+) (BootstrapInvitation, error) {
+	label = strings.TrimSpace(label)
+	createdBy = strings.TrimSpace(createdBy)
+	if len(tokenSHA256) != sha256.Size {
+		return BootstrapInvitation{}, errors.New("bootstrap invitation token digest must be 32 bytes")
+	}
+	if createdBy == "" {
+		return BootstrapInvitation{}, errors.New("bootstrap invitation actor is required")
+	}
+	if len([]rune(createdBy)) > 128 {
+		return BootstrapInvitation{}, errors.New("bootstrap invitation actor is too long")
+	}
+	if len([]rune(label)) > 128 {
+		return BootstrapInvitation{}, errors.New("bootstrap invitation label is too long")
+	}
+	expiresAt = expiresAt.UTC()
+	if !expiresAt.After(time.Now().UTC()) {
+		return BootstrapInvitation{}, errors.New("bootstrap invitation expiry must be in the future")
+	}
+
+	invitation := BootstrapInvitation{
+		ID:        uuid.NewString(),
+		Label:     label,
+		CreatedBy: createdBy,
+		ExpiresAt: expiresAt,
+	}
+	if err := s.db.QueryRowContext(ctx, `
+		INSERT INTO bootstrap_invitations (id, token_sha256, label, created_by, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING created_at
+	`, invitation.ID, tokenSHA256, invitation.Label, invitation.CreatedBy, invitation.ExpiresAt).Scan(&invitation.CreatedAt); err != nil {
+		return BootstrapInvitation{}, err
+	}
+	return invitation, nil
 }
 
 func normalizeBootstrapUUID(value string, field string) (string, error) {
@@ -961,6 +1081,52 @@ func (s *Store) RevokeDevice(ctx context.Context, accountID, targetDeviceID stri
 		return Device{}, nil, err
 	}
 	defer tx.Rollback()
+
+	var lockedAccountID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id
+		   FROM accounts
+		  WHERE id = $1
+		    AND deleted_at IS NULL
+		  FOR UPDATE`,
+		accountID,
+	).Scan(&lockedAccountID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Device{}, nil, ErrDeviceNotFound
+		}
+		return Device{}, nil, err
+	}
+
+	var lockedDeviceID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id
+		   FROM devices
+		  WHERE account_id = $1
+		    AND id = $2
+		    AND revoked_at IS NULL
+		  FOR UPDATE`,
+		accountID,
+		targetDeviceID,
+	).Scan(&lockedDeviceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Device{}, nil, ErrDeviceNotFound
+		}
+		return Device{}, nil, err
+	}
+
+	var activeDeviceCount int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		   FROM devices
+		  WHERE account_id = $1
+		    AND revoked_at IS NULL`,
+		accountID,
+	).Scan(&activeDeviceCount); err != nil {
+		return Device{}, nil, err
+	}
+	if activeDeviceCount <= 1 {
+		return Device{}, nil, ErrLastActiveDevice
+	}
 
 	var device Device
 	if err := tx.QueryRowContext(ctx,
@@ -3085,6 +3251,21 @@ func (s *Store) AppendRuntimeLog(ctx context.Context, runtimeID, source, level, 
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) PruneRuntimeLogs(ctx context.Context, retention time.Duration) (int64, error) {
+	if retention <= 0 {
+		return 0, nil
+	}
+	result, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM runtime_logs WHERE created_at < $1`,
+		time.Now().UTC().Add(-retention),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s *Store) AppendSecurityEvent(ctx context.Context, event SecurityEventInput) error {
@@ -5243,6 +5424,10 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 	if err != nil {
 		return SessionReapResult{}, err
 	}
+	prunedBlobKeyHandoffs, err := pruneExpiredBlobKeyHandoffsTX(ctx, tx)
+	if err != nil {
+		return SessionReapResult{}, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return SessionReapResult{}, err
@@ -5253,6 +5438,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		StaleActiveSessions:           len(staleActive),
 		RevokedRuntimeCapabilities:    revokedStoppedRuntimeCapabilities + revokedSessionCapabilities + revokedExpiredCapabilities,
 		PrunedRuntimeCapabilityNonces: prunedRuntimeCapabilityNonces,
+		PrunedBlobKeyHandoffs:         prunedBlobKeyHandoffs,
 		StoppedRuntimeIDs:             allStoppedRuntimeIDs,
 	}, nil
 }
@@ -6610,6 +6796,18 @@ func revokeExpiredRuntimeCapabilitiesTX(ctx context.Context, tx *sql.Tx) (int, e
 
 func pruneExpiredRuntimeCapabilityNoncesTX(ctx context.Context, tx *sql.Tx) (int, error) {
 	result, err := tx.ExecContext(ctx, `DELETE FROM runtime_capability_nonces WHERE expires_at < NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
+}
+
+func pruneExpiredBlobKeyHandoffsTX(ctx context.Context, tx *sql.Tx) (int, error) {
+	result, err := tx.ExecContext(ctx, `DELETE FROM runtime_blob_key_handoffs WHERE expires_at <= NOW()`)
 	if err != nil {
 		return 0, err
 	}

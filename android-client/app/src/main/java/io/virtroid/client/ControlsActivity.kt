@@ -30,6 +30,7 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
+import io.virtroid.client.security.showTypedConfirmation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -317,12 +318,13 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun confirmRestartPersona() {
         val current = runtime ?: return
-        MaterialAlertDialogBuilder(this)
-            .setTitle(getString(R.string.controls_restart_confirm_title))
-            .setMessage(getString(R.string.controls_restart_confirm_body))
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setPositiveButton(getString(R.string.controls_confirm)) { _, _ -> restartWithNewPersona(current) }
-            .show()
+        showTypedConfirmation(
+            title = getString(R.string.controls_restart_confirm_title),
+            message = getString(R.string.controls_restart_confirm_body),
+            confirmationPhrase = "RESTART",
+            confirmLabel = getString(R.string.controls_confirm),
+            onConfirmed = { restartWithNewPersona(current) },
+        )
     }
 
     private fun restartWithNewPersona(current: RuntimeSummary) {
@@ -401,12 +403,13 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun confirmWipe() {
         val current = runtime ?: return
-        MaterialAlertDialogBuilder(this)
-            .setTitle(getString(R.string.controls_wipe_confirm_title))
-            .setMessage(getString(R.string.controls_wipe_confirm_body))
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setPositiveButton(getString(R.string.controls_confirm)) { _, _ ->
-                val accountId = sessionStore.accountId ?: return@setPositiveButton
+        showTypedConfirmation(
+            title = getString(R.string.controls_wipe_confirm_title),
+            message = getString(R.string.controls_wipe_confirm_body),
+            confirmationPhrase = "ERASE",
+            confirmLabel = getString(R.string.controls_confirm),
+            onConfirmed = wipe@{
+                val accountId = sessionStore.accountId ?: return@wipe
                 lifecycleScope.launch {
                     runCatching {
                         val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
@@ -425,8 +428,8 @@ class ControlsActivity : AppCompatActivity() {
                         toast(it.virtroidDisplayMessage(this@ControlsActivity))
                     }
                 }
-            }
-            .show()
+            },
+        )
     }
 
     private fun renderLogs(logs: List<RuntimeLogEntry>): String {
@@ -681,13 +684,14 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun confirmDelete() {
         val current = runtime ?: return
-        MaterialAlertDialogBuilder(this)
-            .setTitle(getString(R.string.controls_delete_confirm_title))
-            .setMessage(getString(R.string.controls_delete_confirm_body))
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setPositiveButton(getString(R.string.controls_confirm)) { _, _ ->
-                val accountId = sessionStore.accountId ?: return@setPositiveButton
-                val deviceId = sessionStore.deviceId ?: return@setPositiveButton
+        showTypedConfirmation(
+            title = getString(R.string.controls_delete_confirm_title),
+            message = getString(R.string.controls_delete_confirm_body),
+            confirmationPhrase = "DELETE",
+            confirmLabel = getString(R.string.controls_confirm),
+            onConfirmed = delete@{
+                val accountId = sessionStore.accountId ?: return@delete
+                val deviceId = sessionStore.deviceId ?: return@delete
                 lifecycleScope.launch {
                     runCatching {
                         val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
@@ -706,8 +710,8 @@ class ControlsActivity : AppCompatActivity() {
                         toast(it.virtroidDisplayMessage(this@ControlsActivity))
                     }
                 }
-            }
-            .show()
+            },
+        )
     }
 
     private fun formatAndroidVersion(value: String): String {

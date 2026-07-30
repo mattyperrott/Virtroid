@@ -1,8 +1,6 @@
 package io.virtroid.client.security
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import org.json.JSONObject
 import java.io.File
@@ -11,7 +9,6 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Arrays
 import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -334,17 +331,7 @@ class SecureLocalVault private constructor(context: Context) {
     private fun getOrCreateKeystoreKey(): SecretKey {
         keyStore().getKey(KEYSTORE_KEY_ALIAS, null)?.let { return it as SecretKey }
 
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        val spec = KeyGenParameterSpec.Builder(
-            KEYSTORE_KEY_ALIAS,
-            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-        )
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setRandomizedEncryptionRequired(true)
-            .build()
-        generator.init(spec)
-        return generator.generateKey()
+        return KeystoreKeyPolicy.generateAesKey(KEYSTORE_KEY_ALIAS)
     }
 
     private fun deriveKey(secret: String, saltB64: String): ByteArray? {
