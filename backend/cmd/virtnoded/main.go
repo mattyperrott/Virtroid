@@ -300,6 +300,10 @@ const (
 	viewerMinBitRate     = 250_000
 	viewerMaxBitRate     = 32_000_000
 	viewerPrewarmBitRate = 4_000_000
+
+	maxConcurrentRelaySessions = 64
+	maxRelaySessionDuration    = time.Hour
+	maxRelayBytesPerDirection  = int64(8 * 1024 * 1024 * 1024)
 )
 
 type nodeAgent struct {
@@ -316,6 +320,7 @@ type nodeAgent struct {
 	runtimeBlobKeys     map[string][]byte
 	callbackNonceMu     sync.Mutex
 	callbackNonces      map[string]time.Time
+	relaySlots          chan struct{}
 }
 
 type runtimeContainerResources struct {
@@ -341,7 +346,8 @@ func main() {
 		controlPlane: &http.Client{
 			Timeout: 20 * time.Second,
 		},
-		docker: dockerHTTPClient(),
+		docker:     dockerHTTPClient(),
+		relaySlots: make(chan struct{}, maxConcurrentRelaySessions),
 	}
 	defer node.clearAllCachedRuntimeBlobKeys()
 	if os.Getenv("NODE_BLOB_SMOKE_TEST") == "1" {
@@ -389,8 +395,11 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
-		Handler:           mux,
+		Handler:           recoverNodeHTTP(mux),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -422,6 +431,27 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func recoverNodeHTTP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("node HTTP panic: method=%s path=%s", r.Method, r.URL.Path)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func runNodeBackgroundIteration(name string, fn func()) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("%s iteration panic", name)
+		}
+	}()
+	fn()
 }
 
 func (n *nodeAgent) signControlPlaneRequest(req *http.Request, body []byte, includeRegistration bool) error {
@@ -882,6 +912,12 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing relay session details", http.StatusBadRequest)
 		return
 	}
+	if !n.acquireRelaySlot() {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "relay capacity is temporarily exhausted", http.StatusTooManyRequests)
+		return
+	}
+	defer n.releaseRelaySlot()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -940,26 +976,54 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deadline := time.Now().Add(maxRelaySessionDuration)
+	_ = clientConn.SetDeadline(deadline)
+	_ = upstream.SetDeadline(deadline)
+	defer clientConn.Close()
+	defer upstream.Close()
+
+	clientToRuntimeDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(upstream, clientConn)
+		defer close(clientToRuntimeDone)
+		_, _ = io.Copy(upstream, io.LimitReader(clientConn, maxRelayBytesPerDirection))
+		_ = upstream.Close()
 	}()
-	_, _ = io.Copy(clientConn, upstream)
-	clientConn.Close()
-	upstream.Close()
+	_, _ = io.Copy(clientConn, io.LimitReader(upstream, maxRelayBytesPerDirection))
+	_ = clientConn.Close()
+	<-clientToRuntimeDone
+}
+
+func (n *nodeAgent) acquireRelaySlot() bool {
+	if n.relaySlots == nil {
+		return true
+	}
+	select {
+	case n.relaySlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (n *nodeAgent) releaseRelaySlot() {
+	if n.relaySlots == nil {
+		return
+	}
+	<-n.relaySlots
 }
 
 func (n *nodeAgent) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(n.cfg.HeartbeatInterval)
 	defer ticker.Stop()
 
-	n.sendHeartbeat(ctx)
+	runNodeBackgroundIteration("heartbeat", func() { n.sendHeartbeat(ctx) })
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n.sendHeartbeat(ctx)
+			runNodeBackgroundIteration("heartbeat", func() { n.sendHeartbeat(ctx) })
 		}
 	}
 }
@@ -968,14 +1032,14 @@ func (n *nodeAgent) reconcileLoop(ctx context.Context) {
 	ticker := time.NewTicker(n.cfg.ReconcileInterval)
 	defer ticker.Stop()
 
-	n.reconcileOnce(ctx)
+	runNodeBackgroundIteration("reconcile", func() { n.reconcileOnce(ctx) })
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n.reconcileOnce(ctx)
+			runNodeBackgroundIteration("reconcile", func() { n.reconcileOnce(ctx) })
 		}
 	}
 }
@@ -3154,6 +3218,11 @@ func (n *nodeAgent) startViewerServer(runtimeID string, adbSerial string, maxSiz
 	}
 
 	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("viewer adb command wait panic for runtime %s", runtimeID)
+			}
+		}()
 		defer logFile.Close()
 		if err := cmd.Wait(); err != nil {
 			log.Printf("viewer adb command exited for runtime %s: %v", runtimeID, err)

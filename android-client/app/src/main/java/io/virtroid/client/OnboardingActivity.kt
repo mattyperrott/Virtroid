@@ -76,6 +76,9 @@ class OnboardingActivity : AppCompatActivity() {
         }
         binding.continueSetupButton.setOnClickListener {
             lifecycleScope.launch {
+                if (!sessionStore.hasAccess() && !ensureBootstrapInviteReady()) {
+                    return@launch
+                }
                 if (!ensureIdentityPasswordReady()) {
                     return@launch
                 }
@@ -99,6 +102,11 @@ class OnboardingActivity : AppCompatActivity() {
 
     private suspend fun createIdentity() {
         val password = pendingIdentityPassword ?: return
+        val inviteToken = binding.bootstrapInviteInput.text?.toString()?.trim().orEmpty()
+        if (inviteToken.isBlank()) {
+            ensureBootstrapInviteReady()
+            return
+        }
         binding.continueSetupButton.isEnabled = false
         val identity = ensurePreviewIdentity()
         showProvisioningLog()
@@ -123,9 +131,11 @@ class OnboardingActivity : AppCompatActivity() {
                 deviceId = identity.deviceId,
                 deviceName = deviceIdentityStore.defaultDeviceName(this@OnboardingActivity),
                 publicKey = publicKey,
+                inviteToken = inviteToken,
                 runtimeProfile = DeviceRuntimeProfile.from(this@OnboardingActivity),
             )
             sessionStore.saveBootstrap(result.accountId, result.deviceId)
+            binding.bootstrapInviteInput.text?.clear()
             pendingAccountId = result.accountId
             pendingDeviceId = result.deviceId
             renderProvisionedAccount(result.accountId, registered = true)
@@ -150,12 +160,13 @@ class OnboardingActivity : AppCompatActivity() {
         }.onSuccess {
             launchMain()
         }.onFailure {
+            val message = it.virtroidDisplayMessage(this@OnboardingActivity)
             updateActiveMilestone(
                 title = "Provisioning Failed",
                 command = "> provisioning error",
-                detail = "... ${it.message ?: getString(R.string.status_error)}",
+                detail = "... $message",
             )
-            toast(it.message ?: getString(R.string.status_error))
+            toast(message)
             binding.continueSetupButton.isEnabled = true
         }
     }
@@ -244,6 +255,16 @@ class OnboardingActivity : AppCompatActivity() {
         return collectIdentityPassword()
     }
 
+    private fun ensureBootstrapInviteReady(): Boolean {
+        val ready = binding.bootstrapInviteInput.text?.toString()?.trim()?.isNotEmpty() == true
+        binding.bootstrapInviteInputLayout.error =
+            if (ready) null else getString(R.string.onboarding_invite_required)
+        if (!ready) {
+            binding.bootstrapInviteInput.requestFocus()
+        }
+        return ready
+    }
+
     private suspend fun collectIdentityPassword(): Boolean {
         val password = promptIdentityPasswordSetup() ?: return false
         if (password.isBlank()) {
@@ -257,6 +278,8 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun refreshIdentityState() {
+        binding.bootstrapInviteDescription.isVisible = !sessionStore.hasAccess()
+        binding.bootstrapInviteInputLayout.isVisible = !sessionStore.hasAccess()
         if (sessionStore.hasAccess()) {
             pendingAccountId = sessionStore.accountId
             pendingDeviceId = sessionStore.deviceId

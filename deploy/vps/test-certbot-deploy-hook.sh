@@ -13,12 +13,13 @@ umask 0077
 
 lineage="${tmp_dir}/lineage"
 wrong_lineage="${tmp_dir}/wrong-lineage"
+rotated_lineage="${tmp_dir}/rotated-lineage"
 pem_dir="${tmp_dir}/tls"
 state_root="${tmp_dir}/state"
 fake_bin="${tmp_dir}/bin"
 fake_state="${tmp_dir}/fake-state"
 env_file="${tmp_dir}/.env"
-mkdir -p "${lineage}" "${wrong_lineage}" "${pem_dir}" "${state_root}" "${fake_bin}" "${fake_state}"
+mkdir -p "${lineage}" "${wrong_lineage}" "${rotated_lineage}" "${pem_dir}" "${state_root}" "${fake_bin}" "${fake_state}"
 
 "${openssl_binary}" req -x509 -newkey rsa:2048 -nodes -days 2 \
   -keyout "${lineage}/privkey.pem" \
@@ -30,6 +31,11 @@ mkdir -p "${lineage}" "${wrong_lineage}" "${pem_dir}" "${state_root}" "${fake_bi
   -out "${wrong_lineage}/fullchain.pem" \
   -subj /CN=wrong.example \
   -addext subjectAltName=DNS:wrong.example >/dev/null 2>&1
+"${openssl_binary}" req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -keyout "${rotated_lineage}/privkey.pem" \
+  -out "${rotated_lineage}/fullchain.pem" \
+  -subj /CN=virtroid.example \
+  -addext subjectAltName=DNS:virtroid.example >/dev/null 2>&1
 printf 'HAPROXY_CERT_GID=99\nPUBLIC_BASE_URL=https://virtroid.example\n' > "${env_file}"
 cat "${lineage}/fullchain.pem" "${lineage}/privkey.pem" > "${tmp_dir}/expected.pem"
 
@@ -99,7 +105,7 @@ reset_fixture() {
   : > "${fake_state}/docker.log"
   : > "${fake_state}/curl.log"
   : > "${fake_state}/flock.log"
-  printf 'old certificate bundle\n' > "${pem_dir}/virtroid.pem"
+  cat "${lineage}/fullchain.pem" "${lineage}/privkey.pem" > "${pem_dir}/virtroid.pem"
   cp "${pem_dir}/virtroid.pem" "${tmp_dir}/old.pem"
 }
 
@@ -150,6 +156,17 @@ if RENEWED_LINEAGE_OVERRIDE="${wrong_lineage}" run_hook >/dev/null 2>&1; then
 fi
 cmp -s "${tmp_dir}/old.pem" "${pem_dir}/virtroid.pem"
 [ ! -s "${fake_state}/docker.log" ]
+
+reset_fixture true
+if RENEWED_LINEAGE_OVERRIDE="${rotated_lineage}" run_hook >/dev/null 2>&1; then
+  echo "certificate hook accepted an unplanned public-key rotation" >&2
+  exit 1
+fi
+cmp -s "${tmp_dir}/old.pem" "${pem_dir}/virtroid.pem"
+if grep -Eq '^(restart|exec) ' "${fake_state}/docker.log"; then
+  echo "certificate hook activated an unplanned public-key rotation" >&2
+  exit 1
+fi
 
 reset_fixture true
 if VIRTROID_CERT_FAKE_FLOCK_FAIL=1 run_hook >/dev/null 2>&1; then

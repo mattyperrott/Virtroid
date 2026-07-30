@@ -22,6 +22,7 @@ import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptPinCode
+import io.virtroid.client.security.showTypedConfirmation
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -179,9 +180,18 @@ class PrivacySecurityActivity : AppCompatActivity() {
 
     private suspend fun setAppLockEnabled(enabled: Boolean) {
         if (!enabled) {
-            appLockStore.setEnabled(false)
-            appLogs.warn("App lock disabled", "auth")
-            renderSettings()
+            showTypedConfirmation(
+                title = getString(R.string.privacy_disable_app_lock_title),
+                message = getString(R.string.privacy_disable_app_lock_body),
+                confirmationPhrase = "DISABLE",
+                confirmLabel = getString(R.string.privacy_disable_app_lock_confirm),
+                onCancelled = ::renderSettings,
+                onConfirmed = {
+                    appLockStore.setEnabled(false)
+                    appLogs.warn("App lock disabled", "auth")
+                    renderSettings()
+                },
+            )
             return
         }
 
@@ -268,7 +278,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
             title = getString(R.string.lock_pin_prompt),
             hint = getString(R.string.privacy_pin_setup_body),
         )?.trim().orEmpty()
-        if (!first.matches(Regex("\\d{6}"))) {
+        if (!first.matches(Regex("\\d{${AppLockStore.NEW_PIN_LENGTH}}"))) {
             toast(getString(R.string.lock_pin_invalid_format))
             return null
         }

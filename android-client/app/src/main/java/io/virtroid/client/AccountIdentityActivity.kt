@@ -25,6 +25,7 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPasswordSetup
+import io.virtroid.client.security.showTypedConfirmation
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -305,7 +306,10 @@ class AccountIdentityActivity : AppCompatActivity() {
                 AlertDialog.Builder(this@AccountIdentityActivity)
                     .setTitle(getString(R.string.account_linked_devices_title))
                     .setItems(labels) { _, index ->
-                        confirmDeviceRevoke(devices[index])
+                        confirmDeviceRevoke(
+                            device = devices[index],
+                            activeDeviceCount = devices.count { it.revokedAt == null },
+                        )
                     }
                     .setNegativeButton(getString(R.string.controls_cancel), null)
                     .show()
@@ -330,21 +334,24 @@ class AccountIdentityActivity : AppCompatActivity() {
         return "${device.name.ifBlank { shortId(device.id) }}$currentMarker\n${shortId(device.id)} - $activity"
     }
 
-    private fun confirmDeviceRevoke(device: TrustedDeviceSummary) {
+    private fun confirmDeviceRevoke(device: TrustedDeviceSummary, activeDeviceCount: Int) {
+        if (activeDeviceCount <= 1) {
+            toast(getString(R.string.account_revoke_last_device_blocked))
+            return
+        }
         val currentDeviceId = sessionStore.deviceId.orEmpty()
         val message = if (device.id == currentDeviceId) {
             getString(R.string.account_revoke_current_device_body)
         } else {
             getString(R.string.account_revoke_device_body)
         }
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.account_revoke_device_title))
-            .setMessage(message)
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setPositiveButton(getString(R.string.account_revoke_device_confirm)) { _, _ ->
-                revokeDevice(device)
-            }
-            .show()
+        showTypedConfirmation(
+            title = getString(R.string.account_revoke_device_title),
+            message = message,
+            confirmationPhrase = "REVOKE",
+            confirmLabel = getString(R.string.account_revoke_device_confirm),
+            onConfirmed = { revokeDevice(device) },
+        )
     }
 
     private fun revokeDevice(device: TrustedDeviceSummary) {
@@ -383,18 +390,19 @@ class AccountIdentityActivity : AppCompatActivity() {
     }
 
     private fun confirmLocalDataWipe() {
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.account_wipe_local_title))
-            .setMessage(getString(R.string.account_wipe_local_body))
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setPositiveButton(getString(R.string.privacy_force_clear_cache)) { _, _ ->
+        showTypedConfirmation(
+            title = getString(R.string.account_wipe_local_title),
+            message = getString(R.string.account_wipe_local_body),
+            confirmationPhrase = "CLEAR",
+            confirmLabel = getString(R.string.privacy_force_clear_cache),
+            onConfirmed = {
                 activeSessionStore.clear()
                 identityPasswordStore.clearUnlocked()
                 val result = appSettings.clearSafeLocalCache()
                 appLogs.warn("Local user data cache wipe completed: ${result.deletedItems} items", "privacy")
                 toast(getString(R.string.account_wipe_local_done, result.deletedItems))
-            }
-            .show()
+            },
+        )
     }
 
     private fun showIdentityPasswordActions() {
@@ -465,14 +473,13 @@ class AccountIdentityActivity : AppCompatActivity() {
     }
 
     private fun confirmLocalIdentityReset() {
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.account_delete_local_identity_title))
-            .setMessage(getString(R.string.account_delete_local_identity_body))
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setPositiveButton(getString(R.string.account_delete_local_identity_confirm)) { _, _ ->
-                deleteServerAccountAndResetLocal()
-            }
-            .show()
+        showTypedConfirmation(
+            title = getString(R.string.account_delete_local_identity_title),
+            message = getString(R.string.account_delete_local_identity_body),
+            confirmationPhrase = "DELETE ACCOUNT",
+            confirmLabel = getString(R.string.account_delete_local_identity_confirm),
+            onConfirmed = ::deleteServerAccountAndResetLocal,
+        )
     }
 
     private fun deleteServerAccountAndResetLocal() {

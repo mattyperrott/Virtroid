@@ -37,6 +37,9 @@ func main() {
 		Addr:              cfg.BindAddr,
 		Handler:           httpapi.New(cfg, pg),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	go func() {
@@ -67,14 +70,16 @@ func appCatalogSyncLoop(ctx context.Context, pg *store.Store, cfg config.ServerC
 	}
 
 	runSync := func() {
-		syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel()
-		count, err := appcatalog.SyncFDroid(syncCtx, pg, cfg.AppCatalogSyncURL, cfg.AppCatalogSyncSHA256, cfg.AppCatalogSyncMaxApps)
-		if err != nil {
-			log.Printf("app catalog sync failed: %v", err)
-			return
-		}
-		log.Printf("app catalog sync: upserted=%d source=fdroid", count)
+		runBackgroundIteration("app catalog sync", func() {
+			syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			count, err := appcatalog.SyncFDroid(syncCtx, pg, cfg.AppCatalogSyncURL, cfg.AppCatalogSyncSHA256, cfg.AppCatalogSyncMaxApps)
+			if err != nil {
+				log.Printf("app catalog sync failed: %v", err)
+				return
+			}
+			log.Printf("app catalog sync: upserted=%d source=fdroid", count)
+		})
 	}
 
 	runSync()
@@ -97,25 +102,36 @@ func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerCo
 	}
 
 	runReaper := func() {
-		result, err := pg.ReapStaleSessions(ctx, cfg.ActiveSessionTimeout, cfg.RuntimeIdleTimeout)
-		if err != nil {
-			log.Printf("session reaper failed: %v", err)
-			return
-		}
-		if result.ExpiredPendingSessions > 0 ||
-			result.StaleActiveSessions > 0 ||
-			result.RevokedRuntimeCapabilities > 0 ||
-			result.PrunedRuntimeCapabilityNonces > 0 ||
-			len(result.StoppedRuntimeIDs) > 0 {
-			log.Printf(
-				"session reaper: expired_pending=%d stale_active=%d revoked_capabilities=%d pruned_capability_nonces=%d runtimes_queued_to_stop=%d",
-				result.ExpiredPendingSessions,
-				result.StaleActiveSessions,
-				result.RevokedRuntimeCapabilities,
-				result.PrunedRuntimeCapabilityNonces,
-				len(result.StoppedRuntimeIDs),
-			)
-		}
+		runBackgroundIteration("session reaper", func() {
+			result, err := pg.ReapStaleSessions(ctx, cfg.ActiveSessionTimeout, cfg.RuntimeIdleTimeout)
+			if err != nil {
+				log.Printf("session reaper failed: %v", err)
+				return
+			}
+			prunedRuntimeLogs, err := pg.PruneRuntimeLogs(ctx, cfg.RuntimeLogRetention)
+			if err != nil {
+				log.Printf("runtime log retention sweep failed: %v", err)
+				return
+			}
+			if result.ExpiredPendingSessions > 0 ||
+				result.StaleActiveSessions > 0 ||
+				result.RevokedRuntimeCapabilities > 0 ||
+				result.PrunedRuntimeCapabilityNonces > 0 ||
+				result.PrunedBlobKeyHandoffs > 0 ||
+				len(result.StoppedRuntimeIDs) > 0 ||
+				prunedRuntimeLogs > 0 {
+				log.Printf(
+					"session reaper: expired_pending=%d stale_active=%d revoked_capabilities=%d pruned_capability_nonces=%d pruned_blob_key_handoffs=%d pruned_runtime_logs=%d runtimes_queued_to_stop=%d",
+					result.ExpiredPendingSessions,
+					result.StaleActiveSessions,
+					result.RevokedRuntimeCapabilities,
+					result.PrunedRuntimeCapabilityNonces,
+					result.PrunedBlobKeyHandoffs,
+					prunedRuntimeLogs,
+					len(result.StoppedRuntimeIDs),
+				)
+			}
+		})
 	}
 
 	runReaper()
@@ -129,4 +145,13 @@ func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerCo
 			runReaper()
 		}
 	}
+}
+
+func runBackgroundIteration(name string, action func()) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("%s panic recovered: %v", name, recovered)
+		}
+	}()
+	action()
 }

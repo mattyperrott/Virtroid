@@ -295,6 +295,7 @@ validate_environment() {
     NODE_ADVERTISE_ADDR \
     NODE_ALLOWED_ADVERTISE_ADDRS \
     BOOTSTRAP_ENABLED \
+    BOOTSTRAP_REQUIRE_INVITE \
     DOCKER_GID \
     POSTGRES_IMAGE \
     VIRTROID_BACKEND_IMAGE \
@@ -446,6 +447,10 @@ validate_environment() {
 			exit 1
 			;;
 	esac
+  if [ "${BOOTSTRAP_REQUIRE_INVITE}" != "true" ]; then
+    echo "BOOTSTRAP_REQUIRE_INVITE must be true for production deployment" >&2
+    exit 1
+  fi
   if [ "${NODE_ALLOWED_ADVERTISE_ADDRS}" != "${NODE_ADVERTISE_ADDR}" ]; then
     echo "NODE_ALLOWED_ADVERTISE_ADDRS must exactly match NODE_ADVERTISE_ADDR for this single-node Compose deployment" >&2
     exit 1

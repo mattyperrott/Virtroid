@@ -4,17 +4,22 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestBootstrapAndNodeAdvertiseDefaultsFailClosedInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("BOOTSTRAP_ENABLED", "")
+	t.Setenv("BOOTSTRAP_REQUIRE_INVITE", "")
 	t.Setenv("NODE_DEVELOPMENT_ENROLLMENT_ENABLED", "true")
 	t.Setenv("NODE_ALLOWED_ADVERTISE_ADDRS", " virtnoded, node.internal,virtnoded ")
 
 	cfg := LoadServer()
-	if cfg.BootstrapEnabled {
-		t.Fatal("bootstrap enabled by default in production")
+	if !cfg.BootstrapEnabled {
+		t.Fatal("bootstrap endpoint disabled by default in production")
+	}
+	if !cfg.BootstrapRequireInvite {
+		t.Fatal("anonymous bootstrap enabled by default in production")
 	}
 	if cfg.NodeDevelopmentEnrollmentEnabled {
 		t.Fatal("development node enrollment enabled in production")
@@ -56,23 +61,43 @@ func TestNodeRegistrationSecretNeverFallsBackToCallbackSharedSecret(t *testing.T
 	}
 }
 
-func TestBootstrapDefaultsToDevelopmentOnlyAndHonorsOverride(t *testing.T) {
+func TestBootstrapDefaultsToInviteGatedProductionAndHonorsOverride(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
 	t.Setenv("BOOTSTRAP_ENABLED", "")
-	if cfg := LoadServer(); !cfg.BootstrapEnabled {
-		t.Fatal("bootstrap disabled by default in development")
+	t.Setenv("BOOTSTRAP_REQUIRE_INVITE", "")
+	if cfg := LoadServer(); !cfg.BootstrapEnabled || !cfg.BootstrapRequireInvite {
+		t.Fatal("bootstrap did not default to an enabled, invite-gated endpoint in development")
 	}
 
 	t.Setenv("APP_ENV", "production")
-	t.Setenv("BOOTSTRAP_ENABLED", "true")
-	if cfg := LoadServer(); !cfg.BootstrapEnabled {
-		t.Fatal("bootstrap did not honor explicit production opt-in")
+	t.Setenv("BOOTSTRAP_ENABLED", "")
+	t.Setenv("BOOTSTRAP_REQUIRE_INVITE", "false")
+	if cfg := LoadServer(); !cfg.BootstrapEnabled || !cfg.BootstrapRequireInvite {
+		t.Fatal("production bootstrap did not enforce an enabled, invite-gated endpoint")
 	}
 
 	t.Setenv("APP_ENV", "development")
 	t.Setenv("BOOTSTRAP_ENABLED", "false")
 	if cfg := LoadServer(); cfg.BootstrapEnabled {
 		t.Fatal("bootstrap did not honor explicit development opt-out")
+	}
+
+	t.Setenv("BOOTSTRAP_ENABLED", "true")
+	t.Setenv("BOOTSTRAP_REQUIRE_INVITE", "false")
+	if cfg := LoadServer(); cfg.BootstrapRequireInvite {
+		t.Fatal("development bootstrap invite requirement did not honor explicit opt-out")
+	}
+}
+
+func TestRuntimeLogRetentionDefaultsAndOverride(t *testing.T) {
+	t.Setenv("RUNTIME_LOG_RETENTION", "")
+	if cfg := LoadServer(); cfg.RuntimeLogRetention != 30*24*time.Hour {
+		t.Fatalf("RuntimeLogRetention = %s, want 720h", cfg.RuntimeLogRetention)
+	}
+
+	t.Setenv("RUNTIME_LOG_RETENTION", "168h")
+	if cfg := LoadServer(); cfg.RuntimeLogRetention != 7*24*time.Hour {
+		t.Fatalf("RuntimeLogRetention = %s, want 168h", cfg.RuntimeLogRetention)
 	}
 }
 

@@ -22,6 +22,17 @@ class AppLockStore(context: Context) {
     fun hasCredential(): Boolean = mode != null && !credentialHash.isNullOrBlank() && !salt.isNullOrBlank()
 
     fun saveCredential(mode: LockMode, secret: String) {
+        saveCredential(mode, secret, allowLegacyPin = false)
+    }
+
+    private fun saveCredential(mode: LockMode, secret: String, allowLegacyPin: Boolean) {
+        require(
+            mode != LockMode.PIN ||
+                secret.length == NEW_PIN_LENGTH ||
+                (allowLegacyPin && secret.length == LEGACY_PIN_LENGTH),
+        ) {
+            "PIN must use the current credential length"
+        }
         val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val salt = Base64.encodeToString(saltBytes, B64_FLAGS)
         val vaultSalt = newVaultSalt()
@@ -35,6 +46,13 @@ class AppLockStore(context: Context) {
             .putString(KEY_VAULT_SALT, vaultSalt)
             .putString(KEY_HASH, hash)
             .putString(KEY_KDF, KDF_VERSION)
+            .apply {
+                if (mode == LockMode.PIN) {
+                    putInt(KEY_PIN_LENGTH, secret.length)
+                } else {
+                    remove(KEY_PIN_LENGTH)
+                }
+            }
             .putBoolean(KEY_ENABLED, true)
             .remove(KEY_FAILED_ATTEMPTS)
             .remove(KEY_LOCKED_UNTIL)
@@ -65,7 +83,7 @@ class AppLockStore(context: Context) {
         if (matches) {
             clearFailures()
             if (kdfVersion != KDF_VERSION) {
-                saveCredential(mode, secret)
+                saveCredential(mode, secret, allowLegacyPin = true)
                 return true
             }
             if (!unlockVault(secret)) {
@@ -156,6 +174,15 @@ class AppLockStore(context: Context) {
 
     fun lastUnlockAtMs(): Long {
         return prefs.getLong(KEY_LAST_UNLOCK_AT, 0L)
+    }
+
+    fun requiredPinLength(): Int {
+        if (mode != LockMode.PIN) {
+            return NEW_PIN_LENGTH
+        }
+        return prefs.getInt(KEY_PIN_LENGTH, LEGACY_PIN_LENGTH)
+            .takeIf { it in LEGACY_PIN_LENGTH..NEW_PIN_LENGTH }
+            ?: LEGACY_PIN_LENGTH
     }
 
     var mode: LockMode?
@@ -298,22 +325,25 @@ class AppLockStore(context: Context) {
         }
     }
 
-    private companion object {
-        const val KEY_MODE = "lock_mode"
-        const val KEY_ENABLED = "lock_enabled"
-        const val KEY_SALT = "lock_salt"
-        const val KEY_VAULT_SALT = "lock_vault_salt"
-        const val KEY_HASH = "lock_hash"
-        const val KEY_KDF = "lock_kdf"
-        const val KEY_FAILED_ATTEMPTS = "lock_failed_attempts"
-        const val KEY_LOCKED_UNTIL = "lock_locked_until"
-        const val KEY_LAST_BACKGROUND_AT = "lock_last_background_at"
-        const val KEY_LAST_UNLOCK_AT = "lock_last_unlock_at"
-        const val KDF_VERSION = "pbkdf2-sha256-v1"
-        const val PBKDF2_ITERATIONS = 210_000
-        const val KEY_BYTES = 32
-        const val LOCKOUT_MS = 30_000L
-        const val B64_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
+    companion object {
+        private const val KEY_MODE = "lock_mode"
+        private const val KEY_ENABLED = "lock_enabled"
+        private const val KEY_SALT = "lock_salt"
+        private const val KEY_VAULT_SALT = "lock_vault_salt"
+        private const val KEY_HASH = "lock_hash"
+        private const val KEY_KDF = "lock_kdf"
+        private const val KEY_PIN_LENGTH = "lock_pin_length"
+        private const val KEY_FAILED_ATTEMPTS = "lock_failed_attempts"
+        private const val KEY_LOCKED_UNTIL = "lock_locked_until"
+        private const val KEY_LAST_BACKGROUND_AT = "lock_last_background_at"
+        private const val KEY_LAST_UNLOCK_AT = "lock_last_unlock_at"
+        private const val KDF_VERSION = "pbkdf2-sha256-v1"
+        private const val PBKDF2_ITERATIONS = 210_000
+        private const val KEY_BYTES = 32
+        private const val LOCKOUT_MS = 30_000L
+        const val LEGACY_PIN_LENGTH = 6
+        const val NEW_PIN_LENGTH = 8
+        private const val B64_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
 
         @Volatile
         var unlockedInProcess: Boolean = false

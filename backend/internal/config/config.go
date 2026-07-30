@@ -18,11 +18,13 @@ type ServerConfig struct {
 	NodeDevelopmentEnrollmentEnabled bool
 	NodeAllowedAdvertiseAddrs        []string
 	BootstrapEnabled                 bool
+	BootstrapRequireInvite           bool
 	BootstrapRateLimitPerMinute      int
 	BootstrapMaxBodyBytes            int64
 	TrustProxyHeaders                bool
 	SecurityEventRateLimitPerMinute  int
 	SecurityEventRetention           time.Duration
+	RuntimeLogRetention              time.Duration
 	SessionReaperInterval            time.Duration
 	ActiveSessionTimeout             time.Duration
 	RuntimeIdleTimeout               time.Duration
@@ -74,6 +76,12 @@ func LoadServer() ServerConfig {
 		// Production authorization always comes from the approved-node registry.
 		developmentEnrollmentEnabled = false
 	}
+	bootstrapRequireInvite := parseEnvBool("BOOTSTRAP_REQUIRE_INVITE", true)
+	if !strings.EqualFold(appEnv, "development") {
+		// Production identity creation is never anonymous, even if an unsafe
+		// environment override bypasses the deployment-script validation.
+		bootstrapRequireInvite = true
+	}
 	bootstrapRateLimit, err := parseEnvInt("BOOTSTRAP_RATE_LIMIT_PER_MINUTE", 5)
 	if err != nil {
 		bootstrapRateLimit = 5
@@ -87,6 +95,7 @@ func LoadServer() ServerConfig {
 		securityEventRateLimit = 120
 	}
 	securityEventRetention := parseEnvDuration("SECURITY_EVENT_RETENTION", 7*24*time.Hour)
+	runtimeLogRetention := parseEnvDuration("RUNTIME_LOG_RETENTION", 30*24*time.Hour)
 	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
 	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
 	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 3*time.Minute)
@@ -106,12 +115,14 @@ func LoadServer() ServerConfig {
 		NodeRegistrationSecret:           strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
 		NodeDevelopmentEnrollmentEnabled: developmentEnrollmentEnabled,
 		NodeAllowedAdvertiseAddrs:        parseEnvCSV("NODE_ALLOWED_ADVERTISE_ADDRS", ""),
-		BootstrapEnabled:                 parseEnvBool("BOOTSTRAP_ENABLED", appEnv == "development"),
+		BootstrapEnabled:                 parseEnvBool("BOOTSTRAP_ENABLED", true),
+		BootstrapRequireInvite:           bootstrapRequireInvite,
 		BootstrapRateLimitPerMinute:      bootstrapRateLimit,
 		BootstrapMaxBodyBytes:            int64(bootstrapMaxBodyBytes),
 		TrustProxyHeaders:                parseEnvBool("TRUST_PROXY_HEADERS", false),
 		SecurityEventRateLimitPerMinute:  securityEventRateLimit,
 		SecurityEventRetention:           securityEventRetention,
+		RuntimeLogRetention:              runtimeLogRetention,
 		SessionReaperInterval:            sessionReaperInterval,
 		ActiveSessionTimeout:             activeSessionTimeout,
 		RuntimeIdleTimeout:               runtimeIdleTimeout,

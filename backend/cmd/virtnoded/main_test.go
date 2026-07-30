@@ -61,6 +61,42 @@ func TestRequireControlPlaneCallbackVerifiesBodyAndRejectsReplay(t *testing.T) {
 	}
 }
 
+func TestRecoverNodeHTTPContainsHandlerPanic(t *testing.T) {
+	handler := recoverNodeHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("sensitive panic detail")
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	if strings.Contains(response.Body.String(), "sensitive panic detail") {
+		t.Fatalf("panic detail leaked in response: %q", response.Body.String())
+	}
+}
+
+func TestRelaySlotsRejectExcessConcurrency(t *testing.T) {
+	node := &nodeAgent{relaySlots: make(chan struct{}, 1)}
+	if !node.acquireRelaySlot() {
+		t.Fatal("first relay slot was rejected")
+	}
+	if node.acquireRelaySlot() {
+		t.Fatal("relay slot limit was not enforced")
+	}
+	node.releaseRelaySlot()
+	if !node.acquireRelaySlot() {
+		t.Fatal("released relay slot was not reusable")
+	}
+	node.releaseRelaySlot()
+}
+
+func TestRunNodeBackgroundIterationContainsPanic(t *testing.T) {
+	runNodeBackgroundIteration("test", func() {
+		panic("background failure")
+	})
+}
+
 func TestNormalizeViewerPrepareParamsDefaultsAndBounds(t *testing.T) {
 	maxSize, bitRate, err := normalizeViewerPrepareParams(0, 0, runtimeAssignment{
 		WidthPx:  720,

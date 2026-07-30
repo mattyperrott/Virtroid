@@ -1,12 +1,9 @@
 package io.virtroid.client.security
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import io.virtroid.client.data.KeystorePrefs
 import java.nio.ByteBuffer
-import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.PrivateKey
@@ -21,20 +18,7 @@ class DeviceIdentityStore {
             return Base64.encodeToString(existingCertificate.publicKey.encoded, Base64.NO_WRAP)
         }
 
-        val keyPairGenerator = KeyPairGenerator.getInstance(
-            KeyProperties.KEY_ALGORITHM_EC,
-            ANDROID_KEYSTORE,
-        )
-        val spec = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
-            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-        )
-            .setAlgorithmParameterSpec(java.security.spec.ECGenParameterSpec("secp256r1"))
-            .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
-            .build()
-
-        keyPairGenerator.initialize(spec)
-        val keyPair = keyPairGenerator.generateKeyPair()
+        val keyPair = KeystoreKeyPolicy.generateSigningKey(KEY_ALIAS)
         return Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP)
     }
 

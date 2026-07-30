@@ -16,6 +16,11 @@ import (
 	"virtroid/backend/internal/nodeauth"
 )
 
+const (
+	bootstrapInvitationReservationSQL = `SELECT id\s+FROM bootstrap_invitations\s+WHERE token_sha256 = \$1\s+AND consumed_at IS NULL\s+AND expires_at > NOW\(\)\s+FOR UPDATE`
+	bootstrapInvitationConsumptionSQL = `UPDATE bootstrap_invitations\s+SET consumed_at = NOW\(\),\s+consumed_account_id = \$1\s+WHERE id = \$2\s+AND consumed_at IS NULL\s+AND expires_at > NOW\(\)`
+)
+
 func TestEnsureSchemaSerializesAndRecordsVersion(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -94,12 +99,30 @@ func TestNodeRegistrySchemaIsSeparateFromHeartbeatHosts(t *testing.T) {
 	}
 }
 
-func TestPublicBootstrapSchemaRemovesOperatorInvitationTable(t *testing.T) {
+func TestBootstrapSchemaUsesHashedSingleUseInvitations(t *testing.T) {
 	if !strings.Contains(schemaSQL, "DROP TABLE IF EXISTS enrollment_invitations") {
 		t.Fatal("schema does not remove the obsolete operator invitation table")
 	}
 	if strings.Contains(schemaSQL, "CREATE TABLE IF NOT EXISTS enrollment_invitations") {
 		t.Fatal("schema recreates the obsolete operator invitation table")
+	}
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS bootstrap_invitations",
+		"token_sha256 BYTEA NOT NULL UNIQUE",
+		"consumed_at TIMESTAMPTZ",
+		"consumed_account_id UUID",
+		"consumed_at IS NOT NULL AND consumed_account_id IS NOT NULL",
+		"WHERE consumed_at IS NULL",
+	} {
+		if !strings.Contains(schemaSQL, required) {
+			t.Fatalf("schema is missing bootstrap-invitation control %q", required)
+		}
+	}
+	if strings.Contains(schemaSQL, "invite_token") {
+		t.Fatal("schema appears to persist plaintext bootstrap invitation tokens")
+	}
+	if strings.Contains(schemaSQL, "consumed_account_id UUID REFERENCES") {
+		t.Fatal("bootstrap invitation audit history would block or be rewritten by later account deletion")
 	}
 }
 
@@ -427,6 +450,30 @@ func TestAppendRuntimeLogBoundsFieldsAndPrunesOldRows(t *testing.T) {
 	}
 }
 
+func TestPruneRuntimeLogsUsesConfiguredRetention(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	mock.ExpectExec(`DELETE FROM runtime_logs WHERE created_at < \$1`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 7))
+
+	count, err := st.PruneRuntimeLogs(context.Background(), 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("PruneRuntimeLogs: %v", err)
+	}
+	if count != 7 {
+		t.Fatalf("PruneRuntimeLogs count = %d, want 7", count)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestBootstrapAccountDoesNotCreateRuntime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -575,6 +622,176 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 	}
 	if result.Runtime != nil {
 		t.Fatalf("bootstrap runtime = %#v; want nil until the user creates one", result.Runtime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestBootstrapAccountWithInvitationConsumesItInAccountTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	invitationID := "33333333-3333-3333-3333-333333333333"
+	tokenDigest := sha256.Sum256([]byte("single-use-bootstrap-token"))
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(bootstrapInvitationReservationSQL).
+		WithArgs(tokenDigest[:]).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(invitationID))
+	mock.ExpectQuery("INSERT INTO accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(accountID, now))
+	mock.ExpectExec("INSERT INTO account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO devices").
+		WithArgs(deviceID, accountID, "Pixel", "public-key").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_id", "name", "public_key", "blob_key_verifier", "created_at", "last_seen_at",
+		}).AddRow(deviceID, accountID, "Pixel", "public-key", nil, now, nil))
+	mock.ExpectExec(bootstrapInvitationConsumptionSQL).
+		WithArgs(accountID, invitationID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := st.BootstrapAccountWithInvitation(
+		context.Background(),
+		accountID,
+		deviceID,
+		"Pixel",
+		"public-key",
+		tokenDigest[:],
+		CreateRuntimeInput{},
+	)
+	if err != nil {
+		t.Fatalf("BootstrapAccountWithInvitation returned error: %v", err)
+	}
+	if result.Account.ID != accountID || result.Device.ID != deviceID {
+		t.Fatalf("unexpected bootstrap result: %+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestBootstrapAccountWithInvitationRejectsUnavailableTokenAndRollsBack(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	tokenDigest := sha256.Sum256([]byte("expired-or-consumed-token"))
+	mock.ExpectBegin()
+	mock.ExpectQuery(bootstrapInvitationReservationSQL).
+		WithArgs(tokenDigest[:]).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	_, err = st.BootstrapAccountWithInvitation(
+		context.Background(),
+		accountID,
+		deviceID,
+		"Pixel",
+		"public-key",
+		tokenDigest[:],
+		CreateRuntimeInput{},
+	)
+	if !errors.Is(err, ErrBootstrapInviteInvalid) {
+		t.Fatalf("BootstrapAccountWithInvitation error = %v, want %v", err, ErrBootstrapInviteInvalid)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestBootstrapInvitationConsumptionRollsBackWhenDeviceCreationFails(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	invitationID := "33333333-3333-3333-3333-333333333333"
+	tokenDigest := sha256.Sum256([]byte("rollback-safe-token"))
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(bootstrapInvitationReservationSQL).
+		WithArgs(tokenDigest[:]).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(invitationID))
+	mock.ExpectQuery("INSERT INTO accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(accountID, now))
+	mock.ExpectExec("INSERT INTO account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO devices").
+		WithArgs(deviceID, accountID, "Pixel", "public-key").
+		WillReturnError(errors.New("device insert failed"))
+	mock.ExpectRollback()
+
+	_, err = st.BootstrapAccountWithInvitation(
+		context.Background(),
+		accountID,
+		deviceID,
+		"Pixel",
+		"public-key",
+		tokenDigest[:],
+		CreateRuntimeInput{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "device insert failed") {
+		t.Fatalf("BootstrapAccountWithInvitation error = %v, want device failure", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestCreateBootstrapInvitationStoresDigestAndAuditMetadata(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	tokenDigest := sha256.Sum256([]byte("plaintext-is-never-stored"))
+	expiresAt := time.Now().UTC().Add(30 * time.Minute)
+	createdAt := time.Now().UTC()
+	mock.ExpectQuery("INSERT INTO bootstrap_invitations").
+		WithArgs(sqlmock.AnyArg(), tokenDigest[:], "Pixel 9", "security-admin", expiresAt).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(createdAt))
+
+	invitation, err := st.CreateBootstrapInvitation(
+		context.Background(),
+		tokenDigest[:],
+		" Pixel 9 ",
+		" security-admin ",
+		expiresAt,
+	)
+	if err != nil {
+		t.Fatalf("CreateBootstrapInvitation returned error: %v", err)
+	}
+	if invitation.ID == "" || invitation.Label != "Pixel 9" || invitation.CreatedBy != "security-admin" {
+		t.Fatalf("unexpected invitation: %+v", invitation)
+	}
+	if !invitation.CreatedAt.Equal(createdAt) || !invitation.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected invitation timestamps: %+v", invitation)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -795,6 +1012,15 @@ func TestRevokeDeviceMarksDeviceAndStopsItsLiveRuntime(t *testing.T) {
 	runtimeID := "33333333-3333-3333-3333-333333333333"
 
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(accountID))
+	mock.ExpectQuery("SELECT id").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(deviceID))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 	mock.ExpectQuery("UPDATE devices d").
 		WithArgs(accountID, deviceID).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -832,6 +1058,38 @@ func TestRevokeDeviceMarksDeviceAndStopsItsLiveRuntime(t *testing.T) {
 	}
 	if len(stoppedRuntimeIDs) != 1 || stoppedRuntimeIDs[0] != runtimeID {
 		t.Fatalf("stopped runtime ids = %#v, want [%s]", stoppedRuntimeIDs, runtimeID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRevokeDeviceRejectsLastActiveDevice(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(accountID))
+	mock.ExpectQuery("SELECT id").
+		WithArgs(accountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(deviceID))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectRollback()
+
+	_, _, err = st.RevokeDevice(context.Background(), accountID, deviceID)
+	if !errors.Is(err, ErrLastActiveDevice) {
+		t.Fatalf("RevokeDevice error = %v, want %v", err, ErrLastActiveDevice)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -3280,6 +3538,8 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	mock.ExpectExec("DELETE FROM runtime_capability_nonces").
 		WillReturnResult(sqlmock.NewResult(0, 4))
+	mock.ExpectExec("DELETE FROM runtime_blob_key_handoffs").
+		WillReturnResult(sqlmock.NewResult(0, 5))
 	mock.ExpectCommit()
 
 	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute, 3*time.Minute)
@@ -3294,6 +3554,9 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 	}
 	if result.RevokedRuntimeCapabilities != 6 || result.PrunedRuntimeCapabilityNonces != 4 {
 		t.Fatalf("capability cleanup = %+v, want 6 revoked capabilities and 4 pruned nonces", result)
+	}
+	if result.PrunedBlobKeyHandoffs != 5 {
+		t.Fatalf("pruned blob-key handoffs = %d, want 5", result.PrunedBlobKeyHandoffs)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -3348,6 +3611,8 @@ func TestReapStaleSessionsStopsRuntimeAtTrialTimeQuota(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 4))
 	mock.ExpectExec("DELETE FROM runtime_capability_nonces").
 		WillReturnResult(sqlmock.NewResult(0, 5))
+	mock.ExpectExec("DELETE FROM runtime_blob_key_handoffs").
+		WillReturnResult(sqlmock.NewResult(0, 6))
 	mock.ExpectCommit()
 
 	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute, 3*time.Minute)
@@ -3362,6 +3627,9 @@ func TestReapStaleSessionsStopsRuntimeAtTrialTimeQuota(t *testing.T) {
 	}
 	if result.RevokedRuntimeCapabilities != 9 || result.PrunedRuntimeCapabilityNonces != 5 {
 		t.Fatalf("capability cleanup = %+v, want 9 revoked capabilities and 5 pruned nonces", result)
+	}
+	if result.PrunedBlobKeyHandoffs != 6 {
+		t.Fatalf("pruned blob-key handoffs = %d, want 6", result.PrunedBlobKeyHandoffs)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

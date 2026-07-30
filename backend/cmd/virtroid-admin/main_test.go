@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"os"
@@ -79,6 +80,15 @@ func TestInvalidDatabaseCommandsFailBeforeDatabaseSetup(t *testing.T) {
 		"operator revoke missing reason": {
 			"operator-revoke", "--operator", "operator-1", "--actor", "security-admin",
 		},
+		"bootstrap invite ttl too short": {
+			"bootstrap-invite", "--ttl", "59s",
+		},
+		"bootstrap invite ttl too long": {
+			"bootstrap-invite", "--ttl", "169h",
+		},
+		"bootstrap invite missing actor": {
+			"bootstrap-invite", "--actor", "",
+		},
 		"revoke missing reason": {
 			"revoke", "--node", "node-1",
 		},
@@ -116,6 +126,43 @@ func TestOperatorCommandsValidateBeforeDatabaseSetup(t *testing.T) {
 				t.Fatalf("valid operator command error = %v, want database requirement after validation", err)
 			}
 		})
+	}
+}
+
+func TestBootstrapInviteCommandValidatesBeforeDatabaseSetup(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	err := run(
+		context.Background(),
+		[]string{"bootstrap-invite", "--ttl", "15m", "--label", "Pixel 9", "--actor", "security-admin"},
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL is required") {
+		t.Fatalf("valid bootstrap-invite command error = %v, want database requirement after validation", err)
+	}
+}
+
+func TestGenerateBootstrapInviteTokenIsRandomAndMatchesReturnedDigest(t *testing.T) {
+	first, firstDigest, err := generateBootstrapInviteToken()
+	if err != nil {
+		t.Fatalf("generate first bootstrap invitation token: %v", err)
+	}
+	second, _, err := generateBootstrapInviteToken()
+	if err != nil {
+		t.Fatalf("generate second bootstrap invitation token: %v", err)
+	}
+	if first == second {
+		t.Fatal("generated duplicate bootstrap invitation tokens")
+	}
+	if len(first) != 43 {
+		t.Fatalf("token length = %d, want 43 base64url characters", len(first))
+	}
+	if strings.ContainsAny(first, "+/=") {
+		t.Fatalf("token %q is not unpadded base64url", first)
+	}
+	expectedDigest := sha256.Sum256([]byte(first))
+	if !bytes.Equal(firstDigest, expectedDigest[:]) {
+		t.Fatal("returned invitation digest does not match the plaintext token")
 	}
 }
 

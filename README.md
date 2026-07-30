@@ -90,8 +90,8 @@ flowchart LR
 
 | Capability                   |       Status      | Notes                                                   |
 | :--------------------------- | :---------------: | :------------------------------------------------------ |
-| Signed account bootstrap     |   ✅ Implemented   | Device proof-of-possession protects later API requests  |
-| Trusted-device management    |   ✅ Implemented   | Devices can be listed and revoked                       |
+| Invite-gated account bootstrap | ✅ Implemented   | One-time expiring operator invite plus signed device proof |
+| Trusted-device management    |     🟡 Partial     | Listing and revocation exist; additional-device enrolment does not |
 | Runtime creation             |   ✅ Implemented   | Creates independently managed Android environments      |
 | Runtime start and stop       |   ✅ Implemented   | Proven on the current single-node deployment            |
 | Remote Android viewer        |   ✅ Implemented   | Encrypted viewer sessions over TLS                      |
@@ -160,7 +160,10 @@ Each lifecycle action is treated as an explicit backend operation rather than an
 
 ### Cryptographic device identity
 
-After bootstrap, requests are authenticated using a signing key held by the Android device.
+During bootstrap, the Android device signs the request that carries its
+one-time operator invitation. The server atomically consumes the invitation
+while creating the account and device. After bootstrap, requests are
+authenticated using the signing key held by that device.
 
 Signed requests cover security-relevant fields including:
 
@@ -274,7 +277,7 @@ flowchart TB
 
 The control plane is responsible for:
 
-* Public account bootstrap
+* Invite-gated signed account bootstrap
 * Device registration
 * Device revocation
 * Entitlement enforcement

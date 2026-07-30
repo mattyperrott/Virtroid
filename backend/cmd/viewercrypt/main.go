@@ -21,13 +21,18 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 const (
-	protocolMagic  = "VRTENC1\n"
-	maxPublicKey   = 2048
-	maxPlainFrame  = 32 * 1024
-	maxCipherFrame = maxPlainFrame + 16
+	protocolMagic        = "VRTENC1\n"
+	maxPublicKey         = 2048
+	maxPlainFrame        = 32 * 1024
+	maxCipherFrame       = maxPlainFrame + 16
+	maxConcurrentClients = 16
+	handshakeTimeout     = 10 * time.Second
+	upstreamDialTimeout  = 10 * time.Second
+	maxSessionDuration   = time.Hour
 )
 
 func main() {
@@ -56,31 +61,59 @@ func main() {
 	}
 	log.Printf("viewercrypt listening on %s upstream=%s", *listenAddr, *upstreamAddr)
 
+	clientSlots := make(chan struct{}, maxConcurrentClients)
 	for {
 		client, err := listener.Accept()
 		if err != nil {
 			log.Printf("accept: %v", err)
 			continue
 		}
-		go handleClient(client, *upstreamAddr, serverPrivate)
+		select {
+		case clientSlots <- struct{}{}:
+			go func() {
+				defer func() {
+					<-clientSlots
+					if recovered := recover(); recovered != nil {
+						log.Printf("client handler panic")
+					}
+				}()
+				handleClient(client, *upstreamAddr, serverPrivate)
+			}()
+		default:
+			log.Printf("rejecting viewer connection: capacity exhausted")
+			_ = client.Close()
+		}
 	}
 }
 
 func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.PrivateKey) {
 	defer rawClient.Close()
 
+	if err := rawClient.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		log.Printf("set handshake deadline: %v", err)
+		return
+	}
 	client, err := serverHandshake(rawClient, serverPrivate)
 	if err != nil {
 		log.Printf("handshake: %v", err)
 		return
 	}
+	sessionDeadline := time.Now().Add(maxSessionDuration)
+	if err := rawClient.SetDeadline(sessionDeadline); err != nil {
+		log.Printf("set client session deadline: %v", err)
+		return
+	}
 
-	upstream, err := net.Dial("tcp", upstreamAddr)
+	upstream, err := net.DialTimeout("tcp", upstreamAddr, upstreamDialTimeout)
 	if err != nil {
 		log.Printf("dial upstream: %v", err)
 		return
 	}
 	defer upstream.Close()
+	if err := upstream.SetDeadline(sessionDeadline); err != nil {
+		log.Printf("set upstream session deadline: %v", err)
+		return
+	}
 
 	done := make(chan struct{}, 2)
 	go func() {

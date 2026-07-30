@@ -45,6 +45,9 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
         "runtime_storage_quota_exceeded" -> context.getString(R.string.entitlement_storage_quota_reached)
         "runtime_profile_not_allowed" -> context.getString(R.string.entitlement_profile_not_allowed)
         "no_ready_host" -> context.getString(R.string.entitlement_no_ready_host)
+        "last_active_device" -> context.getString(R.string.account_revoke_last_device_blocked)
+        "bootstrap_invite_required" -> context.getString(R.string.onboarding_invite_required)
+        "bootstrap_invite_invalid" -> context.getString(R.string.onboarding_invite_invalid)
         else -> when {
             rawMessage.contains("viewer prepare", ignoreCase = true) ||
                 rawMessage.contains("viewer service", ignoreCase = true) ||

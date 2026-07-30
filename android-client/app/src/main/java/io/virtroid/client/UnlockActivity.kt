@@ -30,6 +30,7 @@ class UnlockActivity : AppCompatActivity() {
     private var pinBuffer = StringBuilder()
     private var showingPassphrase = false
     private var returnToPrevious = false
+    private var requiredPinLength = AppLockStore.LEGACY_PIN_LENGTH
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,6 +51,7 @@ class UnlockActivity : AppCompatActivity() {
         }
 
         appLockStore = AppLockStore(this)
+        requiredPinLength = appLockStore.requiredPinLength()
         appSettings = AppSettingsStore(this)
         appLogs = AppLogStore.get(this)
         returnToPrevious = intent.getBooleanExtra(EXTRA_RETURN_TO_PREVIOUS, false)
@@ -91,10 +93,10 @@ class UnlockActivity : AppCompatActivity() {
     }
 
     private fun appendPin(value: String) {
-        if (showingPassphrase || pinBuffer.length >= 6) return
+        if (showingPassphrase || pinBuffer.length >= requiredPinLength) return
         pinBuffer.append(value)
         updateDots()
-        if (pinBuffer.length == 6) {
+        if (pinBuffer.length == requiredPinLength) {
             if (showLockoutIfNeeded()) {
                 pinBuffer = StringBuilder()
                 updateDots()
@@ -135,9 +137,11 @@ class UnlockActivity : AppCompatActivity() {
         } else {
             InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
         }
-        binding.passphraseInput.hint = getString(
-            if (passphraseOnly) R.string.unlock_enter_passphrase else R.string.lock_pin_field_hint,
-        )
+        binding.passphraseInput.hint = if (passphraseOnly) {
+            getString(R.string.unlock_enter_passphrase)
+        } else {
+            getString(R.string.lock_pin_field_hint, requiredPinLength)
+        }
         binding.passphraseSection.isVisible = effectivePassphrase
         binding.pinPad.isVisible = !effectivePassphrase
         binding.pinDotsRow.isVisible = !effectivePassphrase
@@ -208,9 +212,20 @@ class UnlockActivity : AppCompatActivity() {
         binding.pinDotsRow.contentDescription = getString(
             R.string.lock_pin_progress,
             pinBuffer.length,
+            requiredPinLength,
         )
-        val dots = listOf(binding.pinDot1, binding.pinDot2, binding.pinDot3, binding.pinDot4, binding.pinDot5, binding.pinDot6)
+        val dots = listOf(
+            binding.pinDot1,
+            binding.pinDot2,
+            binding.pinDot3,
+            binding.pinDot4,
+            binding.pinDot5,
+            binding.pinDot6,
+            binding.pinDot7,
+            binding.pinDot8,
+        )
         dots.forEachIndexed { index, view ->
+            view.isVisible = index < requiredPinLength
             view.setBackgroundResource(
                 if (index < pinBuffer.length) R.drawable.bg_pin_dot_active else R.drawable.bg_pin_dot_inactive,
             )
