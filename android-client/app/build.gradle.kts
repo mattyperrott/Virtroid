@@ -104,7 +104,7 @@ androidComponents {
     }
 }
 
-val verifyReleaseSigningConfiguration by tasks.registering {
+val verifyReleaseSigningConfiguration = tasks.register("verifyReleaseSigningConfiguration") {
     group = "verification"
     description = "Fails closed unless every release-signing input is present and the keystore is readable."
     doLast {
@@ -129,7 +129,7 @@ tasks.matching {
     dependsOn(verifyReleaseSigningConfiguration)
 }
 
-val verifyReleaseSecurityManifest by tasks.registering {
+val verifyReleaseSecurityManifest = tasks.register("verifyReleaseSecurityManifest") {
     dependsOn("processReleaseMainManifest")
     doLast {
         val manifestRoot = layout.buildDirectory.dir("intermediates/merged_manifest/release").get().asFile
