@@ -65,6 +65,7 @@ grep -q 'NODE_MIN_FREE_DISK_BYTES: "10737418240"' "${tmp_dir}/rendered-compose.y
 grep -q 'NODE_MIN_FREE_DISK_PERCENT: "5"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-prometheus' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-alertmanager' "${tmp_dir}/rendered-compose.yml"
+grep -q 'monitoring-egress:' "${tmp_dir}/rendered-compose.yml"
 if grep -q -- '--web.enable-lifecycle=false' "${tmp_dir}/rendered-compose.yml"; then
   echo "Prometheus must rely on its default-disabled lifecycle API" >&2
   exit 1
