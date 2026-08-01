@@ -23,14 +23,14 @@ From `android-client/`, build with:
 ./gradlew --no-daemon :scrcpy-server:syncEmbeddedAsset
 ```
 
-Use JDK 17, matching the module's Java target and the pinned CI build
-environment. D8 output can differ when the same sources are compiled under a
-different JDK major version.
+Use the tracked Gradle 9.3.1 wrapper, Android Gradle Plugin 9.1.1, and JDK 17,
+matching the pinned CI build environment. D8 output can differ when the same
+sources are compiled under a different JDK major version.
 
 The resulting APK is a zip-compatible app-process payload. The sync task copies
 it to `../backend/cmd/virtnoded/assets/scrcpy-server.jar`; then run the backend
 and Android test suites. The tracked asset's pinned SHA-256 digest is
-`d9114c91fceb2567df6877a15b7505aff4b1bedb4f8169526d8166a645ef3c6a`.
+`4ec08c4211e73f9b293e53dc6b141b0360210ada4e6fcb71213320ba2d8d40a0`.
 CI independently rebuilds the module and checks every decompressed ZIP member
 byte against the tracked asset. This ignores container-level APK ordering and
 compression metadata, which Android build tools may vary between platforms,
