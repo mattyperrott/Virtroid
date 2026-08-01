@@ -53,9 +53,12 @@ This separates:
 
 ## Project Status
 
-Virtroid currently operates as a working **single-VPS remote Android development system**.
+The repository contains a working **single-VPS remote Android release candidate**.
+The current code has local build and PostgreSQL integration evidence; it has not
+yet been deployed or exercised end to end on the VPS/ReDroid guest. See the
+authoritative status report for the exact evidence boundary.
 
-The deployed architecture includes:
+The release candidate includes:
 
 * Android client application
 * Go control plane
@@ -93,8 +96,9 @@ flowchart LR
 | Invite-gated account bootstrap | ✅ Implemented   | One-time expiring operator invite plus signed device proof |
 | Trusted-device management    |     🟡 Partial     | Listing and revocation exist; additional-device enrolment does not |
 | Runtime creation             |   ✅ Implemented   | Creates independently managed Android environments      |
-| Runtime start and stop       |   ✅ Implemented   | Proven on the current single-node deployment            |
+| Runtime start and stop       |   ✅ Implemented   | Repository and prior single-node live proof              |
 | Remote Android viewer        |   ✅ Implemented   | Encrypted viewer sessions over TLS                      |
+| Runtime audio streaming      |     🟡 Candidate   | Wired node/server/client path; live ReDroid proof pending |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
 | Runtime deletion             |   ✅ Implemented   | Includes explicit cleanup obligations                   |
@@ -103,11 +107,14 @@ flowchart LR
 | Encrypted client state       |   ✅ Implemented   | Protected using Android Keystore-backed controls        |
 | F-Droid application catalog  |   ✅ Implemented   | Catalog entries include pinned APK hashes               |
 | F-Droid installation         |     🟡 Partial    | Happy path implemented; broader failure testing remains |
-| Encrypted local snapshots    |   ✅ Implemented   | Current production persistence mechanism                |
+| Encrypted local snapshots    |   ✅ Implemented   | Repository path and last recorded VPS mechanism         |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
 | Reproducible VPS deployment  |   ✅ Implemented   | Hardened release and verification scripts included      |
-| Camera passthrough           | ❌ Not implemented | Existing fields and controls are scaffolding only       |
-| Active-runtime file import   | ❌ Not implemented | Viewer action remains unavailable                       |
+| Camera passthrough           |  🧪 Experimental   | Capability/slot gated; exact guest V4L2 HAL proof pending |
+| Active-runtime file import   |     🟡 Candidate   | Signed session path to bounded ADB import; live proof pending |
+| Metrics and trace context    |   ✅ Implemented   | Bounded Prometheus metrics and W3C trace propagation     |
+| Alerts                       |     🟡 Partial     | Rules included; operator notification receiver required  |
+| Node-aware readiness         |   ✅ Implemented   | Control readiness requires a fresh approved ready node    |
 | Confidential VM isolation    | ❌ Not implemented | ReDroid currently runs on a trusted VPS                 |
 | Hardware attestation         | ❌ Not implemented | Design and proof-of-concept work only                   |
 | Operator-blind persistence   | ❌ Not implemented | Runtime host participates in snapshot operations        |
@@ -266,7 +273,7 @@ flowchart TB
 | **Android client**   | Device identity, onboarding, runtime controls, local security, and remote viewer    |
 | **HAProxy**          | Public HTTPS termination and controlled ingress                                     |
 | **`virtroidd`**      | Accounts, devices, entitlements, runtimes, capabilities, sessions, and policy       |
-| **`virtnoded`**      | ReDroid lifecycle, application installation, relay handling, snapshots, and cleanup |
+| **`virtnoded`**      | ReDroid lifecycle, media/file paths, relay handling, snapshots, and cleanup          |
 | **PostgreSQL**       | Authoritative control-plane and lifecycle state                                     |
 | **ReDroid**          | Remote Android runtime containers                                                   |
 | **Snapshot storage** | Encrypted stopped-runtime persistence                                               |
@@ -309,6 +316,9 @@ The runtime node agent is responsible for:
 * Stopping Android runtimes
 * Managing runtime-specific Docker resources
 * Opening viewer relay sessions
+* Feeding runtime audio to the viewer path
+* Importing bounded files into active runtimes
+* Feeding session camera frames to a configured V4L2 device
 * Installing approved applications
 * Encrypting runtime snapshots
 * Restoring runtime snapshots
@@ -332,6 +342,9 @@ The Android client currently provides:
 * Runtime stop
 * Runtime reset actions
 * Encrypted viewer sessions
+* Runtime audio controls
+* Active-runtime document import
+* Explicit camera capture and passthrough controls
 * Trusted-device management
 * F-Droid catalog selection
 * Local application lock
@@ -505,7 +518,8 @@ Virtroid/
 │   ├── go.mod
 │   └── go.sum
 ├── deploy/
-    └── vps/                 # VPS deployment and hardening system
+│   └── vps/                 # VPS deployment, monitoring, and hardening system
+└── third_party/             # Reviewable vendored source and upstream notices
 ```
 
 | Path                           | Purpose                                                           |
@@ -514,6 +528,7 @@ Virtroid/
 | [`backend/cmd/`](backend/cmd/)                 | Backend service and administration command entry points           |
 | [`backend/internal/`](backend/internal/)       | Security, lifecycle, storage, persistence, and runtime logic      |
 | [`deploy/vps/`](deploy/vps/)   | VPS preparation, release, backup, rollback, and hardening         |
+| [`third_party/`](third_party/)  | Vendored source, provenance, and upstream license notices         |
 
 
 ## Disclaimer

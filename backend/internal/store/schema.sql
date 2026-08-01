@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS hosts (
     relay_port INTEGER NOT NULL DEFAULT 8090,
     docker_socket BOOLEAN NOT NULL DEFAULT FALSE,
     binder BOOLEAN NOT NULL DEFAULT FALSE,
+    audio_streaming BOOLEAN NOT NULL DEFAULT FALSE,
+    file_import BOOLEAN NOT NULL DEFAULT FALSE,
+    camera_passthrough BOOLEAN NOT NULL DEFAULT FALSE,
+    camera_slots INTEGER NOT NULL DEFAULT 0 CHECK (camera_slots >= 0),
     public_key TEXT NOT NULL DEFAULT '',
     blob_store_kind TEXT NOT NULL DEFAULT 'local-disk',
     storage_preflight_kind TEXT,
@@ -50,6 +54,10 @@ CREATE TABLE IF NOT EXISTS hosts (
 );
 
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS relay_port INTEGER NOT NULL DEFAULT 8090;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS audio_streaming BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS file_import BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS camera_passthrough BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS camera_slots INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS public_key TEXT NOT NULL DEFAULT '';
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS blob_store_kind TEXT NOT NULL DEFAULT 'local-disk';
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_kind TEXT;
@@ -57,6 +65,15 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_status TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_json TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_at TIMESTAMPTZ;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_wallet_address TEXT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'hosts_camera_slots_nonnegative'
+    ) THEN
+        ALTER TABLE hosts ADD CONSTRAINT hosts_camera_slots_nonnegative CHECK (camera_slots >= 0);
+    END IF;
+END $$;
 
 -- Heartbeats describe current host capabilities, but they are not a trust
 -- source. Approved operators, nodes, and key history live in this separate

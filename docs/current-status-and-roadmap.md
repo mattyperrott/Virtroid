@@ -1,260 +1,215 @@
 # Virtroid Current Status and Roadmap
 
-Authoritative status date: 2026-07-25
+Authoritative status date: 2026-08-01
 
-This report replaces the historical 2026-05 and 2026-07-19 status snapshots.
-It separates live verification, repository verification, target architecture,
-and unverified work. Historical audits remain useful as provenance only.
+This report separates repository implementation, local validation, the last
+recorded live deployment snapshot, and work that remains unproved. Historical
+audits under `docs/` remain provenance rather than current-state claims.
 
-## Executive status
+## Executive assessment
 
-Virtroid is currently a working, single-VPS remote Android development system:
+Virtroid is a substantial single-VPS remote Android release candidate, not yet
+a production-proven private computing service.
 
-- the public control plane and relay are on `virtroid-cp`
-  (`185.223.207.157`), behind HTTPS on `virtroid.network`;
-- the Android client supports signed onboarding, runtime lifecycle operations,
-  encrypted viewer sessions, F-Droid catalog selection, local app lock, and
-  encrypted local client state;
-- the VPS currently hosts the control plane, node agent, PostgreSQL, HAProxy,
-  ReDroid containers, and encrypted local-disk runtime snapshots;
-- renterd/Sia is inactive and intentionally deferred;
-- confidential VM runtimes, attestation-bound key release, true end-to-end
-  encrypted persistence, and camera passthrough are not implemented.
+The current repository implements signed invite-gated onboarding, runtime and
+persona lifecycle operations, an encrypted viewer, encrypted stopped-runtime
+snapshots, approved node/operator identities, active-runtime file import,
+viewer audio, experimental camera passthrough, node-aware readiness, metrics,
+trace-context propagation, and alert rules.
 
-This is a trusted-operator system, not a trustless or confidential service. The
-runtime node controls the live Android plaintext and receives material needed to
-restore/save encrypted runtime state. A compromised VPS or privileged operator
-can compromise an active runtime.
+The strongest remaining boundary is unchanged: ReDroid and the node agent run
+inside a trusted, privileged VPS boundary. The node can observe active Android
+plaintext and participates in snapshot restoration. Virtroid is not
+confidential computing, host-blind, operator-blind, or end-to-end encrypted
+against the runtime host.
 
-## Live VPS verification
+The media and observability additions in this repository have local build,
+unit, and PostgreSQL transaction evidence. They have not yet been deployed to
+the VPS or proved through a live ReDroid guest. Camera support is therefore
+experimental and fail-closed, not a production camera guarantee.
 
-Verified read-only on 2026-07-25 at approximately 11:55 UTC:
+## Evidence ledger
 
-| Check | Verified result |
+### Current repository candidate
+
+Implemented in this repository:
+
+- one-time, expiring, invite-gated bootstrap with signed device
+  proof-of-possession;
+- signed device, capability, node, and callback requests with replay controls;
+- runtime create, schedule, start, connect, stop, restore, reset, restart,
+  delete, and account-erasure workflows;
+- approved operator, node, and overlapping node-key registries;
+- encrypted local snapshots with authenticated monotonic generations;
+- runtime audio propagated from the runtime profile through the node and
+  embedded scrcpy server to the Android viewer decoder;
+- session-bound, signed, bounded active-runtime file upload, with node-side
+  content checks, temporary-file cleanup, ADB push, and media scan;
+- explicit client camera capture, a signed bounded JPEG channel, node-side
+  rate limiting and idle cleanup, one-slot V4L2 allocation, and capability-aware
+  scheduling;
+- `/healthz`, `/readyz`, and `/metrics` on control and node services;
+- control readiness that includes database health and fresh approved-node
+  readiness;
+- W3C `traceparent` propagation and sampled structured trace logs;
+- bounded Prometheus metrics plus reviewed Prometheus/Alertmanager rules; and
+- a source-vendored, reproducibly built scrcpy server with retained upstream
+  notices.
+
+### Locally verified for this candidate
+
+Passed locally on 2026-08-01:
+
+- the full Go unit suite and race detector, `go vet`, and every command build;
+- `govulncheck`, with no reachable Go vulnerabilities;
+- schema and lifecycle integration against an actual PostgreSQL 18 server;
+- concurrent PostgreSQL proof that two camera runtimes cannot claim one camera
+  slot;
+- Android unit tests, debug/release lint, debug assembly, and the release
+  security-manifest gate;
+- byte-for-byte comparison between a clean vendored scrcpy build and the
+  embedded node asset;
+- deployment shell syntax, environment-safety, and Compose checks;
+- a `linux/amd64` backend image build with the expected health check and
+  `ffmpeg` support;
+- Trivy repository and image scans with no high/critical findings, Semgrep
+  security/secrets rules with no findings, and TruffleHog with no secrets; and
+- Prometheus configuration plus all seven alert rules through `promtool`, and
+  the Alertmanager configuration through `amtool`.
+
+GitHub Actions and GitHub code scanning are the independent post-push
+confirmation. Local success alone is not GitHub, VPS, or live ReDroid proof.
+
+### Last recorded live VPS snapshot
+
+The latest retained read-only production observation is still the 2026-07-25
+snapshot. At that point:
+
+| Check | Last recorded result |
 | --- | --- |
-| Host | `virtroid-cp`, uptime 47 minutes during the check |
-| Public DNS | `virtroid.network` resolves to `185.223.207.157` |
-| Public health | `https://virtroid.network/healthz` returned `{"ok":true}` |
-| Public listener | HAProxy exposes TCP 443 |
-| Private services | `virtroidd` is host-loopback on 8080; `virtnoded` is host-loopback on 8090 |
-| Containers | edge, PostgreSQL, control plane, and node agent running; PostgreSQL healthy |
-| Host hardening services | Docker, fail2ban, and auditd active |
-| Disk | 180 GiB total, 18 GiB used, 162 GiB available (10% used) |
+| Host and edge | `virtroid-cp`, HAProxy on public TCP 443 |
+| Public endpoint | `https://virtroid.network/healthz` returned `{"ok":true}` |
+| Private services | control on loopback 8080; node on loopback 8090 |
+| Core containers | edge, PostgreSQL, control, and node running |
 | Deployed source | `ee7ee673c7f7916a53cd07a7728649adf3eddf88` |
 | Deployed schema | `2026072102` |
-| Release image | protected local image and immutable release state present |
+| Runtime inventory | no running guests or live sessions during observation |
+| Relational orphan audit | zero orphan devices, runtimes, sessions, or logs |
 
-The deployed VPS does not yet contain local commit `df0ae36` (the
-`golang.org/x/text` security update) or the Android log fixes in the current
-working tree.
-
-### Live database and runtime inventory
-
-Aggregate counts only; no user identifiers were exported:
-
-| Item | Count |
-| --- | ---: |
-| Active accounts | 2 |
-| Active devices | 2 |
-| Active runtime rows | 2 |
-| Deleted runtime rows retained for lifecycle history | 1 |
-| Runtimes requesting `running` | 0 |
-| Runtime cleanup obligations pending | 0 |
-| Live sessions | 0 |
-| Unexpired blob-key handoffs | 0 |
-| Runtime containers | 0 |
-| Approved operators / nodes | 1 / 1 |
-| Orphan devices, runtimes, sessions, or runtime logs by foreign-key audit | 0 |
-| Local snapshot files | 0 |
-
-One runtime data directory exists on disk. A future orphan audit should compare
-every runtime directory, blob namespace, Docker network, and database row by
-expected identifier after each fault-injection case.
-
-## Verified repository state
-
-### Backend and deployment
-
-Verified locally on 2026-07-25:
-
-- `go test -count=1 ./...`
-- `go test -race -count=1 ./...`
-- `go vet ./...`
-- `go build ./cmd/...`
-- `govulncheck ./...` reported no vulnerabilities after upgrading
-  `golang.org/x/text` to `v0.39.0`;
-- deployment shell syntax, environment-safety tests, and Compose configuration
-  tests pass.
-
-Previously established controls still present in current code include:
-
-- signed device requests with bounded timestamps, nonces, body hashes, and
-  replay rejection;
-- runtime-scoped capability signing;
-- signed node and callback traffic;
-- approved operator/node/key registry;
-- allowlisted Android runtime images;
-- hashed relay-token handling, expiry, close, and heartbeat flows;
-- monotonic authenticated snapshot generations and rollback checks;
-- runtime, start-rate, trial-time, storage-quota, and free-disk enforcement;
-- local-disk snapshot encryption and authenticated manifests;
-- explicit cleanup obligations for stop, wipe, delete, and account erasure;
-- reproducible VPS hardening and release scripts under `deploy/vps`.
-
-### Android client
-
-The complete local Android gate passed on 2026-07-25:
-
-- debug unit tests;
-- debug and release lint;
-- debug APK assembly;
-- release security-manifest verification.
-
-The current debug APK was installed over the emulator and the real log viewer
-was exercised:
-
-- All logs is the initial filter;
-- info, warning, error, and critical rows are visible under All;
-- Clear removes the persisted log store, not only the current projection;
-- re-entering the screen does not resurrect cleared rows;
-- restarting the process restores no cleared history; only the new `App startup`
-  event appears;
-- the unread error/critical count becomes zero after clear in regression tests.
-
-The public F-Droid catalog was also checked live. It returned 250 entries; every
-returned entry was marked `fdroid` and had a 64-character APK SHA-256 value.
+This is historical evidence, not confirmation of the server's state on
+2026-08-01. The current repository schema is `2026080101`. No claim in this
+report establishes that the repository candidate has been deployed.
 
 ## Capability matrix
 
-| Capability | Status | Current truth |
+| Capability | Repository status | Evidence boundary |
 | --- | --- | --- |
-| Public signed account bootstrap | Implemented | Open creation is intentional; device proof-of-possession protects subsequent API use |
-| Trusted-device list and revoke | Implemented | Android and backend flows exist |
-| Runtime create/start/connect/stop | Implemented | Proven on the current single-VPS model |
-| Persona restart and factory reset | Implemented, needs more fault testing | Cleanup semantics exist; complete orphan evidence remains a reliability task |
-| Runtime/account deletion cleanup | Implemented, needs repeated failure tests | Current live relational orphan checks are zero |
-| Viewer encryption and TLS relay | Implemented | Protects transport; does not make the runtime node confidential |
-| Local app lock and secure vault | Implemented | Keystore-bound local state, retry controls, biometric support, secure windows |
-| F-Droid catalog | Implemented | 250 live pinned entries at the current check |
-| F-Droid install into runtime | Implemented happy path | Needs repeated package/version/signature failure testing |
-| Local-disk encrypted snapshots | Implemented | Current production storage path |
-| Snapshot rollback/generation checks | Implemented | More live fork/corruption/failure testing remains |
-| Sia/renterd production storage | Deferred | Inactive by explicit decision |
-| End-to-end encrypted persistence | Not implemented | Runtime node can access active plaintext/key material |
-| Confidential runtime VM | Not implemented | Current ReDroid containers are privileged on the VPS |
-| Attestation and lease-scoped key release | Not implemented | Design/POC documents only |
-| File import into an active runtime | Not implemented | Viewer action remains hidden |
-| Live camera passthrough | Not implemented | See dedicated milestone below |
-| Central operator control-panel UI | Not implemented | Current “control plane” is API/service infrastructure |
+| Invite-gated signed bootstrap | Implemented | Unit/API/PostgreSQL evidence; deployment upgrade pending |
+| Trusted-device list and revoke | Implemented | Backend and Android flows exist |
+| Runtime create/start/connect/stop | Implemented | Repository tests plus earlier single-node live evidence |
+| Persona restart and factory reset | Implemented, more fault testing needed | Cleanup semantics exist; exhaustive orphan proof remains |
+| Runtime/account deletion | Implemented, more fault testing needed | Relational cleanup covered; repeated failure injection remains |
+| Viewer transport | Implemented | TLS and session encryption do not hide plaintext from the node |
+| Viewer audio | Release candidate | Full code/build path exists; live ReDroid audio capture is unproved |
+| Active-runtime file import | Release candidate | Signed session path and node/ADB logic tested; live guest import is unproved |
+| Camera passthrough | Experimental | Client-to-V4L2 path exists; exact ReDroid camera HAL behavior is unproved |
+| Encrypted local snapshots | Implemented | Same-VPS stopped-runtime persistence |
+| Snapshot rollback protection | Implemented | Monotonic generation checks plus PostgreSQL integration |
+| Metrics | Implemented | Bounded service/route/status counters, histograms, and readiness gauges |
+| Trace context | Implemented, backend pending | W3C propagation and sampled logs; no OTLP collector or trace store |
+| Alerts | Partial | Rules evaluate locally; no external notification receiver is committed |
+| Node-aware health/readiness | Implemented | Liveness is separate from readiness; control readiness requires a ready node |
+| Multi-node scheduling | Implemented in control logic, not live-proved | Current known deployment remains single-node |
+| Confidential runtime VM | Not implemented | ReDroid remains in the privileged host boundary |
+| Attestation-bound key release | Not implemented | Design work only |
+| Operator-blind persistence | Not implemented | Node handles active state and restore material |
+| Sia/renterd production storage | Deferred | Intentionally inactive |
+| Operator dashboard | Not implemented | Control plane is API/service infrastructure |
 
-## Camera passthrough: exact gap
+## Media-path safety boundaries
 
-The database has a `camera_mode` field and the Android layouts contain disabled
-camera controls, but that is only dormant model/UI scaffolding. The backend
-rejects every creation profile where `camera_mode != "disabled"`.
+### Audio
 
-True passthrough does not exist because the system has none of the required
-media path:
+The runtime's `audio_enabled` setting is preserved, including explicit `false`,
+and passed through the control response, Android session store, node launch
+arguments, vendored server, synchronized multiplexed transport, and Android
+decoder. A reproducible build proves which server payload is embedded. It does
+not prove that the pinned production ReDroid image exposes a working audio
+capture API; that requires a live listening test.
 
-1. no Android-client camera permission or CameraX capture pipeline;
-2. no session-bound upstream video channel from the physical client;
-3. no node-side decoder/frame conversion and backpressure policy;
-4. no per-runtime V4L2 loopback device;
-5. no working V4L2 camera HAL in the pinned ReDroid guest image;
-6. no lifecycle cleanup for camera devices and media buffers;
-7. no camera privacy indicator, explicit enable/disable state, or failure UI.
+### File import
 
-scrcpy camera mirroring is the opposite direction: it captures the Android
-device camera and sends it to its client. It does not inject the physical
-client camera into a remote Android guest. ReDroid's upstream V4L2 camera path
-has historically been experimental and requires validation against the exact
-pinned image before any product switch is enabled:
+File import requires a live viewer session and a capability bound to the same
+runtime. Request paths, session identifiers, content, and the encoded filename
+are covered by signed requests. The node limits the upload to 32 MiB, stages it
+with mode `0600`, rejects Android packages, DEX, and JAR-like executables by
+name and content, pushes permitted files to `/sdcard/Download`, requests a
+media scan, and removes the host temporary file.
 
-- <https://github.com/Genymobile/scrcpy>
-- <https://github.com/remote-android/redroid-doc/issues/14>
+This is a document-import path, not arbitrary package sideloading. Live ADB and
+Android storage behavior still require disposable-guest acceptance testing.
 
-### Camera passthrough milestone
+### Camera
 
-Do this only on a disposable runtime/node until it is proven:
+The Android client captures Camera2 JPEG frames only while the user has enabled
+the session control. The signed, session-bound route limits frame size; the
+node limits the feed to 25 frames per second, converts frames with `ffmpeg`,
+writes only to the configured V4L2 device, and stops the feeder after five
+seconds idle. The Linux decoder child runs without the node's environment,
+root identity, or Docker-group authority. Runtime stop/delete, taint, process
+shutdown, client background, or user disable also stop the path.
 
-1. Build a host feasibility rig with one dedicated `v4l2loopback` device.
-2. Pin a ReDroid image that contains and successfully boots a V4L2 camera HAL.
-3. Prove Camera2 enumeration, preview, still capture, rotation, reconnect, and
-   container deletion without exposing another runtime's device.
-4. Add a session-scoped encrypted camera channel. Bind authorization to the
-   active runtime capability, device, session, expiry, and replay controls.
-5. Capture with CameraX into bounded memory buffers; do not write frames to the
-   gallery or long-lived client storage.
-6. Convert only explicitly supported formats/resolutions, enforce bandwidth and
-   backpressure limits, and stop immediately on background, disconnect, expiry,
-   runtime stop, or user action.
-7. Create/remove a dedicated video device per runtime and audit all device,
-   process, socket, and buffer cleanup.
-8. Enable `camera_mode=passthrough` and reveal the UI only after the complete
-   end-to-end test passes.
+Scheduling locks the host row and counts active camera runtimes before
+allocating a camera slot. A node advertises camera capability only when its
+configured device is ready. Without `NODE_CAMERA_DEVICE`, camera runtimes fail
+closed at scheduling.
 
-This path still exposes camera frames to the current trusted VPS/runtime node.
-Confidentiality against the operator requires the future confidential-runtime
-architecture.
+The missing proof is guest-side: the exact pinned ReDroid image must enumerate
+the mounted V4L2 device through Camera2 and pass preview, rotation, reconnect,
+cross-runtime isolation, and cleanup tests. Until then, camera passthrough is an
+experimental operator-enabled feature.
 
-## Remaining security blockers
+## Observability boundary
 
-Highest-impact open items:
+Prometheus and Alertmanager are optional loopback-only Compose services. Public
+HAProxy access to `/metrics` is denied. Metric labels are bounded to registered
+services/routes, normalized methods, status classes, and known outbound target
+classes.
 
-1. ReDroid and `virtnoded` still have a privileged container/host trust boundary
-   with Docker control and host devices.
-2. Active runtime plaintext and key material are not protected from the node or
-   VPS operator.
-3. There is no confidential VM, attestation verification, runtime lease, or
-   lease-scoped key release.
-4. Encrypted user blobs remain on the same VPS as the control plane and runtime
-   node.
-5. Reliability evidence is not yet complete for interruption, disk pressure,
-   rollback/fork, corruption, and cleanup failure cases.
-6. Camera/file import channels are absent and must not be represented as
-   available.
-7. The local security dependency update and Android fixes are not yet deployed.
+Trace context is propagated with W3C headers. Sampled spans are structured log
+events; trace identifiers are reduced before logging. There is no OTLP exporter,
+collector, or trace-query backend yet.
 
-## What is next
+Alert rules cover service down/not-ready, missing or stale node heartbeats, and
+elevated 5xx rates. The committed Alertmanager receiver intentionally has no
+email, webhook, or pager destination. Alerts are evaluated and visible, but the
+deployment must not be described as paged until an operator installs and tests
+a secret-backed receiver.
 
-### Milestone 0 — finish this maintenance release
+## Highest-priority remaining work
 
-- review the final diff;
-- commit the log fix, dead-resource cleanup, and updated reports;
-- complete user acceptance on the installed final debug APK;
-- create a reviewed VPS release containing the Go dependency fix;
-- verify public/VPS health and repeat the smoke checks after deployment.
-
-### Milestone 1 — runtime reliability and cleanup evidence
-
-- concurrent and repeated start/stop/delete operations;
-- Android viewer network loss, reconnection, and service restarts;
-- control-plane/node restarts during provisioning and snapshot save;
-- snapshot rollback, fork, corruption, and skipped-generation rejection;
-- free-disk headroom, storage quota, trial-time, and disk-pressure failures;
-- persona restart, factory reset, runtime deletion, and account deletion;
-- database, container, network, session, capability, snapshot, and filesystem
-  orphan audits after every injected failure.
-
-### Milestone 2 — camera passthrough feasibility
-
-Run the disposable V4L2/ReDroid proof above. Do not enable the production API or
-UI until the guest HAL and isolation requirements pass.
-
-### Milestone 3 — reduce the runtime trust boundary
-
-- package ReDroid in a full confidential VM candidate;
-- implement attested runtime leases;
-- bind viewer and storage-key release to verified measurements and expiry;
-- move runtime nodes away from the control-plane host;
-- document what the control plane, node operator, storage provider, and client
-  can each observe.
+1. Publish the reviewed candidate to `main` and require all GitHub checks to
+   pass without suppressing findings.
+2. Create a reviewed VPS release, apply schema `2026080101`, and re-run public,
+   control, node, database, and orphan checks. Deployment is a separate
+   operator-authorized action.
+3. Run disposable ReDroid acceptance tests for audio playback, document import,
+   and the exact V4L2 camera HAL before enabling camera in production.
+4. Configure and test an external Alertmanager receiver, then add a trace
+   backend if cross-service trace search is required.
+5. Complete interruption, disk-pressure, rollback/fork/corruption, network-loss,
+   and lifecycle cleanup fault injection.
+6. Decide and document the root-project license. Vendored upstream licenses are
+   retained, but they do not license original Virtroid code.
+7. Reduce the runtime trust boundary with an isolated/confidential VM design,
+   measurement verification, runtime leases, and attestation-bound key release.
 
 ### Deferred by current decision
 
 - renterd wallet funding and production Sia cutover;
-- multi-operator scheduling;
-- public claims of anonymity, trustlessness, or end-to-end confidentiality.
+- public claims of anonymity, trustlessness, host blindness, or end-to-end
+  confidentiality; and
+- a graphical operator control panel.
 
-Those claims remain prohibited until the architecture and evidence actually
-support them.
+Those claims remain prohibited until the architecture and evidence support
+them.

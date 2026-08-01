@@ -110,6 +110,12 @@ jobs:
           :app:lintRelease
           :app:assembleDebug
           :app:verifyReleaseSecurityManifest
+          :scrcpy-server:lintRelease
+          :scrcpy-server:assembleRelease
+
+      - name: Verify embedded scrcpy server provenance
+        working-directory: ${{ github.workspace }}
+        run: bash backend/third_party/verify-scrcpy-server-asset.sh
 
   deployment:
     name: Deployment static checks
@@ -122,10 +128,24 @@ jobs:
           persist-credentials: false
 
       - name: Shell syntax
-        run: bash -n deploy/vps/deploy.sh deploy/vps/generate-env.sh deploy/vps/prepare-redroid-host.sh deploy/vps/test-compose-config.sh deploy/vps/test-env-safety.sh deploy/vps/virtroid-binderfs-setup.sh
+        run: |
+          mapfile -d '' scripts < <(find deploy/vps backend/third_party -type f -name '*.sh' -print0)
+          bash -n "${scripts[@]}"
 
       - name: Environment safety regression test
         run: bash deploy/vps/test-env-safety.sh
 
       - name: Compose configuration validation
         run: bash deploy/vps/test-compose-config.sh
+
+      - name: Monitoring configuration validation
+        run: |
+          docker run --rm --entrypoint=/bin/promtool \
+            -v "${PWD}/deploy/vps/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "${PWD}/deploy/vps/monitoring/virtroid-alerts.yml:/etc/prometheus/rules/virtroid-alerts.yml:ro" \
+            prom/prometheus:v3.13.0@sha256:c6b27ea434f8389bfe233fbc7be381cf50587c286e871bc842008f5a1b1908a7 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint=/bin/amtool \
+            -v "${PWD}/deploy/vps/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
+            prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286 \
+            check-config /etc/alertmanager/alertmanager.yml

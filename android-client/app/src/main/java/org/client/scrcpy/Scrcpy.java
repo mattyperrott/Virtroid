@@ -62,6 +62,7 @@ public class Scrcpy extends Service {
     private String relayPath = "";
     private String relayToken = "";
     private String viewerPublicKey = "";
+    private boolean audioEnabled = false;
     private Surface surface;
     private int screenWidth;
     private int screenHeight;
@@ -128,7 +129,7 @@ public class Scrcpy extends Service {
         return decoder;
     }
 
-    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, String viewerPublicKey, int screenHeight, int screenWidth, int delay) {
+    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, String viewerPublicKey, boolean audioEnabled, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
         first_time = true;
@@ -136,18 +137,13 @@ public class Scrcpy extends Service {
         remote_dev_resolution[1] = 0;
         firstVideoFrameDelivered.set(false);
 
-        this.videoDecoder = createVideoDecoder();
-        videoDecoder.start();
-
-        this.audioDecoder = new AudioDecoder();
-        audioDecoder.start();
-
         this.serverHost = serverHost;
         this.serverPort = serverPort;
         this.relayTls = relayTls;
         this.relayPath = relayPath;
         this.relayToken = relayToken;
         this.viewerPublicKey = viewerPublicKey;
+        this.audioEnabled = audioEnabled;
 
         this.screenHeight = screenHeight;
         this.screenWidth = screenWidth;
@@ -396,8 +392,10 @@ public class Scrcpy extends Service {
 
         videoDecoder = createVideoDecoder();
         videoDecoder.start();
-        audioDecoder = new AudioDecoder();
-        audioDecoder.start();
+        audioDecoder = audioEnabled ? new AudioDecoder() : null;
+        if (audioDecoder != null) {
+            audioDecoder.start();
+        }
 
         DataInputStream dataInputStream = null;
         DataOutputStream dataOutputStream = null;
@@ -506,15 +504,13 @@ public class Scrcpy extends Service {
     }
 
     private Socket connectRelaySocket(String host, int port) throws IOException {
-        Socket socket = new Socket();
-        socket.connect(new InetSocketAddress(host, port), 5000);
         if (!relayTls) {
-            socket.close();
             throw new IOException("insecure relay transport rejected");
         }
 
         SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-        SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket(socket, host, port, true);
+        SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
+        sslSocket.connect(new InetSocketAddress(host, port), 5000);
         SSLParameters sslParameters = sslSocket.getSSLParameters();
         sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
         sslSocket.setSSLParameters(sslParameters);
@@ -690,7 +686,7 @@ public class Scrcpy extends Service {
                             }
                         }
                         first_time = false;
-                    } else if (MediaPacket.Type.getType(packet[0]) == MediaPacket.Type.AUDIO) {
+                    } else if (audioDecoder != null && MediaPacket.Type.getType(packet[0]) == MediaPacket.Type.AUDIO) {
                         AudioPacket audioPacket = AudioPacket.readHead(packet);
                         // byte[] data = audioPacket.data;
                         if (audioPacket.flag == AudioPacket.Flag.CONFIG) {

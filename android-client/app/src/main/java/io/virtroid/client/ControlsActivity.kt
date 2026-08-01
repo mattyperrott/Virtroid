@@ -667,6 +667,9 @@ class ControlsActivity : AppCompatActivity() {
                     relayToken = session.relayToken,
                     sessionId = session.sessionId,
                     viewerPublicKey = session.viewerPublicKey,
+                    audioEnabled = readyRuntime.audioEnabled,
+                    cameraMode = readyRuntime.cameraMode,
+                    fileMode = readyRuntime.fileMode,
                 )
                 activeSessionStore.save(activeSession)
                 appLogs.info("Session created from controls for ${readyRuntime.name}", "session")

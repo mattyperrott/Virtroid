@@ -76,6 +76,74 @@ func TestRecoverNodeHTTPContainsHandlerPanic(t *testing.T) {
 	}
 }
 
+func TestSafeRuntimeImportFilenameRejectsPackageArtifacts(t *testing.T) {
+	for _, name := range []string{"payload.apk", "bundle.APKS", "classes.dex", "client.jar"} {
+		if _, err := safeRuntimeImportFilename(name); err == nil {
+			t.Fatalf("safeRuntimeImportFilename(%q) accepted an installable artifact", name)
+		}
+	}
+	got, err := safeRuntimeImportFilename("holiday photo (1).jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "holiday photo (1).jpg" {
+		t.Fatalf("normalized name = %q", got)
+	}
+}
+
+func TestValidateRuntimeImportContentRejectsRenamedAndroidPackage(t *testing.T) {
+	var payload bytes.Buffer
+	writer := zip.NewWriter(&payload)
+	manifest, err := writer.Create("AndroidManifest.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manifest.Write([]byte("binary manifest")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRuntimeImportContent(payload.Bytes()); err == nil {
+		t.Fatal("accepted an Android package whose filename could be disguised")
+	}
+	if err := validateRuntimeImportContent([]byte("ordinary document")); err != nil {
+		t.Fatalf("ordinary document rejected: %v", err)
+	}
+}
+
+func TestValidateRuntimeImportContentRejectsExcessiveZipEntries(t *testing.T) {
+	var payload bytes.Buffer
+	writer := zip.NewWriter(&payload)
+	for index := 0; index <= maxRuntimeImportZipEntries; index++ {
+		entry, err := writer.Create(fmt.Sprintf("entry-%04d.txt", index))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write(nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRuntimeImportContent(payload.Bytes()); err == nil {
+		t.Fatal("accepted an archive with excessive entry cardinality")
+	}
+}
+
+func TestNodeCallbackBodyLimitIsRouteSpecific(t *testing.T) {
+	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/files"); got != maxRuntimeFileImportBytes {
+		t.Fatalf("file callback limit = %d", got)
+	}
+	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/camera/frame"); got != maxRuntimeCameraFrameBytes {
+		t.Fatalf("camera callback limit = %d", got)
+	}
+	if got := nodeCallbackBodyLimit("/api/v1/internal/viewer/prepare"); got != 2<<20 {
+		t.Fatalf("default callback limit = %d", got)
+	}
+}
+
 func TestRelaySlotsRejectExcessConcurrency(t *testing.T) {
 	node := &nodeAgent{relaySlots: make(chan struct{}, 1)}
 	if !node.acquireRelaySlot() {

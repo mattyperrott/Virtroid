@@ -83,6 +83,9 @@ class ActiveSessionStore(context: Context) {
             relayToken = vault.getString(NAMESPACE, KEY_RELAY_TOKEN, "").orEmpty(),
             sessionId = vault.getString(NAMESPACE, KEY_SESSION_ID, "").orEmpty(),
             viewerPublicKey = vault.getString(NAMESPACE, KEY_VIEWER_PUBLIC_KEY, "").orEmpty(),
+            audioEnabled = vault.getBoolean(NAMESPACE, KEY_AUDIO_ENABLED, false),
+            cameraMode = vault.getString(NAMESPACE, KEY_CAMERA_MODE, "disabled").orEmpty(),
+            fileMode = vault.getString(NAMESPACE, KEY_FILE_MODE, "upload-only").orEmpty(),
             savedAtMs = vault.getLong(NAMESPACE, KEY_SAVED_AT, 0L),
         )
         if (session.hasEndpoint()) {
@@ -108,6 +111,9 @@ class ActiveSessionStore(context: Context) {
             relayToken = relayToken,
             sessionId = prefs.getString(KEY_SESSION_ID, "").orEmpty(),
             viewerPublicKey = prefs.getString(KEY_VIEWER_PUBLIC_KEY, "").orEmpty(),
+            audioEnabled = prefs.getBoolean(KEY_AUDIO_ENABLED, false),
+            cameraMode = prefs.getString(KEY_CAMERA_MODE, "disabled").orEmpty(),
+            fileMode = prefs.getString(KEY_FILE_MODE, "upload-only").orEmpty(),
             savedAtMs = prefs.getLong(KEY_SAVED_AT, 0L),
         )
     }
@@ -127,6 +133,9 @@ class ActiveSessionStore(context: Context) {
             .put(KEY_RELAY_TOKEN, session.relayToken)
             .put(KEY_SESSION_ID, session.sessionId)
             .put(KEY_VIEWER_PUBLIC_KEY, session.viewerPublicKey)
+            .put(KEY_AUDIO_ENABLED, session.audioEnabled)
+            .put(KEY_CAMERA_MODE, session.cameraMode)
+            .put(KEY_FILE_MODE, session.fileMode)
             .put(KEY_SAVED_AT, session.savedAtMs)
             .toString()
     }
@@ -148,6 +157,9 @@ class ActiveSessionStore(context: Context) {
                 relayToken = payload.optString(KEY_RELAY_TOKEN),
                 sessionId = payload.optString(KEY_SESSION_ID),
                 viewerPublicKey = payload.optString(KEY_VIEWER_PUBLIC_KEY),
+                audioEnabled = payload.optBoolean(KEY_AUDIO_ENABLED, false),
+                cameraMode = payload.optString(KEY_CAMERA_MODE, "disabled"),
+                fileMode = payload.optString(KEY_FILE_MODE, "upload-only"),
                 savedAtMs = payload.optLong(KEY_SAVED_AT),
             )
         }.getOrNull()?.takeIf { it.hasEndpoint() }
@@ -168,6 +180,9 @@ class ActiveSessionStore(context: Context) {
             .remove(KEY_RELAY_TOKEN)
             .remove(KEY_SESSION_ID)
             .remove(KEY_VIEWER_PUBLIC_KEY)
+            .remove(KEY_AUDIO_ENABLED)
+            .remove(KEY_CAMERA_MODE)
+            .remove(KEY_FILE_MODE)
             .remove(KEY_SAVED_AT)
             .apply()
     }
@@ -186,6 +201,9 @@ class ActiveSessionStore(context: Context) {
         val relayToken: String,
         val sessionId: String,
         val viewerPublicKey: String,
+        val audioEnabled: Boolean = false,
+        val cameraMode: String = "disabled",
+        val fileMode: String = "upload-only",
         val savedAtMs: Long = System.currentTimeMillis(),
     ) {
         fun hasEndpoint(): Boolean {
@@ -219,6 +237,9 @@ class ActiveSessionStore(context: Context) {
         const val KEY_RELAY_TOKEN = "relay_token"
         const val KEY_SESSION_ID = "session_id"
         const val KEY_VIEWER_PUBLIC_KEY = "viewer_public_key"
+        const val KEY_AUDIO_ENABLED = "audio_enabled"
+        const val KEY_CAMERA_MODE = "camera_mode"
+        const val KEY_FILE_MODE = "file_mode"
         const val KEY_SAVED_AT = "saved_at"
     }
 }

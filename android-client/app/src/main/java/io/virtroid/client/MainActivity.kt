@@ -549,6 +549,9 @@ class MainActivity : AppCompatActivity() {
                         relayToken = session.relayToken,
                         sessionId = session.sessionId,
                         viewerPublicKey = session.viewerPublicKey,
+                        audioEnabled = readyRuntime.audioEnabled,
+                        cameraMode = readyRuntime.cameraMode,
+                        fileMode = readyRuntime.fileMode,
                     )
                     activeSessionStore.save(activeSession)
                     appLogs.info("Session created for ${readyRuntime.name}", "session")

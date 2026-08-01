@@ -260,7 +260,7 @@
     <string name="runtime_lifecycle_detail_deleting">... waiting for node cleanup confirmation_</string>
 
     <string name="new_runtime_audio_passthrough">Audio Passthrough</string>
-    <string name="new_runtime_camera_passthrough_unavailable">Camera Passthrough (not available)</string>
+    <string name="new_runtime_camera_passthrough">Camera Passthrough (compatible nodes only)</string>
     <string name="new_runtime_close">Close</string>
     <string name="new_runtime_missing_access">Link this device to an account before creating runtimes.</string>
     <string name="new_runtime_provision_title_request">Creating Runtime Profile ...</string>
@@ -372,6 +372,12 @@
     <string name="session_secure_online">Connected</string>
     <string name="session_camera">Camera</string>
     <string name="session_upload">Upload</string>
+    <string name="session_file_too_large">Files must be 32 MiB or smaller.</string>
+    <string name="session_file_imported">Imported %1$s into Downloads.</string>
+    <string name="session_camera_permission_required">Camera permission is required for passthrough.</string>
+    <string name="session_camera_started">Camera passthrough started.</string>
+    <string name="session_camera_stopped">Camera passthrough stopped.</string>
+    <string name="session_camera_unavailable">Camera passthrough is unavailable.</string>
     <string name="session_controls">Controls</string>
     <string name="session_stream_connecting">Opening live Android display...</string>
     <string name="session_stream_reconnecting">Reconnecting live Android display...</string>

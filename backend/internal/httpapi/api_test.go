@@ -89,6 +89,30 @@ func TestAPIRequestBodyLimitRejectsDeclaredOversizeBeforeHandler(t *testing.T) {
 	}
 }
 
+func TestAPIRequestBodyLimitAllowsOnlyBoundedMediaRoutes(t *testing.T) {
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/files"); got != maxRuntimeFileImportBytes {
+		t.Fatalf("file limit = %d", got)
+	}
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/camera/frame"); got != maxRuntimeCameraFrameBytes {
+		t.Fatalf("camera limit = %d", got)
+	}
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/session"); got != maxAPIRequestBodyBytes {
+		t.Fatalf("default limit = %d", got)
+	}
+}
+
+func TestDecodeRuntimeMediaNameRejectsPathTraversal(t *testing.T) {
+	encoded := base64.RawURLEncoding.EncodeToString([]byte("../payload.txt"))
+	if _, err := decodeRuntimeMediaName(encoded); err == nil {
+		t.Fatal("accepted a path-like media name")
+	}
+	encoded = base64.RawURLEncoding.EncodeToString([]byte("report.pdf"))
+	got, err := decodeRuntimeMediaName(encoded)
+	if err != nil || got != "report.pdf" {
+		t.Fatalf("decodeRuntimeMediaName = %q, %v", got, err)
+	}
+}
+
 func TestRecoveryMiddlewareReturnsStableInternalError(t *testing.T) {
 	handler := withRecovery(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("sensitive panic detail")

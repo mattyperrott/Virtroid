@@ -16,27 +16,38 @@ if [ -e /vmlinuz ]; then
   next_kernel="${next_kernel#vmlinuz-}"
 fi
 
-apt-get update
-apt-get install -y \
-  adb \
-  apparmor \
-  apparmor-utils \
-  auditd \
-  audispd-plugins \
-  ca-certificates \
-  certbot \
-  curl \
-  docker-compose-v2 \
-  docker.io \
-  fail2ban \
-  git \
-  gnupg \
-  openssl \
-  python3 \
-  rsync \
-  ufw \
-  unattended-upgrades \
+packages=(
+  adb
+  apparmor
+  apparmor-utils
+  auditd
+  audispd-plugins
+  ca-certificates
+  certbot
+  curl
+  docker-compose-v2
+  docker.io
+  fail2ban
+  git
+  gnupg
+  openssl
+  python3
+  rsync
+  ufw
+  unattended-upgrades
   "linux-modules-extra-${current_kernel}"
+)
+if [ "${VIRTROID_PREPARE_CAMERA:-false}" = true ]; then
+  packages+=(
+    dkms
+    "linux-headers-${current_kernel}"
+    v4l2loopback-dkms
+    v4l2loopback-utils
+  )
+fi
+
+apt-get update
+apt-get install -y "${packages[@]}"
 
 if [ -n "${next_kernel}" ] && [ "${next_kernel}" != "${current_kernel}" ]; then
   if apt-cache show "linux-modules-extra-${next_kernel}" >/dev/null 2>&1; then
@@ -78,6 +89,15 @@ install -m 0644 "${script_dir}/virtroid-backup.service" /etc/systemd/system/virt
 install -m 0644 "${script_dir}/virtroid-backup.timer" /etc/systemd/system/virtroid-backup.timer
 install -m 0644 "${script_dir}/unattended-upgrades-virtroid.conf" \
   /etc/apt/apt.conf.d/52virtroid-unattended-upgrades
+if [ "${VIRTROID_PREPARE_CAMERA:-false}" = true ]; then
+  install -m 0644 "${script_dir}/v4l2loopback-virtroid.conf" /etc/modprobe.d/virtroid-v4l2loopback.conf
+  install -m 0644 "${script_dir}/virtroid-camera.modules" /etc/modules-load.d/virtroid-camera.conf
+  modprobe v4l2loopback
+  if [ ! -c /dev/video42 ]; then
+    echo "V4L2 loopback camera did not appear at /dev/video42" >&2
+    exit 1
+  fi
+fi
 
 systemctl daemon-reload
 systemctl enable --now apparmor

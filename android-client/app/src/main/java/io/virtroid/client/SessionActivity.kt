@@ -1,13 +1,26 @@
 package io.virtroid.client
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import android.media.ImageReader
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
+import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -17,6 +30,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.addCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -43,10 +57,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicBoolean
 
 class SessionActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionViewerBinding
@@ -65,6 +82,9 @@ class SessionActivity : AppCompatActivity() {
     private var accountId: String = ""
     private var deviceId: String = ""
     private var baseUrl: String = ""
+    private var audioEnabled: Boolean = false
+    private var cameraMode: String = "disabled"
+    private var fileMode: String = "upload-only"
     private var endingSession = false
     private var viewerSurface: Surface? = null
     private lateinit var identityPasswordStore: IdentityPasswordStore
@@ -80,6 +100,27 @@ class SessionActivity : AppCompatActivity() {
     private var viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
     private var sessionUnavailable = false
     private var heartbeatFailureCount = 0
+    private var cameraDevice: CameraDevice? = null
+    private var cameraCaptureSession: CameraCaptureSession? = null
+    private var cameraImageReader: ImageReader? = null
+    private var cameraThread: HandlerThread? = null
+    private var cameraHandler: Handler? = null
+    private var cameraPassthroughRunning = false
+    private var lastCameraFrameAtMs = 0L
+    private var cameraFailureCount = 0
+    private val cameraFrameInFlight = AtomicBoolean(false)
+
+    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(::importSelectedFile)
+    }
+
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            startCameraPassthrough()
+        } else {
+            toast(getString(R.string.session_camera_permission_required))
+        }
+    }
 
     private val sessionCallback = object : ScrcpySessionHost.Callback {
         override fun onConnected(remoteWidth: Int, remoteHeight: Int) {
@@ -157,6 +198,9 @@ class SessionActivity : AppCompatActivity() {
         accountId = intent.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
         deviceId = intent.getStringExtra(EXTRA_DEVICE_ID).orEmpty()
         baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty()
+        audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO_ENABLED, false)
+        cameraMode = intent.getStringExtra(EXTRA_CAMERA_MODE).orEmpty().ifBlank { "disabled" }
+        fileMode = intent.getStringExtra(EXTRA_FILE_MODE).orEmpty().ifBlank { "upload-only" }
         sessionStore = SessionStore(this)
         if (accountId.isBlank()) {
             accountId = sessionStore.accountId.orEmpty()
@@ -193,9 +237,25 @@ class SessionActivity : AppCompatActivity() {
             viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
             retryViewerConnection()
         }
-        binding.sessionUploadButton.isVisible = false
-        binding.sessionCameraButton.isVisible = false
-        binding.sessionOptionalActionsDivider.isVisible = false
+        val fileImportEnabled = fileMode.equals("upload-only", ignoreCase = true) ||
+            fileMode.equals("bidirectional", ignoreCase = true)
+        val cameraEnabled = cameraMode.equals("passthrough", ignoreCase = true)
+        binding.sessionUploadButton.isVisible = fileImportEnabled
+        binding.sessionCameraButton.isVisible = cameraEnabled
+        binding.sessionOptionalActionsDivider.isVisible = fileImportEnabled || cameraEnabled
+        binding.sessionUploadButton.setOnClickListener {
+            filePicker.launch(arrayOf("*/*"))
+        }
+        binding.sessionCameraButton.setOnClickListener {
+            if (cameraPassthroughRunning) {
+                stopCameraPassthrough()
+                toast(getString(R.string.session_camera_stopped))
+            } else if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                startCameraPassthrough()
+            } else {
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+        }
         binding.sessionRetryButton.isVisible = false
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
         binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_pending)
@@ -279,6 +339,7 @@ class SessionActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+		stopCameraPassthrough()
         persistActiveSession()
         super.onStop()
     }
@@ -287,6 +348,7 @@ class SessionActivity : AppCompatActivity() {
         inactivityJob?.cancel()
         heartbeatJob?.cancel()
         viewerReconnectJob?.cancel()
+        stopCameraPassthrough()
         disconnectViewer()
         super.onDestroy()
     }
@@ -334,6 +396,7 @@ class SessionActivity : AppCompatActivity() {
             relayPath = relayPath,
             relayToken = relayToken,
             viewerPublicKey = viewerPublicKey,
+            audioEnabled = audioEnabled,
             surface = surface,
             displayWidth = binding.sessionSurfaceView.width.takeIf { it > 0 }
                 ?: resources.displayMetrics.widthPixels,
@@ -346,6 +409,203 @@ class SessionActivity : AppCompatActivity() {
     private fun disconnectViewer() {
         sessionHost?.destroy()
         sessionHost = null
+    }
+
+    private fun importSelectedFile(uri: Uri) {
+        val metadata = queryImportMetadata(uri)
+        if (metadata.second != null && metadata.second!! > MAX_RUNTIME_FILE_IMPORT_BYTES) {
+            toast(getString(R.string.session_file_too_large))
+            return
+        }
+        binding.sessionUploadButton.isEnabled = false
+        lifecycleScope.launch {
+            runCatching {
+                val bytes = readImportBytes(uri)
+                api.importRuntimeFile(
+                    baseUrl = baseUrl,
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    runtimeId = runtimeId,
+                    sessionId = sessionId,
+                    fileName = metadata.first,
+                    contentType = contentResolver.getType(uri).orEmpty(),
+                    body = bytes,
+                )
+            }.onSuccess { result ->
+                appLogs.info("Imported ${result.fileName} into active runtime", "session")
+                toast(getString(R.string.session_file_imported, result.fileName))
+            }.onFailure { error ->
+                appLogs.warn("Active runtime file import failed: ${error.message}", "session")
+                toast(error.virtroidDisplayMessage(this@SessionActivity))
+            }
+            binding.sessionUploadButton.isEnabled = true
+        }
+    }
+
+    private fun queryImportMetadata(uri: Uri): Pair<String, Long?> {
+        var name = "import-${System.currentTimeMillis()}"
+        var size: Long? = null
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (nameIndex >= 0) {
+                    name = cursor.getString(nameIndex)?.takeIf { it.isNotBlank() } ?: name
+                }
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
+                    size = cursor.getLong(sizeIndex)
+                }
+            }
+        }
+        return name.take(255) to size
+    }
+
+    private fun readImportBytes(uri: Uri): ByteArray {
+        val stream = contentResolver.openInputStream(uri) ?: throw IOException("selected file is unavailable")
+        return stream.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > MAX_RUNTIME_FILE_IMPORT_BYTES) {
+                    throw IOException("selected file exceeds 32 MiB")
+                }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startCameraPassthrough() {
+        if (cameraPassthroughRunning || !cameraMode.equals("passthrough", ignoreCase = true)) {
+            return
+        }
+        runCatching { openCameraPassthrough() }
+            .onFailure { error ->
+                appLogs.warn("Camera passthrough setup failed: ${error.message}", "session")
+                stopCameraPassthrough()
+                toast(getString(R.string.session_camera_unavailable))
+            }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun openCameraPassthrough() {
+        val manager = getSystemService(CameraManager::class.java)
+        val cameraId = manager.cameraIdList.firstOrNull { id ->
+            manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        } ?: manager.cameraIdList.firstOrNull()
+        if (cameraId == null) {
+            toast(getString(R.string.session_camera_unavailable))
+            return
+        }
+        val characteristics = manager.getCameraCharacteristics(cameraId)
+        val sizes = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?.getOutputSizes(ImageFormat.JPEG)
+            .orEmpty()
+        val size = sizes.minByOrNull { candidate ->
+            kotlin.math.abs(candidate.width * candidate.height - CAMERA_TARGET_WIDTH * CAMERA_TARGET_HEIGHT)
+        } ?: android.util.Size(CAMERA_TARGET_WIDTH, CAMERA_TARGET_HEIGHT)
+
+        cameraThread = HandlerThread("virtroid-camera-passthrough").also { it.start() }
+        cameraHandler = Handler(checkNotNull(cameraThread).looper)
+        cameraImageReader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2).also { reader ->
+            reader.setOnImageAvailableListener({ source ->
+                val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
+                val now = System.currentTimeMillis()
+                try {
+                    if (!cameraPassthroughRunning || now - lastCameraFrameAtMs < CAMERA_FRAME_INTERVAL_MS || !cameraFrameInFlight.compareAndSet(false, true)) {
+                        return@setOnImageAvailableListener
+                    }
+                    val buffer = image.planes[0].buffer
+                    val frame = ByteArray(buffer.remaining())
+                    buffer.get(frame)
+                    lastCameraFrameAtMs = now
+                    lifecycleScope.launch {
+                        runCatching {
+                            api.sendRuntimeCameraFrame(baseUrl, accountId, deviceId, runtimeId, sessionId, frame)
+                        }.onSuccess {
+                            cameraFailureCount = 0
+                        }.onFailure { error ->
+                            cameraFailureCount++
+                            if (cameraFailureCount >= CAMERA_FAILURE_LIMIT) {
+                                appLogs.warn("Camera passthrough stopped after repeated node failures: ${error.message}", "session")
+                                stopCameraPassthrough()
+                                toast(error.virtroidDisplayMessage(this@SessionActivity))
+                            }
+                        }
+                        cameraFrameInFlight.set(false)
+                    }
+                } finally {
+                    image.close()
+                }
+            }, cameraHandler)
+        }
+        cameraPassthroughRunning = true
+        binding.sessionCameraButton.isSelected = true
+        manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+            override fun onOpened(camera: CameraDevice) {
+                cameraDevice = camera
+                val surface = cameraImageReader?.surface ?: return
+                val handler = cameraHandler ?: return
+                val stateCallback = object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigured(session: CameraCaptureSession) {
+                        cameraCaptureSession = session
+                        val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                            addTarget(surface)
+                            set(android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE, android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                        }.build()
+                        session.setRepeatingRequest(request, null, cameraHandler)
+                        runOnUiThread { toast(getString(R.string.session_camera_started)) }
+                    }
+
+                    override fun onConfigureFailed(session: CameraCaptureSession) {
+                        runOnUiThread {
+                            stopCameraPassthrough()
+                            toast(getString(R.string.session_camera_unavailable))
+                        }
+                    }
+                }
+                camera.createCaptureSession(
+                    SessionConfiguration(
+                        SessionConfiguration.SESSION_REGULAR,
+                        listOf(OutputConfiguration(surface)),
+                        Executor { command -> handler.post(command) },
+                        stateCallback,
+                    ),
+                )
+            }
+
+            override fun onDisconnected(camera: CameraDevice) {
+                runOnUiThread { stopCameraPassthrough() }
+            }
+
+            override fun onError(camera: CameraDevice, error: Int) {
+                runOnUiThread {
+                    stopCameraPassthrough()
+                    toast(getString(R.string.session_camera_unavailable))
+                }
+            }
+        }, cameraHandler)
+    }
+
+    private fun stopCameraPassthrough() {
+        cameraPassthroughRunning = false
+        cameraFrameInFlight.set(false)
+        runCatching { cameraCaptureSession?.stopRepeating() }
+        cameraCaptureSession?.close()
+        cameraCaptureSession = null
+        cameraDevice?.close()
+        cameraDevice = null
+        cameraImageReader?.close()
+        cameraImageReader = null
+        cameraHandler = null
+        cameraThread?.quitSafely()
+        cameraThread = null
+        if (::binding.isInitialized) runOnUiThread { binding.sessionCameraButton.isSelected = false }
     }
 
     private fun retryViewerConnection(delayMs: Long = 0L) {
@@ -671,6 +931,9 @@ class SessionActivity : AppCompatActivity() {
                 relayToken = relayToken,
                 sessionId = sessionId,
                 viewerPublicKey = viewerPublicKey,
+                audioEnabled = audioEnabled,
+                cameraMode = cameraMode,
+                fileMode = fileMode,
             ),
         )
     }
@@ -806,11 +1069,19 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_ACCOUNT_ID = "account_id"
         private const val EXTRA_DEVICE_ID = "device_id"
         private const val EXTRA_BASE_URL = "base_url"
+        private const val EXTRA_AUDIO_ENABLED = "audio_enabled"
+        private const val EXTRA_CAMERA_MODE = "camera_mode"
+        private const val EXTRA_FILE_MODE = "file_mode"
         private const val SESSION_HEARTBEAT_INTERVAL_MS = 20_000L
         private const val HEARTBEAT_RETRY_VISIBLE_THRESHOLD = 2
         private const val VIEWER_RECONNECT_INITIAL_DELAY_MS = 1_000L
         private const val VIEWER_RECONNECT_MAX_DELAY_MS = 10_000L
         private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182
+        private const val MAX_RUNTIME_FILE_IMPORT_BYTES = 32 * 1024 * 1024
+        private const val CAMERA_TARGET_WIDTH = 640
+        private const val CAMERA_TARGET_HEIGHT = 480
+        private const val CAMERA_FRAME_INTERVAL_MS = 200L
+        private const val CAMERA_FAILURE_LIMIT = 3
         private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 
         fun createIntent(
@@ -828,6 +1099,9 @@ class SessionActivity : AppCompatActivity() {
             viewerPublicKey: String,
             sessionId: String,
             viewerAddress: String,
+            audioEnabled: Boolean = false,
+            cameraMode: String = "disabled",
+            fileMode: String = "upload-only",
         ): Intent {
             return Intent(context, SessionActivity::class.java)
                 .putExtra(EXTRA_ACCOUNT_ID, accountId)
@@ -843,6 +1117,9 @@ class SessionActivity : AppCompatActivity() {
                 .putExtra(EXTRA_RELAY_TOKEN, relayToken)
                 .putExtra(EXTRA_VIEWER_PUBLIC_KEY, viewerPublicKey)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
+                .putExtra(EXTRA_AUDIO_ENABLED, audioEnabled)
+                .putExtra(EXTRA_CAMERA_MODE, cameraMode)
+                .putExtra(EXTRA_FILE_MODE, fileMode)
         }
 
         fun createIntent(
@@ -864,6 +1141,9 @@ class SessionActivity : AppCompatActivity() {
                 viewerPublicKey = session.viewerPublicKey,
                 sessionId = session.sessionId,
                 viewerAddress = session.viewerAddress,
+                audioEnabled = session.audioEnabled,
+                cameraMode = session.cameraMode,
+                fileMode = session.fileMode,
             )
         }
     }

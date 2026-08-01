@@ -97,8 +97,8 @@ PATH="${fake_bin}:${PATH}" \
   VIRTROID_ENV_FILE="${tmp_dir}/.env" \
   VIRTROID_TEST_CURL_COUNT="${curl_count_file}" \
   "${script_dir}/deploy.sh" health >/dev/null
-if [ "$(cat "${curl_count_file}")" -ne 3 ]; then
-  echo "health check did not retry before checking both endpoints" >&2
+if [ "$(cat "${curl_count_file}")" -ne 5 ]; then
+  echo "health check did not retry before checking liveness, node readiness, control-plane readiness, and the public endpoint" >&2
   exit 1
 fi
 
@@ -309,12 +309,12 @@ grep -q '^kernel.unprivileged_bpf_disabled = 0$' "${script_dir}/sysctl-virtroid-
 grep -q '^net.ipv4.conf.all.send_redirects = 0$' "${script_dir}/sysctl-virtroid-hardening.conf"
 grep -q 'sysctl-virtroid-hardening.conf.*99-virtroid-hardening.conf' "${script_dir}/prepare-redroid-host.sh"
 grep -q 'audit-virtroid.rules.*99-virtroid-hardening.rules' "${script_dir}/prepare-redroid-host.sh"
-grep -q '^  auditd \\$' "${script_dir}/prepare-redroid-host.sh"
-grep -q '^  audispd-plugins \\$' "${script_dir}/prepare-redroid-host.sh"
-grep -q '^  apparmor \\$' "${script_dir}/prepare-redroid-host.sh"
-grep -q '^  apparmor-utils \\$' "${script_dir}/prepare-redroid-host.sh"
-grep -q '^  ufw \\$' "${script_dir}/prepare-redroid-host.sh"
-grep -q '^  unattended-upgrades \\$' "${script_dir}/prepare-redroid-host.sh"
+grep -q '^  auditd$' "${script_dir}/prepare-redroid-host.sh"
+grep -q '^  audispd-plugins$' "${script_dir}/prepare-redroid-host.sh"
+grep -q '^  apparmor$' "${script_dir}/prepare-redroid-host.sh"
+grep -q '^  apparmor-utils$' "${script_dir}/prepare-redroid-host.sh"
+grep -q '^  ufw$' "${script_dir}/prepare-redroid-host.sh"
+grep -q '^  unattended-upgrades$' "${script_dir}/prepare-redroid-host.sh"
 grep -q 'systemctl enable --now auditd' "${script_dir}/prepare-redroid-host.sh"
 grep -q 'augenrules --load' "${script_dir}/prepare-redroid-host.sh"
 grep -q 'systemctl enable --now apparmor' "${script_dir}/prepare-redroid-host.sh"
