@@ -64,6 +64,12 @@ func New(serviceName string) *Service {
 
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; sandbox")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+
 		trace := incomingTrace(r.Header.Get("Traceparent"))
 		if trace.TraceID == "" {
 			trace.TraceID = randomHex(16)
@@ -367,13 +373,6 @@ func (w *responseRecorder) WriteHeader(status int) {
 	w.wroteHeader = true
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *responseRecorder) Write(payload []byte) (int, error) {
-	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK)
-	}
-	return w.ResponseWriter.Write(payload)
 }
 
 func (w *responseRecorder) Flush() {

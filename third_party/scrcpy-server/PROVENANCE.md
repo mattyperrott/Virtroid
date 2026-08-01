@@ -23,6 +23,10 @@ From `android-client/`, build with:
 ./gradlew --no-daemon :scrcpy-server:assembleRelease
 ```
 
+Use JDK 17, matching the module's Java target and the pinned CI build
+environment. D8 output can differ when the same sources are compiled under a
+different JDK major version.
+
 The resulting APK is a zip-compatible app-process payload. Copy
 `../third_party/scrcpy-server/build/outputs/apk/release/scrcpy-server-release-unsigned.apk`
 to `../backend/cmd/virtnoded/assets/scrcpy-server.jar`, then run the backend and
