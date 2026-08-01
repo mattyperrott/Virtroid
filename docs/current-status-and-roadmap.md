@@ -77,8 +77,27 @@ Passed locally on 2026-08-01:
 - Prometheus configuration plus all seven alert rules through `promtool`, and
   the Alertmanager configuration through `amtool`.
 
-GitHub Actions and GitHub code scanning are the independent post-push
-confirmation. Local success alone is not GitHub, VPS, or live ReDroid proof.
+### GitHub verification for this candidate
+
+Commit `8e29d6592d3c5c6356145da11ceb07a2b28922fa` passed the independent
+post-push checks on 2026-08-01:
+
+- [CI run `30706774390`](https://github.com/mattyperrott/Virtroid/actions/runs/30706774390):
+  backend tests, race detector, vet, command builds,
+  `govulncheck`, Android tests/lint/build/security gate, scrcpy provenance,
+  deployment checks, and monitoring validation all passed;
+- [CodeQL run `30706774376`](https://github.com/mattyperrott/Virtroid/actions/runs/30706774376):
+  Actions, Go, Python, and Java/Kotlin analysis all passed;
+- the two cleartext Android preference findings closed after the affected
+  identity binding values were moved behind Android Keystore-backed AES-GCM
+  storage; and
+- the remaining three UI findings were reviewed and dismissed with audit notes
+  because they intentionally display non-secret opaque account/device
+  identifiers, not passwords, tokens, private keys, or derived encryption keys.
+
+At the end of the review, GitHub reported zero open code-scanning, Dependabot,
+or secret-scanning alerts and zero open pull requests. This is repository and
+GitHub evidence, not VPS or live ReDroid proof.
 
 ### Last recorded live VPS snapshot
 
@@ -188,20 +207,18 @@ a secret-backed receiver.
 
 ## Highest-priority remaining work
 
-1. Publish the reviewed candidate to `main` and require all GitHub checks to
-   pass without suppressing findings.
-2. Create a reviewed VPS release, apply schema `2026080101`, and re-run public,
+1. Create a reviewed VPS release, apply schema `2026080101`, and re-run public,
    control, node, database, and orphan checks. Deployment is a separate
    operator-authorized action.
-3. Run disposable ReDroid acceptance tests for audio playback, document import,
+2. Run disposable ReDroid acceptance tests for audio playback, document import,
    and the exact V4L2 camera HAL before enabling camera in production.
-4. Configure and test an external Alertmanager receiver, then add a trace
+3. Configure and test an external Alertmanager receiver, then add a trace
    backend if cross-service trace search is required.
-5. Complete interruption, disk-pressure, rollback/fork/corruption, network-loss,
+4. Complete interruption, disk-pressure, rollback/fork/corruption, network-loss,
    and lifecycle cleanup fault injection.
-6. Decide and document the root-project license. Vendored upstream licenses are
+5. Decide and document the root-project license. Vendored upstream licenses are
    retained, but they do not license original Virtroid code.
-7. Reduce the runtime trust boundary with an isolated/confidential VM design,
+6. Reduce the runtime trust boundary with an isolated/confidential VM design,
    measurement verification, runtime leases, and attestation-bound key release.
 
 ### Deferred by current decision
