@@ -625,14 +625,28 @@ wait_for_health() {
   printf '%s\n' "${response}"
 }
 
+wait_for_http_ready() {
+  local url="$1"
+  local attempt response
+  for attempt in $(seq 1 30); do
+    if response="$(curl -fsS --connect-timeout 2 --max-time 5 "${url}" 2>/dev/null)"; then
+      printf '%s\n' "${response}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "readiness endpoint did not return HTTP success within the retry window: ${url}" >&2
+  curl -fsS --connect-timeout 2 --max-time 5 "${url}"
+}
+
 health() {
   local public_authority public_hostname public_port
   wait_for_health http://127.0.0.1:8080/healthz
   wait_for_health http://127.0.0.1:8090/readyz
   wait_for_health http://127.0.0.1:8080/readyz
   if profile_enabled monitoring; then
-    wait_for_health http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}/-/ready
-    wait_for_health http://127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}/-/ready
+    wait_for_http_ready http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}/-/ready
+    wait_for_http_ready http://127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}/-/ready
   fi
   if profile_enabled edge; then
     if [[ ! "${PUBLIC_BASE_URL}" =~ ^https://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$ ]]; then
