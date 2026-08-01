@@ -5,7 +5,11 @@ import android.os.SystemClock
 
 class IdentityPasswordStore(context: Context) {
     private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences("virtroid-identity", Context.MODE_PRIVATE)
+    private val prefs = KeystoreEncryptedPrefs(
+        appContext,
+        "virtroid-identity",
+        KEYSTORE_ALIAS,
+    )
     private val vault = SecureLocalVault.get(appContext)
 
     fun isConfigured(accountId: String?, deviceId: String?): Boolean {
@@ -33,43 +37,45 @@ class IdentityPasswordStore(context: Context) {
             migrateToVaultIfUnlocked()
             vault.putString(NAMESPACE, KEY_ACCOUNT_ID, accountId)
             vault.putString(NAMESPACE, KEY_DEVICE_ID, deviceId)
-            prefs.edit().clear().apply()
+            prefs.clear(KEY_ACCOUNT_ID, KEY_DEVICE_ID)
             return
         }
-        prefs.edit()
-            .putString(KEY_ACCOUNT_ID, accountId)
-            .putString(KEY_DEVICE_ID, deviceId)
-            .apply()
+        prefs.putStrings(
+            mapOf(
+                KEY_ACCOUNT_ID to accountId,
+                KEY_DEVICE_ID to deviceId,
+            ),
+        )
     }
 
     fun clearConfigured() {
         if (vault.isUnlocked) {
             vault.clearNamespace(NAMESPACE)
         }
-        prefs.edit()
-            .remove(KEY_ACCOUNT_ID)
-            .remove(KEY_DEVICE_ID)
-            .apply()
+        prefs.clear(KEY_ACCOUNT_ID, KEY_DEVICE_ID)
         clearUnlocked()
     }
 
     fun migrateToVaultIfUnlocked() {
-        if (!vault.isUnlocked || !prefs.contains(KEY_ACCOUNT_ID)) {
+        if (!vault.isUnlocked) {
             return
         }
-        vault.putString(NAMESPACE, KEY_ACCOUNT_ID, prefs.getString(KEY_ACCOUNT_ID, null))
+        val accountId = prefs.getString(KEY_ACCOUNT_ID, null) ?: return
+        vault.putString(NAMESPACE, KEY_ACCOUNT_ID, accountId)
         vault.putString(NAMESPACE, KEY_DEVICE_ID, prefs.getString(KEY_DEVICE_ID, null))
-        prefs.edit().clear().apply()
+        prefs.clear(KEY_ACCOUNT_ID, KEY_DEVICE_ID)
     }
 
     fun exportVaultToLegacyIfUnlocked() {
         if (!vault.isUnlocked) {
             return
         }
-        prefs.edit()
-            .putString(KEY_ACCOUNT_ID, vault.getString(NAMESPACE, KEY_ACCOUNT_ID, null))
-            .putString(KEY_DEVICE_ID, vault.getString(NAMESPACE, KEY_DEVICE_ID, null))
-            .apply()
+        prefs.putStrings(
+            mapOf(
+                KEY_ACCOUNT_ID to vault.getString(NAMESPACE, KEY_ACCOUNT_ID, null),
+                KEY_DEVICE_ID to vault.getString(NAMESPACE, KEY_DEVICE_ID, null),
+            ),
+        )
     }
 
     fun unlock(accountId: String, deviceId: String, password: String): String {
@@ -113,6 +119,7 @@ class IdentityPasswordStore(context: Context) {
     private companion object {
         const val KEY_ACCOUNT_ID = "identity_account_id"
         const val KEY_DEVICE_ID = "identity_device_id"
+        const val KEYSTORE_ALIAS = "virtroid_identity_binding_prefs_v1"
         const val NAMESPACE = "identity_password"
         const val UNLOCK_TTL_MS = 10 * 60 * 1000L
 
