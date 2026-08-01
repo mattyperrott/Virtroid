@@ -65,6 +65,35 @@ func TestIncomingTraceRejectsControlCharacters(t *testing.T) {
 	}
 }
 
+func TestMiddlewareMakesImplicitResponsesNonExecutableAndRecordsOK(t *testing.T) {
+	service := New("test-service")
+	handler := service.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<script>alert(1)</script>"))
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/untrusted", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q, want application/octet-stream", got)
+	}
+	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := response.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") {
+		t.Fatalf("Content-Security-Policy = %q, want default-src 'none'", got)
+	}
+
+	metricsResponse := httptest.NewRecorder()
+	service.Handler().ServeHTTP(metricsResponse, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	metrics := metricsResponse.Body.String()
+	if !strings.Contains(metrics, `status="200"`) {
+		t.Fatalf("metrics did not record the implicit 200 response:\n%s", metrics)
+	}
+}
+
 func TestMetricsBoundUnknownHTTPMethodsAndClassifyNodeTargets(t *testing.T) {
 	if got := boundedHTTPMethod("UNTRUSTED-123"); got != "OTHER" {
 		t.Fatalf("bounded method = %q", got)
