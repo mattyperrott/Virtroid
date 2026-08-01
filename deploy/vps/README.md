@@ -1,7 +1,7 @@
 # Virtroid VPS Deploy
 
-> **Release target (2026-08-01):** Runtime media paths and node-capability
-> readiness use schema `2026080101`. Invite-gated signed bootstrap used schema
+> **Release target (2026-08-02):** Photo import, idle cleanup, and node-capability
+> readiness use schema `2026080201`. Invite-gated signed bootstrap used schema
 > `2026073001`; the previously observed VPS release used schema `2026072102`,
 > and the node-registry release used schema `2026071903`, with the
 > approved production node registry. Production builds, release bundles,
@@ -203,7 +203,7 @@ the bundle helpers above.
 
 The node-registry migration used schema `2026071903`; public signed bootstrap
 used `2026072102`; invite-gated bootstrap used `2026073001`; runtime media paths
-and node-capability readiness use `2026080101`. Retained VPS backups remain the recovery
+and node-capability readiness use `2026080201`. Retained VPS backups remain the recovery
 boundary; an older schema image must never be started automatically against a
 newer database.
 
@@ -421,17 +421,11 @@ before treating alerts as paged. The deployment health gate now checks node
 until PostgreSQL and at least one fresh, approved, Docker/binder-ready node are
 all present.
 
-Camera passthrough is capability-gated. To prepare the host-side loopback device:
-
-```bash
-sudo VIRTROID_PREPARE_CAMERA=true bash ./prepare-redroid-host.sh
-```
-
-Then set `NODE_CAMERA_DEVICE=/dev/video42` only after the pinned ReDroid image
-has been independently verified to contain a compatible V4L2 camera HAL. Stock
-ReDroid images do not currently provide that production guarantee. With the
-variable empty, the node advertises zero camera slots and camera-enabled
-runtimes cannot be scheduled there.
+Physical-camera capture is handled by the Android client and imported as a
+bounded JPEG through the existing signed, session-bound node file-import path.
+The node pushes captures to `/sdcard/Pictures/Virtroid` and requests an Android
+media scan. It does not require a VPS video device, V4L2 loopback module,
+`ffmpeg`, camera slot, or ReDroid camera HAL.
 
 The renterd profile is fail-closed: it will not start until the installed
 ceremony helper verifies two offline seed copies, root-only mounted secret

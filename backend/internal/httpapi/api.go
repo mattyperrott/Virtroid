@@ -13,11 +13,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/jpeg"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -109,7 +111,7 @@ const viewerReconnectBitRate = 4_000_000
 const blobKeyEnvelopeAlgorithm = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
 const maxAPIRequestBodyBytes int64 = 2 << 20
 const maxRuntimeFileImportBytes int64 = 32 << 20
-const maxRuntimeCameraFrameBytes int64 = 2 << 20
+const maxRuntimePhotoImportBytes int64 = 16 << 20
 const runtimeMediaProxyTimeout = 2 * time.Minute
 
 var errNodeAdvertiseAllowlistUnavailable = errors.New("node advertise address allowlist is required in production")
@@ -378,7 +380,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/wipe", api.wipeMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/session", api.createMyRuntimeSession)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/files", api.importMyRuntimeFile)
-	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/camera/frame", api.forwardMyRuntimeCameraFrame)
+	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/photos", api.importMyRuntimePhoto)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/logs", api.runtimeLogs)
 	mux.HandleFunc("GET /api/v1/me/sessions/active", api.listMyActiveSessions)
 	mux.HandleFunc("GET /api/v1/me/sessions/{id}", api.getMySession)
@@ -1612,38 +1614,53 @@ func (a *API) importMyRuntimeFile(w http.ResponseWriter, r *http.Request) {
 	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": contentType})
 }
 
-func (a *API) forwardMyRuntimeCameraFrame(w http.ResponseWriter, r *http.Request) {
+func (a *API) importMyRuntimePhoto(w http.ResponseWriter, r *http.Request) {
 	runtimeID := strings.TrimSpace(r.PathValue("id"))
 	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
 	if !ok {
+		return
+	}
+	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_photo_name", err.Error())
 		return
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			writeAPIError(w, http.StatusRequestEntityTooLarge, "camera_frame_invalid", "camera frame must be a JPEG no larger than 2 MiB")
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "photo_too_large", "photo must be a JPEG no larger than 16 MiB")
 			return
 		}
-		writeAPIError(w, http.StatusBadRequest, "camera_frame_read_failed", "could not read camera frame")
+		writeAPIError(w, http.StatusBadRequest, "photo_read_failed", "could not read captured photo")
 		return
 	}
-	if len(body) < 4 || int64(len(body)) > maxRuntimeCameraFrameBytes {
-		writeAPIError(w, http.StatusRequestEntityTooLarge, "camera_frame_invalid", "camera frame must be a JPEG no larger than 2 MiB")
-		return
-	}
-	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Content-Type")), "image/jpeg") || body[0] != 0xff || body[1] != 0xd8 {
-		writeAPIError(w, http.StatusUnsupportedMediaType, "camera_frame_invalid", "camera frame must be JPEG")
+	if err := validateRuntimePhoto(filename, body); err != nil {
+		writeAPIError(w, http.StatusUnsupportedMediaType, "photo_invalid", err.Error())
 		return
 	}
 
-	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, "camera")
+	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, "photo")
 	if !ok {
 		return
 	}
-	a.proxyRuntimeMedia(w, r, host, "/api/v1/internal/runtimes/"+url.PathEscape(runtimeID)+"/camera/frame", body, map[string]string{
-		"Content-Type": "image/jpeg",
-	})
+	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/photos?name=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString([]byte(filename)))
+	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": "image/jpeg"})
+}
+
+func validateRuntimePhoto(filename string, body []byte) error {
+	extension := strings.ToLower(filepath.Ext(strings.TrimSpace(filename)))
+	if extension != ".jpg" && extension != ".jpeg" {
+		return errors.New("captured photo name must end in .jpg or .jpeg")
+	}
+	if len(body) < 4 || int64(len(body)) > maxRuntimePhotoImportBytes || body[0] != 0xff || body[1] != 0xd8 {
+		return errors.New("photo must be a JPEG no larger than 16 MiB")
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(body))
+	if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 64_000_000 {
+		return errors.New("photo contains invalid or excessive JPEG dimensions")
+	}
+	return nil
 }
 
 func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor runtimeActor, runtimeID, operation string) (store.Runtime, store.Host, bool) {
@@ -1679,9 +1696,9 @@ func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor r
 			writeAPIError(w, http.StatusConflict, "file_import_disabled", "file import is disabled for this runtime")
 			return store.Runtime{}, store.Host{}, false
 		}
-	case "camera":
-		if !strings.EqualFold(runtime.CameraMode, "passthrough") {
-			writeAPIError(w, http.StatusConflict, "camera_passthrough_disabled", "camera passthrough is disabled for this runtime")
+	case "photo":
+		if !strings.EqualFold(runtime.CameraMode, "photo-import") {
+			writeAPIError(w, http.StatusConflict, "camera_photo_import_disabled", "camera photo import is disabled for this runtime")
 			return store.Runtime{}, store.Host{}, false
 		}
 	}
@@ -1690,12 +1707,8 @@ func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor r
 		writeInternalAPIError(w, "runtime_media_host_lookup_failed", err)
 		return store.Runtime{}, store.Host{}, false
 	}
-	if operation == "file" && !host.FileImport {
+	if (operation == "file" || operation == "photo") && !host.FileImport {
 		writeAPIError(w, http.StatusServiceUnavailable, "node_file_import_unavailable", "assigned node does not support file import")
-		return store.Runtime{}, store.Host{}, false
-	}
-	if operation == "camera" && !host.CameraPassthrough {
-		writeAPIError(w, http.StatusServiceUnavailable, "node_camera_unavailable", "assigned node is not camera-ready")
 		return store.Runtime{}, store.Host{}, false
 	}
 	return runtime, host, true
@@ -3193,8 +3206,8 @@ func apiRequestBodyLimit(path string) int64 {
 	if strings.HasSuffix(path, "/files") {
 		return maxRuntimeFileImportBytes
 	}
-	if strings.HasSuffix(path, "/camera/frame") {
-		return maxRuntimeCameraFrameBytes
+	if strings.HasSuffix(path, "/photos") {
+		return maxRuntimePhotoImportBytes
 	}
 	return maxAPIRequestBodyBytes
 }

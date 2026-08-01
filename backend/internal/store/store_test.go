@@ -2272,11 +2272,11 @@ func TestNormalizedCreateInputRejectsUnsafeProfile(t *testing.T) {
 	}
 }
 
-func TestNormalizedCreateInputPreservesExplicitAudioAndAllowsCameraPassthrough(t *testing.T) {
+func TestNormalizedCreateInputPreservesExplicitAudioAndAllowsPhotoImport(t *testing.T) {
 	input, err := normalizedCreateInput(CreateRuntimeInput{
 		AudioEnabled:    false,
 		AudioEnabledSet: true,
-		CameraMode:      "passthrough",
+		CameraMode:      "photo-import",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2284,7 +2284,7 @@ func TestNormalizedCreateInputPreservesExplicitAudioAndAllowsCameraPassthrough(t
 	if input.AudioEnabled {
 		t.Fatal("explicit audio disable was replaced by the default")
 	}
-	if input.CameraMode != "passthrough" {
+	if input.CameraMode != "photo-import" {
 		t.Fatalf("camera mode = %q", input.CameraMode)
 	}
 }
@@ -3581,9 +3581,12 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 }
 
 func TestIdleRuntimeReaperUsesNewestRuntimeOrSessionActivity(t *testing.T) {
-	const want = "GREATEST(r.updated_at, COALESCE(ls.last_session_at, r.updated_at))"
+	const want = "GREATEST(COALESCE(ls.last_session_at, r.started_at, r.created_at), COALESCE(r.started_at, r.created_at))"
 	if idleRuntimeLastActivitySQL != want {
 		t.Fatalf("idle runtime last-activity expression = %q, want %q", idleRuntimeLastActivitySQL, want)
+	}
+	if strings.Contains(idleRuntimeLastActivitySQL, "r.updated_at") {
+		t.Fatal("idle runtime activity must not use node-refreshed runtimes.updated_at")
 	}
 }
 

@@ -111,7 +111,7 @@ flowchart LR
 | Encrypted local snapshots    |   ✅ Implemented   | Repository path and last recorded VPS mechanism         |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
 | Reproducible VPS deployment  |   ✅ Implemented   | Hardened release and verification scripts included      |
-| Camera passthrough           |  🧪 Experimental   | Capability/slot gated; exact guest V4L2 HAL proof pending |
+| Physical-camera photo import |  🚧 Release candidate | In-app capture imports a JPEG into guest media; live guest proof pending |
 | Active-runtime file import   |     🟡 Candidate   | Signed session path to bounded ADB import; live proof pending |
 | Metrics and trace context    |   ✅ Implemented   | Bounded Prometheus metrics and W3C trace propagation     |
 | Alerts                       |     🟡 Partial     | Rules included; operator notification receiver required  |
@@ -319,7 +319,7 @@ The runtime node agent is responsible for:
 * Opening viewer relay sessions
 * Feeding runtime audio to the viewer path
 * Importing bounded files into active runtimes
-* Feeding session camera frames to a configured V4L2 device
+* Importing user-captured physical-camera photos into the active runtime
 * Installing approved applications
 * Encrypting runtime snapshots
 * Restoring runtime snapshots
@@ -345,7 +345,7 @@ The Android client currently provides:
 * Encrypted viewer sessions
 * Runtime audio controls
 * Active-runtime document import
-* Explicit camera capture and passthrough controls
+* Explicit physical-camera capture and photo-import controls
 * Trusted-device management
 * F-Droid catalog selection
 * Local application lock

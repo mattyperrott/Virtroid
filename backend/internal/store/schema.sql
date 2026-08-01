@@ -309,7 +309,7 @@ CREATE TABLE IF NOT EXISTS runtimes (
     height_px INTEGER NOT NULL DEFAULT 1600,
     density_dpi INTEGER NOT NULL DEFAULT 320,
     audio_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    camera_mode TEXT NOT NULL DEFAULT 'disabled',
+    camera_mode TEXT NOT NULL DEFAULT 'photo-import',
     file_mode TEXT NOT NULL DEFAULT 'upload-only',
     blob_auto_snapshot BOOLEAN NOT NULL DEFAULT TRUE,
     blob_retain_days INTEGER NOT NULL DEFAULT 7,
@@ -342,6 +342,8 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS height_px INTEGER NOT NULL DEFAULT
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS density_dpi INTEGER NOT NULL DEFAULT 320;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS audio_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS camera_mode TEXT NOT NULL DEFAULT 'disabled';
+ALTER TABLE runtimes ALTER COLUMN camera_mode SET DEFAULT 'photo-import';
+UPDATE runtimes SET camera_mode = 'photo-import' WHERE camera_mode = 'passthrough';
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS file_mode TEXT NOT NULL DEFAULT 'upload-only';
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_auto_snapshot BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_retain_days INTEGER NOT NULL DEFAULT 7;

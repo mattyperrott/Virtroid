@@ -30,8 +30,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026080101
-	schemaVersionLabel               = "runtime media paths and node capability readiness 2026-08-01"
+	currentSchemaVersion       int64 = 2026080201
+	schemaVersionLabel               = "photo import and idle runtime cleanup 2026-08-02"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -46,7 +46,7 @@ const (
 	viewerPortEnd              = 46099
 	sessionAttachTTL           = 2 * time.Minute
 	runtimeCapabilityTTL       = 24 * time.Hour
-	idleRuntimeLastActivitySQL = "GREATEST(r.updated_at, COALESCE(ls.last_session_at, r.updated_at))"
+	idleRuntimeLastActivitySQL = "GREATEST(COALESCE(ls.last_session_at, r.started_at, r.created_at), COALESCE(r.started_at, r.created_at))"
 	// Keep this aligned with the Android client's MAX_CATALOG_ITEMS bound so a
 	// valid server response is never rejected solely because of cardinality.
 	catalogResponseLimit = 250
@@ -1569,7 +1569,7 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 	}
 	mediaSettingsChanged :=
 		(input.AudioEnabled != nil && *input.AudioEnabled != current.AudioEnabled) ||
-			(input.CameraMode != nil && normalizeChoice(*input.CameraMode, current.CameraMode, "disabled", "passthrough") != current.CameraMode) ||
+			(input.CameraMode != nil && normalizeChoice(*input.CameraMode, current.CameraMode, "disabled", "photo-import") != current.CameraMode) ||
 			(input.FileMode != nil && normalizeChoice(*input.FileMode, current.FileMode, "upload-only", "download-only", "bidirectional") != current.FileMode)
 	if mediaSettingsChanged && !strings.EqualFold(strings.TrimSpace(current.DesiredState), "stopped") {
 		return Runtime{}, ErrRuntimeMediaSettingsActive
@@ -1578,7 +1578,7 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		current.AudioEnabled = *input.AudioEnabled
 	}
 	if input.CameraMode != nil {
-		current.CameraMode = normalizeChoice(*input.CameraMode, current.CameraMode, "disabled", "passthrough")
+		current.CameraMode = normalizeChoice(*input.CameraMode, current.CameraMode, "disabled", "photo-import")
 	}
 	if input.FileMode != nil {
 		current.FileMode = normalizeChoice(*input.FileMode, current.FileMode, "upload-only", "download-only", "bidirectional")
@@ -6323,7 +6323,7 @@ func pickReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, preferredHostID str
 
 	requireAudio := runtime.AudioEnabled
 	requireFiles := strings.EqualFold(runtime.FileMode, "upload-only") || strings.EqualFold(runtime.FileMode, "bidirectional")
-	requireCamera := strings.EqualFold(runtime.CameraMode, "passthrough")
+	requireCamera := false
 	var hostID string
 	err := tx.QueryRowContext(ctx,
 		`SELECT h.id FROM hosts h
@@ -6374,7 +6374,7 @@ func requireReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, hostID string, r
 	}
 	requireAudio := runtime.AudioEnabled
 	requireFiles := strings.EqualFold(runtime.FileMode, "upload-only") || strings.EqualFold(runtime.FileMode, "bidirectional")
-	requireCamera := strings.EqualFold(runtime.CameraMode, "passthrough")
+	requireCamera := false
 	var found string
 	err := tx.QueryRowContext(ctx,
 		`SELECT h.id FROM hosts h
@@ -7139,7 +7139,7 @@ func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error)
 	if !input.AudioEnabledSet {
 		input.AudioEnabled = true
 	}
-	input.CameraMode = normalizeChoice(input.CameraMode, "disabled", "disabled", "passthrough")
+	input.CameraMode = normalizeChoice(input.CameraMode, "photo-import", "disabled", "photo-import")
 	input.FileMode = normalizeChoice(input.FileMode, "upload-only", "upload-only", "download-only", "bidirectional")
 	if !input.BlobAutoSnapshot {
 		input.BlobAutoSnapshot = true
@@ -7241,7 +7241,7 @@ func validateRuntimeProfile(input CreateRuntimeInput) error {
 	if input.DensityDpi < 240 || input.DensityDpi > 640 || input.DensityDpi%20 != 0 {
 		return ErrRuntimeProfile
 	}
-	if input.CameraMode != "disabled" && input.CameraMode != "passthrough" {
+	if input.CameraMode != "disabled" && input.CameraMode != "photo-import" {
 		return ErrRuntimeProfile
 	}
 	if input.FileMode != "upload-only" {

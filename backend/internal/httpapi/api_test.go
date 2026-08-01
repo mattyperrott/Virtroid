@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -11,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net"
 	"net/http"
@@ -93,11 +96,27 @@ func TestAPIRequestBodyLimitAllowsOnlyBoundedMediaRoutes(t *testing.T) {
 	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/files"); got != maxRuntimeFileImportBytes {
 		t.Fatalf("file limit = %d", got)
 	}
-	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/camera/frame"); got != maxRuntimeCameraFrameBytes {
-		t.Fatalf("camera limit = %d", got)
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/photos"); got != maxRuntimePhotoImportBytes {
+		t.Fatalf("photo limit = %d", got)
 	}
 	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/session"); got != maxAPIRequestBodyBytes {
 		t.Fatalf("default limit = %d", got)
+	}
+}
+
+func TestValidateRuntimePhotoRequiresBoundedJPEG(t *testing.T) {
+	var photo bytes.Buffer
+	if err := jpeg.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRuntimePhoto("capture.jpg", photo.Bytes()); err != nil {
+		t.Fatalf("valid JPEG rejected: %v", err)
+	}
+	if err := validateRuntimePhoto("capture.png", photo.Bytes()); err == nil {
+		t.Fatal("JPEG with a non-JPEG name was accepted")
+	}
+	if err := validateRuntimePhoto("capture.jpg", []byte("not a jpeg")); err == nil {
+		t.Fatal("invalid JPEG was accepted")
 	}
 }
 

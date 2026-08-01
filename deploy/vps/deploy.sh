@@ -438,10 +438,6 @@ validate_environment() {
     echo "NODE_AGENT_CONTAINER_NAME must match the Compose node container name: virtnoded" >&2
     exit 1
   fi
-  if [ -n "${NODE_CAMERA_DEVICE:-}" ] && [[ ! "${NODE_CAMERA_DEVICE}" =~ ^/dev/video[0-9]+$ ]]; then
-    echo "NODE_CAMERA_DEVICE must be empty or an explicit /dev/videoN path" >&2
-    exit 1
-  fi
   if [[ ! "${NODE_MIN_FREE_DISK_BYTES}" =~ ^[0-9]+$ ]] ||
      [ "${NODE_MIN_FREE_DISK_BYTES}" -lt 1073741824 ]; then
     echo "NODE_MIN_FREE_DISK_BYTES must be a decimal value of at least 1073741824 (1 GiB)" >&2
@@ -600,10 +596,6 @@ validate_host() {
     echo "binderfs is not ready. Run sudo ./prepare-redroid-host.sh first." >&2
     exit 1
   fi
-  if [ -n "${NODE_CAMERA_DEVICE:-}" ] && [ ! -c "${NODE_CAMERA_DEVICE}" ]; then
-    echo "configured NODE_CAMERA_DEVICE is not a character device: ${NODE_CAMERA_DEVICE}" >&2
-    exit 1
-  fi
   if profile_enabled edge; then
     if [ ! -r "${HAPROXY_CERT_PATH:-/srv/virtroid/tls/virtroid.pem}" ]; then
       echo "missing HAProxy PEM bundle: ${HAPROXY_CERT_PATH:-/srv/virtroid/tls/virtroid.pem}" >&2
@@ -638,6 +630,10 @@ health() {
   wait_for_health http://127.0.0.1:8080/healthz
   wait_for_health http://127.0.0.1:8090/readyz
   wait_for_health http://127.0.0.1:8080/readyz
+  if profile_enabled monitoring; then
+    wait_for_health http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}/-/ready
+    wait_for_health http://127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}/-/ready
+  fi
   if profile_enabled edge; then
     if [[ ! "${PUBLIC_BASE_URL}" =~ ^https://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$ ]]; then
       echo "PUBLIC_BASE_URL is not an approved HTTPS origin" >&2

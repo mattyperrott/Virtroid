@@ -66,11 +66,6 @@ type NodeConfig struct {
 	RuntimeRoot                   string
 	MinFreeDiskBytes              int64
 	MinFreeDiskPercent            int
-	CameraDevice                  string
-	CameraFFmpegPath              string
-	CameraWidth                   int
-	CameraHeight                  int
-	CameraFPS                     int
 }
 
 func LoadServer() ServerConfig {
@@ -181,19 +176,6 @@ func LoadNode() NodeConfig {
 	if err != nil || minFreeDiskPercent < 0 || minFreeDiskPercent > 100 {
 		minFreeDiskPercent = defaultMinFreeDiskPercent
 	}
-	cameraWidth, err := parseEnvInt("NODE_CAMERA_WIDTH", 640)
-	if err != nil || cameraWidth < 160 || cameraWidth > 1920 {
-		cameraWidth = 640
-	}
-	cameraHeight, err := parseEnvInt("NODE_CAMERA_HEIGHT", 480)
-	if err != nil || cameraHeight < 120 || cameraHeight > 1080 {
-		cameraHeight = 480
-	}
-	cameraFPS, err := parseEnvInt("NODE_CAMERA_FPS", 10)
-	if err != nil || cameraFPS < 1 || cameraFPS > 30 {
-		cameraFPS = 10
-	}
-
 	return NodeConfig{
 		NodeID:                        envOrDefault("NODE_ID", hostname),
 		NodeName:                      envOrDefault("NODE_NAME", hostname),
@@ -225,11 +207,6 @@ func LoadNode() NodeConfig {
 		RuntimeRoot:                   envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtroid/runtimes"),
 		MinFreeDiskBytes:              minFreeDiskBytes,
 		MinFreeDiskPercent:            minFreeDiskPercent,
-		CameraDevice:                  strings.TrimSpace(os.Getenv("NODE_CAMERA_DEVICE")),
-		CameraFFmpegPath:              envOrDefault("NODE_CAMERA_FFMPEG_PATH", "ffmpeg"),
-		CameraWidth:                   cameraWidth,
-		CameraHeight:                  cameraHeight,
-		CameraFPS:                     cameraFPS,
 	}
 }
 

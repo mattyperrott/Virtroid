@@ -77,13 +77,13 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 		Name:            "CI runtime",
 		AudioEnabled:    false,
 		AudioEnabledSet: true,
-		CameraMode:      "passthrough",
+		CameraMode:      "photo-import",
 		FileMode:        "upload-only",
 	})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
-	if runtime.AudioEnabled || runtime.CameraMode != "passthrough" {
+	if runtime.AudioEnabled || runtime.CameraMode != "photo-import" {
 		t.Fatalf("runtime media profile = audio:%v camera:%q", runtime.AudioEnabled, runtime.CameraMode)
 	}
 	if runtime.OperationGeneration != 1 {
@@ -184,7 +184,7 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 	}
 }
 
-func TestPostgresCameraSlotAllocationIsAtomic(t *testing.T) {
+func TestPostgresPhotoImportDoesNotConsumeHostCameraSlots(t *testing.T) {
 	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
@@ -258,7 +258,7 @@ func TestPostgresCameraSlotAllocationIsAtomic(t *testing.T) {
 			Name:            "Camera slot runtime",
 			AudioEnabled:    false,
 			AudioEnabledSet: true,
-			CameraMode:      "passthrough",
+			CameraMode:      "photo-import",
 			FileMode:        "upload-only",
 		})
 		if err != nil {
@@ -280,34 +280,31 @@ func TestPostgresCameraSlotAllocationIsAtomic(t *testing.T) {
 	close(start)
 
 	started := 0
-	rejected := 0
 	for range runtimeIDs {
 		switch startErr := <-results; {
 		case startErr == nil:
 			started++
-		case errors.Is(startErr, ErrNoReadyHost):
-			rejected++
 		default:
-			t.Fatalf("concurrent camera-slot start error = %v", startErr)
+			t.Fatalf("concurrent photo-import start error = %v", startErr)
 		}
 	}
-	if started != 1 || rejected != 1 {
-		t.Fatalf("camera-slot starts = %d accepted, %d rejected; want one each", started, rejected)
+	if started != 2 {
+		t.Fatalf("photo-import starts = %d accepted; want both", started)
 	}
 
-	var activeCameraRuntimes int
+	var activePhotoImportRuntimes int
 	if err := st.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM runtimes
 		WHERE host_id = $1
 		  AND desired_state = 'running'
-		  AND camera_mode = 'passthrough'
+		  AND camera_mode = 'photo-import'
 		  AND deleted_at IS NULL
-	`, nodeID).Scan(&activeCameraRuntimes); err != nil {
-		t.Fatalf("count active camera runtimes: %v", err)
+	`, nodeID).Scan(&activePhotoImportRuntimes); err != nil {
+		t.Fatalf("count active photo-import runtimes: %v", err)
 	}
-	if activeCameraRuntimes != 1 {
-		t.Fatalf("active camera runtimes = %d, want 1", activeCameraRuntimes)
+	if activePhotoImportRuntimes != 2 {
+		t.Fatalf("active photo-import runtimes = %d, want 2", activePhotoImportRuntimes)
 	}
 }
 

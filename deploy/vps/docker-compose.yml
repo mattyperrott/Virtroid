@@ -135,11 +135,6 @@ services:
       NODE_RUNTIME_ROOT: /srv/virtroid/runtimes
       NODE_MIN_FREE_DISK_BYTES: ${NODE_MIN_FREE_DISK_BYTES:-10737418240}
       NODE_MIN_FREE_DISK_PERCENT: ${NODE_MIN_FREE_DISK_PERCENT:-5}
-      NODE_CAMERA_DEVICE: ${NODE_CAMERA_DEVICE:-}
-      NODE_CAMERA_FFMPEG_PATH: /usr/bin/ffmpeg
-      NODE_CAMERA_WIDTH: ${NODE_CAMERA_WIDTH:-640}
-      NODE_CAMERA_HEIGHT: ${NODE_CAMERA_HEIGHT:-480}
-      NODE_CAMERA_FPS: ${NODE_CAMERA_FPS:-10}
       VIRTROID_HEALTHCHECK_URL: http://127.0.0.1:8090/healthz
     ports:
       - "${HOST_RELAY_BIND:-127.0.0.1}:8090:8090"
@@ -150,8 +145,6 @@ services:
       - /dev/binderfs:/dev/binderfs:ro
       - /srv/virtroid:/srv/virtroid
       - ${RENTERD_API_PASSWORD_FILE:-/etc/virtroid/secrets/renterd-api-password}:/run/secrets/renterd-api-password:ro
-    devices:
-      - "${NODE_CAMERA_DEVICE:-/dev/null}:${NODE_CAMERA_DEVICE:-/dev/null}"
     mem_limit: "${VIRTNODED_MEMORY_LIMIT:-1g}"
     cpus: "${VIRTNODED_CPU_LIMIT:-2.0}"
     pids_limit: ${VIRTNODED_PIDS_LIMIT:-512}

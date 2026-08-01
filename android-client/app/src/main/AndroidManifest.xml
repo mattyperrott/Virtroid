@@ -59,6 +59,10 @@
             android:name=".SessionActivity"
             android:exported="false" />
         <activity
+            android:name=".CameraCaptureActivity"
+            android:exported="false"
+            android:screenOrientation="fullSensor" />
+        <activity
             android:name=".MainActivity"
             android:exported="false" />
 

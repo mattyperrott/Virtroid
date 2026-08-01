@@ -71,7 +71,7 @@ profiles="${VIRTROID_PROFILES:-edge}"
 IFS=',' read -ra profile_list <<< "${profiles}"
 for profile in "${profile_list[@]}"; do
   case "${profile}" in
-    edge|renterd|falco) ;;
+    edge|renterd|falco|monitoring) ;;
     *) die "unsupported production profile: ${profile}" ;;
   esac
 done
@@ -359,6 +359,9 @@ done
 
 if profile_enabled falco; then
   compose up -d --no-deps --no-build --pull never falco-forwarder falco
+fi
+if profile_enabled monitoring; then
+  compose up -d --no-build --pull never alertmanager prometheus
 fi
 if profile_enabled edge; then
   compose up -d --no-deps --no-build --pull never edge

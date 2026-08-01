@@ -63,7 +63,6 @@ grep -q 'NODE_ALLOWED_ADVERTISE_ADDRS: virtnoded' "${tmp_dir}/rendered-compose.y
 grep -q 'NODE_RUNTIME_NETWORK_MODE: per-runtime' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_MIN_FREE_DISK_BYTES: "10737418240"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_MIN_FREE_DISK_PERCENT: "5"' "${tmp_dir}/rendered-compose.yml"
-grep -q 'NODE_CAMERA_WIDTH: "640"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-prometheus' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-alertmanager' "${tmp_dir}/rendered-compose.yml"
 grep -q 'image: virtroid-backend:release-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"

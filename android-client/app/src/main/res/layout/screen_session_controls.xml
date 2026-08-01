@@ -367,7 +367,7 @@
                             style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Camera Passthrough" />
+                            android:text="Physical Camera Photo Import" />
                         <TextView
                             android:id="@+id/item_camera_passthrough_subtitle"
                             style="@style/VirtroidText.Body.Compact"
