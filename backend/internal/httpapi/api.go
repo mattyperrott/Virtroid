@@ -288,7 +288,7 @@ func (v *activeBlobKeyVault) clear(runtimeID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := v.store.ClearRuntimeBlobKeyHandoff(ctx, runtimeID); err != nil {
-			log.Printf("clear durable runtime blob-key handoff runtime_id=%s error=%s", safeLogValue(runtimeID), safeLogValue(err))
+			log.Printf("clear durable runtime blob-key handoff failed")
 		}
 	}
 }
@@ -306,7 +306,7 @@ func (v *activeBlobKeyVault) clearAccount(accountID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := v.store.ClearAccountBlobKeyHandoffs(ctx, accountID); err != nil {
-			log.Printf("clear durable account blob-key handoffs account_id=%s error=%s", safeLogValue(accountID), safeLogValue(err))
+			log.Printf("clear durable account blob-key handoffs failed")
 		}
 	}
 }
@@ -1421,7 +1421,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		abortCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 		defer cancel()
 		if _, abortErr := a.store.AbortPendingSession(abortCtx, session.ID, session.RelayToken, reason); abortErr != nil {
-			log.Printf("abort pending session after setup failure session_id=%s error=%s", safeLogValue(session.ID), safeLogValue(abortErr))
+			log.Printf("abort pending session after setup failure failed")
 		}
 	}
 
@@ -2857,21 +2857,9 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 
 func writeServerAPIError(w http.ResponseWriter, status int, code, message string, err error) {
 	if err != nil {
-		log.Printf("httpapi server error status=%d code=%s error=%s", status, safeLogValue(code), safeLogValue(err))
+		log.Printf("httpapi server error status=%d", status)
 	}
 	writeAPIError(w, status, code, message)
-}
-
-func safeLogValue(value any) string {
-	const maxRunes = 1024
-	runes := []rune(fmt.Sprint(value))
-	if len(runes) > maxRunes {
-		runes = append(runes[:maxRunes], '…')
-	}
-	// QuoteToASCII makes CR, LF, terminal escapes, and every other control byte
-	// visible as an escape sequence, so one untrusted value cannot forge a new
-	// log record or terminal control sequence.
-	return strconv.QuoteToASCII(string(runes))
 }
 
 func writeInternalAPIError(w http.ResponseWriter, code string, err error) {
@@ -2929,11 +2917,7 @@ func withRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				log.Printf(
-					"http handler panic method=%s path=%s",
-					safeLogValue(r.Method),
-					safeLogValue(r.URL.Path),
-				)
+				log.Printf("http handler panic")
 				writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "internal server error")
 			}
 		}()

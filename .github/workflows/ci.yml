@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests and security checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VIRTROID_TEST_DATABASE_URL: postgres://virtroid:ci-postgres-password@127.0.0.1:5432/virtroid?sslmode=disable
+    services:
+      postgres:
+        image: "postgres:18@sha256:32ca0af8e77bfb8c6610c488e4691f83f972a3e9e64d3b02facf3ab111ad5500"
+        env:
+          POSTGRES_DB: virtroid
+          POSTGRES_USER: virtroid
+          POSTGRES_PASSWORD: ci-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U virtroid -d virtroid"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Reject tracked release and distribution artifacts
+        working-directory: ${{ github.workspace }}
+        run: |
+          tracked="$(git ls-files -- ':(glob)dist/**' ':(glob)**/dist/**' ':(glob)**/*.apk' ':(glob)**/*.aab' ':(glob)**/*.idsig' backend/falco-forwarder backend/virtnoded backend/virtroid-viewercrypt backend/virtroidd)"
+          if [ -n "${tracked}" ]; then
+            echo "Generated release/distribution artifacts must be published by CI, not committed:" >&2
+            echo "${tracked}" >&2
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: backend/go.sum
+
+      - name: Download locked modules
+        run: go mod download
+
+      - name: Unit tests
+        run: go test -count=1 ./...
+
+      - name: Race tests
+        run: go test -race -count=1 ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build every command
+        run: go build ./cmd/...
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+      - name: Reachable vulnerability scan
+        run: govulncheck ./...
+
+  android:
+    name: Android tests and release security gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android-client
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up and validate Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      - name: Unit tests, lint, debug build, and release manifest gate
+        run: >-
+          ./gradlew --no-daemon
+          :app:testDebugUnitTest
+          :app:lintDebug
+          :app:lintRelease
+          :app:assembleDebug
+          :app:verifyReleaseSecurityManifest
+
+  deployment:
+    name: Deployment static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shell syntax
+        run: bash -n deploy/vps/deploy.sh deploy/vps/generate-env.sh deploy/vps/prepare-redroid-host.sh deploy/vps/test-compose-config.sh deploy/vps/test-env-safety.sh deploy/vps/virtroid-binderfs-setup.sh
+
+      - name: Environment safety regression test
+        run: bash deploy/vps/test-env-safety.sh
+
+      - name: Compose configuration validation
+        run: bash deploy/vps/test-compose-config.sh

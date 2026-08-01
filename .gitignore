@@ -6,7 +6,6 @@
 *.aab
 *.idsig
 /dist/
-/docs/
 /Virtroid-source-code.html
 /android-client/dist/
 /deploy/vps/.env
