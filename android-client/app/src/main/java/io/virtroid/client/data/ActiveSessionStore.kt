@@ -84,7 +84,7 @@ class ActiveSessionStore(context: Context) {
             sessionId = vault.getString(NAMESPACE, KEY_SESSION_ID, "").orEmpty(),
             viewerPublicKey = vault.getString(NAMESPACE, KEY_VIEWER_PUBLIC_KEY, "").orEmpty(),
             audioEnabled = vault.getBoolean(NAMESPACE, KEY_AUDIO_ENABLED, false),
-            cameraMode = vault.getString(NAMESPACE, KEY_CAMERA_MODE, "disabled").orEmpty(),
+            cameraMode = vault.getString(NAMESPACE, KEY_CAMERA_MODE, "photo-import").orEmpty(),
             fileMode = vault.getString(NAMESPACE, KEY_FILE_MODE, "upload-only").orEmpty(),
             savedAtMs = vault.getLong(NAMESPACE, KEY_SAVED_AT, 0L),
         )
@@ -112,7 +112,7 @@ class ActiveSessionStore(context: Context) {
             sessionId = prefs.getString(KEY_SESSION_ID, "").orEmpty(),
             viewerPublicKey = prefs.getString(KEY_VIEWER_PUBLIC_KEY, "").orEmpty(),
             audioEnabled = prefs.getBoolean(KEY_AUDIO_ENABLED, false),
-            cameraMode = prefs.getString(KEY_CAMERA_MODE, "disabled").orEmpty(),
+            cameraMode = prefs.getString(KEY_CAMERA_MODE, "photo-import").orEmpty(),
             fileMode = prefs.getString(KEY_FILE_MODE, "upload-only").orEmpty(),
             savedAtMs = prefs.getLong(KEY_SAVED_AT, 0L),
         )
@@ -158,7 +158,7 @@ class ActiveSessionStore(context: Context) {
                 sessionId = payload.optString(KEY_SESSION_ID),
                 viewerPublicKey = payload.optString(KEY_VIEWER_PUBLIC_KEY),
                 audioEnabled = payload.optBoolean(KEY_AUDIO_ENABLED, false),
-                cameraMode = payload.optString(KEY_CAMERA_MODE, "disabled"),
+                cameraMode = payload.optString(KEY_CAMERA_MODE, "photo-import"),
                 fileMode = payload.optString(KEY_FILE_MODE, "upload-only"),
                 savedAtMs = payload.optLong(KEY_SAVED_AT),
             )
@@ -202,7 +202,7 @@ class ActiveSessionStore(context: Context) {
         val sessionId: String,
         val viewerPublicKey: String,
         val audioEnabled: Boolean = false,
-        val cameraMode: String = "disabled",
+        val cameraMode: String = "photo-import",
         val fileMode: String = "upload-only",
         val savedAtMs: Long = System.currentTimeMillis(),
     ) {

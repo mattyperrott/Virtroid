@@ -1,6 +1,6 @@
 # Virtroid Current Status and Roadmap
 
-Authoritative status date: 2026-08-01
+Authoritative status date: 2026-08-02
 
 This report separates repository implementation, local validation, the last
 recorded live deployment snapshot, and work that remains unproved. Historical
@@ -14,7 +14,7 @@ a production-proven private computing service.
 The current repository implements signed invite-gated onboarding, runtime and
 persona lifecycle operations, an encrypted viewer, encrypted stopped-runtime
 snapshots, approved node/operator identities, active-runtime file import,
-viewer audio, experimental camera passthrough, node-aware readiness, metrics,
+viewer audio, physical-camera photo import, node-aware readiness, metrics,
 trace-context propagation, and alert rules.
 
 The strongest remaining boundary is unchanged: ReDroid and the node agent run
@@ -24,9 +24,8 @@ confidential computing, host-blind, operator-blind, or end-to-end encrypted
 against the runtime host.
 
 The media and observability additions in this repository have local build,
-unit, and PostgreSQL transaction evidence. They have not yet been deployed to
-the VPS or proved through a live ReDroid guest. Camera support is therefore
-experimental and fail-closed, not a production camera guarantee.
+unit, and PostgreSQL transaction evidence. Live ReDroid acceptance evidence is
+tracked separately from the existence of the code path.
 
 ## Evidence ledger
 
@@ -45,9 +44,8 @@ Implemented in this repository:
   embedded scrcpy server to the Android viewer decoder;
 - session-bound, signed, bounded active-runtime file upload, with node-side
   content checks, temporary-file cleanup, ADB push, and media scan;
-- explicit client camera capture, a signed bounded JPEG channel, node-side
-  rate limiting and idle cleanup, one-slot V4L2 allocation, and capability-aware
-  scheduling;
+- explicit in-app Camera2 photo capture and a signed, session-bound, bounded
+  JPEG import into `/sdcard/Pictures/Virtroid`, followed by a media scan;
 - `/healthz`, `/readyz`, and `/metrics` on control and node services;
 - control readiness that includes database health and fresh approved-node
   readiness;
@@ -63,15 +61,14 @@ Passed locally on 2026-08-01:
 - the full Go unit suite and race detector, `go vet`, and every command build;
 - `govulncheck`, with no reachable Go vulnerabilities;
 - schema and lifecycle integration against an actual PostgreSQL 18 server;
-- concurrent PostgreSQL proof that two camera runtimes cannot claim one camera
-  slot;
+- PostgreSQL proof that photo-import runtimes do not consume obsolete host
+  camera slots;
 - Android unit tests, debug/release lint, debug assembly, and the release
   security-manifest gate;
 - byte-for-byte comparison between a clean vendored scrcpy build and the
   embedded node asset;
 - deployment shell syntax, environment-safety, and Compose checks;
-- a `linux/amd64` backend image build with the expected health check and
-  `ffmpeg` support;
+- a `linux/amd64` backend image build with the expected health check;
 - Trivy repository and image scans with no high/critical findings, Semgrep
   security/secrets rules with no findings, and TruffleHog with no secrets; and
 - Prometheus configuration plus all seven alert rules through `promtool`, and
@@ -116,7 +113,7 @@ snapshot. At that point:
 | Relational orphan audit | zero orphan devices, runtimes, sessions, or logs |
 
 This is historical evidence, not confirmation of the server's state on
-2026-08-01. The current repository schema is `2026080101`. No claim in this
+2026-08-02. The current repository schema is `2026080201`. No claim in this
 report establishes that the repository candidate has been deployed.
 
 ## Capability matrix
@@ -131,7 +128,7 @@ report establishes that the repository candidate has been deployed.
 | Viewer transport | Implemented | TLS and session encryption do not hide plaintext from the node |
 | Viewer audio | Release candidate | Full code/build path exists; live ReDroid audio capture is unproved |
 | Active-runtime file import | Release candidate | Signed session path and node/ADB logic tested; live guest import is unproved |
-| Camera passthrough | Experimental | Client-to-V4L2 path exists; exact ReDroid camera HAL behavior is unproved |
+| Physical-camera photo import | Release candidate | In-app Camera2 capture and signed ADB/media-scan import exist; live physical-device proof is pending |
 | Encrypted local snapshots | Implemented | Same-VPS stopped-runtime persistence |
 | Snapshot rollback protection | Implemented | Monotonic generation checks plus PostgreSQL integration |
 | Metrics | Implemented | Bounded service/route/status counters, histograms, and readiness gauges |
@@ -168,25 +165,21 @@ media scan, and removes the host temporary file.
 This is a document-import path, not arbitrary package sideloading. Live ADB and
 Android storage behavior still require disposable-guest acceptance testing.
 
-### Camera
+### Physical-camera photo import
 
-The Android client captures Camera2 JPEG frames only while the user has enabled
-the session control. The signed, session-bound route limits frame size; the
-node limits the feed to 25 frames per second, converts frames with `ffmpeg`,
-writes only to the configured V4L2 device, and stops the feeder after five
-seconds idle. The Linux decoder child runs without the node's environment,
-root identity, or Docker-group authority. Runtime stop/delete, taint, process
-shutdown, client background, or user disable also stop the path.
+The live viewer top bar exposes a camera icon when the runtime uses
+`photo-import`. Pressing it opens an app-internal Camera2 screen rather than an
+external camera application. After the user takes a picture, the client sends
+one JPEG through a signed capability bound to the active session and runtime.
+Both control and node enforce a 16 MiB limit, JPEG structure, and a 64-megapixel
+dimension ceiling.
 
-Scheduling locks the host row and counts active camera runtimes before
-allocating a camera slot. A node advertises camera capability only when its
-configured device is ready. Without `NODE_CAMERA_DEVICE`, camera runtimes fail
-closed at scheduling.
-
-The missing proof is guest-side: the exact pinned ReDroid image must enumerate
-the mounted V4L2 device through Camera2 and pass preview, rotation, reconnect,
-cross-runtime isolation, and cleanup tests. Until then, camera passthrough is an
-experimental operator-enabled feature.
+The node stages the image with mode `0600`, pushes it to
+`/sdcard/Pictures/Virtroid`, requests an Android media scan, and removes the
+host temporary file. This design intentionally has no VPS camera device,
+kernel module, V4L2 loopback, `ffmpeg` feeder, ReDroid camera HAL, or camera-slot
+scheduler dependency. A real-phone capture and disposable live-guest import
+remain the acceptance boundary.
 
 ## Observability boundary
 
@@ -207,11 +200,11 @@ a secret-backed receiver.
 
 ## Highest-priority remaining work
 
-1. Create a reviewed VPS release, apply schema `2026080101`, and re-run public,
+1. Create a reviewed VPS release, apply schema `2026080201`, and re-run public,
    control, node, database, and orphan checks. Deployment is a separate
    operator-authorized action.
 2. Run disposable ReDroid acceptance tests for audio playback, document import,
-   and the exact V4L2 camera HAL before enabling camera in production.
+   and physical-camera photo import, deleting the test runtime afterward.
 3. Configure and test an external Alertmanager receiver, then add a trace
    backend if cross-service trace search is required.
 4. Complete interruption, disk-pressure, rollback/fork/corruption, network-loss,

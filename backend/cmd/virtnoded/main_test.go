@@ -10,6 +10,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,11 +138,29 @@ func TestNodeCallbackBodyLimitIsRouteSpecific(t *testing.T) {
 	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/files"); got != maxRuntimeFileImportBytes {
 		t.Fatalf("file callback limit = %d", got)
 	}
-	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/camera/frame"); got != maxRuntimeCameraFrameBytes {
-		t.Fatalf("camera callback limit = %d", got)
+	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/photos"); got != maxRuntimePhotoImportBytes {
+		t.Fatalf("photo callback limit = %d", got)
 	}
 	if got := nodeCallbackBodyLimit("/api/v1/internal/viewer/prepare"); got != 2<<20 {
 		t.Fatalf("default callback limit = %d", got)
+	}
+}
+
+func TestRuntimePhotoValidation(t *testing.T) {
+	var photo bytes.Buffer
+	if err := jpeg.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRuntimePhotoContent(photo.Bytes()); err != nil {
+		t.Fatalf("valid JPEG rejected: %v", err)
+	}
+	if got, err := safeRuntimePhotoFilename("Virtroid-20260802.jpg"); err != nil || got != "Virtroid-20260802.jpg" {
+		t.Fatalf("safe photo name = %q, %v", got, err)
+	}
+	for _, name := range []string{"../capture.jpg", "capture.png", "capture.jpg/other"} {
+		if _, err := safeRuntimePhotoFilename(name); err == nil {
+			t.Fatalf("unsafe photo name %q was accepted", name)
+		}
 	}
 }
 

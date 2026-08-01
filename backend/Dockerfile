@@ -35,7 +35,6 @@ LABEL org.opencontainers.image.revision="${VCS_REF}" \
 RUN apk add --no-cache \
       android-tools=35.0.2-r23 \
       ca-certificates=20260611-r0 \
-      ffmpeg=8.0.1-r1 \
     && adduser -D -h /home/virtroid -s /sbin/nologin virtroid
 
 COPY --from=build /out/virtroidd /usr/local/bin/virtroidd

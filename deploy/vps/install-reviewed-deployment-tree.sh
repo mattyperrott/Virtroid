@@ -259,7 +259,6 @@ required_tree_files=(
   derive-node-fingerprint.sh docker-compose.yml enable-key-only-ssh.sh
   fail2ban-virtroid.conf audit-virtroid.rules generate-env.sh haproxy.cfg
   install-reviewed-deployment-tree.sh prepare-redroid-host.sh
-  v4l2loopback-virtroid.conf virtroid-camera.modules
   release-on-vps.sh renterd-admin.sh renterd-mysql-init.sql
   renterd-smoke-test.sh
   redroid-binderfs.service release.env.example renterd.md

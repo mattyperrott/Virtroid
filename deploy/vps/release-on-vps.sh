@@ -122,7 +122,7 @@ if [ "${installer_digest_after}" != "${installer_digest_before}" ]; then
   # runtime integration list cannot be skipped by the prior installer.
   /usr/local/sbin/virtroid-install-reviewed-deployment-tree "${stage}/tree/vps" "${tree_digest}"
 fi
-VIRTROID_PROFILES=edge /usr/local/sbin/virtroid-apply-local-release "${stage}" "${expected_fingerprint}"
+VIRTROID_PROFILES=edge,monitoring /usr/local/sbin/virtroid-apply-local-release "${stage}" "${expected_fingerprint}"
 trap - EXIT HUP INT TERM
 cleanup_stage
 

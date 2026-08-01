@@ -52,6 +52,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         binding.provisionRuntimeButton.setOnClickListener { provisionRuntime() }
         binding.provisionRuntimeButton.isEnabled = false
         binding.cameraPassthroughSwitch.isEnabled = true
+        binding.cameraPassthroughSwitch.isChecked = true
         binding.switchCameraPassthroughLabel.text = getString(R.string.new_runtime_camera_passthrough)
         loadEntitlement()
     }
@@ -143,7 +144,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                         name = runtimeName,
                         runtimeProfile = runtimeProfile,
                         audioEnabled = binding.audioPassthroughSwitch.isChecked,
-						cameraMode = if (binding.cameraPassthroughSwitch.isChecked) "passthrough" else "disabled",
+						cameraMode = if (binding.cameraPassthroughSwitch.isChecked) "photo-import" else "disabled",
                         fileMode = "upload-only",
                         blobAutoSnapshot = true,
                         blobRetainDays = 7,

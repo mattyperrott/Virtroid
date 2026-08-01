@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"image/jpeg"
 	"io"
 	"io/fs"
 	"log"
@@ -45,7 +46,6 @@ import (
 
 var errContainerNotFound = errors.New("container not found")
 var errInstalledPackageMissing = errors.New("installed artifact did not provide the expected package")
-var errCameraFrameRate = errors.New("camera frame rate exceeds the node limit")
 var appPackageNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
 var digestedImageReferencePattern = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-fA-F]{64}$`)
 var dockerNetworkNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
@@ -316,20 +316,9 @@ const (
 	maxRelaySessionDuration    = time.Hour
 	maxRelayBytesPerDirection  = int64(8 * 1024 * 1024 * 1024)
 	maxRuntimeFileImportBytes  = int64(32 << 20)
-	maxRuntimeCameraFrameBytes = int64(2 << 20)
+	maxRuntimePhotoImportBytes = int64(16 << 20)
 	maxRuntimeImportZipEntries = 1024
-	cameraFrameMinimumInterval = 40 * time.Millisecond
-	cameraFeedIdleTimeout      = 5 * time.Second
 )
-
-type cameraFeed struct {
-	runtimeID string
-	command   *exec.Cmd
-	stdin     io.WriteCloser
-	logFile   *os.File
-	lastFrame time.Time
-	idleTimer *time.Timer
-}
 
 type nodeAgent struct {
 	cfg                 config.NodeConfig
@@ -346,8 +335,6 @@ type nodeAgent struct {
 	callbackNonceMu     sync.Mutex
 	callbackNonces      map[string]time.Time
 	relaySlots          chan struct{}
-	cameraFeedMu        sync.Mutex
-	cameraFeed          *cameraFeed
 	heartbeatStateMu    sync.RWMutex
 	lastHeartbeatAt     time.Time
 	lastHeartbeatOK     bool
@@ -420,7 +407,7 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/v1/internal/viewer/prepare", node.handlePrepareViewer)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/files", node.handleRuntimeFileImport)
-	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/camera/frame", node.handleRuntimeCameraFrame)
+	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/photos", node.handleRuntimePhotoImport)
 	mux.HandleFunc("POST /api/v1/internal/blob-key/verify", node.handleVerifyBlobKeyEnvelope)
 	mux.HandleFunc("CONNECT /api/v1/relay/{id}", node.handleRelaySession)
 	mux.HandleFunc("GET /api/v1/relay/{id}", node.handleRelaySession)
@@ -450,7 +437,6 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	cancel()
-	node.stopCameraFeed("")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
@@ -532,7 +518,7 @@ func (n *nodeAgent) healthReport(ctx context.Context) nodeHealthReport {
 		LastHeartbeatAt:       lastHeartbeatAt,
 		AudioStreaming:        len(scrcpyServerJar) > 0,
 		FileImport:            adbAvailable(n.cfg.ADBPath),
-		CameraPassthrough:     n.cameraPassthroughAvailable(),
+		CameraPassthrough:     false,
 	}
 	report.OK = report.DockerReady && report.BinderReady && report.DiskReady && report.AssetsReady && report.ConfigurationReady && report.ControlPlaneHeartbeat
 	return report
@@ -802,8 +788,8 @@ func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map
 		"binder":              binderAvailable(),
 		"audio_streaming":     len(scrcpyServerJar) > 0,
 		"file_import":         adbAvailable(n.cfg.ADBPath),
-		"camera_passthrough":  n.cameraPassthroughAvailable(),
-		"camera_slots":        boolInt(n.cameraPassthroughAvailable()),
+		"camera_passthrough":  false,
+		"camera_slots":        0,
 		"blob_store_kind":     blobStoreKind,
 		"renterd_configured":  strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" && strings.TrimSpace(n.cfg.RenterdPassword) != "",
 		"renterd_bucket":      defaultBlobBucket(n.cfg.RenterdBucket),
@@ -958,8 +944,8 @@ func nodeCallbackBodyLimit(path string) int64 {
 	if strings.HasSuffix(path, "/files") {
 		return maxRuntimeFileImportBytes
 	}
-	if strings.HasSuffix(path, "/camera/frame") {
-		return maxRuntimeCameraFrameBytes
+	if strings.HasSuffix(path, "/photos") {
+		return maxRuntimePhotoImportBytes
 	}
 	return 2 << 20
 }
@@ -1119,40 +1105,125 @@ func (n *nodeAgent) handleRuntimeFileImport(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (n *nodeAgent) handleRuntimeCameraFrame(w http.ResponseWriter, r *http.Request) {
+func (n *nodeAgent) handleRuntimePhotoImport(w http.ResponseWriter, r *http.Request) {
 	if !n.requireControlPlaneCallback(w, r) {
 		return
 	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil || len(body) < 4 || int64(len(body)) > maxRuntimeCameraFrameBytes || body[0] != 0xff || body[1] != 0xd8 {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": "camera frame must be a JPEG no larger than 2 MiB"})
+	runtimeID := strings.TrimSpace(r.PathValue("id"))
+	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	runtimeID := strings.TrimSpace(r.PathValue("id"))
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	filename, err = safeRuntimePhotoFilename(filename)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil || len(body) == 0 || int64(len(body)) > maxRuntimePhotoImportBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "photo must be a JPEG no larger than 16 MiB"})
+		return
+	}
+	if err := validateRuntimePhotoContent(body); err != nil {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 	runtime, err := n.assignedRuntime(ctx, runtimeID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		return
 	}
-	if runtime.Status != "running" || !strings.EqualFold(runtime.CameraMode, "passthrough") {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime is not ready for camera passthrough"})
+	if runtime.Status != "running" || !strings.EqualFold(runtime.CameraMode, "photo-import") {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime is not ready for camera photo import"})
 		return
 	}
-	if !n.cameraPassthroughAvailable() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "node camera passthrough is not configured"})
+	inspect, err := n.inspectContainer(ctx, containerNameForRuntime(runtime.ID))
+	if err != nil || !inspect.State.Running {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime container is not running"})
 		return
 	}
-	if err := n.writeCameraFrame(runtime.ID, body); err != nil {
-		if errors.Is(err, errCameraFrameRate) {
-			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "camera frame injection failed"})
+	serial, err := n.adbSerialForRuntime(runtime, inspect)
+	if err != nil || n.adbConnect(ctx, serial) != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "runtime ADB transport is unavailable"})
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "bytes": len(body)})
+
+	importDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "imports")
+	if err := os.MkdirAll(importDir, 0o700); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare photo staging"})
+		return
+	}
+	tmp, err := os.CreateTemp(importDir, ".photo-*")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare photo staging"})
+		return
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "secure photo staging"})
+		return
+	}
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "write photo staging"})
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "close photo staging"})
+		return
+	}
+	remoteDir := "/sdcard/Pictures/Virtroid"
+	if _, err := n.adbShellCapture(ctx, serial, "mkdir -p "+shellQuote(remoteDir)); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "prepare runtime photo directory"})
+		return
+	}
+	remotePath := remoteDir + "/" + filename
+	if err := n.adbPush(ctx, serial, tmpPath, remotePath); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "push photo into runtime"})
+		return
+	}
+	_, _ = n.adbShellCapture(ctx, serial, "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "+shellQuote("file://"+remotePath)+" >/dev/null 2>&1 || true")
+	digest := sha256.Sum256(body)
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Imported a physical-camera photo into the active runtime media library.")
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"ok":           true,
+		"file_name":    filename,
+		"bytes":        len(body),
+		"sha256":       hex.EncodeToString(digest[:]),
+		"runtime_path": remotePath,
+	})
+}
+
+func safeRuntimePhotoFilename(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.ContainsRune(name, 0) || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		return "", errors.New("invalid photo name")
+	}
+	extension := strings.ToLower(filepath.Ext(name))
+	if extension != ".jpg" && extension != ".jpeg" {
+		return "", errors.New("captured photo name must end in .jpg or .jpeg")
+	}
+	if len([]byte(name)) > 255 {
+		return "", errors.New("photo name is too long")
+	}
+	return name, nil
+}
+
+func validateRuntimePhotoContent(body []byte) error {
+	if len(body) < 4 || int64(len(body)) > maxRuntimePhotoImportBytes || body[0] != 0xff || body[1] != 0xd8 {
+		return errors.New("photo must be a JPEG no larger than 16 MiB")
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(body))
+	if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 64_000_000 {
+		return errors.New("photo contains invalid or excessive JPEG dimensions")
+	}
+	return nil
 }
 
 func (n *nodeAgent) assignedRuntime(ctx context.Context, runtimeID string) (runtimeAssignment, error) {
@@ -1244,119 +1315,6 @@ func validateRuntimeImportContent(body []byte) error {
 func adbAvailable(adbPath string) bool {
 	_, err := exec.LookPath(strings.TrimSpace(adbPath))
 	return err == nil
-}
-
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
-}
-
-func (n *nodeAgent) cameraPassthroughAvailable() bool {
-	device := strings.TrimSpace(n.cfg.CameraDevice)
-	if device == "" || !strings.HasPrefix(filepath.Base(device), "video") {
-		return false
-	}
-	info, err := os.Stat(device)
-	if err != nil || info.IsDir() || info.Mode()&os.ModeDevice == 0 {
-		return false
-	}
-	_, err = exec.LookPath(strings.TrimSpace(n.cfg.CameraFFmpegPath))
-	return err == nil
-}
-
-func (n *nodeAgent) writeCameraFrame(runtimeID string, frame []byte) error {
-	n.cameraFeedMu.Lock()
-	defer n.cameraFeedMu.Unlock()
-	if n.cameraFeed == nil || n.cameraFeed.runtimeID != runtimeID || n.cameraFeed.command.ProcessState != nil {
-		n.stopCameraFeedLocked()
-		feed, err := n.startCameraFeedLocked(runtimeID)
-		if err != nil {
-			return err
-		}
-		n.cameraFeed = feed
-	}
-	if !n.cameraFeed.lastFrame.IsZero() && time.Since(n.cameraFeed.lastFrame) < cameraFrameMinimumInterval {
-		return errCameraFrameRate
-	}
-	if _, err := n.cameraFeed.stdin.Write(frame); err != nil {
-		n.stopCameraFeedLocked()
-		return err
-	}
-	n.cameraFeed.lastFrame = time.Now()
-	n.armCameraFeedIdleTimerLocked(n.cameraFeed)
-	return nil
-}
-
-func (n *nodeAgent) armCameraFeedIdleTimerLocked(feed *cameraFeed) {
-	if feed.idleTimer != nil {
-		feed.idleTimer.Stop()
-	}
-	feed.idleTimer = time.AfterFunc(cameraFeedIdleTimeout, func() {
-		n.cameraFeedMu.Lock()
-		defer n.cameraFeedMu.Unlock()
-		if n.cameraFeed == feed {
-			n.stopCameraFeedLocked()
-		}
-	})
-}
-
-func (n *nodeAgent) startCameraFeedLocked(runtimeID string) (*cameraFeed, error) {
-	logPath := filepath.Join(n.cfg.RuntimeRoot, runtimeID, "camera-ffmpeg.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	filter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", n.cfg.CameraWidth, n.cfg.CameraHeight, n.cfg.CameraWidth, n.cfg.CameraHeight)
-	cmd := exec.Command(
-		n.cfg.CameraFFmpegPath,
-		"-hide_banner", "-loglevel", "warning",
-		"-f", "image2pipe", "-vcodec", "mjpeg", "-r", strconv.Itoa(n.cfg.CameraFPS), "-i", "pipe:0",
-		"-vf", filter, "-pix_fmt", "yuyv422", "-f", "v4l2", n.cfg.CameraDevice,
-	)
-	if err := hardenCameraCommand(cmd, n.cfg.CameraDevice); err != nil {
-		_ = logFile.Close()
-		return nil, err
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		_ = logFile.Close()
-		return nil, err
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = logFile.Close()
-		return nil, err
-	}
-	return &cameraFeed{runtimeID: runtimeID, command: cmd, stdin: stdin, logFile: logFile}, nil
-}
-
-func (n *nodeAgent) stopCameraFeed(runtimeID string) {
-	n.cameraFeedMu.Lock()
-	defer n.cameraFeedMu.Unlock()
-	if n.cameraFeed != nil && (runtimeID == "" || n.cameraFeed.runtimeID == runtimeID) {
-		n.stopCameraFeedLocked()
-	}
-}
-
-func (n *nodeAgent) stopCameraFeedLocked() {
-	feed := n.cameraFeed
-	n.cameraFeed = nil
-	if feed == nil {
-		return
-	}
-	if feed.idleTimer != nil {
-		feed.idleTimer.Stop()
-	}
-	_ = feed.stdin.Close()
-	if feed.command.Process != nil {
-		_ = feed.command.Process.Kill()
-		_, _ = feed.command.Process.Wait()
-	}
-	_ = feed.logFile.Close()
 }
 
 func (n *nodeAgent) handleVerifyBlobKeyEnvelope(w http.ResponseWriter, r *http.Request) {
@@ -1830,7 +1788,6 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 }
 
 func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAssignment, containerName string) error {
-	n.stopCameraFeed(runtime.ID)
 	var cleanupErrors []error
 	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove tainted runtime container: %w", err))
@@ -1847,7 +1804,6 @@ func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAs
 }
 
 func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAssignment, clearWipe bool) error {
-	n.stopCameraFeed(runtime.ID)
 	containerName := containerNameForRuntime(runtime.ID)
 	_, inspectErr := n.inspectContainer(ctx, containerName)
 	hadContainer := inspectErr == nil
@@ -2020,7 +1976,6 @@ func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) 
 }
 
 func (n *nodeAgent) deleteRuntime(ctx context.Context, runtime runtimeAssignment) error {
-	n.stopCameraFeed(runtime.ID)
 	containerName := containerNameForRuntime(runtime.ID)
 	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 		return err
@@ -2645,13 +2600,6 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 		fmt.Sprintf("androidboot.redroid_dpi=%d", runtime.DensityDpi),
 	}
 	cmd = append(cmd, personaOverrideProps(persona)...)
-	if strings.EqualFold(runtime.CameraMode, "passthrough") {
-		if !n.cameraPassthroughAvailable() {
-			return errors.New("camera passthrough was requested but this node has no ready V4L2 device")
-		}
-		cmd = append(cmd, "ro.hardware.camera=v4l2")
-	}
-
 	body := map[string]any{
 		"Image": runtimeImage,
 		"Cmd":   cmd,
@@ -2693,16 +2641,6 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 				},
 			},
 		},
-	}
-	if strings.EqualFold(runtime.CameraMode, "passthrough") {
-		body["HostConfig"].(map[string]any)["Devices"] = []map[string]string{
-			{
-				"PathOnHost":        n.cfg.CameraDevice,
-				"PathInContainer":   "/dev/video0",
-				"CgroupPermissions": "rwm",
-			},
-		}
-		body["Labels"].(map[string]string)["io.virtroid.camera-device"] = n.cfg.CameraDevice
 	}
 	if networkName = strings.TrimSpace(networkName); networkName != "" {
 		body["HostConfig"].(map[string]any)["NetworkMode"] = networkName

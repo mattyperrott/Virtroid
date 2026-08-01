@@ -700,27 +700,38 @@ class VirtroidApi(
         )
     }
 
-    suspend fun sendRuntimeCameraFrame(
+    suspend fun importRuntimePhoto(
         baseUrl: String,
         accountId: String,
         deviceId: String,
         runtimeId: String,
         sessionId: String,
+        fileName: String,
         jpeg: ByteArray,
-    ) = withContext(Dispatchers.IO) {
-        require(jpeg.size in 4..MAX_RUNTIME_CAMERA_FRAME_BYTES) {
-            "camera frame must be a JPEG no larger than 2 MiB"
+    ): RuntimeFileImport = withContext(Dispatchers.IO) {
+        require(jpeg.size in 4..MAX_RUNTIME_PHOTO_IMPORT_BYTES) {
+            "photo must be a JPEG no larger than 16 MiB"
         }
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
-        executeJson(
+        val encodedFileName = Base64.encodeToString(
+            fileName.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+        )
+        val payload = executeJson(
             capabilityBinaryRequest(
                 baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/camera/frame?session_id=$sessionId",
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/photos?session_id=$sessionId&name=$encodedFileName",
                 method = "POST",
                 runtimeId = runtimeId,
                 body = jpeg,
                 contentType = "image/jpeg",
             ),
+        )
+        RuntimeFileImport(
+            fileName = payload.getString("file_name"),
+            bytes = payload.getLong("bytes"),
+            sha256 = payload.getString("sha256"),
+            runtimePath = payload.getString("runtime_path"),
         )
     }
 
@@ -1199,7 +1210,7 @@ class VirtroidApi(
             heightPx = optInt("height_px", 1600),
             densityDpi = optInt("density_dpi", 320),
             audioEnabled = optBoolean("audio_enabled", true),
-            cameraMode = optString("camera_mode", "disabled"),
+            cameraMode = optString("camera_mode", "photo-import"),
             fileMode = optString("file_mode", "upload-only"),
             blobAutoSnapshot = optBoolean("blob_auto_snapshot", true),
             blobRetainDays = optInt("blob_retain_days", 7),
@@ -1335,7 +1346,7 @@ class VirtroidApi(
         const val MAX_ERROR_MESSAGE_CHARS = 2_048
         const val MAX_CATALOG_ITEMS = 250
         const val MAX_RUNTIME_FILE_IMPORT_BYTES = 32 * 1024 * 1024
-        const val MAX_RUNTIME_CAMERA_FRAME_BYTES = 2 * 1024 * 1024
+        const val MAX_RUNTIME_PHOTO_IMPORT_BYTES = 16 * 1024 * 1024
         val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
         val registeredRuntimeCapabilities = mutableSetOf<String>()
     }

@@ -260,7 +260,7 @@
     <string name="runtime_lifecycle_detail_deleting">... waiting for node cleanup confirmation_</string>
 
     <string name="new_runtime_audio_passthrough">Audio Passthrough</string>
-    <string name="new_runtime_camera_passthrough">Camera Passthrough (compatible nodes only)</string>
+    <string name="new_runtime_camera_passthrough">Physical Camera Photo Import</string>
     <string name="new_runtime_close">Close</string>
     <string name="new_runtime_missing_access">Link this device to an account before creating runtimes.</string>
     <string name="new_runtime_provision_title_request">Creating Runtime Profile ...</string>
@@ -374,10 +374,13 @@
     <string name="session_upload">Upload</string>
     <string name="session_file_too_large">Files must be 32 MiB or smaller.</string>
     <string name="session_file_imported">Imported %1$s into Downloads.</string>
-    <string name="session_camera_permission_required">Camera permission is required for passthrough.</string>
-    <string name="session_camera_started">Camera passthrough started.</string>
-    <string name="session_camera_stopped">Camera passthrough stopped.</string>
-    <string name="session_camera_unavailable">Camera passthrough is unavailable.</string>
+    <string name="session_camera_permission_required">Camera permission is required to take a photo.</string>
+    <string name="session_camera_unavailable">The physical camera is unavailable.</string>
+    <string name="session_camera_close">Close camera</string>
+    <string name="session_camera_take_photo">Take photo</string>
+    <string name="session_camera_capture_failed">The photo could not be captured.</string>
+    <string name="session_photo_too_large">The captured photo exceeds 16 MiB.</string>
+    <string name="session_photo_imported">Saved %1$s to Pictures/Virtroid.</string>
     <string name="session_controls">Controls</string>
     <string name="session_stream_connecting">Opening live Android display...</string>
     <string name="session_stream_reconnecting">Reconnecting live Android display...</string>
