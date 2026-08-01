@@ -26,5 +26,9 @@ From `android-client/`, build with:
 The resulting APK is a zip-compatible app-process payload. Copy
 `../third_party/scrcpy-server/build/outputs/apk/release/scrcpy-server-release-unsigned.apk`
 to `../backend/cmd/virtnoded/assets/scrcpy-server.jar`, then run the backend and
-Android test suites. CI independently rebuilds the module and checks that the
-tracked asset is byte-for-byte identical to the reproducible unsigned APK.
+Android test suites. The tracked asset's pinned SHA-256 digest is
+`4cc8c509fd73f6594e89419c0c29347e2c20b5528da12f087cb9fa9f003b56a7`.
+CI independently rebuilds the module and checks every decompressed ZIP member
+byte against the tracked asset. This ignores container-level APK ordering and
+compression metadata, which Android build tools may vary between platforms,
+without weakening the source-to-payload comparison.
