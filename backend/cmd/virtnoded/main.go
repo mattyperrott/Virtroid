@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -34,14 +35,17 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/nodeauth"
+	"virtroid/backend/internal/observability"
 )
 
 var errContainerNotFound = errors.New("container not found")
 var errInstalledPackageMissing = errors.New("installed artifact did not provide the expected package")
+var errCameraFrameRate = errors.New("camera frame rate exceeds the node limit")
 var appPackageNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
 var digestedImageReferencePattern = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-fA-F]{64}$`)
 var dockerNetworkNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
@@ -95,6 +99,7 @@ PUBLIC_KEY=/data/local/tmp/virtroid-viewer-public-key
 IP=$(getprop virtroid.viewer.client_ip)
 SIZE=$(getprop virtroid.viewer.max_size)
 BITRATE=$(getprop virtroid.viewer.bit_rate)
+AUDIO=$(getprop virtroid.viewer.audio_enabled)
 
 if [ -z "$IP" ]; then
   IP=127.0.0.1
@@ -105,15 +110,18 @@ fi
 if [ -z "$BITRATE" ]; then
   BITRATE=4000000
 fi
+if [ -z "$AUDIO" ]; then
+  AUDIO=false
+fi
 exec >>"$LOG" 2>&1
-echo "viewer-start $(date +%s) ip=$IP size=$SIZE bitrate=$BITRATE"
+echo "viewer-start $(date +%s) ip=$IP size=$SIZE bitrate=$BITRATE audio=$AUDIO"
 rm -f "$DST"
 rm -f "$PUBLIC_KEY"
 cp "$SRC" "$DST"
 chown shell:shell "$DST" || true
 chmod 0644 "$DST" || true
 restorecon "$DST" >/dev/null 2>&1 || true
-env CLASSPATH="$DST" PATH="$PATH" app_process / org.server.scrcpy.Server "/$IP" "$SIZE" "$BITRATE" &
+env CLASSPATH="$DST" PATH="$PATH" app_process / org.server.scrcpy.Server "/$IP" "$SIZE" "$BITRATE" false "$AUDIO" &
 SERVER_PID=$!
 for i in 1 2 3 4 5 6 7 8 9 10; do
   if ss -ltn 2>/dev/null | grep -q ':7007'; then
@@ -209,6 +217,9 @@ type runtimeAssignment struct {
 	WidthPx             int          `json:"width_px"`
 	HeightPx            int          `json:"height_px"`
 	DensityDpi          int          `json:"density_dpi"`
+	AudioEnabled        bool         `json:"audio_enabled"`
+	CameraMode          string       `json:"camera_mode"`
+	FileMode            string       `json:"file_mode"`
 	BlobAutoSnapshot    bool         `json:"blob_auto_snapshot"`
 	BlobStoreKind       *string      `json:"blob_store_kind"`
 	BlobManifestJSON    *string      `json:"blob_manifest_json"`
@@ -304,7 +315,21 @@ const (
 	maxConcurrentRelaySessions = 64
 	maxRelaySessionDuration    = time.Hour
 	maxRelayBytesPerDirection  = int64(8 * 1024 * 1024 * 1024)
+	maxRuntimeFileImportBytes  = int64(32 << 20)
+	maxRuntimeCameraFrameBytes = int64(2 << 20)
+	maxRuntimeImportZipEntries = 1024
+	cameraFrameMinimumInterval = 40 * time.Millisecond
+	cameraFeedIdleTimeout      = 5 * time.Second
 )
+
+type cameraFeed struct {
+	runtimeID string
+	command   *exec.Cmd
+	stdin     io.WriteCloser
+	logFile   *os.File
+	lastFrame time.Time
+	idleTimer *time.Timer
+}
 
 type nodeAgent struct {
 	cfg                 config.NodeConfig
@@ -321,6 +346,12 @@ type nodeAgent struct {
 	callbackNonceMu     sync.Mutex
 	callbackNonces      map[string]time.Time
 	relaySlots          chan struct{}
+	cameraFeedMu        sync.Mutex
+	cameraFeed          *cameraFeed
+	heartbeatStateMu    sync.RWMutex
+	lastHeartbeatAt     time.Time
+	lastHeartbeatOK     bool
+	observability       *observability.Service
 }
 
 type runtimeContainerResources struct {
@@ -339,15 +370,18 @@ func main() {
 	if nodePrivateKey == nil {
 		log.Printf("node private key is not configured; production control planes will reject unsigned node requests")
 	}
+	telemetry := observability.New("virtnoded")
 	node := &nodeAgent{
 		cfg:            cfg,
 		nodePrivateKey: nodePrivateKey,
 		nodePublicKey:  nodePublicKey,
 		controlPlane: &http.Client{
-			Timeout: 20 * time.Second,
+			Timeout:   20 * time.Second,
+			Transport: telemetry.Transport(http.DefaultTransport),
 		},
-		docker:     dockerHTTPClient(),
-		relaySlots: make(chan struct{}, maxConcurrentRelaySessions),
+		docker:        dockerHTTPClient(),
+		relaySlots:    make(chan struct{}, maxConcurrentRelaySessions),
+		observability: telemetry,
 	}
 	defer node.clearAllCachedRuntimeBlobKeys()
 	if os.Getenv("NODE_BLOB_SMOKE_TEST") == "1" {
@@ -378,24 +412,22 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":   true,
-			"role": "virtnoded",
-			"id":   cfg.NodeID,
-		})
-	})
+	mux.HandleFunc("GET /healthz", node.handleHealth)
+	mux.HandleFunc("GET /readyz", node.handleReady)
+	mux.HandleFunc("GET /metrics", node.handleMetrics)
 	mux.HandleFunc("/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, node.capabilities(r.Context(), false))
 	})
 	mux.HandleFunc("POST /api/v1/internal/viewer/prepare", node.handlePrepareViewer)
+	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/files", node.handleRuntimeFileImport)
+	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/camera/frame", node.handleRuntimeCameraFrame)
 	mux.HandleFunc("POST /api/v1/internal/blob-key/verify", node.handleVerifyBlobKeyEnvelope)
 	mux.HandleFunc("CONNECT /api/v1/relay/{id}", node.handleRelaySession)
 	mux.HandleFunc("GET /api/v1/relay/{id}", node.handleRelaySession)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
-		Handler:           recoverNodeHTTP(mux),
+		Handler:           telemetry.Middleware(recoverNodeHTTP(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -418,6 +450,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	cancel()
+	node.stopCameraFeed("")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
@@ -431,6 +464,103 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+type nodeHealthReport struct {
+	OK                    bool      `json:"ok"`
+	Role                  string    `json:"role"`
+	ID                    string    `json:"id"`
+	DockerReady           bool      `json:"docker_ready"`
+	BinderReady           bool      `json:"binder_ready"`
+	DiskReady             bool      `json:"disk_ready"`
+	AssetsReady           bool      `json:"assets_ready"`
+	ConfigurationReady    bool      `json:"configuration_ready"`
+	ControlPlaneHeartbeat bool      `json:"control_plane_heartbeat"`
+	LastHeartbeatAt       time.Time `json:"last_heartbeat_at,omitempty"`
+	AudioStreaming        bool      `json:"audio_streaming"`
+	FileImport            bool      `json:"file_import"`
+	CameraPassthrough     bool      `json:"camera_passthrough"`
+}
+
+func (n *nodeAgent) handleHealth(w http.ResponseWriter, r *http.Request) {
+	report := n.healthReport(r.Context())
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (n *nodeAgent) handleReady(w http.ResponseWriter, r *http.Request) {
+	report := n.healthReport(r.Context())
+	status := http.StatusOK
+	if !report.OK {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, report)
+}
+
+func (n *nodeAgent) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	report := n.healthReport(r.Context())
+	n.observability.SetGauge("virtroid_node_ready", boolFloat(report.OK), nil)
+	n.observability.SetGauge("virtroid_node_docker_ready", boolFloat(report.DockerReady), nil)
+	n.observability.SetGauge("virtroid_node_binder_ready", boolFloat(report.BinderReady), nil)
+	n.observability.SetGauge("virtroid_node_disk_ready", boolFloat(report.DiskReady), nil)
+	n.observability.SetGauge("virtroid_node_control_plane_heartbeat", boolFloat(report.ControlPlaneHeartbeat), nil)
+	n.observability.SetGauge("virtroid_node_camera_passthrough", boolFloat(report.CameraPassthrough), nil)
+	n.observability.Handler().ServeHTTP(w, r)
+}
+
+func boolFloat(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func (n *nodeAgent) healthReport(ctx context.Context) nodeHealthReport {
+	n.heartbeatStateMu.RLock()
+	lastHeartbeatAt := n.lastHeartbeatAt
+	lastHeartbeatOK := n.lastHeartbeatOK
+	n.heartbeatStateMu.RUnlock()
+	heartbeatFresh := lastHeartbeatOK && !lastHeartbeatAt.IsZero() && time.Since(lastHeartbeatAt) <= 2*time.Minute
+	report := nodeHealthReport{
+		Role:                  "virtnoded",
+		ID:                    n.cfg.NodeID,
+		DockerReady:           n.dockerReady(ctx),
+		BinderReady:           binderAvailable(),
+		DiskReady:             n.ensureRuntimeDiskHeadroom() == nil,
+		AssetsReady:           n.assetsReady(),
+		ConfigurationReady:    n.nodePrivateKey != nil && strings.TrimSpace(n.cfg.ControlPlaneCallbackPublicKey) != "",
+		ControlPlaneHeartbeat: heartbeatFresh,
+		LastHeartbeatAt:       lastHeartbeatAt,
+		AudioStreaming:        len(scrcpyServerJar) > 0,
+		FileImport:            adbAvailable(n.cfg.ADBPath),
+		CameraPassthrough:     n.cameraPassthroughAvailable(),
+	}
+	report.OK = report.DockerReady && report.BinderReady && report.DiskReady && report.AssetsReady && report.ConfigurationReady && report.ControlPlaneHeartbeat
+	return report
+}
+
+func (n *nodeAgent) dockerReady(ctx context.Context) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://docker/_ping", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := n.docker.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+func (n *nodeAgent) assetsReady() bool {
+	for _, candidate := range []string{n.scrcpyServerPath(), n.viewerCryptPath(), n.viewerScriptPath(), n.viewerInitPath()} {
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func recoverNodeHTTP(next http.Handler) http.Handler {
@@ -670,6 +800,10 @@ func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map
 		"relay_port":          n.cfg.RelayPort,
 		"docker_socket":       dockerSocketAvailable(),
 		"binder":              binderAvailable(),
+		"audio_streaming":     len(scrcpyServerJar) > 0,
+		"file_import":         adbAvailable(n.cfg.ADBPath),
+		"camera_passthrough":  n.cameraPassthroughAvailable(),
+		"camera_slots":        boolInt(n.cameraPassthroughAvailable()),
 		"blob_store_kind":     blobStoreKind,
 		"renterd_configured":  strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" && strings.TrimSpace(n.cfg.RenterdPassword) != "",
 		"renterd_bucket":      defaultBlobBucket(n.cfg.RenterdBucket),
@@ -782,12 +916,13 @@ func (n *nodeAgent) requireControlPlaneCallback(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback timestamp is outside the allowed window"})
 		return false
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, (2<<20)+1))
+	limit := nodeCallbackBodyLimit(r.URL.Path)
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read control-plane callback body"})
 		return false
 	}
-	if len(body) > 2<<20 {
+	if int64(len(body)) > limit {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "control-plane callback body is too large"})
 		return false
 	}
@@ -817,6 +952,16 @@ func (n *nodeAgent) requireControlPlaneCallback(w http.ResponseWriter, r *http.R
 	}
 	n.callbackNonces[nonce] = callbackTime.Add(5 * time.Minute)
 	return true
+}
+
+func nodeCallbackBodyLimit(path string) int64 {
+	if strings.HasSuffix(path, "/files") {
+		return maxRuntimeFileImportBytes
+	}
+	if strings.HasSuffix(path, "/camera/frame") {
+		return maxRuntimeCameraFrameBytes
+	}
+	return 2 << 20
 }
 
 func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) {
@@ -882,6 +1027,336 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 		"viewer_port":       runtime.ViewerPort,
 		"viewer_public_key": viewerPublicKey,
 	})
+}
+
+func (n *nodeAgent) handleRuntimeFileImport(w http.ResponseWriter, r *http.Request) {
+	if !n.requireControlPlaneCallback(w, r) {
+		return
+	}
+	runtimeID := strings.TrimSpace(r.PathValue("id"))
+	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	filename, err = safeRuntimeImportFilename(filename)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil || len(body) == 0 || int64(len(body)) > maxRuntimeFileImportBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "imported file must be between 1 byte and 32 MiB"})
+		return
+	}
+	if err := validateRuntimeImportContent(body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	runtime, err := n.assignedRuntime(ctx, runtimeID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	if runtime.Status != "running" || (!strings.EqualFold(runtime.FileMode, "upload-only") && !strings.EqualFold(runtime.FileMode, "bidirectional")) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime is not ready for file import"})
+		return
+	}
+	inspect, err := n.inspectContainer(ctx, containerNameForRuntime(runtime.ID))
+	if err != nil || !inspect.State.Running {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime container is not running"})
+		return
+	}
+	serial, err := n.adbSerialForRuntime(runtime, inspect)
+	if err != nil || n.adbConnect(ctx, serial) != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "runtime ADB transport is unavailable"})
+		return
+	}
+
+	importDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "imports")
+	if err := os.MkdirAll(importDir, 0o700); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare import staging"})
+		return
+	}
+	tmp, err := os.CreateTemp(importDir, ".upload-*")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare import staging"})
+		return
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "secure import staging"})
+		return
+	}
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "write import staging"})
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "close import staging"})
+		return
+	}
+	remotePath := "/sdcard/Download/" + filename
+	if err := n.adbPush(ctx, serial, tmpPath, remotePath); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "push file into runtime"})
+		return
+	}
+	_, _ = n.adbShellCapture(ctx, serial, "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "+shellQuote("file://"+remotePath)+" >/dev/null 2>&1 || true")
+	digest := sha256.Sum256(body)
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Imported a file into the active runtime Download directory.")
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"ok":           true,
+		"file_name":    filename,
+		"bytes":        len(body),
+		"sha256":       hex.EncodeToString(digest[:]),
+		"runtime_path": remotePath,
+	})
+}
+
+func (n *nodeAgent) handleRuntimeCameraFrame(w http.ResponseWriter, r *http.Request) {
+	if !n.requireControlPlaneCallback(w, r) {
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil || len(body) < 4 || int64(len(body)) > maxRuntimeCameraFrameBytes || body[0] != 0xff || body[1] != 0xd8 {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": "camera frame must be a JPEG no larger than 2 MiB"})
+		return
+	}
+	runtimeID := strings.TrimSpace(r.PathValue("id"))
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	runtime, err := n.assignedRuntime(ctx, runtimeID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	if runtime.Status != "running" || !strings.EqualFold(runtime.CameraMode, "passthrough") {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime is not ready for camera passthrough"})
+		return
+	}
+	if !n.cameraPassthroughAvailable() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "node camera passthrough is not configured"})
+		return
+	}
+	if err := n.writeCameraFrame(runtime.ID, body); err != nil {
+		if errors.Is(err, errCameraFrameRate) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "camera frame injection failed"})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "bytes": len(body)})
+}
+
+func (n *nodeAgent) assignedRuntime(ctx context.Context, runtimeID string) (runtimeAssignment, error) {
+	if strings.TrimSpace(runtimeID) == "" {
+		return runtimeAssignment{}, errors.New("runtime id is required")
+	}
+	assignments, err := n.fetchAssignments(ctx)
+	if err != nil {
+		return runtimeAssignment{}, fmt.Errorf("fetch runtime assignment: %w", err)
+	}
+	for _, runtime := range assignments {
+		if runtime.ID == runtimeID {
+			return runtime, nil
+		}
+	}
+	return runtimeAssignment{}, errors.New("runtime is not assigned to this node")
+}
+
+func decodeRuntimeMediaName(encoded string) (string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil || len(decoded) == 0 || len(decoded) > 255 || !utf8.Valid(decoded) {
+		return "", errors.New("invalid file name encoding")
+	}
+	name := strings.TrimSpace(string(decoded))
+	if name == "" || strings.ContainsRune(name, 0) || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		return "", errors.New("invalid file name")
+	}
+	return name, nil
+}
+
+func safeRuntimeImportFilename(name string) (string, error) {
+	extension := strings.ToLower(filepath.Ext(name))
+	switch extension {
+	case ".apk", ".apks", ".apkm", ".xapk", ".dex", ".jar":
+		return "", errors.New("application packages must be installed from the approved catalog")
+	}
+	var normalized strings.Builder
+	for _, candidate := range strings.TrimSpace(name) {
+		if (candidate >= 'a' && candidate <= 'z') || (candidate >= 'A' && candidate <= 'Z') ||
+			(candidate >= '0' && candidate <= '9') || strings.ContainsRune(" ._-()", candidate) {
+			normalized.WriteRune(candidate)
+		} else {
+			normalized.WriteByte('_')
+		}
+	}
+	result := strings.Trim(normalized.String(), " .")
+	if result == "" {
+		return "", errors.New("file name has no usable characters")
+	}
+	if len(result) > 180 {
+		result = result[:180]
+	}
+	return result, nil
+}
+
+func validateRuntimeImportContent(body []byte) error {
+	if bytes.HasPrefix(body, []byte("dex\n")) {
+		return errors.New("executable Android artifacts must be installed from the approved catalog")
+	}
+	archive, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return nil
+	}
+	if len(archive.File) > maxRuntimeImportZipEntries {
+		return fmt.Errorf("imported archive contains more than %d entries", maxRuntimeImportZipEntries)
+	}
+	hasJARManifest := false
+	hasJavaClass := false
+	for _, file := range archive.File {
+		name := strings.ToLower(strings.TrimPrefix(path.Clean(strings.ReplaceAll(file.Name, "\\", "/")), "./"))
+		if name == "androidmanifest.xml" || name == "classes.dex" ||
+			strings.HasSuffix(name, ".apk") || strings.HasSuffix(name, ".apks") ||
+			strings.HasSuffix(name, ".apkm") || strings.HasSuffix(name, ".xapk") {
+			return errors.New("executable Android artifacts must be installed from the approved catalog")
+		}
+		if name == "meta-inf/manifest.mf" {
+			hasJARManifest = true
+		}
+		if strings.HasSuffix(name, ".class") {
+			hasJavaClass = true
+		}
+	}
+	if hasJARManifest && hasJavaClass {
+		return errors.New("executable Android artifacts must be installed from the approved catalog")
+	}
+	return nil
+}
+
+func adbAvailable(adbPath string) bool {
+	_, err := exec.LookPath(strings.TrimSpace(adbPath))
+	return err == nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func (n *nodeAgent) cameraPassthroughAvailable() bool {
+	device := strings.TrimSpace(n.cfg.CameraDevice)
+	if device == "" || !strings.HasPrefix(filepath.Base(device), "video") {
+		return false
+	}
+	info, err := os.Stat(device)
+	if err != nil || info.IsDir() || info.Mode()&os.ModeDevice == 0 {
+		return false
+	}
+	_, err = exec.LookPath(strings.TrimSpace(n.cfg.CameraFFmpegPath))
+	return err == nil
+}
+
+func (n *nodeAgent) writeCameraFrame(runtimeID string, frame []byte) error {
+	n.cameraFeedMu.Lock()
+	defer n.cameraFeedMu.Unlock()
+	if n.cameraFeed == nil || n.cameraFeed.runtimeID != runtimeID || n.cameraFeed.command.ProcessState != nil {
+		n.stopCameraFeedLocked()
+		feed, err := n.startCameraFeedLocked(runtimeID)
+		if err != nil {
+			return err
+		}
+		n.cameraFeed = feed
+	}
+	if !n.cameraFeed.lastFrame.IsZero() && time.Since(n.cameraFeed.lastFrame) < cameraFrameMinimumInterval {
+		return errCameraFrameRate
+	}
+	if _, err := n.cameraFeed.stdin.Write(frame); err != nil {
+		n.stopCameraFeedLocked()
+		return err
+	}
+	n.cameraFeed.lastFrame = time.Now()
+	n.armCameraFeedIdleTimerLocked(n.cameraFeed)
+	return nil
+}
+
+func (n *nodeAgent) armCameraFeedIdleTimerLocked(feed *cameraFeed) {
+	if feed.idleTimer != nil {
+		feed.idleTimer.Stop()
+	}
+	feed.idleTimer = time.AfterFunc(cameraFeedIdleTimeout, func() {
+		n.cameraFeedMu.Lock()
+		defer n.cameraFeedMu.Unlock()
+		if n.cameraFeed == feed {
+			n.stopCameraFeedLocked()
+		}
+	})
+}
+
+func (n *nodeAgent) startCameraFeedLocked(runtimeID string) (*cameraFeed, error) {
+	logPath := filepath.Join(n.cfg.RuntimeRoot, runtimeID, "camera-ffmpeg.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	filter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", n.cfg.CameraWidth, n.cfg.CameraHeight, n.cfg.CameraWidth, n.cfg.CameraHeight)
+	cmd := exec.Command(
+		n.cfg.CameraFFmpegPath,
+		"-hide_banner", "-loglevel", "warning",
+		"-f", "image2pipe", "-vcodec", "mjpeg", "-r", strconv.Itoa(n.cfg.CameraFPS), "-i", "pipe:0",
+		"-vf", filter, "-pix_fmt", "yuyv422", "-f", "v4l2", n.cfg.CameraDevice,
+	)
+	if err := hardenCameraCommand(cmd, n.cfg.CameraDevice); err != nil {
+		_ = logFile.Close()
+		return nil, err
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		_ = logFile.Close()
+		return nil, err
+	}
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = logFile.Close()
+		return nil, err
+	}
+	return &cameraFeed{runtimeID: runtimeID, command: cmd, stdin: stdin, logFile: logFile}, nil
+}
+
+func (n *nodeAgent) stopCameraFeed(runtimeID string) {
+	n.cameraFeedMu.Lock()
+	defer n.cameraFeedMu.Unlock()
+	if n.cameraFeed != nil && (runtimeID == "" || n.cameraFeed.runtimeID == runtimeID) {
+		n.stopCameraFeedLocked()
+	}
+}
+
+func (n *nodeAgent) stopCameraFeedLocked() {
+	feed := n.cameraFeed
+	n.cameraFeed = nil
+	if feed == nil {
+		return
+	}
+	if feed.idleTimer != nil {
+		feed.idleTimer.Stop()
+	}
+	_ = feed.stdin.Close()
+	if feed.command.Process != nil {
+		_ = feed.command.Process.Kill()
+		_, _ = feed.command.Process.Wait()
+	}
+	_ = feed.logFile.Close()
 }
 
 func (n *nodeAgent) handleVerifyBlobKeyEnvelope(w http.ResponseWriter, r *http.Request) {
@@ -1045,10 +1520,21 @@ func (n *nodeAgent) reconcileLoop(ctx context.Context) {
 }
 
 func (n *nodeAgent) sendHeartbeat(ctx context.Context) {
+	if err := n.sendHeartbeatOnce(ctx); err != nil {
+		n.recordHeartbeat(false)
+		n.countMetric("virtroid_node_heartbeat_total", "failure")
+		log.Printf("heartbeat failed")
+		return
+	}
+	n.recordHeartbeat(true)
+	n.countMetric("virtroid_node_heartbeat_total", "success")
+	log.Printf("heartbeat ok: node=%s", n.cfg.NodeID)
+}
+
+func (n *nodeAgent) sendHeartbeatOnce(ctx context.Context) error {
 	body, err := json.Marshal(n.capabilities(ctx, true))
 	if err != nil {
-		log.Printf("marshal heartbeat: %v", err)
-		return
+		return fmt.Errorf("marshal heartbeat: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -1058,41 +1544,45 @@ func (n *nodeAgent) sendHeartbeat(ctx context.Context) {
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		log.Printf("new heartbeat request: %v", err)
-		return
+		return fmt.Errorf("new heartbeat request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	if err := n.signControlPlaneRequest(req, body, true); err != nil {
-		log.Printf("sign heartbeat request: %v", err)
-		return
+		return fmt.Errorf("sign heartbeat request: %w", err)
 	}
 
 	resp, err := n.controlPlane.Do(req)
 	if err != nil {
-		log.Printf("heartbeat failed: %v", err)
-		return
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		log.Printf("heartbeat rejected: status=%d body=%s", resp.StatusCode, string(payload))
-		return
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("heartbeat rejected with status %d", resp.StatusCode)
 	}
+	return nil
+}
 
-	log.Printf("heartbeat ok: node=%s", n.cfg.NodeID)
+func (n *nodeAgent) recordHeartbeat(ok bool) {
+	n.heartbeatStateMu.Lock()
+	n.lastHeartbeatAt = time.Now().UTC()
+	n.lastHeartbeatOK = ok
+	n.heartbeatStateMu.Unlock()
 }
 
 func (n *nodeAgent) reconcileOnce(ctx context.Context) {
 	assignments, err := n.fetchAssignments(ctx)
 	if err != nil {
+		n.countMetric("virtroid_node_reconcile_total", "failure")
 		log.Printf("fetch assignments: %v", err)
 		return
 	}
 
 	for _, runtime := range assignments {
 		if err := n.reconcileRuntime(ctx, runtime); err != nil {
+			n.countMetric("virtroid_node_runtime_reconcile_total", "failure")
 			message := fmt.Sprintf("Reconcile failed: %v", err)
 			log.Printf("runtime %s: %s", runtime.ID, message)
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", message)
@@ -1102,7 +1592,16 @@ func (n *nodeAgent) reconcileOnce(ctx context.Context) {
 				ConnectionStatus: "offline",
 				LastError:        &lastError,
 			})
+			continue
 		}
+		n.countMetric("virtroid_node_runtime_reconcile_total", "success")
+	}
+	n.countMetric("virtroid_node_reconcile_total", "success")
+}
+
+func (n *nodeAgent) countMetric(name, result string) {
+	if n.observability != nil {
+		n.observability.Counter(name, map[string]string{"result": result})
 	}
 }
 
@@ -1256,7 +1755,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				prewarmMaxSize = viewerDefaultMaxSize
 			}
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Prewarming encrypted viewer bridge.")
-			if err := n.startViewerService(ctx, containerName, "127.0.0.1", prewarmMaxSize, viewerPrewarmBitRate); err != nil {
+			if err := n.startViewerService(ctx, containerName, "127.0.0.1", prewarmMaxSize, viewerPrewarmBitRate, runtime.AudioEnabled); err != nil {
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Viewer prewarm failed: %v.", err))
 			} else {
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Encrypted viewer bridge prewarmed.")
@@ -1331,6 +1830,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 }
 
 func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAssignment, containerName string) error {
+	n.stopCameraFeed(runtime.ID)
 	var cleanupErrors []error
 	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove tainted runtime container: %w", err))
@@ -1347,6 +1847,7 @@ func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAs
 }
 
 func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAssignment, clearWipe bool) error {
+	n.stopCameraFeed(runtime.ID)
 	containerName := containerNameForRuntime(runtime.ID)
 	_, inspectErr := n.inspectContainer(ctx, containerName)
 	hadContainer := inspectErr == nil
@@ -1519,6 +2020,7 @@ func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) 
 }
 
 func (n *nodeAgent) deleteRuntime(ctx context.Context, runtime runtimeAssignment) error {
+	n.stopCameraFeed(runtime.ID)
 	containerName := containerNameForRuntime(runtime.ID)
 	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 		return err
@@ -2143,10 +2645,20 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 		fmt.Sprintf("androidboot.redroid_dpi=%d", runtime.DensityDpi),
 	}
 	cmd = append(cmd, personaOverrideProps(persona)...)
+	if strings.EqualFold(runtime.CameraMode, "passthrough") {
+		if !n.cameraPassthroughAvailable() {
+			return errors.New("camera passthrough was requested but this node has no ready V4L2 device")
+		}
+		cmd = append(cmd, "ro.hardware.camera=v4l2")
+	}
 
 	body := map[string]any{
 		"Image": runtimeImage,
 		"Cmd":   cmd,
+		"Labels": map[string]string{
+			"io.virtroid.managed": "true",
+			"io.virtroid.runtime": runtime.ID,
+		},
 		"ExposedPorts": map[string]any{
 			"5555/tcp": map[string]any{},
 		},
@@ -2181,6 +2693,16 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 				},
 			},
 		},
+	}
+	if strings.EqualFold(runtime.CameraMode, "passthrough") {
+		body["HostConfig"].(map[string]any)["Devices"] = []map[string]string{
+			{
+				"PathOnHost":        n.cfg.CameraDevice,
+				"PathInContainer":   "/dev/video0",
+				"CgroupPermissions": "rwm",
+			},
+		}
+		body["Labels"].(map[string]string)["io.virtroid.camera-device"] = n.cfg.CameraDevice
 	}
 	if networkName = strings.TrimSpace(networkName); networkName != "" {
 		body["HostConfig"].(map[string]any)["NetworkMode"] = networkName
@@ -2267,7 +2789,7 @@ func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment
 
 	clientIP := "127.0.0.1"
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Preparing viewer via in-guest init service.")
-	if err := n.startViewerService(ctx, containerName, clientIP, maxSize, bitRate); err != nil {
+	if err := n.startViewerService(ctx, containerName, clientIP, maxSize, bitRate, runtime.AudioEnabled); err != nil {
 		return "", fmt.Errorf("start viewer service: %w", err)
 	}
 	if err := n.waitForViewerPort(ctx, runtime, containerName); err != nil {
@@ -2957,7 +3479,10 @@ func extractAPKMWithLimits(apkmPath, extractDir string, maxFiles, maxEntries int
 		}
 		remainingTotal := maxTotalBytes - extractedTotal
 		readLimit := min(maxFileBytes, remainingTotal)
-		written, copyErr := io.Copy(target, io.LimitReader(source, readLimit+1))
+		written, copyErr := io.CopyN(target, source, readLimit+1)
+		if errors.Is(copyErr, io.EOF) {
+			copyErr = nil
+		}
 		closeErr := target.Close()
 		sourceCloseErr := source.Close()
 		if copyErr != nil {
@@ -3192,7 +3717,7 @@ func (n *nodeAgent) adbLogcatCapture(ctx context.Context, serial string, lines i
 	return n.adbShellCapture(ctx, serial, fmt.Sprintf("logcat -b all -d -t %d 2>/dev/null", lines))
 }
 
-func (n *nodeAgent) startViewerServer(runtimeID string, adbSerial string, maxSize int, bitRate int) error {
+func (n *nodeAgent) startViewerServer(runtimeID string, adbSerial string, maxSize int, bitRate int, audioEnabled bool) error {
 	logPath := n.viewerCommandLogPath(runtimeID)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return err
@@ -3204,9 +3729,10 @@ func (n *nodeAgent) startViewerServer(runtimeID string, adbSerial string, maxSiz
 	}
 
 	shellCmd := fmt.Sprintf(
-		"CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / org.server.scrcpy.Server /0.0.0.0 %d %d false",
+		"CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / org.server.scrcpy.Server /0.0.0.0 %d %d false %t",
 		maxSize,
 		bitRate,
+		audioEnabled,
 	)
 	cmd := exec.Command(n.cfg.ADBPath, "-s", adbSerial, "shell", shellCmd)
 	cmd.Stdout = logFile
@@ -3252,22 +3778,24 @@ func viewerServiceReuseListenerCondition() string {
 	)
 }
 
-func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clientIP string, maxSize, bitRate int) error {
+func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clientIP string, maxSize, bitRate int, audioEnabled bool) error {
 	clientIP = strings.TrimSpace(clientIP)
 	if clientIP == "" {
 		clientIP = "127.0.0.1"
 	}
 	shellCmd := fmt.Sprintf(
-		"desired_ip=%s; desired_size=%d; desired_bitrate=%d; public_key=%s; "+
+		"desired_ip=%s; desired_size=%d; desired_bitrate=%d; desired_audio=%t; public_key=%s; "+
 			"current_ip=$(getprop virtroid.viewer.client_ip); "+
 			"current_size=$(getprop virtroid.viewer.max_size); "+
 			"current_bitrate=$(getprop virtroid.viewer.bit_rate); "+
+			"current_audio=$(getprop virtroid.viewer.audio_enabled); "+
 			"svc=$(getprop init.svc.virtroid_viewer); "+
-			"if [ \"$svc\" = \"running\" ] && [ \"$current_ip\" = \"$desired_ip\" ] && [ \"$current_size\" = \"$desired_size\" ] && [ \"$current_bitrate\" = \"$desired_bitrate\" ] && [ -s \"$public_key\" ] && %s; then exit 0; fi; "+
+			"if [ \"$svc\" = \"running\" ] && [ \"$current_ip\" = \"$desired_ip\" ] && [ \"$current_size\" = \"$desired_size\" ] && [ \"$current_bitrate\" = \"$desired_bitrate\" ] && [ \"$current_audio\" = \"$desired_audio\" ] && [ -s \"$public_key\" ] && %s; then exit 0; fi; "+
 			"rm -f /data/local/tmp/virtroid-viewer.log \"$public_key\"; "+
 			"setprop virtroid.viewer.client_ip %s; "+
 			"setprop virtroid.viewer.max_size %d; "+
 			"setprop virtroid.viewer.bit_rate %d; "+
+			"setprop virtroid.viewer.audio_enabled %t; "+
 			"if [ \"$(getprop init.svc.virtroid_viewer)\" = \"running\" ]; then "+
 			"setprop ctl.stop virtroid_viewer >/dev/null 2>&1 || true; "+
 			"for i in 1 2 3 4 5 6 7 8 9 10; do "+
@@ -3289,11 +3817,13 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 		shellEscape(clientIP),
 		maxSize,
 		bitRate,
+		audioEnabled,
 		shellEscape(viewerPublicKeyPath),
 		viewerServiceReuseListenerCondition(),
 		shellEscape(clientIP),
 		maxSize,
 		bitRate,
+		audioEnabled,
 		encryptedViewerPort,
 	)
 	output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
@@ -3309,17 +3839,19 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 	return nil
 }
 
-func (n *nodeAgent) startViewerProcessInContainer(ctx context.Context, containerName string, maxSize, bitRate int) error {
+func (n *nodeAgent) startViewerProcessInContainer(ctx context.Context, containerName string, maxSize, bitRate int, audioEnabled bool) error {
 	shellCmd := fmt.Sprintf(
 		"setprop ctl.stop virtroid_viewer >/dev/null 2>&1 || true; "+
 			"if [ -f /data/local/tmp/virtroid-viewer.pid ]; then kill $(cat /data/local/tmp/virtroid-viewer.pid) >/dev/null 2>&1 || true; rm -f /data/local/tmp/virtroid-viewer.pid; fi; "+
 			"setprop virtroid.viewer.client_ip 127.0.0.1; "+
 			"setprop virtroid.viewer.max_size %d; "+
 			"setprop virtroid.viewer.bit_rate %d; "+
+			"setprop virtroid.viewer.audio_enabled %t; "+
 			"echo $$ > /data/local/tmp/virtroid-viewer.pid; "+
 			"exec /system/bin/sh %s",
 		maxSize,
 		bitRate,
+		audioEnabled,
 		shellEscape(viewerScriptMountPath),
 	)
 	return n.execInContainerDetachedAny(ctx, containerName, "", nil, [][]string{

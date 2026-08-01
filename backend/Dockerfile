@@ -35,6 +35,7 @@ LABEL org.opencontainers.image.revision="${VCS_REF}" \
 RUN apk add --no-cache \
       android-tools=35.0.2-r23 \
       ca-certificates=20260611-r0 \
+      ffmpeg=8.0.1-r1 \
     && adduser -D -h /home/virtroid -s /sbin/nologin virtroid
 
 COPY --from=build /out/virtroidd /usr/local/bin/virtroidd
@@ -47,5 +48,9 @@ USER virtroid
 WORKDIR /home/virtroid
 
 EXPOSE 8080 8090
+
+ENV VIRTROID_HEALTHCHECK_URL=http://127.0.0.1:8080/healthz
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -q -T 4 -O /dev/null "${VIRTROID_HEALTHCHECK_URL}" || exit 1
 
 CMD ["virtroidd"]

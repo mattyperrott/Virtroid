@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "VirtroidClient"
 include(":app")
+include(":scrcpy-server")
+project(":scrcpy-server").projectDir = file("../third_party/scrcpy-server")

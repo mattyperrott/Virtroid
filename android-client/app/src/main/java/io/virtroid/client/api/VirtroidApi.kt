@@ -1,6 +1,7 @@
 package io.virtroid.client.api
 
 import android.content.Context
+import android.util.Base64
 import io.virtroid.client.BuildConfig
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.BlobKeyEnvelopeCrypto
@@ -69,6 +70,13 @@ data class SessionLaunch(
 data class SessionRelayRefresh(
     val relayToken: String,
     val viewerPublicKey: String,
+)
+
+data class RuntimeFileImport(
+    val fileName: String,
+    val bytes: Long,
+    val sha256: String,
+    val runtimePath: String,
 )
 
 data class SessionState(
@@ -656,6 +664,66 @@ class VirtroidApi(
         )
     }
 
+    suspend fun importRuntimeFile(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        sessionId: String,
+        fileName: String,
+        contentType: String,
+        body: ByteArray,
+    ): RuntimeFileImport = withContext(Dispatchers.IO) {
+        require(body.isNotEmpty() && body.size <= MAX_RUNTIME_FILE_IMPORT_BYTES) {
+            "file must be between 1 byte and 32 MiB"
+        }
+        ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
+        val encodedFileName = Base64.encodeToString(
+            fileName.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+        )
+        val payload = executeJson(
+            capabilityBinaryRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/files?session_id=$sessionId&name=$encodedFileName",
+                method = "POST",
+                runtimeId = runtimeId,
+                body = body,
+                contentType = contentType.ifBlank { "application/octet-stream" },
+            ),
+        )
+        RuntimeFileImport(
+            fileName = payload.getString("file_name"),
+            bytes = payload.getLong("bytes"),
+            sha256 = payload.getString("sha256"),
+            runtimePath = payload.getString("runtime_path"),
+        )
+    }
+
+    suspend fun sendRuntimeCameraFrame(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        sessionId: String,
+        jpeg: ByteArray,
+    ) = withContext(Dispatchers.IO) {
+        require(jpeg.size in 4..MAX_RUNTIME_CAMERA_FRAME_BYTES) {
+            "camera frame must be a JPEG no larger than 2 MiB"
+        }
+        ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
+        executeJson(
+            capabilityBinaryRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/camera/frame?session_id=$sessionId",
+                method = "POST",
+                runtimeId = runtimeId,
+                body = jpeg,
+                contentType = "image/jpeg",
+            ),
+        )
+    }
+
     suspend fun deleteAccount(
         baseUrl: String,
         accountId: String,
@@ -1025,6 +1093,26 @@ class VirtroidApi(
         return builder.build()
     }
 
+    private fun capabilityBinaryRequest(
+        baseUrl: String,
+        pathAndQuery: String,
+        method: String,
+        runtimeId: String,
+        body: ByteArray,
+        contentType: String,
+    ): Request {
+        val builder = Request.Builder()
+            .url(normalizeBaseUrl(baseUrl) + pathAndQuery)
+            .method(method.uppercase(), body.toRequestBody(contentType.toMediaType()))
+        runtimeCapabilityStore.signedHeaders(
+            method = method,
+            requestUri = pathAndQuery,
+            runtimeId = runtimeId,
+            body = body,
+        ).forEach { (name, value) -> builder.header(name, value) }
+        return builder.build()
+    }
+
     private fun executeJson(request: Request): JSONObject {
         okHttpClient.newCall(request).execute().use { response ->
             val responseBody = response.body
@@ -1246,6 +1334,8 @@ class VirtroidApi(
         const val MAX_JSON_RESPONSE_BYTES = 2L * 1024L * 1024L
         const val MAX_ERROR_MESSAGE_CHARS = 2_048
         const val MAX_CATALOG_ITEMS = 250
+        const val MAX_RUNTIME_FILE_IMPORT_BYTES = 32 * 1024 * 1024
+        const val MAX_RUNTIME_CAMERA_FRAME_BYTES = 2 * 1024 * 1024
         val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
         val registeredRuntimeCapabilities = mutableSetOf<String>()
     }

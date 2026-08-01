@@ -30,8 +30,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026073001
-	schemaVersionLabel               = "invite-gated bootstrap with atomic consumption 2026-07-30"
+	currentSchemaVersion       int64 = 2026080101
+	schemaVersionLabel               = "runtime media paths and node capability readiness 2026-08-01"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -61,44 +61,45 @@ type Store struct {
 }
 
 var (
-	ErrNoReadyHost             = errors.New("no redroid-capable host available")
-	ErrDeviceNotFound          = errors.New("device not found")
-	ErrLastActiveDevice        = errors.New("the last active device cannot be revoked; delete the account instead")
-	ErrRuntimeNotFound         = errors.New("runtime not found")
-	ErrRuntimeNotReady         = errors.New("runtime is not ready for sessions")
-	ErrSessionNotFound         = errors.New("session not found")
-	ErrSessionAlreadyActive    = errors.New("runtime already has an active session")
-	ErrIdentityNotFound        = errors.New("identity password is not configured for this device")
-	ErrIdentityAlreadySet      = errors.New("identity password is already configured for this device")
-	ErrIdentityAuthFailed      = errors.New("identity authentication failed")
-	ErrIdentityKeyRequired     = errors.New("blob access key is required")
-	ErrDeviceRequestReplay     = errors.New("device request nonce has already been used")
-	ErrNodeRequestReplay       = errors.New("node request nonce has already been used")
-	ErrHostNotFound            = errors.New("host not found")
-	ErrRuntimeEntitlement      = errors.New("runtime entitlement is required")
-	ErrRuntimeQuota            = errors.New("runtime quota exceeded")
-	ErrRuntimeActiveQuota      = errors.New("active runtime quota exceeded")
-	ErrRuntimeStartQuota       = errors.New("runtime start quota exceeded")
-	ErrRuntimeTrialTimeQuota   = errors.New("trial runtime time quota exceeded")
-	ErrRuntimeStorageQuota     = errors.New("runtime storage quota exceeded")
-	ErrRuntimeSnapshotRollback = errors.New("runtime snapshot generation is not monotonic")
-	ErrRuntimeProfile          = errors.New("runtime profile is not allowed")
-	ErrSecurityEventRateLimit  = errors.New("security event rate limit exceeded")
-	ErrAccountNotFound         = errors.New("account not found")
-	ErrRuntimeBlobOwner        = errors.New("runtime local snapshot owner is unknown")
-	ErrRuntimeCleanupPending   = errors.New("runtime cleanup is still pending")
-	ErrRuntimeObservationStale = errors.New("runtime observation generation is stale")
-	ErrRuntimeBlobKeyHandoff   = errors.New("runtime blob-key handoff is not available")
-	ErrRuntimeCapability       = errors.New("runtime capability is invalid or expired")
-	ErrRuntimeCapabilityReplay = errors.New("runtime capability nonce has already been used")
-	ErrApprovedNodeNotFound    = errors.New("approved node not found")
-	ErrApprovedNodeExists      = errors.New("approved node already exists with a different key")
-	ErrApprovedNodeRevoked     = errors.New("approved node is revoked")
-	ErrNodeOperatorNotFound    = errors.New("node operator not found")
-	ErrNodeOperatorRevoked     = errors.New("node operator is revoked")
-	ErrNodeKeyRotationOverlap  = errors.New("node key rotation overlap is outside the allowed range")
-	ErrNodeKeyAlreadyActive    = errors.New("node key is already active")
-	ErrBootstrapInviteInvalid  = errors.New("bootstrap invitation is invalid, expired, or already used")
+	ErrNoReadyHost                = errors.New("no redroid-capable host available")
+	ErrDeviceNotFound             = errors.New("device not found")
+	ErrLastActiveDevice           = errors.New("the last active device cannot be revoked; delete the account instead")
+	ErrRuntimeNotFound            = errors.New("runtime not found")
+	ErrRuntimeNotReady            = errors.New("runtime is not ready for sessions")
+	ErrRuntimeMediaSettingsActive = errors.New("runtime media settings can only be changed while the runtime is stopped")
+	ErrSessionNotFound            = errors.New("session not found")
+	ErrSessionAlreadyActive       = errors.New("runtime already has an active session")
+	ErrIdentityNotFound           = errors.New("identity password is not configured for this device")
+	ErrIdentityAlreadySet         = errors.New("identity password is already configured for this device")
+	ErrIdentityAuthFailed         = errors.New("identity authentication failed")
+	ErrIdentityKeyRequired        = errors.New("blob access key is required")
+	ErrDeviceRequestReplay        = errors.New("device request nonce has already been used")
+	ErrNodeRequestReplay          = errors.New("node request nonce has already been used")
+	ErrHostNotFound               = errors.New("host not found")
+	ErrRuntimeEntitlement         = errors.New("runtime entitlement is required")
+	ErrRuntimeQuota               = errors.New("runtime quota exceeded")
+	ErrRuntimeActiveQuota         = errors.New("active runtime quota exceeded")
+	ErrRuntimeStartQuota          = errors.New("runtime start quota exceeded")
+	ErrRuntimeTrialTimeQuota      = errors.New("trial runtime time quota exceeded")
+	ErrRuntimeStorageQuota        = errors.New("runtime storage quota exceeded")
+	ErrRuntimeSnapshotRollback    = errors.New("runtime snapshot generation is not monotonic")
+	ErrRuntimeProfile             = errors.New("runtime profile is not allowed")
+	ErrSecurityEventRateLimit     = errors.New("security event rate limit exceeded")
+	ErrAccountNotFound            = errors.New("account not found")
+	ErrRuntimeBlobOwner           = errors.New("runtime local snapshot owner is unknown")
+	ErrRuntimeCleanupPending      = errors.New("runtime cleanup is still pending")
+	ErrRuntimeObservationStale    = errors.New("runtime observation generation is stale")
+	ErrRuntimeBlobKeyHandoff      = errors.New("runtime blob-key handoff is not available")
+	ErrRuntimeCapability          = errors.New("runtime capability is invalid or expired")
+	ErrRuntimeCapabilityReplay    = errors.New("runtime capability nonce has already been used")
+	ErrApprovedNodeNotFound       = errors.New("approved node not found")
+	ErrApprovedNodeExists         = errors.New("approved node already exists with a different key")
+	ErrApprovedNodeRevoked        = errors.New("approved node is revoked")
+	ErrNodeOperatorNotFound       = errors.New("node operator not found")
+	ErrNodeOperatorRevoked        = errors.New("node operator is revoked")
+	ErrNodeKeyRotationOverlap     = errors.New("node key rotation overlap is outside the allowed range")
+	ErrNodeKeyAlreadyActive       = errors.New("node key is already active")
+	ErrBootstrapInviteInvalid     = errors.New("bootstrap invitation is invalid, expired, or already used")
 )
 
 const MaxNodeKeyRotationOverlap = 24 * time.Hour
@@ -116,6 +117,7 @@ const (
 	RuntimeBlobOwnerCode            = "runtime_blob_owner_unknown"
 	RuntimeCleanupPendingCode       = "runtime_cleanup_pending"
 	RuntimeNotReadyCode             = "runtime_not_ready"
+	RuntimeMediaSettingsActiveCode  = "runtime_media_settings_active"
 )
 
 type BootstrapResult struct {
@@ -312,6 +314,7 @@ type CreateRuntimeInput struct {
 	HeightPx         int
 	DensityDpi       int
 	AudioEnabled     bool
+	AudioEnabledSet  bool
 	CameraMode       string
 	FileMode         string
 	BlobAutoSnapshot bool
@@ -348,6 +351,10 @@ type Host struct {
 	RelayPort              int        `json:"relay_port"`
 	DockerSocket           bool       `json:"docker_socket"`
 	Binder                 bool       `json:"binder"`
+	AudioStreaming         bool       `json:"audio_streaming"`
+	FileImport             bool       `json:"file_import"`
+	CameraPassthrough      bool       `json:"camera_passthrough"`
+	CameraSlots            int        `json:"camera_slots"`
 	PublicKey              string     `json:"public_key,omitempty"`
 	BlobStoreKind          string     `json:"blob_store_kind"`
 	StoragePreflightKind   *string    `json:"storage_preflight_kind,omitempty"`
@@ -367,6 +374,10 @@ type HostHeartbeat struct {
 	RelayPort              int
 	DockerSocket           bool
 	Binder                 bool
+	AudioStreaming         bool
+	FileImport             bool
+	CameraPassthrough      bool
+	CameraSlots            int
 	PublicKey              string
 	BlobStoreKind          string
 	StoragePreflightKind   string
@@ -374,6 +385,14 @@ type HostHeartbeat struct {
 	StoragePreflightJSON   string
 	StoragePreflightAt     *time.Time
 	StorageWalletAddress   string
+}
+
+type NodeReadiness struct {
+	Ready         bool `json:"ready"`
+	ObservedNodes int  `json:"observed_nodes"`
+	ApprovedNodes int  `json:"approved_nodes"`
+	ReadyNodes    int  `json:"ready_nodes"`
+	StaleNodes    int  `json:"stale_nodes"`
 }
 
 type ApprovedNodeKey struct {
@@ -1548,11 +1567,18 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 	if input.DensityDpi != nil && *input.DensityDpi > 0 {
 		current.DensityDpi = *input.DensityDpi
 	}
+	mediaSettingsChanged :=
+		(input.AudioEnabled != nil && *input.AudioEnabled != current.AudioEnabled) ||
+			(input.CameraMode != nil && normalizeChoice(*input.CameraMode, current.CameraMode, "disabled", "passthrough") != current.CameraMode) ||
+			(input.FileMode != nil && normalizeChoice(*input.FileMode, current.FileMode, "upload-only", "download-only", "bidirectional") != current.FileMode)
+	if mediaSettingsChanged && !strings.EqualFold(strings.TrimSpace(current.DesiredState), "stopped") {
+		return Runtime{}, ErrRuntimeMediaSettingsActive
+	}
 	if input.AudioEnabled != nil {
 		current.AudioEnabled = *input.AudioEnabled
 	}
 	if input.CameraMode != nil {
-		current.CameraMode = normalizeChoice(*input.CameraMode, current.CameraMode, "disabled", "passthrough", "upload-only")
+		current.CameraMode = normalizeChoice(*input.CameraMode, current.CameraMode, "disabled", "passthrough")
 	}
 	if input.FileMode != nil {
 		current.FileMode = normalizeChoice(*input.FileMode, current.FileMode, "upload-only", "download-only", "bidirectional")
@@ -2944,12 +2970,12 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 
 	var hostID string
 	if requiredHostID != "" {
-		hostID, err = requireReadyHostTX(ctx, tx, requiredHostID)
+		hostID, err = requireReadyRuntimeHostTX(ctx, tx, requiredHostID, current)
 		if err != nil {
 			return Runtime{}, err
 		}
 	} else {
-		hostID, err = pickReadyHostTX(ctx, tx, valueOrEmpty(current.HostID))
+		hostID, err = pickReadyRuntimeHostTX(ctx, tx, valueOrEmpty(current.HostID), current)
 		if err != nil {
 			return Runtime{}, err
 		}
@@ -3337,7 +3363,8 @@ func (s *Store) AppendSecurityEventLimited(ctx context.Context, event SecurityEv
 
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder,
+		        audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
 		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
 		        created_at, updated_at, last_heartbeat_at
@@ -3358,6 +3385,10 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 			&host.RelayPort,
 			&host.DockerSocket,
 			&host.Binder,
+			&host.AudioStreaming,
+			&host.FileImport,
+			&host.CameraPassthrough,
+			&host.CameraSlots,
 			&host.PublicKey,
 			&host.BlobStoreKind,
 			&host.StoragePreflightKind,
@@ -3377,10 +3408,55 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	return hosts, rows.Err()
 }
 
+func (s *Store) NodeReadiness(ctx context.Context) (NodeReadiness, error) {
+	var result NodeReadiness
+	err := s.db.QueryRowContext(ctx,
+		`SELECT
+		    COUNT(*) AS observed_nodes,
+		    COUNT(*) FILTER (WHERE EXISTS (
+		        SELECT 1
+		          FROM approved_nodes n
+		          JOIN node_operators o ON o.id = n.operator_id AND o.status = 'approved'
+		          JOIN approved_node_keys k ON k.node_id = n.node_id AND k.public_key = h.public_key
+		         WHERE n.node_id = h.id
+		           AND n.status = 'approved'
+		           AND (
+		               (k.state = 'active' AND k.key_version = n.active_key_version)
+		               OR (k.state = 'overlap' AND k.valid_until > NOW())
+		           )
+		    )) AS approved_nodes,
+		    COUNT(*) FILTER (WHERE
+		        h.docker_socket = TRUE
+		        AND h.binder = TRUE
+		        AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
+		        AND EXISTS (
+		            SELECT 1
+		              FROM approved_nodes n
+		              JOIN node_operators o ON o.id = n.operator_id AND o.status = 'approved'
+		              JOIN approved_node_keys k ON k.node_id = n.node_id AND k.public_key = h.public_key
+		             WHERE n.node_id = h.id
+		               AND n.status = 'approved'
+		               AND (
+		                   (k.state = 'active' AND k.key_version = n.active_key_version)
+		                   OR (k.state = 'overlap' AND k.valid_until > NOW())
+		               )
+		        )
+		    ) AS ready_nodes,
+		    COUNT(*) FILTER (WHERE h.last_heartbeat_at < NOW() - INTERVAL '2 minutes') AS stale_nodes
+		 FROM hosts h`,
+	).Scan(&result.ObservedNodes, &result.ApprovedNodes, &result.ReadyNodes, &result.StaleNodes)
+	if err != nil {
+		return NodeReadiness{}, err
+	}
+	result.Ready = result.ReadyNodes > 0
+	return result, nil
+}
+
 func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 	var host Host
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		`SELECT id, name, advertise_addr, relay_port, docker_socket, binder,
+		        audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
 		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
 		        created_at, updated_at, last_heartbeat_at
@@ -3393,6 +3469,10 @@ func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 		&host.RelayPort,
 		&host.DockerSocket,
 		&host.Binder,
+		&host.AudioStreaming,
+		&host.FileImport,
+		&host.CameraPassthrough,
+		&host.CameraSlots,
 		&host.PublicKey,
 		&host.BlobStoreKind,
 		&host.StoragePreflightKind,
@@ -4419,17 +4499,22 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 	var host Host
 	err := s.db.QueryRowContext(ctx,
 		`INSERT INTO hosts (
-		     id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		     id, name, advertise_addr, relay_port, docker_socket, binder,
+		     audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		     blob_store_kind, storage_preflight_kind, storage_preflight_status,
 		     storage_preflight_json, storage_preflight_at, storage_wallet_address
 		 )
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		 ON CONFLICT (id) DO UPDATE
 		 SET name = EXCLUDED.name,
 		     advertise_addr = EXCLUDED.advertise_addr,
 		     relay_port = EXCLUDED.relay_port,
 		     docker_socket = EXCLUDED.docker_socket,
 		     binder = EXCLUDED.binder,
+		     audio_streaming = EXCLUDED.audio_streaming,
+		     file_import = EXCLUDED.file_import,
+		     camera_passthrough = EXCLUDED.camera_passthrough,
+		     camera_slots = EXCLUDED.camera_slots,
 		     blob_store_kind = EXCLUDED.blob_store_kind,
 		     storage_preflight_kind = EXCLUDED.storage_preflight_kind,
 		     storage_preflight_status = EXCLUDED.storage_preflight_status,
@@ -4442,7 +4527,8 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		     END,
 		     updated_at = NOW(),
 		     last_heartbeat_at = NOW()
-		 RETURNING id, name, advertise_addr, relay_port, docker_socket, binder, public_key,
+		 RETURNING id, name, advertise_addr, relay_port, docker_socket, binder,
+		           audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		           blob_store_kind, storage_preflight_kind, storage_preflight_status,
 		           storage_preflight_json, storage_preflight_at, storage_wallet_address,
 		           created_at, updated_at, last_heartbeat_at`,
@@ -4452,6 +4538,10 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		heartbeat.RelayPort,
 		heartbeat.DockerSocket,
 		heartbeat.Binder,
+		heartbeat.AudioStreaming,
+		heartbeat.FileImport,
+		heartbeat.CameraPassthrough,
+		max(0, heartbeat.CameraSlots),
 		strings.TrimSpace(heartbeat.PublicKey),
 		normalizeChoice(heartbeat.BlobStoreKind, "local-disk", "local-disk", "sia-renterd"),
 		nullStringValue(heartbeat.StoragePreflightKind),
@@ -4466,6 +4556,10 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		&host.RelayPort,
 		&host.DockerSocket,
 		&host.Binder,
+		&host.AudioStreaming,
+		&host.FileImport,
+		&host.CameraPassthrough,
+		&host.CameraSlots,
 		&host.PublicKey,
 		&host.BlobStoreKind,
 		&host.StoragePreflightKind,
@@ -4953,7 +5047,8 @@ func (s *Store) RequireSessionRuntimeWithCapability(ctx context.Context, account
 		    AND c.revoked_at IS NULL
 		    AND c.expires_at > NOW()
 		    AND r.deleted_at IS NULL
-		    AND s.status IN ('pending', 'active')`,
+		    AND s.status IN ('pending', 'active')
+		    AND s.expires_at > NOW()`,
 		sessionID,
 		runtimeID,
 		capabilityID,
@@ -6203,16 +6298,124 @@ func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (s
 func runtimeStartHostTX(ctx context.Context, tx *sql.Tx, runtime Runtime) (string, error) {
 	currentHostID := valueOrEmpty(runtime.HostID)
 	if currentHostID != "" {
-		return pickReadyHostTX(ctx, tx, currentHostID)
+		return pickReadyRuntimeHostTX(ctx, tx, currentHostID, runtime)
 	}
 	if runtimeUsesNodeLocalBlob(runtime) {
 		blobHostID := valueOrEmpty(runtime.BlobHostID)
 		if blobHostID == "" {
 			return "", ErrRuntimeBlobOwner
 		}
-		return requireReadyHostTX(ctx, tx, blobHostID)
+		return requireReadyRuntimeHostTX(ctx, tx, blobHostID, runtime)
 	}
-	return pickReadyHostTX(ctx, tx, "")
+	return pickReadyRuntimeHostTX(ctx, tx, "", runtime)
+}
+
+func pickReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string, runtime Runtime) (string, error) {
+	if strings.TrimSpace(preferredHostID) != "" {
+		hostID, err := requireReadyRuntimeHostTX(ctx, tx, preferredHostID, runtime)
+		if err == nil {
+			return hostID, nil
+		}
+		if err != ErrNoReadyHost {
+			return "", err
+		}
+	}
+
+	requireAudio := runtime.AudioEnabled
+	requireFiles := strings.EqualFold(runtime.FileMode, "upload-only") || strings.EqualFold(runtime.FileMode, "bidirectional")
+	requireCamera := strings.EqualFold(runtime.CameraMode, "passthrough")
+	var hostID string
+	err := tx.QueryRowContext(ctx,
+		`SELECT h.id FROM hosts h
+		 JOIN approved_nodes n ON n.node_id = h.id AND n.status = 'approved'
+		 JOIN node_operators o ON o.id = n.operator_id AND o.status = 'approved'
+		 JOIN approved_node_keys k ON k.node_id = n.node_id AND k.public_key = h.public_key
+		 WHERE h.docker_socket = TRUE
+		   AND h.binder = TRUE
+		   AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
+		   AND (NOT $1 OR h.audio_streaming = TRUE)
+		   AND (NOT $2 OR h.file_import = TRUE)
+		   AND (NOT $3 OR (
+		       h.camera_passthrough = TRUE
+		       AND h.camera_slots > (
+		           SELECT COUNT(*) FROM runtimes active_camera
+		            WHERE active_camera.host_id = h.id
+		              AND active_camera.id <> $4
+		              AND active_camera.deleted_at IS NULL
+		              AND active_camera.desired_state = 'running'
+		              AND active_camera.camera_mode = 'passthrough'
+		       )
+		   ))
+		   AND (
+		       (k.state = 'active' AND k.key_version = n.active_key_version)
+		       OR (k.state = 'overlap' AND k.valid_until > NOW())
+		   )
+		 ORDER BY h.last_heartbeat_at DESC
+		 LIMIT 1
+		 FOR UPDATE OF h SKIP LOCKED`,
+		requireAudio,
+		requireFiles,
+		requireCamera,
+		runtime.ID,
+	).Scan(&hostID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNoReadyHost
+		}
+		return "", err
+	}
+	return hostID, nil
+}
+
+func requireReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, hostID string, runtime Runtime) (string, error) {
+	hostID = strings.TrimSpace(hostID)
+	if hostID == "" {
+		return "", ErrNoReadyHost
+	}
+	requireAudio := runtime.AudioEnabled
+	requireFiles := strings.EqualFold(runtime.FileMode, "upload-only") || strings.EqualFold(runtime.FileMode, "bidirectional")
+	requireCamera := strings.EqualFold(runtime.CameraMode, "passthrough")
+	var found string
+	err := tx.QueryRowContext(ctx,
+		`SELECT h.id FROM hosts h
+		 JOIN approved_nodes n ON n.node_id = h.id AND n.status = 'approved'
+		 JOIN node_operators o ON o.id = n.operator_id AND o.status = 'approved'
+		 JOIN approved_node_keys k ON k.node_id = n.node_id AND k.public_key = h.public_key
+		 WHERE h.id = $1
+		   AND h.docker_socket = TRUE
+		   AND h.binder = TRUE
+		   AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
+		   AND (NOT $2 OR h.audio_streaming = TRUE)
+		   AND (NOT $3 OR h.file_import = TRUE)
+		   AND (NOT $4 OR (
+		       h.camera_passthrough = TRUE
+		       AND h.camera_slots > (
+		           SELECT COUNT(*) FROM runtimes active_camera
+		            WHERE active_camera.host_id = h.id
+		              AND active_camera.id <> $5
+		              AND active_camera.deleted_at IS NULL
+		              AND active_camera.desired_state = 'running'
+		              AND active_camera.camera_mode = 'passthrough'
+		       )
+		   ))
+		   AND (
+		       (k.state = 'active' AND k.key_version = n.active_key_version)
+		       OR (k.state = 'overlap' AND k.valid_until > NOW())
+		   )
+		 FOR UPDATE OF h`,
+		hostID,
+		requireAudio,
+		requireFiles,
+		requireCamera,
+		runtime.ID,
+	).Scan(&found)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNoReadyHost
+		}
+		return "", err
+	}
+	return found, nil
 }
 
 func runtimeCleanupHostTX(ctx context.Context, tx *sql.Tx, runtime Runtime) (string, error) {
@@ -6271,7 +6474,8 @@ func requireReadyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (string,
 func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, error) {
 	var host Host
 	err := tx.QueryRowContext(ctx,
-		`SELECT h.id, h.name, h.advertise_addr, h.relay_port, h.docker_socket, h.binder, h.public_key,
+		`SELECT h.id, h.name, h.advertise_addr, h.relay_port, h.docker_socket, h.binder,
+		        h.audio_streaming, h.file_import, h.camera_passthrough, h.camera_slots, h.public_key,
 		        h.blob_store_kind, h.storage_preflight_kind, h.storage_preflight_status,
 		        h.storage_preflight_json, h.storage_preflight_at, h.storage_wallet_address,
 		        h.created_at, h.updated_at, h.last_heartbeat_at
@@ -6292,6 +6496,10 @@ func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, err
 		&host.RelayPort,
 		&host.DockerSocket,
 		&host.Binder,
+		&host.AudioStreaming,
+		&host.FileImport,
+		&host.CameraPassthrough,
+		&host.CameraSlots,
 		&host.PublicKey,
 		&host.BlobStoreKind,
 		&host.StoragePreflightKind,
@@ -6928,10 +7136,10 @@ func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error)
 	if input.DensityDpi <= 0 {
 		input.DensityDpi = 320
 	}
-	if !input.AudioEnabled {
+	if !input.AudioEnabledSet {
 		input.AudioEnabled = true
 	}
-	input.CameraMode = normalizeChoice(input.CameraMode, "disabled", "disabled", "passthrough", "upload-only")
+	input.CameraMode = normalizeChoice(input.CameraMode, "disabled", "disabled", "passthrough")
 	input.FileMode = normalizeChoice(input.FileMode, "upload-only", "upload-only", "download-only", "bidirectional")
 	if !input.BlobAutoSnapshot {
 		input.BlobAutoSnapshot = true
@@ -7033,7 +7241,7 @@ func validateRuntimeProfile(input CreateRuntimeInput) error {
 	if input.DensityDpi < 240 || input.DensityDpi > 640 || input.DensityDpi%20 != 0 {
 		return ErrRuntimeProfile
 	}
-	if input.CameraMode != "disabled" {
+	if input.CameraMode != "disabled" && input.CameraMode != "passthrough" {
 		return ErrRuntimeProfile
 	}
 	if input.FileMode != "upload-only" {

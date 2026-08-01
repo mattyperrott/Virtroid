@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+backend/cmd/virtnoded/assets/scrcpy-server.jar binary
+third_party/scrcpy-server/** whitespace=-blank-at-eof

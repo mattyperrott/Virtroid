@@ -53,16 +53,28 @@ public class AudioDecoder {
     }
 
     public void stop() {
-        if (mWorker != null) {
-            mWorker.setRunning(false);
-            mWorker = null;
-            mIsConfigured.set(false);
-            if (mCodec != null) {
+        Worker worker = mWorker;
+        mWorker = null;
+        if (worker != null) {
+            worker.setRunning(false);
+            worker.interrupt();
+        }
+        mIsConfigured.set(false);
+        if (mCodec != null) {
+            try {
                 mCodec.stop();
+            } catch (IllegalStateException ignored) {
             }
-            if (audioTrack != null) {
+            mCodec.release();
+            mCodec = null;
+        }
+        if (audioTrack != null) {
+            try {
                 audioTrack.stop();
+            } catch (IllegalStateException ignored) {
             }
+            audioTrack.release();
+            audioTrack = null;
         }
     }
 
@@ -81,10 +93,20 @@ public class AudioDecoder {
             if (mIsConfigured.get()) {
                 mIsConfigured.set(false);
                 if (mCodec != null) {
-                    mCodec.stop();
+                    try {
+                        mCodec.stop();
+                    } catch (IllegalStateException ignored) {
+                    }
+                    mCodec.release();
+                    mCodec = null;
                 }
                 if (audioTrack != null) {
-                    audioTrack.stop();
+                    try {
+                        audioTrack.stop();
+                    } catch (IllegalStateException ignored) {
+                    }
+                    audioTrack.release();
+                    audioTrack = null;
                 }
             }
             MediaFormat format = MediaFormat.createAudioFormat(MIMETYPE_AUDIO_AAC, SAMPLE_RATE, 2);

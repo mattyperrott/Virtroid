@@ -73,9 +73,18 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 	); err != nil {
 		t.Fatalf("bootstrap public account: %v", err)
 	}
-	runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{Name: "CI runtime"})
+	runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{
+		Name:            "CI runtime",
+		AudioEnabled:    false,
+		AudioEnabledSet: true,
+		CameraMode:      "passthrough",
+		FileMode:        "upload-only",
+	})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
+	}
+	if runtime.AudioEnabled || runtime.CameraMode != "passthrough" {
+		t.Fatalf("runtime media profile = audio:%v camera:%q", runtime.AudioEnabled, runtime.CameraMode)
 	}
 	if runtime.OperationGeneration != 1 {
 		t.Fatalf("initial operation generation = %d, want 1", runtime.OperationGeneration)
@@ -92,14 +101,17 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 		t.Fatalf("approve test node: %v", err)
 	}
 	if _, err := st.UpsertHostHeartbeat(ctx, HostHeartbeat{
-		ID:            nodeID,
-		Name:          "CI node",
-		AdvertiseAddr: "virtnoded",
-		RelayPort:     8090,
-		DockerSocket:  true,
-		Binder:        true,
-		PublicKey:     approvedNode.Keys[0].PublicKey,
-		BlobStoreKind: "local-disk",
+		ID:                nodeID,
+		Name:              "CI node",
+		AdvertiseAddr:     "virtnoded",
+		RelayPort:         8090,
+		DockerSocket:      true,
+		Binder:            true,
+		FileImport:        true,
+		CameraPassthrough: true,
+		CameraSlots:       1,
+		PublicKey:         approvedNode.Keys[0].PublicKey,
+		BlobStoreKind:     "local-disk",
 	}); err != nil {
 		t.Fatalf("register test node: %v", err)
 	}
@@ -172,6 +184,133 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 	}
 }
 
+func TestPostgresCameraSlotAllocationIsAtomic(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	nodeID := "camera-slot-node-" + uuid.NewString()
+	operatorID := "camera-slot-operator-" + uuid.NewString()
+	accountIDs := []string{uuid.NewString(), uuid.NewString()}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, cleanupErr := st.db.ExecContext(cleanupCtx, `DELETE FROM accounts WHERE id = $1`, accountIDs[1]); cleanupErr != nil {
+			t.Errorf("clean up second camera-slot account: %v", cleanupErr)
+		}
+		cleanupPostgresIntegrationFixture(t, st, accountIDs[0], nodeID, operatorID)
+	})
+
+	approvedNode, err := st.ApproveNode(ctx, ApproveNodeInput{
+		NodeID:       nodeID,
+		OperatorID:   operatorID,
+		OperatorName: "Camera slot integration operator",
+		PublicKey:    integrationNodePublicKey(t),
+		Actor:        "postgres-integration-test",
+		Reason:       "atomic camera slot allocation fixture",
+	})
+	if err != nil {
+		t.Fatalf("approve camera-slot node: %v", err)
+	}
+	if _, err := st.UpsertHostHeartbeat(ctx, HostHeartbeat{
+		ID:                nodeID,
+		Name:              "Camera slot node",
+		AdvertiseAddr:     "camera-slot.invalid",
+		RelayPort:         8090,
+		DockerSocket:      true,
+		Binder:            true,
+		FileImport:        true,
+		CameraPassthrough: true,
+		CameraSlots:       1,
+		PublicKey:         approvedNode.Keys[0].PublicKey,
+		BlobStoreKind:     "local-disk",
+	}); err != nil {
+		t.Fatalf("register camera-slot node: %v", err)
+	}
+
+	runtimeIDs := make([]string, len(accountIDs))
+	for index, accountID := range accountIDs {
+		if _, err := st.BootstrapAccountWithIdentity(
+			ctx,
+			accountID,
+			uuid.NewString(),
+			"Camera slot CI device",
+			integrationNodePublicKey(t),
+			CreateRuntimeInput{},
+		); err != nil {
+			t.Fatalf("bootstrap camera-slot account %d: %v", index, err)
+		}
+		runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{
+			Name:            "Camera slot runtime",
+			AudioEnabled:    false,
+			AudioEnabledSet: true,
+			CameraMode:      "passthrough",
+			FileMode:        "upload-only",
+		})
+		if err != nil {
+			t.Fatalf("create camera-slot runtime %d: %v", index, err)
+		}
+		runtimeIDs[index] = runtime.ID
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, len(runtimeIDs))
+	for index, runtimeID := range runtimeIDs {
+		accountID := accountIDs[index]
+		go func() {
+			<-start
+			_, startErr := st.StartRuntimeOnHost(ctx, accountID, runtimeID, nodeID)
+			results <- startErr
+		}()
+	}
+	close(start)
+
+	started := 0
+	rejected := 0
+	for range runtimeIDs {
+		switch startErr := <-results; {
+		case startErr == nil:
+			started++
+		case errors.Is(startErr, ErrNoReadyHost):
+			rejected++
+		default:
+			t.Fatalf("concurrent camera-slot start error = %v", startErr)
+		}
+	}
+	if started != 1 || rejected != 1 {
+		t.Fatalf("camera-slot starts = %d accepted, %d rejected; want one each", started, rejected)
+	}
+
+	var activeCameraRuntimes int
+	if err := st.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM runtimes
+		WHERE host_id = $1
+		  AND desired_state = 'running'
+		  AND camera_mode = 'passthrough'
+		  AND deleted_at IS NULL
+	`, nodeID).Scan(&activeCameraRuntimes); err != nil {
+		t.Fatalf("count active camera runtimes: %v", err)
+	}
+	if activeCameraRuntimes != 1 {
+		t.Fatalf("active camera runtimes = %d, want 1", activeCameraRuntimes)
+	}
+}
+
 func TestPostgresSnapshotGenerationRejectionIntegration(t *testing.T) {
 	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -221,14 +360,16 @@ func TestPostgresSnapshotGenerationRejectionIntegration(t *testing.T) {
 		t.Fatalf("approve disposable node: %v", err)
 	}
 	if _, err := st.UpsertHostHeartbeat(ctx, HostHeartbeat{
-		ID:            nodeID,
-		Name:          "Snapshot generation QA node",
-		AdvertiseAddr: "snapshot-qa.invalid",
-		RelayPort:     8090,
-		DockerSocket:  true,
-		Binder:        true,
-		PublicKey:     approvedNode.Keys[0].PublicKey,
-		BlobStoreKind: "local-disk",
+		ID:             nodeID,
+		Name:           "Snapshot generation QA node",
+		AdvertiseAddr:  "snapshot-qa.invalid",
+		RelayPort:      8090,
+		DockerSocket:   true,
+		Binder:         true,
+		AudioStreaming: true,
+		FileImport:     true,
+		PublicKey:      approvedNode.Keys[0].PublicKey,
+		BlobStoreKind:  "local-disk",
 	}); err != nil {
 		t.Fatalf("register disposable node: %v", err)
 	}

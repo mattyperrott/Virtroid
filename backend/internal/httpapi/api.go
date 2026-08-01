@@ -22,10 +22,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/nodeauth"
+	"virtroid/backend/internal/observability"
 	"virtroid/backend/internal/store"
 )
 
@@ -34,6 +36,8 @@ type API struct {
 	store            *store.Store
 	activeBlobKeys   *activeBlobKeyVault
 	bootstrapLimiter *bootstrapRateLimiter
+	observability    *observability.Service
+	httpClient       *http.Client
 }
 
 type durableBlobKeyHandoffStore interface {
@@ -104,6 +108,9 @@ const viewerPrepareProxyTimeout = 90 * time.Second
 const viewerReconnectBitRate = 4_000_000
 const blobKeyEnvelopeAlgorithm = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
 const maxAPIRequestBodyBytes int64 = 2 << 20
+const maxRuntimeFileImportBytes int64 = 32 << 20
+const maxRuntimeCameraFrameBytes int64 = 2 << 20
+const runtimeMediaProxyTimeout = 2 * time.Minute
 
 var errNodeAdvertiseAllowlistUnavailable = errors.New("node advertise address allowlist is required in production")
 
@@ -327,15 +334,20 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	if st != nil {
 		activeBlobKeys = newActiveBlobKeyVault(st)
 	}
+	telemetry := observability.New("virtroidd")
 	api := &API{
 		cfg:              cfg,
 		store:            st,
 		activeBlobKeys:   activeBlobKeys,
 		bootstrapLimiter: newBootstrapRateLimiter(cfg.BootstrapRateLimitPerMinute, bootstrapRateLimitWindow),
+		observability:    telemetry,
+		httpClient:       &http.Client{Transport: telemetry.Transport(http.DefaultTransport), Timeout: runtimeMediaProxyTimeout},
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.healthz)
+	mux.HandleFunc("GET /readyz", api.readyz)
+	mux.HandleFunc("GET /metrics", api.metrics)
 	mux.HandleFunc("GET /api/v1/meta", api.meta)
 	mux.HandleFunc("GET /api/v1/hosts", api.hosts)
 	mux.HandleFunc("GET /api/v1/apps/catalog", api.listAppCatalog)
@@ -365,6 +377,8 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/stop", api.stopMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/wipe", api.wipeMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/session", api.createMyRuntimeSession)
+	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/files", api.importMyRuntimeFile)
+	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/camera/frame", api.forwardMyRuntimeCameraFrame)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/logs", api.runtimeLogs)
 	mux.HandleFunc("GET /api/v1/me/sessions/active", api.listMyActiveSessions)
 	mux.HandleFunc("GET /api/v1/me/sessions/{id}", api.getMySession)
@@ -381,7 +395,18 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
 	mux.HandleFunc("POST /api/v1/internal/security/events", api.securityEventAppend)
 
-	return withRecovery(withJSON(mux))
+	return telemetry.Middleware(withRecovery(withJSON(mux)))
+}
+
+func (a *API) metrics(w http.ResponseWriter, r *http.Request) {
+	readiness, err := a.store.NodeReadiness(r.Context())
+	if err == nil {
+		a.observability.SetGauge("virtroid_control_plane_ready", boolFloat(readiness.Ready), nil)
+		a.observability.SetGauge("virtroid_nodes_ready", float64(readiness.ReadyNodes), nil)
+		a.observability.SetGauge("virtroid_nodes_observed", float64(readiness.ObservedNodes), nil)
+		a.observability.SetGauge("virtroid_nodes_stale", float64(readiness.StaleNodes), nil)
+	}
+	a.observability.Handler().ServeHTTP(w, r)
 }
 
 func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
@@ -390,8 +415,38 @@ func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	readiness, err := a.store.NodeReadiness(r.Context())
+	if err != nil {
+		writeServerAPIError(w, http.StatusServiceUnavailable, "node_readiness_failed", "service unavailable", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
+		"ok":       true,
+		"role":     "virtroidd",
+		"database": map[string]any{"ready": true},
+		"nodes":    readiness,
+	})
+}
+
+func (a *API) readyz(w http.ResponseWriter, r *http.Request) {
+	if err := a.store.Ping(r.Context()); err != nil {
+		writeServerAPIError(w, http.StatusServiceUnavailable, "database_not_ready", "service unavailable", err)
+		return
+	}
+	readiness, err := a.store.NodeReadiness(r.Context())
+	if err != nil {
+		writeServerAPIError(w, http.StatusServiceUnavailable, "node_readiness_failed", "service unavailable", err)
+		return
+	}
+	status := http.StatusOK
+	if !readiness.Ready {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, map[string]any{
+		"ok":       readiness.Ready,
+		"role":     "virtroidd",
+		"database": map[string]any{"ready": true},
+		"nodes":    readiness,
 	})
 }
 
@@ -451,7 +506,7 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 		WidthPx          int    `json:"width_px"`
 		HeightPx         int    `json:"height_px"`
 		DensityDpi       int    `json:"density_dpi"`
-		AudioEnabled     bool   `json:"audio_enabled"`
+		AudioEnabled     *bool  `json:"audio_enabled"`
 		CameraMode       string `json:"camera_mode"`
 		FileMode         string `json:"file_mode"`
 		BlobAutoSnapshot bool   `json:"blob_auto_snapshot"`
@@ -473,6 +528,10 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bootstrapAudioEnabled := true
+	if req.AudioEnabled != nil {
+		bootstrapAudioEnabled = *req.AudioEnabled
+	}
 	defaults := store.CreateRuntimeInput{
 		Name:             req.RuntimeName,
 		AndroidImage:     req.AndroidImage,
@@ -480,7 +539,8 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 		WidthPx:          req.WidthPx,
 		HeightPx:         req.HeightPx,
 		DensityDpi:       req.DensityDpi,
-		AudioEnabled:     req.AudioEnabled,
+		AudioEnabled:     bootstrapAudioEnabled,
+		AudioEnabledSet:  req.AudioEnabled != nil,
 		CameraMode:       req.CameraMode,
 		FileMode:         req.FileMode,
 		BlobAutoSnapshot: req.BlobAutoSnapshot,
@@ -999,7 +1059,7 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		WidthPx          int    `json:"width_px"`
 		HeightPx         int    `json:"height_px"`
 		DensityDpi       int    `json:"density_dpi"`
-		AudioEnabled     bool   `json:"audio_enabled"`
+		AudioEnabled     *bool  `json:"audio_enabled"`
 		CameraMode       string `json:"camera_mode"`
 		FileMode         string `json:"file_mode"`
 		BlobAutoSnapshot bool   `json:"blob_auto_snapshot"`
@@ -1015,6 +1075,10 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audioEnabled := true
+	if req.AudioEnabled != nil {
+		audioEnabled = *req.AudioEnabled
+	}
 	runtime, err := a.store.CreateRuntime(r.Context(), accountID, store.CreateRuntimeInput{
 		Name:             req.Name,
 		AndroidImage:     req.AndroidImage,
@@ -1022,7 +1086,8 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		WidthPx:          req.WidthPx,
 		HeightPx:         req.HeightPx,
 		DensityDpi:       req.DensityDpi,
-		AudioEnabled:     req.AudioEnabled,
+		AudioEnabled:     audioEnabled,
+		AudioEnabledSet:  req.AudioEnabled != nil,
 		CameraMode:       req.CameraMode,
 		FileMode:         req.FileMode,
 		BlobAutoSnapshot: req.BlobAutoSnapshot,
@@ -1499,7 +1564,193 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		"relay_tls":         relayEndpoint.TLS,
 		"relay_path":        "/api/v1/relay/" + session.ID,
 		"viewer_public_key": viewerPublicKey,
+		"audio_enabled":     runtime.AudioEnabled,
+		"camera_mode":       runtime.CameraMode,
+		"file_mode":         runtime.FileMode,
 	})
+}
+
+func (a *API) importMyRuntimeFile(w http.ResponseWriter, r *http.Request) {
+	runtimeID := strings.TrimSpace(r.PathValue("id"))
+	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
+	if !ok {
+		return
+	}
+	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_file_name", err.Error())
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "file_too_large", "imported file exceeds 32 MiB")
+			return
+		}
+		writeAPIError(w, http.StatusBadRequest, "file_read_failed", "could not read imported file")
+		return
+	}
+	if len(body) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "empty_file", "imported file is empty")
+		return
+	}
+	if int64(len(body)) > maxRuntimeFileImportBytes {
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "file_too_large", "imported file exceeds 32 MiB")
+		return
+	}
+
+	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, "file")
+	if !ok {
+		return
+	}
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/files?name=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString([]byte(filename)))
+	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": contentType})
+}
+
+func (a *API) forwardMyRuntimeCameraFrame(w http.ResponseWriter, r *http.Request) {
+	runtimeID := strings.TrimSpace(r.PathValue("id"))
+	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "camera_frame_invalid", "camera frame must be a JPEG no larger than 2 MiB")
+			return
+		}
+		writeAPIError(w, http.StatusBadRequest, "camera_frame_read_failed", "could not read camera frame")
+		return
+	}
+	if len(body) < 4 || int64(len(body)) > maxRuntimeCameraFrameBytes {
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "camera_frame_invalid", "camera frame must be a JPEG no larger than 2 MiB")
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Content-Type")), "image/jpeg") || body[0] != 0xff || body[1] != 0xd8 {
+		writeAPIError(w, http.StatusUnsupportedMediaType, "camera_frame_invalid", "camera frame must be JPEG")
+		return
+	}
+
+	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, "camera")
+	if !ok {
+		return
+	}
+	a.proxyRuntimeMedia(w, r, host, "/api/v1/internal/runtimes/"+url.PathEscape(runtimeID)+"/camera/frame", body, map[string]string{
+		"Content-Type": "image/jpeg",
+	})
+}
+
+func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor runtimeActor, runtimeID, operation string) (store.Runtime, store.Host, bool) {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" || !actor.capability {
+		writeAPIError(w, http.StatusConflict, "active_session_required", "an active viewer session is required for runtime media")
+		return store.Runtime{}, store.Host{}, false
+	}
+	if err := a.store.RequireSessionRuntimeWithCapability(r.Context(), actor.accountID, actor.capabilityID, sessionID, runtimeID); err != nil {
+		if errors.Is(err, store.ErrSessionNotFound) {
+			writeAPIError(w, http.StatusConflict, "active_session_required", "an active viewer session is required for runtime media")
+		} else {
+			writeInternalAPIError(w, "runtime_media_session_lookup_failed", err)
+		}
+		return store.Runtime{}, store.Host{}, false
+	}
+	runtime, err := a.store.GetRuntime(r.Context(), actor.accountID, runtimeID)
+	if err != nil {
+		if errors.Is(err, store.ErrRuntimeNotFound) {
+			writeAPIError(w, http.StatusNotFound, "runtime_not_found", err.Error())
+		} else {
+			writeInternalAPIError(w, "runtime_media_lookup_failed", err)
+		}
+		return store.Runtime{}, store.Host{}, false
+	}
+	if runtime.Status != "running" || runtime.DesiredState != "running" || runtime.ConnectionStatus != "online" || runtime.HostID == nil {
+		writeAPIError(w, http.StatusConflict, "runtime_not_ready", "runtime must be online for active media operations")
+		return store.Runtime{}, store.Host{}, false
+	}
+	switch operation {
+	case "file":
+		if !strings.EqualFold(runtime.FileMode, "upload-only") && !strings.EqualFold(runtime.FileMode, "bidirectional") {
+			writeAPIError(w, http.StatusConflict, "file_import_disabled", "file import is disabled for this runtime")
+			return store.Runtime{}, store.Host{}, false
+		}
+	case "camera":
+		if !strings.EqualFold(runtime.CameraMode, "passthrough") {
+			writeAPIError(w, http.StatusConflict, "camera_passthrough_disabled", "camera passthrough is disabled for this runtime")
+			return store.Runtime{}, store.Host{}, false
+		}
+	}
+	host, err := a.store.GetHost(r.Context(), strings.TrimSpace(*runtime.HostID))
+	if err != nil {
+		writeInternalAPIError(w, "runtime_media_host_lookup_failed", err)
+		return store.Runtime{}, store.Host{}, false
+	}
+	if operation == "file" && !host.FileImport {
+		writeAPIError(w, http.StatusServiceUnavailable, "node_file_import_unavailable", "assigned node does not support file import")
+		return store.Runtime{}, store.Host{}, false
+	}
+	if operation == "camera" && !host.CameraPassthrough {
+		writeAPIError(w, http.StatusServiceUnavailable, "node_camera_unavailable", "assigned node is not camera-ready")
+		return store.Runtime{}, store.Host{}, false
+	}
+	return runtime, host, true
+}
+
+func (a *API) proxyRuntimeMedia(w http.ResponseWriter, r *http.Request, host store.Host, callbackPath string, body []byte, headers map[string]string) {
+	advertiseAddr, err := validateNodeAdvertiseAddr(host.AdvertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	if err != nil {
+		writeServerAPIError(w, http.StatusBadGateway, "node_address_rejected", "assigned node address is unavailable", err)
+		return
+	}
+	port := host.RelayPort
+	if port <= 0 {
+		port = 8090
+	}
+	proxyCtx, cancel := context.WithTimeout(r.Context(), runtimeMediaProxyTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(proxyCtx, http.MethodPost, "http://"+net.JoinHostPort(advertiseAddr, strconv.Itoa(port))+callbackPath, bytes.NewReader(body))
+	if err != nil {
+		writeInternalAPIError(w, "runtime_media_proxy_request_failed", err)
+		return
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	if err := a.signNodeCallback(req, body); err != nil {
+		writeInternalAPIError(w, "runtime_media_proxy_sign_failed", err)
+		return
+	}
+	resp, err := a.outboundClient().Do(req)
+	if err != nil {
+		writeServerAPIError(w, http.StatusBadGateway, "runtime_media_proxy_failed", "assigned node did not accept media", err)
+		return
+	}
+	defer resp.Body.Close()
+	payload, readErr := io.ReadAll(io.LimitReader(resp.Body, maxAPIRequestBodyBytes))
+	if readErr != nil {
+		writeServerAPIError(w, http.StatusBadGateway, "runtime_media_proxy_response_failed", "assigned node returned an invalid response", readErr)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(payload)
+}
+
+func decodeRuntimeMediaName(encoded string) (string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil || len(decoded) == 0 || len(decoded) > 255 || !utf8.Valid(decoded) {
+		return "", errors.New("file name must be base64url encoded UTF-8 and no more than 255 bytes")
+	}
+	name := strings.TrimSpace(string(decoded))
+	if name == "" || strings.ContainsRune(name, 0) || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		return "", errors.New("file name is invalid")
+	}
+	return name, nil
 }
 
 func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
@@ -1818,6 +2069,10 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		RelayPort              int    `json:"relay_port"`
 		DockerSocket           bool   `json:"docker_socket"`
 		Binder                 bool   `json:"binder"`
+		AudioStreaming         bool   `json:"audio_streaming"`
+		FileImport             bool   `json:"file_import"`
+		CameraPassthrough      bool   `json:"camera_passthrough"`
+		CameraSlots            int    `json:"camera_slots"`
 		BlobStoreKind          string `json:"blob_store_kind"`
 		StoragePreflightKind   string `json:"storage_preflight_kind"`
 		StoragePreflightStatus string `json:"storage_preflight_status"`
@@ -1871,6 +2126,10 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		RelayPort:              req.RelayPort,
 		DockerSocket:           req.DockerSocket,
 		Binder:                 req.Binder,
+		AudioStreaming:         req.AudioStreaming,
+		FileImport:             req.FileImport,
+		CameraPassthrough:      req.CameraPassthrough,
+		CameraSlots:            req.CameraSlots,
 		PublicKey:              node.publicKey,
 		BlobStoreKind:          req.BlobStoreKind,
 		StoragePreflightKind:   req.StoragePreflightKind,
@@ -2101,7 +2360,7 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 	if err := a.signNodeCallback(req, body); err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.outboundClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -2189,7 +2448,7 @@ func (a *API) requireRuntimeCapabilityRequest(w http.ResponseWriter, r *http.Req
 		return runtimeActor{}, false
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
 		return runtimeActor{}, false
@@ -2555,7 +2814,7 @@ func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request)
 		return "", "", false
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
 		return "", "", false
@@ -2695,7 +2954,7 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowDe
 		return nodeRequestIdentity{}, false
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
 		return nodeRequestIdentity{}, false
@@ -2817,7 +3076,7 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 		return "", err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.outboundClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -2845,6 +3104,20 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (a *API) outboundClient() *http.Client {
+	if a.httpClient != nil {
+		return a.httpClient
+	}
+	return http.DefaultClient
+}
+
+func boolFloat(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func writeAPIError(w http.ResponseWriter, status int, code, message string) {
@@ -2878,6 +3151,8 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusConflict, store.RuntimeCleanupPendingCode, err.Error())
 	case store.ErrRuntimeNotReady:
 		writeAPIError(w, http.StatusConflict, store.RuntimeNotReadyCode, err.Error())
+	case store.ErrRuntimeMediaSettingsActive:
+		writeAPIError(w, http.StatusConflict, store.RuntimeMediaSettingsActiveCode, err.Error())
 	case store.ErrRuntimeEntitlement:
 		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeEntitlementRequiredCode, err.Error())
 	case store.ErrRuntimeQuota:
@@ -2903,14 +3178,25 @@ func withJSON(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		if r.Body != nil {
-			if r.ContentLength > maxAPIRequestBodyBytes {
+			limit := apiRequestBodyLimit(r.URL.Path)
+			if r.ContentLength > limit {
 				writeAPIError(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "request body is too large")
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, maxAPIRequestBodyBytes)
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func apiRequestBodyLimit(path string) int64 {
+	if strings.HasSuffix(path, "/files") {
+		return maxRuntimeFileImportBytes
+	}
+	if strings.HasSuffix(path, "/camera/frame") {
+		return maxRuntimeCameraFrameBytes
+	}
+	return maxAPIRequestBodyBytes
 }
 
 func withRecovery(next http.Handler) http.Handler {

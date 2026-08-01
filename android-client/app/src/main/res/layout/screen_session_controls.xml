@@ -378,7 +378,7 @@
                     </LinearLayout>
                     <FrameLayout
                         android:id="@+id/cameraPassthroughSwitch"
-                        android:contentDescription="@string/new_runtime_camera_passthrough_unavailable"
+                        android:contentDescription="@string/new_runtime_camera_passthrough"
                         android:layout_width="52dp"
                         android:layout_height="30dp"
                         android:background="@drawable/bg_switch_track_on"

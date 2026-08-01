@@ -174,10 +174,10 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="Camera Passthrough" />
+                            android:text="@string/new_runtime_camera_passthrough" />
                         <com.google.android.material.switchmaterial.SwitchMaterial
                             android:id="@+id/cameraPassthroughSwitch"
-                            android:contentDescription="@string/new_runtime_camera_passthrough_unavailable"
+                            android:contentDescription="@string/new_runtime_camera_passthrough"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:checked="false"

@@ -2168,7 +2168,7 @@ func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(0)))
 	mock.ExpectQuery("SELECT h.id FROM hosts h").
-		WithArgs(hostID).
+		WithArgs(hostID, true, true, false, runtimeID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(hostID))
 	mock.ExpectQuery("UPDATE runtimes").
 		WithArgs(accountID, runtimeID, hostID, sql.NullInt32{Int32: 46000, Valid: true}, true).
@@ -2269,6 +2269,23 @@ func TestNormalizedCreateInputRejectsUnsafeProfile(t *testing.T) {
 	}
 	if _, err := normalizedCreateInput(CreateRuntimeInput{WidthPx: 1920, HeightPx: 1080, DensityDpi: 320}); !errors.Is(err, ErrRuntimeProfile) {
 		t.Fatalf("oversized profile error = %v, want %v", err, ErrRuntimeProfile)
+	}
+}
+
+func TestNormalizedCreateInputPreservesExplicitAudioAndAllowsCameraPassthrough(t *testing.T) {
+	input, err := normalizedCreateInput(CreateRuntimeInput{
+		AudioEnabled:    false,
+		AudioEnabledSet: true,
+		CameraMode:      "passthrough",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.AudioEnabled {
+		t.Fatal("explicit audio disable was replaced by the default")
+	}
+	if input.CameraMode != "passthrough" {
+		t.Fatalf("camera mode = %q", input.CameraMode)
 	}
 }
 
@@ -3882,6 +3899,10 @@ func hostRows(now time.Time, hostID, publicKey string) *sqlmock.Rows {
 		"relay_port",
 		"docker_socket",
 		"binder",
+		"audio_streaming",
+		"file_import",
+		"camera_passthrough",
+		"camera_slots",
 		"public_key",
 		"blob_store_kind",
 		"storage_preflight_kind",
@@ -3899,6 +3920,10 @@ func hostRows(now time.Time, hostID, publicKey string) *sqlmock.Rows {
 		8090,
 		true,
 		true,
+		true,
+		true,
+		false,
+		0,
 		publicKey,
 		"local-disk",
 		nil,

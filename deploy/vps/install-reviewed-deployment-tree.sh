@@ -259,6 +259,7 @@ required_tree_files=(
   derive-node-fingerprint.sh docker-compose.yml enable-key-only-ssh.sh
   fail2ban-virtroid.conf audit-virtroid.rules generate-env.sh haproxy.cfg
   install-reviewed-deployment-tree.sh prepare-redroid-host.sh
+  v4l2loopback-virtroid.conf virtroid-camera.modules
   release-on-vps.sh renterd-admin.sh renterd-mysql-init.sql
   renterd-smoke-test.sh
   redroid-binderfs.service release.env.example renterd.md
@@ -269,6 +270,8 @@ required_tree_files=(
   unattended-upgrades-virtroid.conf verify-host-hardening.sh
   virtroid-backup.service virtroid-backup.sh
   virtroid-backup.timer virtroid-binderfs-setup.sh
+  monitoring/README.md monitoring/alertmanager.yml
+  monitoring/prometheus.yml monitoring/virtroid-alerts.yml
 )
 
 atomic_install_file() {

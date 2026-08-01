@@ -107,6 +107,8 @@ write_env_var() {
   write_env_var RENTERD_IMAGE "${RENTERD_IMAGE:-ghcr.io/siafoundation/renterd:2.9.3@sha256:72c589044aa47a09ab8349aad8b639a9cde2dd44bf27df73255d0f7bb29a2316}"
   write_env_var RENTERD_MYSQL_IMAGE "${RENTERD_MYSQL_IMAGE:-mysql:8.4@sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d}"
   write_env_var FALCO_IMAGE "${FALCO_IMAGE:-falcosecurity/falco:0.43.0@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var PROMETHEUS_IMAGE "${PROMETHEUS_IMAGE:-prom/prometheus:v3.13.0@sha256:c6b27ea434f8389bfe233fbc7be381cf50587c286e871bc842008f5a1b1908a7}"
+  write_env_var ALERTMANAGER_IMAGE "${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286}"
   write_env_var POSTGRES_DB virtroid
   write_env_var POSTGRES_USER virtroid
   write_env_var POSTGRES_PASSWORD "$(random_hex)"
@@ -140,6 +142,10 @@ write_env_var() {
   write_env_var NODE_RUNTIME_SHM_BYTES 268435456
   write_env_var NODE_MIN_FREE_DISK_BYTES 10737418240
   write_env_var NODE_MIN_FREE_DISK_PERCENT 5
+  write_env_var NODE_CAMERA_DEVICE ""
+  write_env_var NODE_CAMERA_WIDTH 640
+  write_env_var NODE_CAMERA_HEIGHT 480
+  write_env_var NODE_CAMERA_FPS 10
 
   write_env_var APP_CATALOG_SYNC_ENABLED false
   write_env_var APP_CATALOG_SYNC_URL https://f-droid.org/repo/index-v2.json
