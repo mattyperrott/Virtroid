@@ -54,8 +54,9 @@ This separates:
 ## Project Status
 
 The repository contains a working **single-VPS remote Android release candidate**.
-The current code has local build and PostgreSQL integration evidence; it has not
-yet been deployed or exercised end to end on the VPS/ReDroid guest. See the
+The current code has local build, PostgreSQL integration, and green GitHub CI
+and code-scanning evidence; it has not yet been deployed or exercised end to
+end on the VPS/ReDroid guest. See the
 authoritative status report for the exact evidence boundary.
 
 The release candidate includes:
@@ -118,7 +119,7 @@ flowchart LR
 | Confidential VM isolation    | ❌ Not implemented | ReDroid currently runs on a trusted VPS                 |
 | Hardware attestation         | ❌ Not implemented | Design and proof-of-concept work only                   |
 | Operator-blind persistence   | ❌ Not implemented | Runtime host participates in snapshot operations        |
-| Multi-node scheduling        |    🗓️ Planned    | Current deployment uses one approved node               |
+| Multi-node scheduling        |     🟡 Candidate   | Capability-aware control logic exists; live multi-node proof is pending |
 | Operator control-panel UI    | ❌ Not implemented | Current control plane is API infrastructure             |
 
 > [!NOTE]
