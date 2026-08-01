@@ -419,6 +419,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
+      - monitoring-egress
       - monitoring
       - control
 
@@ -452,6 +453,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
+      - monitoring-egress
       - monitoring
 
 networks:
@@ -463,6 +465,8 @@ networks:
     internal: true
   monitoring:
     internal: true
+  monitoring-egress:
+    driver: bridge
   guest:
     name: ${NODE_DOCKER_NETWORK:?set NODE_DOCKER_NETWORK to the dedicated guest network name}
     driver: bridge
