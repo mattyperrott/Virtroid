@@ -2,6 +2,7 @@ package org.server.scrcpy;
 
 import org.server.scrcpy.util.Workarounds;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 
@@ -91,13 +92,9 @@ public final class Server {
             }
         });
 
-        try {
-            Process cmd = Runtime.getRuntime().exec("rm /data/local/tmp/scrcpy-server.jar");
-            cmd.waitFor();
-        } catch (IOException e1) {
-            e1.printStackTrace();
-        } catch (InterruptedException e1) {
-            e1.printStackTrace();
+        File stagedServer = new File("/data/local/tmp/scrcpy-server.jar");
+        if (stagedServer.exists() && !stagedServer.delete()) {
+            Ln.w("Could not remove the staged scrcpy server payload");
         }
 
         Options options = createOptions(args);

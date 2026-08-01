@@ -34,3 +34,12 @@ android {
 dependencies {
     testImplementation("junit:junit:4.13.2")
 }
+
+tasks.register<Copy>("syncEmbeddedAsset") {
+    group = "build"
+    description = "Builds and copies the scrcpy server payload into the node's embedded assets."
+    dependsOn("assembleRelease")
+    from(layout.buildDirectory.file("outputs/apk/release/scrcpy-server-release-unsigned.apk"))
+    into(rootProject.layout.projectDirectory.dir("../backend/cmd/virtnoded/assets"))
+    rename { "scrcpy-server.jar" }
+}
