@@ -397,7 +397,6 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
-      - --web.enable-lifecycle=false
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/virtroid-alerts.yml:/etc/prometheus/rules/virtroid-alerts.yml:ro
