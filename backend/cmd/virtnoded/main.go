@@ -135,7 +135,7 @@ if ! ss -ltn 2>/dev/null | grep -q ':7007'; then
   exit 1
 fi
 chmod 0755 "$VIEWERCRYPT" >/dev/null 2>&1 || true
-"$VIEWERCRYPT" -listen "127.0.0.1:7017" -upstream "localhost:7007" -public-key-file "$PUBLIC_KEY"
+"$VIEWERCRYPT" -listen "127.0.0.1:7017" -upstream "[::1]:7007" -public-key-file "$PUBLIC_KEY"
 STATUS=$?
 kill "$SERVER_PID" >/dev/null 2>&1 || true
 exit "$STATUS"

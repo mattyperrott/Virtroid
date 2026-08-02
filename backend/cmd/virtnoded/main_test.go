@@ -222,12 +222,12 @@ func TestViewerServiceReuseRequiresEncryptedAndPlaintextListeners(t *testing.T) 
 	}
 }
 
-func TestViewerScriptUsesDualStackLoopbackForScrcpy(t *testing.T) {
-	if !strings.Contains(viewerScriptContent, `-upstream "localhost:7007"`) {
-		t.Fatal("viewer script must resolve the guest loopback listener across IPv4 and IPv6")
+func TestViewerScriptUsesGuestScrcpyIPv6Loopback(t *testing.T) {
+	if !strings.Contains(viewerScriptContent, `-upstream "[::1]:7007"`) {
+		t.Fatal("viewer script must use the IPv6 loopback address exposed by the pinned ReDroid scrcpy listener")
 	}
 	if strings.Contains(viewerScriptContent, `-upstream "127.0.0.1:7007"`) {
-		t.Fatal("viewer script must not assume the scrcpy loopback listener is IPv4")
+		t.Fatal("viewer script must not use IPv4 for the pinned ReDroid scrcpy listener")
 	}
 }
 
