@@ -11,17 +11,24 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,19 +42,27 @@ const (
 	blobEnvelopeAlgorithm  = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
 	blobEnvelopeHKDFInfo   = "virtroid-blob-key-envelope-v1"
 	blobVerifierPrefix     = "virtroid-blob-verifier-v1:"
+	capabilityIDContext    = "VIRTROID-RUNTIME-CAPABILITY-ID-V1"
+	capabilitySignContext  = "VIRTROID-CAPABILITY-SIGNATURE-V1"
+	viewerProtocolMagic    = "VRTENC1\n"
+	viewerMaxPublicKey     = 2048
+	viewerMaxCipherFrame   = 32*1024 + 16
 )
 
 type qaClient struct {
-	baseURL    string
-	http       *http.Client
-	deviceKey  *ecdsa.PrivateKey
-	accountID  string
-	deviceID   string
-	bootstrapInvite string
-	blobKey    []byte
-	verifier   string
-	runtimeID  string
-	runtimeIDs []string
+	baseURL             string
+	http                *http.Client
+	deviceKey           *ecdsa.PrivateKey
+	capabilityKey       *ecdsa.PrivateKey
+	capabilityID        string
+	accountID           string
+	deviceID            string
+	bootstrapInvite     string
+	blobKey             []byte
+	verifier            string
+	runtimeID           string
+	runtimeIDs          []string
+	pauseOnAudioFailure bool
 }
 
 type runtimeState struct {
@@ -76,23 +91,31 @@ type operationResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+type mediaImportResult struct {
+	FileName    string `json:"file_name"`
+	Bytes       int64  `json:"bytes"`
+	SHA256      string `json:"sha256"`
+	RuntimePath string `json:"runtime_path"`
+}
+
 type report struct {
-	StartedAt                time.Time                 `json:"started_at"`
-	FinishedAt               time.Time                 `json:"finished_at"`
-	BaseURL                  string                    `json:"base_url"`
-	AccountID                string                    `json:"account_id"`
-	DeviceID                 string                    `json:"device_id"`
-	RuntimeID                string                    `json:"runtime_id"`
-	ConcurrentStart          []operationResult         `json:"concurrent_start"`
-	ConcurrentStop           []operationResult         `json:"concurrent_stop"`
-	MixedStartStop           []operationResult         `json:"mixed_start_stop"`
-	ConcurrentWipe           []operationResult         `json:"concurrent_wipe"`
-	ConcurrentDelete         []operationResult         `json:"concurrent_delete"`
-	States                   map[string]runtimeState   `json:"states"`
-	Checks                   map[string]bool           `json:"checks"`
-	Notes                    []string                  `json:"notes,omitempty"`
-	HTTPStatusCounts         map[string]map[string]int `json:"http_status_counts"`
-	SnapshotGenerationByStep map[string]int64          `json:"snapshot_generation_by_step"`
+	StartedAt                time.Time                    `json:"started_at"`
+	FinishedAt               time.Time                    `json:"finished_at"`
+	BaseURL                  string                       `json:"base_url"`
+	AccountID                string                       `json:"account_id"`
+	DeviceID                 string                       `json:"device_id"`
+	RuntimeID                string                       `json:"runtime_id"`
+	ConcurrentStart          []operationResult            `json:"concurrent_start"`
+	ConcurrentStop           []operationResult            `json:"concurrent_stop"`
+	MixedStartStop           []operationResult            `json:"mixed_start_stop"`
+	ConcurrentWipe           []operationResult            `json:"concurrent_wipe"`
+	ConcurrentDelete         []operationResult            `json:"concurrent_delete"`
+	States                   map[string]runtimeState      `json:"states"`
+	Checks                   map[string]bool              `json:"checks"`
+	Notes                    []string                     `json:"notes,omitempty"`
+	HTTPStatusCounts         map[string]map[string]int    `json:"http_status_counts"`
+	SnapshotGenerationByStep map[string]int64             `json:"snapshot_generation_by_step"`
+	Media                    map[string]mediaImportResult `json:"media,omitempty"`
 }
 
 func main() {
@@ -107,12 +130,13 @@ func main() {
 	}()
 
 	var (
-		baseURL    = flag.String("base-url", "https://virtroid.network", "Virtroid control-plane base URL")
-		bootstrapInviteEnv = flag.String("bootstrap-invite-env", "VIRTROID_BOOTSTRAP_INVITE", "environment variable containing the one-time bootstrap invitation")
-		concurrent = flag.Int("concurrency", 8, "number of concurrent duplicate mutations")
-		confirm    = flag.Bool("confirm-disposable", false, "required acknowledgement that the generated account is disposable")
-		scenario   = flag.String("scenario", "lifecycle", "test scenario: lifecycle, snapshot-corruption, or quota")
-		timeout    = flag.Duration("timeout", 4*time.Minute, "maximum wait per lifecycle transition")
+		baseURL             = flag.String("base-url", "https://virtroid.network", "Virtroid control-plane base URL")
+		bootstrapInviteEnv  = flag.String("bootstrap-invite-env", "VIRTROID_BOOTSTRAP_INVITE", "environment variable containing the one-time bootstrap invitation")
+		concurrent          = flag.Int("concurrency", 8, "number of concurrent duplicate mutations")
+		confirm             = flag.Bool("confirm-disposable", false, "required acknowledgement that the generated account is disposable")
+		scenario            = flag.String("scenario", "lifecycle", "test scenario: lifecycle, idle, media, snapshot-corruption, or quota")
+		timeout             = flag.Duration("timeout", 4*time.Minute, "maximum wait per lifecycle transition")
+		pauseOnAudioFailure = flag.Bool("pause-on-audio-failure", false, "wait for the audio-inspected stdin signal before cleaning up a failed media guest")
 	)
 	flag.Parse()
 	if !*confirm {
@@ -123,8 +147,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--concurrency must be between 2 and 16")
 		os.Exit(2)
 	}
-	if *scenario != "lifecycle" && *scenario != "snapshot-corruption" && *scenario != "quota" {
-		fmt.Fprintln(os.Stderr, "--scenario must be lifecycle, snapshot-corruption, or quota")
+	if *scenario != "lifecycle" && *scenario != "idle" && *scenario != "media" && *scenario != "snapshot-corruption" && *scenario != "quota" {
+		fmt.Fprintln(os.Stderr, "--scenario must be lifecycle, idle, media, snapshot-corruption, or quota")
 		os.Exit(2)
 	}
 	bootstrapInviteEnvName := strings.TrimSpace(*bootstrapInviteEnv)
@@ -143,6 +167,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	client.pauseOnAudioFailure = *pauseOnAudioFailure
 	rep := report{
 		StartedAt:                time.Now().UTC(),
 		BaseURL:                  client.baseURL,
@@ -152,6 +177,7 @@ func main() {
 		Checks:                   make(map[string]bool),
 		HTTPStatusCounts:         make(map[string]map[string]int),
 		SnapshotGenerationByStep: make(map[string]int64),
+		Media:                    make(map[string]mediaImportResult),
 	}
 	cleanupNeeded := false
 	defer func() {
@@ -169,7 +195,11 @@ func main() {
 	if err := client.registerIdentity(ctx); err != nil {
 		fatal(err)
 	}
-	created, err := client.createRuntime(ctx, "Lifecycle QA "+client.runtimeSuffix())
+	cameraMode := "disabled"
+	if *scenario == "media" {
+		cameraMode = "photo-import"
+	}
+	created, err := client.createRuntimeWithCameraMode(ctx, "Lifecycle QA "+client.runtimeSuffix(), cameraMode)
 	if err != nil {
 		fatal(err)
 	}
@@ -177,6 +207,30 @@ func main() {
 	rep.RuntimeID = created.ID
 	rep.States["created"] = created
 	fmt.Fprintf(os.Stderr, "lifecycleqa disposable account=%s runtime=%s\n", client.accountID, client.runtimeID)
+	if *scenario == "idle" {
+		if err := client.runIdleScenario(ctx, &rep, *timeout); err != nil {
+			fatal(err)
+		}
+		if err := client.deleteAccount(ctx); err != nil {
+			fatal(err)
+		}
+		cleanupNeeded = false
+		rep.Checks["account_delete_accepted"] = true
+		finishReport(&rep)
+		return
+	}
+	if *scenario == "media" {
+		if err := client.runMediaScenario(ctx, &rep, *timeout); err != nil {
+			fatal(err)
+		}
+		if err := client.deleteAccount(ctx); err != nil {
+			fatal(err)
+		}
+		cleanupNeeded = false
+		rep.Checks["account_delete_accepted"] = true
+		finishReport(&rep)
+		return
+	}
 	if *scenario == "snapshot-corruption" {
 		if err := client.runSnapshotCorruptionScenario(ctx, &rep, *timeout); err != nil {
 			fatal(err)
@@ -577,14 +631,14 @@ func newQAClient(rawBaseURL string, bootstrapInvite string) (*qaClient, error) {
 	}
 	verifierDigest := sha256.Sum256(append([]byte(blobVerifierPrefix), blobKey...))
 	return &qaClient{
-		baseURL:   strings.TrimRight(parsed.String(), "/"),
-		http:      &http.Client{Timeout: 2 * time.Minute},
-		deviceKey: deviceKey,
-		accountID: uuid.NewString(),
-		deviceID:  uuid.NewString(),
+		baseURL:         strings.TrimRight(parsed.String(), "/"),
+		http:            &http.Client{Timeout: 2 * time.Minute},
+		deviceKey:       deviceKey,
+		accountID:       uuid.NewString(),
+		deviceID:        uuid.NewString(),
 		bootstrapInvite: strings.TrimSpace(bootstrapInvite),
-		blobKey:   blobKey,
-		verifier:  base64.RawURLEncoding.EncodeToString(verifierDigest[:]),
+		blobKey:         blobKey,
+		verifier:        base64.RawURLEncoding.EncodeToString(verifierDigest[:]),
 	}, nil
 }
 
@@ -628,10 +682,14 @@ func (c *qaClient) registerIdentity(ctx context.Context) error {
 }
 
 func (c *qaClient) createRuntime(ctx context.Context, name string) (runtimeState, error) {
+	return c.createRuntimeWithCameraMode(ctx, name, "disabled")
+}
+
+func (c *qaClient) createRuntimeWithCameraMode(ctx context.Context, name, cameraMode string) (runtimeState, error) {
 	body := map[string]any{
 		"account_id": c.accountID, "device_id": c.deviceID, "name": name,
 		"width_px": 800, "height_px": 1600, "density_dpi": 320,
-		"audio_enabled": true, "camera_mode": "disabled", "file_mode": "upload-only",
+		"audio_enabled": true, "camera_mode": cameraMode, "file_mode": "upload-only",
 		"blob_auto_snapshot": true, "blob_retain_days": 7,
 	}
 	status, payload, err := c.doSigned(ctx, http.MethodPost, "/api/v1/me/runtimes", body)
@@ -647,6 +705,457 @@ func (c *qaClient) createRuntime(ctx context.Context, name string) (runtimeState
 		c.runtimeIDs = append(c.runtimeIDs, state.ID)
 	}
 	return state, err
+}
+
+func (c *qaClient) runIdleScenario(ctx context.Context, rep *report, timeout time.Duration) error {
+	if _, err := c.mutate(ctx, "start"); err != nil {
+		return fmt.Errorf("idle start: %w", err)
+	}
+	running, err := c.waitRuntime(ctx, timeout, func(state runtimeState) bool {
+		return state.Status == "running" && state.DesiredState == "running" && state.ConnectionStatus == "online"
+	})
+	if err != nil {
+		return err
+	}
+	rep.States["idle_running"] = running
+	stopped, err := c.waitRuntime(ctx, timeout, isStopped)
+	if err != nil {
+		return fmt.Errorf("wait for idle reaper: %w", err)
+	}
+	rep.States["idle_reaped"] = stopped
+	rep.Checks["idle_runtime_stopped_without_session"] = stopped.DesiredState == "stopped" && stopped.OperationGeneration > running.OperationGeneration
+	if _, err := c.mutate(ctx, "delete"); err != nil {
+		return fmt.Errorf("delete idle runtime: %w", err)
+	}
+	if err := c.waitRuntimeGone(ctx, timeout); err != nil {
+		return err
+	}
+	rep.Checks["runtime_deleted"] = true
+	return nil
+}
+
+func (c *qaClient) runMediaScenario(ctx context.Context, rep *report, timeout time.Duration) error {
+	if _, err := c.mutate(ctx, "start"); err != nil {
+		return fmt.Errorf("media start: %w", err)
+	}
+	running, err := c.waitRuntime(ctx, timeout, func(state runtimeState) bool {
+		return state.Status == "running" && state.DesiredState == "running" && state.ConnectionStatus == "online"
+	})
+	if err != nil {
+		return err
+	}
+	rep.States["media_running"] = running
+
+	if err := c.registerRuntimeCapability(ctx); err != nil {
+		return err
+	}
+	leasePath := fmt.Sprintf("/api/v1/me/runtimes/%s/blob-key-lease", c.runtimeID)
+	status, payload, err := c.doCapability(ctx, http.MethodPost, leasePath, map[string]any{
+		"operation": "session", "blob_key_verifier": c.verifier,
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated {
+		return responseError("media session lease", status, payload)
+	}
+	var granted lease
+	if err := json.Unmarshal(payload, &granted); err != nil {
+		return err
+	}
+	envelope, err := encryptEnvelope(c.blobKey, granted)
+	if err != nil {
+		return err
+	}
+	sessionPath := fmt.Sprintf("/api/v1/me/runtimes/%s/session", c.runtimeID)
+	status, payload, err = c.doCapability(ctx, http.MethodPost, sessionPath, map[string]any{
+		"max_size": 800, "bit_rate": 4_000_000,
+		"blob_key_verifier": c.verifier, "blob_key_envelope": envelope,
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated {
+		return responseError("media session", status, payload)
+	}
+	var launch struct {
+		Session struct {
+			ID         string `json:"id"`
+			RelayToken string `json:"relay_token"`
+		} `json:"session"`
+		ViewerPublicKey string `json:"viewer_public_key"`
+		RelayHost       string `json:"relay_host"`
+		RelayPort       int    `json:"relay_port"`
+		RelayPath       string `json:"relay_path"`
+		RelayTLS        bool   `json:"relay_tls"`
+		AudioEnabled    bool   `json:"audio_enabled"`
+		CameraMode      string `json:"camera_mode"`
+		FileMode        string `json:"file_mode"`
+	}
+	if err := json.Unmarshal(payload, &launch); err != nil {
+		return err
+	}
+	if launch.Session.ID == "" {
+		return errors.New("media session response did not include a session id")
+	}
+	rep.Checks["viewer_prepared"] = launch.ViewerPublicKey != ""
+	rep.Checks["audio_enabled_through_viewer_prepare"] = launch.AudioEnabled
+	rep.Checks["photo_import_profile_active"] = launch.CameraMode == "photo-import"
+	rep.Checks["file_import_profile_active"] = launch.FileMode == "upload-only"
+	audioObserved, err := observeViewerAudio(
+		ctx,
+		launch.RelayHost,
+		launch.RelayPort,
+		launch.RelayTLS,
+		launch.RelayPath,
+		launch.Session.RelayToken,
+		launch.ViewerPublicKey,
+	)
+	if err != nil {
+		if c.pauseOnAudioFailure {
+			fmt.Fprintf(os.Stderr, "lifecycleqa pause=audio-failure error=%v\n", err)
+			if pauseErr := waitForFaultSignal("audio-inspected"); pauseErr != nil {
+				return fmt.Errorf("observe viewer audio: %w; inspection pause: %v", err, pauseErr)
+			}
+		}
+		return fmt.Errorf("observe viewer audio: %w", err)
+	}
+	rep.Checks["audio_packet_observed_on_encrypted_relay"] = audioObserved
+
+	fileBody := []byte("Virtroid live file import acceptance\n")
+	fileResult, err := c.importRuntimeMedia(ctx, launch.Session.ID, "files", "virtroid-live-import.txt", "text/plain", fileBody)
+	if err != nil {
+		return err
+	}
+	rep.Media["file"] = fileResult
+	rep.Checks["file_imported_to_guest"] = fileResult.RuntimePath == "/sdcard/Download/virtroid-live-import.txt" && mediaDigestMatches(fileResult, fileBody)
+
+	var photo bytes.Buffer
+	if err := jpeg.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 8, 8)), &jpeg.Options{Quality: 90}); err != nil {
+		return err
+	}
+	photoBody := photo.Bytes()
+	photoResult, err := c.importRuntimeMedia(ctx, launch.Session.ID, "photos", "virtroid-live-photo.jpg", "image/jpeg", photoBody)
+	if err != nil {
+		return err
+	}
+	rep.Media["photo"] = photoResult
+	rep.Checks["photo_imported_to_guest"] = photoResult.RuntimePath == "/sdcard/Pictures/Virtroid/virtroid-live-photo.jpg" && mediaDigestMatches(photoResult, photoBody)
+
+	closePath := fmt.Sprintf("/api/v1/me/sessions/%s/close?runtime_id=%s", url.PathEscape(launch.Session.ID), url.QueryEscape(c.runtimeID))
+	status, payload, err = c.doCapability(ctx, http.MethodPost, closePath, nil)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return responseError("close media session", status, payload)
+	}
+	rep.Checks["session_closed"] = true
+	if _, err := c.mutate(ctx, "stop"); err != nil {
+		return err
+	}
+	stopped, err := c.waitRuntime(ctx, timeout, isStopped)
+	if err != nil {
+		return err
+	}
+	rep.States["media_stopped"] = stopped
+	if _, err := c.mutate(ctx, "delete"); err != nil {
+		return err
+	}
+	if err := c.waitRuntimeGone(ctx, timeout); err != nil {
+		return err
+	}
+	rep.Checks["runtime_deleted"] = true
+	return nil
+}
+
+func (c *qaClient) registerRuntimeCapability(ctx context.Context) error {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return err
+	}
+	publicMaterial := base64.StdEncoding.EncodeToString(publicDER)
+	material := strings.Join([]string{capabilityIDContext, strings.TrimSpace(c.runtimeID), publicMaterial}, "\n")
+	digest := sha256.Sum256([]byte(material))
+	c.capabilityKey = key
+	c.capabilityID = base64.RawURLEncoding.EncodeToString(digest[:16])
+	path := fmt.Sprintf("/api/v1/me/runtimes/%s/capability", c.runtimeID)
+	status, payload, err := c.doSigned(ctx, http.MethodPost, path, map[string]any{
+		"account_id": c.accountID, "device_id": c.deviceID,
+		"capability_id": c.capabilityID, "public_key": publicMaterial,
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated {
+		return responseError("register runtime capability", status, payload)
+	}
+	return nil
+}
+
+func (c *qaClient) importRuntimeMedia(ctx context.Context, sessionID, operation, filename, contentType string, body []byte) (mediaImportResult, error) {
+	encodedName := base64.RawURLEncoding.EncodeToString([]byte(filename))
+	path := fmt.Sprintf("/api/v1/me/runtimes/%s/%s?session_id=%s&name=%s", c.runtimeID, operation, url.QueryEscape(sessionID), url.QueryEscape(encodedName))
+	status, payload, err := c.doCapabilityBinary(ctx, http.MethodPost, path, contentType, body)
+	if err != nil {
+		return mediaImportResult{}, err
+	}
+	if status < 200 || status >= 300 {
+		return mediaImportResult{}, responseError("import runtime "+operation, status, payload)
+	}
+	var result mediaImportResult
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return mediaImportResult{}, err
+	}
+	return result, nil
+}
+
+func mediaDigestMatches(result mediaImportResult, body []byte) bool {
+	digest := sha256.Sum256(body)
+	return result.Bytes == int64(len(body)) && strings.EqualFold(result.SHA256, hex.EncodeToString(digest[:]))
+}
+
+func observeViewerAudio(ctx context.Context, host string, port int, relayTLS bool, relayPath, relayToken, expectedServerPublicKey string) (bool, error) {
+	host = strings.TrimSpace(host)
+	if host == "" || port <= 0 || !relayTLS || strings.TrimSpace(relayPath) == "" || strings.TrimSpace(relayToken) == "" {
+		return false, errors.New("viewer relay launch data is incomplete or insecure")
+	}
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: host,
+	})
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	}
+	if _, err := fmt.Fprintf(
+		conn,
+		"GET %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: Upgrade\r\nUpgrade: virtroid-relay\r\nX-Virtroid-Relay-Token: %s\r\n\r\n",
+		relayPath,
+		host,
+		port,
+		relayToken,
+	); err != nil {
+		return false, err
+	}
+	statusLine, err := readRelayHTTPLine(conn)
+	if err != nil {
+		return false, err
+	}
+	if !strings.Contains(statusLine, " 101 ") && !strings.Contains(statusLine, " 200 ") {
+		return false, fmt.Errorf("relay upgrade failed: %s", statusLine)
+	}
+	for {
+		line, err := readRelayHTTPLine(conn)
+		if err != nil {
+			return false, err
+		}
+		if line == "" {
+			break
+		}
+	}
+
+	clientPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return false, err
+	}
+	clientPublicDER, err := x509.MarshalPKIXPublicKey(&clientPrivate.PublicKey)
+	if err != nil {
+		return false, err
+	}
+	if err := writeViewerHandshake(conn, clientPublicDER); err != nil {
+		return false, err
+	}
+	serverPublicDER, err := readViewerHandshake(conn)
+	if err != nil {
+		return false, err
+	}
+	expectedDER, err := base64.StdEncoding.DecodeString(strings.TrimSpace(expectedServerPublicKey))
+	if err != nil {
+		return false, err
+	}
+	if !hmac.Equal(serverPublicDER, expectedDER) {
+		return false, errors.New("viewer server public key mismatch")
+	}
+	parsedServerPublic, err := x509.ParsePKIXPublicKey(serverPublicDER)
+	if err != nil {
+		return false, err
+	}
+	serverPublic, ok := parsedServerPublic.(*ecdsa.PublicKey)
+	if !ok || serverPublic.Curve != elliptic.P256() {
+		return false, errors.New("viewer server public key is not P-256")
+	}
+	sharedX, _ := serverPublic.Curve.ScalarMult(serverPublic.X, serverPublic.Y, clientPrivate.D.Bytes())
+	if sharedX == nil {
+		return false, errors.New("derive viewer shared secret")
+	}
+	sharedSecret := viewerLeftPad(sharedX.Bytes(), 32)
+	transcript := append(bytes.Clone(clientPublicDER), serverPublicDER...)
+	salt := sha256.Sum256(transcript)
+	reader, err := newViewerEncryptedReader(conn, hkdfSHA256(
+		sharedSecret,
+		salt[:],
+		[]byte("virtroid-viewer-e2ee-v1 runtime-to-client"),
+		32,
+	))
+	if err != nil {
+		return false, err
+	}
+	var resolution [8]byte
+	if _, err := io.ReadFull(reader, resolution[:]); err != nil {
+		return false, err
+	}
+	width := binary.BigEndian.Uint32(resolution[0:4])
+	height := binary.BigEndian.Uint32(resolution[4:8])
+	if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
+		return false, fmt.Errorf("invalid viewer resolution %dx%d", width, height)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+	for {
+		var packetSizeBytes [4]byte
+		if _, err := io.ReadFull(reader, packetSizeBytes[:]); err != nil {
+			return false, err
+		}
+		packetSize := int(binary.BigEndian.Uint32(packetSizeBytes[:]))
+		if packetSize <= 0 || packetSize > 4*1024*1024 {
+			return false, fmt.Errorf("invalid viewer packet length %d", packetSize)
+		}
+		packet := make([]byte, packetSize)
+		if _, err := io.ReadFull(reader, packet); err != nil {
+			return false, err
+		}
+		if len(packet) >= 10 && packet[0] == 0 {
+			return true, nil
+		}
+	}
+}
+
+func readRelayHTTPLine(r io.Reader) (string, error) {
+	var line bytes.Buffer
+	previous := byte(0)
+	for {
+		var one [1]byte
+		if _, err := io.ReadFull(r, one[:]); err != nil {
+			return "", err
+		}
+		if previous == '\r' && one[0] == '\n' {
+			payload := line.Bytes()
+			if len(payload) > 0 {
+				payload = payload[:len(payload)-1]
+			}
+			return string(payload), nil
+		}
+		if line.Len() >= 8192 {
+			return "", errors.New("relay HTTP header line is too long")
+		}
+		line.WriteByte(one[0])
+		previous = one[0]
+	}
+}
+
+func writeViewerHandshake(w io.Writer, publicKeyDER []byte) error {
+	if len(publicKeyDER) == 0 || len(publicKeyDER) > viewerMaxPublicKey {
+		return fmt.Errorf("invalid viewer public key length %d", len(publicKeyDER))
+	}
+	if _, err := io.WriteString(w, viewerProtocolMagic); err != nil {
+		return err
+	}
+	var length [2]byte
+	binary.BigEndian.PutUint16(length[:], uint16(len(publicKeyDER)))
+	if _, err := w.Write(length[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(publicKeyDER)
+	return err
+}
+
+func readViewerHandshake(r io.Reader) ([]byte, error) {
+	magic := make([]byte, len(viewerProtocolMagic))
+	if _, err := io.ReadFull(r, magic); err != nil {
+		return nil, err
+	}
+	if string(magic) != viewerProtocolMagic {
+		return nil, errors.New("invalid viewer encryption handshake")
+	}
+	var length [2]byte
+	if _, err := io.ReadFull(r, length[:]); err != nil {
+		return nil, err
+	}
+	publicKeyLength := int(binary.BigEndian.Uint16(length[:]))
+	if publicKeyLength <= 0 || publicKeyLength > viewerMaxPublicKey {
+		return nil, fmt.Errorf("invalid viewer public key length %d", publicKeyLength)
+	}
+	publicKeyDER := make([]byte, publicKeyLength)
+	_, err := io.ReadFull(r, publicKeyDER)
+	return publicKeyDER, err
+}
+
+type viewerEncryptedReader struct {
+	reader io.Reader
+	aead   cipher.AEAD
+	seq    uint64
+	buffer bytes.Buffer
+}
+
+func newViewerEncryptedReader(reader io.Reader, key []byte) (*viewerEncryptedReader, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return &viewerEncryptedReader{reader: reader, aead: aead}, nil
+}
+
+func (r *viewerEncryptedReader) Read(payload []byte) (int, error) {
+	for r.buffer.Len() == 0 {
+		var lengthBytes [4]byte
+		if _, err := io.ReadFull(r.reader, lengthBytes[:]); err != nil {
+			return 0, err
+		}
+		length := int(binary.BigEndian.Uint32(lengthBytes[:]))
+		if length <= 0 || length > viewerMaxCipherFrame {
+			return 0, fmt.Errorf("invalid encrypted viewer frame length %d", length)
+		}
+		ciphertext := make([]byte, length)
+		if _, err := io.ReadFull(r.reader, ciphertext); err != nil {
+			return 0, err
+		}
+		plaintext, err := r.aead.Open(nil, viewerFrameNonce(r.seq), ciphertext, nil)
+		if err != nil {
+			return 0, err
+		}
+		r.seq++
+		r.buffer.Write(plaintext)
+	}
+	return r.buffer.Read(payload)
+}
+
+func viewerFrameNonce(sequence uint64) []byte {
+	nonce := make([]byte, 12)
+	binary.BigEndian.PutUint64(nonce[4:], sequence)
+	return nonce
+}
+
+func viewerLeftPad(value []byte, size int) []byte {
+	if len(value) >= size {
+		return value
+	}
+	padded := make([]byte, size)
+	copy(padded[size-len(value):], value)
+	return padded
 }
 
 func (c *qaClient) mutate(ctx context.Context, action string) (operationResult, error) {
@@ -833,6 +1342,62 @@ func (c *qaClient) doSigned(ctx context.Context, method, path string, body any) 
 	return resp.StatusCode, responseBody, err
 }
 
+func (c *qaClient) doCapability(ctx context.Context, method, path string, body any) (int, []byte, error) {
+	var payload []byte
+	var err error
+	if body != nil {
+		payload, err = json.Marshal(body)
+		if err != nil {
+			return 0, nil, err
+		}
+	} else if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
+		payload = []byte("{}")
+	}
+	return c.doCapabilityBytes(ctx, method, path, "application/json", payload)
+}
+
+func (c *qaClient) doCapabilityBinary(ctx context.Context, method, path, contentType string, body []byte) (int, []byte, error) {
+	return c.doCapabilityBytes(ctx, method, path, contentType, body)
+}
+
+func (c *qaClient) doCapabilityBytes(ctx context.Context, method, path, contentType string, body []byte) (int, []byte, error) {
+	if c.capabilityKey == nil || strings.TrimSpace(c.capabilityID) == "" {
+		return 0, nil, errors.New("runtime capability is not registered")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", contentType)
+	}
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	nonce := uuid.NewString()
+	bodyDigest := sha256.Sum256(body)
+	bodyHash := base64.RawURLEncoding.EncodeToString(bodyDigest[:])
+	canonical := strings.Join([]string{
+		capabilitySignContext, strings.ToUpper(method), path,
+		c.capabilityID, timestamp, nonce, bodyHash,
+	}, "\n")
+	digest := sha256.Sum256([]byte(canonical))
+	signature, err := ecdsa.SignASN1(rand.Reader, c.capabilityKey, digest[:])
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("X-Virtroid-Capability-ID", c.capabilityID)
+	req.Header.Set("X-Virtroid-Capability-Timestamp", timestamp)
+	req.Header.Set("X-Virtroid-Capability-Nonce", nonce)
+	req.Header.Set("X-Virtroid-Capability-Body-SHA256", bodyHash)
+	req.Header.Set("X-Virtroid-Capability-Signature", base64.RawURLEncoding.EncodeToString(signature))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	return resp.StatusCode, responseBody, err
+}
+
 func (c *qaClient) sign(req *http.Request, requestURI string, body []byte) error {
 	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	nonce := uuid.NewString()
@@ -953,6 +1518,20 @@ func responseError(operation string, status int, payload []byte) error {
 		message = message[:500]
 	}
 	return fmt.Errorf("%s failed: status=%d body=%s", operation, status, message)
+}
+
+func finishReport(rep *report) {
+	for name, ok := range rep.Checks {
+		if !ok {
+			fatal(fmt.Errorf("check failed: %s", name))
+		}
+	}
+	rep.FinishedAt = time.Now().UTC()
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(rep); err != nil {
+		fatal(err)
+	}
 }
 
 func recordStatuses(rep *report, name string, results []operationResult) {

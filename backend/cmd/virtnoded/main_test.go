@@ -222,6 +222,15 @@ func TestViewerServiceReuseRequiresEncryptedAndPlaintextListeners(t *testing.T) 
 	}
 }
 
+func TestViewerScriptUsesDualStackLoopbackForScrcpy(t *testing.T) {
+	if !strings.Contains(viewerScriptContent, `-upstream "localhost:7007"`) {
+		t.Fatal("viewer script must resolve the guest loopback listener across IPv4 and IPv6")
+	}
+	if strings.Contains(viewerScriptContent, `-upstream "127.0.0.1:7007"`) {
+		t.Fatal("viewer script must not assume the scrcpy loopback listener is IPv4")
+	}
+}
+
 func TestRuntimeAppsToInstallMergesDefaultsAndSelections(t *testing.T) {
 	node := &nodeAgent{
 		cfg: config.NodeConfig{
