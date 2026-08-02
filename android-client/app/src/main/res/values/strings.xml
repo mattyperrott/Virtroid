@@ -371,9 +371,6 @@
     <string name="session_back_to_app">Back to app</string>
     <string name="session_secure_online">Connected</string>
     <string name="session_camera">Camera</string>
-    <string name="session_upload">Upload</string>
-    <string name="session_file_too_large">Files must be 32 MiB or smaller.</string>
-    <string name="session_file_imported">Imported %1$s into Downloads.</string>
     <string name="session_camera_permission_required">Camera permission is required to take a photo.</string>
     <string name="session_camera_unavailable">The physical camera is unavailable.</string>
     <string name="session_camera_close">Close camera</string>
