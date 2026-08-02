@@ -22,7 +22,6 @@ NODE_PUBLIC_KEY = (
     "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7UFmyDRf7CB8zNxI0x7vlu4wrgrK"
     "Wg+1d3AJcV8bFfhknFaGr3Bf5Ddy+gmK1MVbQP5rMCLmJZXht/PHWxXrHA=="
 )
-QA_BOOTSTRAP_INVITE = "virtroid-qa-bootstrap-invite"
 
 
 def runtime_fixture(runtime_id: str, name: str = "QA Android") -> dict:
@@ -293,10 +292,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply({"status": "reset"})
                 return
             if path == "/api/v1/bootstrap":
-                if (
-                    body.get("invite_token") != QA_BOOTSTRAP_INVITE
-                    or STATE.bootstrap_invite_consumed
-                ):
+                if STATE.bootstrap_invite_consumed:
                     self.reply(
                         {
                             "error": "bootstrap invitation is invalid, expired, or already used",
@@ -441,7 +437,6 @@ def main() -> None:
     args = parser.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Virtroid UI QA fixture listening on http://127.0.0.1:{args.port}", flush=True)
-    print(f"One-time QA bootstrap invitation: {QA_BOOTSTRAP_INVITE}", flush=True)
     server.serve_forever()
 
 

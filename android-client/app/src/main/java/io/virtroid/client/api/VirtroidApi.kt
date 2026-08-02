@@ -270,7 +270,6 @@ class VirtroidApi(
         deviceId: String,
         deviceName: String,
         publicKey: String,
-        inviteToken: String,
         runtimeProfile: DeviceRuntimeProfile,
     ): BootstrapResult =
         withContext(Dispatchers.IO) {
@@ -279,7 +278,6 @@ class VirtroidApi(
                 .put("device_id", deviceId)
                 .put("device_name", deviceName)
                 .put("public_key", publicKey)
-                .put("invite_token", inviteToken.trim())
                 .put("runtime_name", runtimeProfile.runtimeName)
                 .put("width_px", runtimeProfile.widthPx)
                 .put("height_px", runtimeProfile.heightPx)

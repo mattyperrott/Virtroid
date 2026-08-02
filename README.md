@@ -168,9 +168,10 @@ Each lifecycle action is treated as an explicit backend operation rather than an
 
 ### Cryptographic device identity
 
-During bootstrap, the Android device signs the request that carries its
-one-time operator invitation. The server atomically consumes the invitation
-while creating the account and device. After bootstrap, requests are
+During bootstrap, the Android device signs the account and device request. The
+server mints a device-bound one-time invitation inside that transaction and
+consumes it while creating the account and device; the credential is never
+shown to the user or returned to the client. After bootstrap, requests are
 authenticated using the signing key held by that device.
 
 Signed requests cover security-relevant fields including:

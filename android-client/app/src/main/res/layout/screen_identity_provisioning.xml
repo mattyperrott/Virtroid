@@ -63,34 +63,6 @@
                     android:lineSpacingExtra="4dp"
                     android:text="@string/onboarding_subtitle" />
 
-                <TextView
-                    android:id="@+id/bootstrapInviteDescription"
-                    style="@style/VirtroidText.Body"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    android:text="@string/onboarding_invite_description" />
-
-                <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/bootstrapInviteInputLayout"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="24dp"
-                    android:hint="@string/onboarding_invite_hint"
-                    app:endIconMode="password_toggle">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/bootstrapInviteInput"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:importantForAutofill="no"
-                        android:inputType="textPassword"
-                        android:maxLength="256"
-                        android:saveEnabled="false"
-                        android:singleLine="true"
-                        android:textColor="@color/virtroid_on_surface" />
-                </com.google.android.material.textfield.TextInputLayout>
-
                 <LinearLayout
                     android:id="@+id/account_id_card"
                     android:layout_width="match_parent"

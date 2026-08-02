@@ -456,8 +456,19 @@ validate_environment() {
 			exit 1
 			;;
 	esac
+  case "${BOOTSTRAP_AUTO_ISSUE_INVITE:-true}" in
+    true|false) ;;
+    *)
+      echo "BOOTSTRAP_AUTO_ISSUE_INVITE must be true or false" >&2
+      exit 1
+      ;;
+  esac
   if [ "${BOOTSTRAP_REQUIRE_INVITE}" != "true" ]; then
     echo "BOOTSTRAP_REQUIRE_INVITE must be true for production deployment" >&2
+    exit 1
+  fi
+  if [ "${BOOTSTRAP_AUTO_ISSUE_INVITE:-true}" != "true" ]; then
+    echo "BOOTSTRAP_AUTO_ISSUE_INVITE must be true for unattended client provisioning" >&2
     exit 1
   fi
   if [ "${NODE_ALLOWED_ADVERTISE_ADDRS}" != "${NODE_ADVERTISE_ADDR}" ]; then

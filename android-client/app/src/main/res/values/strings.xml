@@ -394,11 +394,9 @@
     <string name="viewer_service_notification_title">Virtroid viewer active</string>
     <string name="viewer_service_notification_body">Keeping the relay connection active in background.</string>
     <string name="onboarding_title">Generate Identity</string>
-    <string name="onboarding_subtitle">This device creates a local signing key, then uses an operator invitation to register it with the control plane.</string>
-    <string name="onboarding_invite_description">Enter the one-time invitation supplied by your Virtroid operator. It expires and can register only one new account and device.</string>
-    <string name="onboarding_invite_hint">One-time invitation</string>
-    <string name="onboarding_invite_required">A bootstrap invitation is required</string>
-    <string name="onboarding_invite_invalid">This invitation is invalid, expired, or has already been used</string>
+    <string name="onboarding_subtitle">This device creates a local signing key. The control plane issues and consumes a device-bound one-time enrollment credential during registration.</string>
+    <string name="onboarding_invite_required">Automatic identity provisioning is unavailable</string>
+    <string name="onboarding_invite_invalid">Automatic identity provisioning could not be completed</string>
     <string name="onboarding_account_id">ACCOUNT ID</string>
     <string name="onboarding_copy_account">Copy account ID</string>
     <string name="onboarding_account_copied">Account ID copied</string>

@@ -21,6 +21,9 @@ func TestBootstrapAndNodeAdvertiseDefaultsFailClosedInProduction(t *testing.T) {
 	if !cfg.BootstrapRequireInvite {
 		t.Fatal("anonymous bootstrap enabled by default in production")
 	}
+	if !cfg.BootstrapAutoIssueInvite {
+		t.Fatal("automatic one-time bootstrap invitation disabled by default in production")
+	}
 	if cfg.NodeDevelopmentEnrollmentEnabled {
 		t.Fatal("development node enrollment enabled in production")
 	}
@@ -65,8 +68,12 @@ func TestBootstrapDefaultsToInviteGatedProductionAndHonorsOverride(t *testing.T)
 	t.Setenv("APP_ENV", "development")
 	t.Setenv("BOOTSTRAP_ENABLED", "")
 	t.Setenv("BOOTSTRAP_REQUIRE_INVITE", "")
+	t.Setenv("BOOTSTRAP_AUTO_ISSUE_INVITE", "")
 	if cfg := LoadServer(); !cfg.BootstrapEnabled || !cfg.BootstrapRequireInvite {
 		t.Fatal("bootstrap did not default to an enabled, invite-gated endpoint in development")
+	}
+	if cfg := LoadServer(); !cfg.BootstrapAutoIssueInvite {
+		t.Fatal("bootstrap did not default to automatic invitation issuance")
 	}
 
 	t.Setenv("APP_ENV", "production")
@@ -84,8 +91,12 @@ func TestBootstrapDefaultsToInviteGatedProductionAndHonorsOverride(t *testing.T)
 
 	t.Setenv("BOOTSTRAP_ENABLED", "true")
 	t.Setenv("BOOTSTRAP_REQUIRE_INVITE", "false")
+	t.Setenv("BOOTSTRAP_AUTO_ISSUE_INVITE", "false")
 	if cfg := LoadServer(); cfg.BootstrapRequireInvite {
 		t.Fatal("development bootstrap invite requirement did not honor explicit opt-out")
+	}
+	if cfg := LoadServer(); cfg.BootstrapAutoIssueInvite {
+		t.Fatal("development automatic invitation issuance did not honor explicit opt-out")
 	}
 }
 
