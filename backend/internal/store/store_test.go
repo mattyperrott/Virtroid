@@ -682,6 +682,57 @@ func TestBootstrapAccountWithInvitationConsumesItInAccountTransaction(t *testing
 	}
 }
 
+func TestBootstrapAccountWithAutomaticInvitationIssuesAndConsumesInAccountTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO bootstrap_invitations").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "device:"+deviceID, automaticBootstrapActor, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO accounts").
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(accountID, now))
+	mock.ExpectExec("INSERT INTO account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO devices").
+		WithArgs(deviceID, accountID, "Pixel", "public-key").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_id", "name", "public_key", "blob_key_verifier", "created_at", "last_seen_at",
+		}).AddRow(deviceID, accountID, "Pixel", "public-key", nil, now, nil))
+	mock.ExpectExec(bootstrapInvitationConsumptionSQL).
+		WithArgs(accountID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := st.BootstrapAccountWithAutomaticInvitation(
+		context.Background(),
+		accountID,
+		deviceID,
+		"Pixel",
+		"public-key",
+		CreateRuntimeInput{},
+	)
+	if err != nil {
+		t.Fatalf("BootstrapAccountWithAutomaticInvitation returned error: %v", err)
+	}
+	if result.Account.ID != accountID || result.Device.ID != deviceID {
+		t.Fatalf("unexpected bootstrap result: %+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestBootstrapAccountWithInvitationRejectsUnavailableTokenAndRollsBack(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

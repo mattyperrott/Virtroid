@@ -42,6 +42,8 @@ const (
 
 const (
 	defaultAndroidImage        = "redroid/redroid:14.0.0_64only-latest"
+	automaticBootstrapActor    = "virtroidd:auto-provision"
+	automaticBootstrapTTL      = time.Minute
 	viewerPortStart            = 46000
 	viewerPortEnd              = 46099
 	sessionAttachTTL           = 2 * time.Minute
@@ -753,7 +755,7 @@ func (s *Store) BootstrapAccountWithIdentity(
 	publicKey string,
 	defaults CreateRuntimeInput,
 ) (BootstrapResult, error) {
-	return s.bootstrapAccountWithIdentity(ctx, accountID, deviceID, deviceName, publicKey, nil, defaults)
+	return s.bootstrapAccountWithIdentity(ctx, accountID, deviceID, deviceName, publicKey, nil, false, defaults)
 }
 
 func (s *Store) BootstrapAccountWithInvitation(
@@ -769,7 +771,27 @@ func (s *Store) BootstrapAccountWithInvitation(
 		return BootstrapResult{}, ErrBootstrapInviteInvalid
 	}
 	tokenDigest := append([]byte(nil), invitationTokenSHA256...)
-	return s.bootstrapAccountWithIdentity(ctx, accountID, deviceID, deviceName, publicKey, tokenDigest, defaults)
+	return s.bootstrapAccountWithIdentity(ctx, accountID, deviceID, deviceName, publicKey, tokenDigest, false, defaults)
+}
+
+// BootstrapAccountWithAutomaticInvitation mints a one-time invitation inside
+// the account transaction, binds it to the signed device identity, and consumes
+// it before commit. The plaintext credential never leaves the server process or
+// becomes user-visible.
+func (s *Store) BootstrapAccountWithAutomaticInvitation(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	deviceName string,
+	publicKey string,
+	defaults CreateRuntimeInput,
+) (BootstrapResult, error) {
+	randomToken := make([]byte, 32)
+	if _, err := rand.Read(randomToken); err != nil {
+		return BootstrapResult{}, fmt.Errorf("generate automatic bootstrap invitation: %w", err)
+	}
+	tokenDigest := sha256.Sum256(randomToken)
+	return s.bootstrapAccountWithIdentity(ctx, accountID, deviceID, deviceName, publicKey, tokenDigest[:], true, defaults)
 }
 
 func (s *Store) bootstrapAccountWithIdentity(
@@ -779,6 +801,7 @@ func (s *Store) bootstrapAccountWithIdentity(
 	deviceName string,
 	publicKey string,
 	invitationTokenSHA256 []byte,
+	issueInvitation bool,
 	_ CreateRuntimeInput,
 ) (BootstrapResult, error) {
 	if strings.TrimSpace(deviceName) == "" {
@@ -805,18 +828,28 @@ func (s *Store) bootstrapAccountWithIdentity(
 	var result BootstrapResult
 	var invitationID string
 	if invitationTokenSHA256 != nil {
-		if err := tx.QueryRowContext(ctx, `
-			SELECT id
-			FROM bootstrap_invitations
-			WHERE token_sha256 = $1
-			  AND consumed_at IS NULL
-			  AND expires_at > NOW()
-			FOR UPDATE
-		`, invitationTokenSHA256).Scan(&invitationID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return BootstrapResult{}, ErrBootstrapInviteInvalid
+		if issueInvitation {
+			invitationID = uuid.NewString()
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO bootstrap_invitations (id, token_sha256, label, created_by, expires_at)
+				VALUES ($1, $2, $3, $4, $5)
+			`, invitationID, invitationTokenSHA256, "device:"+deviceID, automaticBootstrapActor, time.Now().UTC().Add(automaticBootstrapTTL)); err != nil {
+				return BootstrapResult{}, err
 			}
-			return BootstrapResult{}, err
+		} else {
+			if err := tx.QueryRowContext(ctx, `
+				SELECT id
+				FROM bootstrap_invitations
+				WHERE token_sha256 = $1
+				  AND consumed_at IS NULL
+				  AND expires_at > NOW()
+				FOR UPDATE
+			`, invitationTokenSHA256).Scan(&invitationID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return BootstrapResult{}, ErrBootstrapInviteInvalid
+				}
+				return BootstrapResult{}, err
+			}
 		}
 	}
 

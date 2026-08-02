@@ -19,6 +19,7 @@ type ServerConfig struct {
 	NodeAllowedAdvertiseAddrs        []string
 	BootstrapEnabled                 bool
 	BootstrapRequireInvite           bool
+	BootstrapAutoIssueInvite         bool
 	BootstrapRateLimitPerMinute      int
 	BootstrapMaxBodyBytes            int64
 	TrustProxyHeaders                bool
@@ -117,6 +118,7 @@ func LoadServer() ServerConfig {
 		NodeAllowedAdvertiseAddrs:        parseEnvCSV("NODE_ALLOWED_ADVERTISE_ADDRS", ""),
 		BootstrapEnabled:                 parseEnvBool("BOOTSTRAP_ENABLED", true),
 		BootstrapRequireInvite:           bootstrapRequireInvite,
+		BootstrapAutoIssueInvite:         parseEnvBool("BOOTSTRAP_AUTO_ISSUE_INVITE", true),
 		BootstrapRateLimitPerMinute:      bootstrapRateLimit,
 		BootstrapMaxBodyBytes:            int64(bootstrapMaxBodyBytes),
 		TrustProxyHeaders:                parseEnvBool("TRUST_PROXY_HEADERS", false),

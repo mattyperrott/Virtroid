@@ -118,6 +118,7 @@ write_env_var() {
   write_env_var CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64 "${control_plane_callback_public_key}"
   write_env_var BOOTSTRAP_ENABLED true
   write_env_var BOOTSTRAP_REQUIRE_INVITE true
+  write_env_var BOOTSTRAP_AUTO_ISSUE_INVITE true
   write_env_var BOOTSTRAP_RATE_LIMIT_PER_MINUTE 5
   write_env_var BOOTSTRAP_MAX_BODY_BYTES 32768
   write_env_var RUNTIME_LOG_RETENTION 720h

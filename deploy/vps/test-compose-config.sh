@@ -58,6 +58,7 @@ docker compose \
 
 grep -q 'BOOTSTRAP_ENABLED: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'BOOTSTRAP_REQUIRE_INVITE: "true"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'BOOTSTRAP_AUTO_ISSUE_INVITE: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'RUNTIME_LOG_RETENTION: 720h' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_ALLOWED_ADVERTISE_ADDRS: virtnoded' "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_RUNTIME_NETWORK_MODE: per-runtime' "${tmp_dir}/rendered-compose.yml"

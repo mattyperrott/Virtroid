@@ -26,6 +26,7 @@ grep -q '^NODE_MIN_FREE_DISK_BYTES=10737418240$' "${tmp_dir}/.env"
 grep -q '^NODE_MIN_FREE_DISK_PERCENT=5$' "${tmp_dir}/.env"
 grep -q '^BOOTSTRAP_ENABLED=true$' "${tmp_dir}/.env"
 grep -q '^BOOTSTRAP_REQUIRE_INVITE=true$' "${tmp_dir}/.env"
+grep -q '^BOOTSTRAP_AUTO_ISSUE_INVITE=true$' "${tmp_dir}/.env"
 grep -q '^RUNTIME_LOG_RETENTION=720h$' "${tmp_dir}/.env"
 grep -q '^NODE_DEVELOPMENT_ENROLLMENT_ENABLED=false$' "${tmp_dir}/.env"
 grep -Eq '^CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64=[A-Za-z0-9+/]+={0,2}$' "${tmp_dir}/.env"
@@ -158,6 +159,13 @@ cp "${tmp_dir}/.env" "${tmp_dir}/public-bootstrap.env"
 printf '%s\n' 'BOOTSTRAP_REQUIRE_INVITE=false' >> "${tmp_dir}/public-bootstrap.env"
 if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/public-bootstrap.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
   echo "production deployment accepted anonymous public bootstrap" >&2
+  exit 1
+fi
+
+cp "${tmp_dir}/.env" "${tmp_dir}/manual-bootstrap.env"
+printf '%s\n' 'BOOTSTRAP_AUTO_ISSUE_INVITE=false' >> "${tmp_dir}/manual-bootstrap.env"
+if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/manual-bootstrap.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
+  echo "production deployment accepted manual invitation entry required by the client" >&2
   exit 1
 fi
 

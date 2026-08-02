@@ -100,25 +100,27 @@ Reviewed releases reinstall these files atomically and rerun the verifier, so
 manual VPS drift cannot silently become the expected production state.
 
 The generated production configuration enables the signed bootstrap endpoint,
-requires an operator-created invitation for every new account/device, and
-disables shared-secret node self-enrollment.
+automatically issues and consumes a one-time invitation inside each valid
+device-provisioning transaction, and disables shared-secret node self-enrollment.
 Production node requests are
 accepted only after an operator-controlled node/key approval exists. The
 control plane signs node callbacks with a separate P-256 key, and nodes accept
 only pinned, fresh, non-replayed callback signatures.
-The operator CLI generates 256-bit, one-time invitations with a bounded expiry.
-The database stores only each token's SHA-256 digest, expiry, label, creator,
-and consumption record. Every bootstrap request must carry the plaintext
-invitation plus a fresh signature from the P-256 Android Keystore key whose
-public half is in that exact request body; account ID, device ID, request path,
-timestamp, nonce, invitation, and body hash are all covered. The server consumes
-the invitation and creates the account, default entitlement, and signing device
-inside one database transaction. A failed registration rolls back consumption;
-a successful registration makes the invitation unusable. Bootstrap never
+For the Android client, the server generates a random one-time credential after
+validating the fresh P-256 Android Keystore signature. Only its SHA-256 digest,
+short expiry, device label, creator, and consumption record are stored. The
+credential is inserted and consumed with the account, default entitlement, and
+signing device inside one database transaction. A failed registration rolls
+back both issuance and consumption; a successful registration leaves only the
+consumed audit record. The token is never returned or displayed. Bootstrap never
 creates a runtime. The authenticated device creates runtimes afterward under
 the account entitlement and quota controls.
 
-## Creating a bootstrap invitation
+## Creating a manual bootstrap invitation
+
+Manual invitations remain available for lifecycle QA and non-Android clients
+when `BOOTSTRAP_AUTO_ISSUE_INVITE=false`. The production Android deployment uses
+automatic issuance and has no invitation input field.
 
 Run the operator command from the protected current image while PostgreSQL is
 running:

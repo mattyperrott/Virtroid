@@ -329,6 +329,7 @@ func TestProductionBootstrapRequiresInviteAfterValidDeviceProof(t *testing.T) {
 	New(config.ServerConfig{
 		AppEnv:                      "production",
 		BootstrapEnabled:            true,
+		BootstrapAutoIssueInvite:    false,
 		BootstrapRateLimitPerMinute: 5,
 	}, nil).ServeHTTP(resp, req)
 

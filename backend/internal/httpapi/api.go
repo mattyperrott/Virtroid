@@ -555,24 +555,33 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 	var result store.BootstrapResult
 	if a.cfg.BootstrapRequireInvite {
 		inviteToken := strings.TrimSpace(req.InviteToken)
-		if inviteToken == "" {
+		if inviteToken == "" && a.cfg.BootstrapAutoIssueInvite {
+			result, err = a.store.BootstrapAccountWithAutomaticInvitation(
+				r.Context(),
+				req.AccountID,
+				req.DeviceID,
+				req.DeviceName,
+				req.PublicKey,
+				defaults,
+			)
+		} else if inviteToken == "" {
 			writeAPIError(w, http.StatusForbidden, "bootstrap_invite_required", "a valid bootstrap invitation is required")
 			return
-		}
-		if len(inviteToken) > 256 {
+		} else if len(inviteToken) > 256 {
 			writeAPIError(w, http.StatusForbidden, "bootstrap_invite_invalid", "bootstrap invitation is invalid, expired, or already used")
 			return
+		} else {
+			inviteTokenSHA256 := sha256.Sum256([]byte(inviteToken))
+			result, err = a.store.BootstrapAccountWithInvitation(
+				r.Context(),
+				req.AccountID,
+				req.DeviceID,
+				req.DeviceName,
+				req.PublicKey,
+				inviteTokenSHA256[:],
+				defaults,
+			)
 		}
-		inviteTokenSHA256 := sha256.Sum256([]byte(inviteToken))
-		result, err = a.store.BootstrapAccountWithInvitation(
-			r.Context(),
-			req.AccountID,
-			req.DeviceID,
-			req.DeviceName,
-			req.PublicKey,
-			inviteTokenSHA256[:],
-			defaults,
-		)
 	} else {
 		result, err = a.store.BootstrapAccountWithIdentity(
 			r.Context(),
