@@ -224,7 +224,7 @@ private val DEFAULT_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
     .certificatePinner(TlsPins.certificatePinner())
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(90, TimeUnit.SECONDS)
-    .writeTimeout(30, TimeUnit.SECONDS)
+    .writeTimeout(90, TimeUnit.SECONDS)
     .callTimeout(120, TimeUnit.SECONDS)
     .build()
 

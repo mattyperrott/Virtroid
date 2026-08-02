@@ -237,6 +237,18 @@ func TestViewerServiceReuseRequiresEncryptedAndPlaintextListeners(t *testing.T) 
 	}
 }
 
+func TestAndroidInteractiveProbeAcceptsFocusedSecondaryDisplay(t *testing.T) {
+	if strings.Contains(androidInteractiveProbeScript, `grep -m 1 "mCurrentFocus="`) {
+		t.Fatal("interactive probe stops at a null primary-display focus before checking later displays")
+	}
+	if count := strings.Count(androidInteractiveProbeScript, `grep -m 1 "mCurrentFocus=Window"`); count != 2 {
+		t.Fatalf("interactive probe performs %d focused-window checks, want 2", count)
+	}
+	if count := strings.Count(androidInteractiveProbeScript, `grep -m 1 "mAwake=true"`); count != 2 {
+		t.Fatalf("interactive probe performs %d awake-display checks, want 2", count)
+	}
+}
+
 func TestViewerScriptUsesGuestScrcpyIPv6Loopback(t *testing.T) {
 	if !strings.Contains(viewerScriptContent, `-upstream "[::1]:7007"`) {
 		t.Fatal("viewer script must use the IPv6 loopback address exposed by the pinned ReDroid scrcpy listener")

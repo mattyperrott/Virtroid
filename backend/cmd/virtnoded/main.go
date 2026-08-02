@@ -170,8 +170,8 @@ for service_name in activity package window; do
   echo "$service_output" | grep -q "found" || not_ready "${service_name}_service_unavailable"
 done
 
-focus_line="$(dumpsys window 2>/dev/null | grep -m 1 "mCurrentFocus=" || true)"
-awake_line="$(dumpsys window 2>/dev/null | grep -m 1 "mAwake=" || true)"
+focus_line="$(dumpsys window 2>/dev/null | grep -m 1 "mCurrentFocus=Window" || true)"
+awake_line="$(dumpsys window 2>/dev/null | grep -m 1 "mAwake=true" || true)"
 echo "$focus_line"
 echo "$awake_line"
 if echo "$focus_line" | grep -q "mCurrentFocus=Window" && echo "$awake_line" | grep -q "mAwake=true"; then
@@ -193,8 +193,8 @@ if [ "$home_status" -ne 0 ]; then
 fi
 
 sleep 1
-focus_line="$(dumpsys window 2>/dev/null | grep -m 1 "mCurrentFocus=" || true)"
-awake_line="$(dumpsys window 2>/dev/null | grep -m 1 "mAwake=" || true)"
+focus_line="$(dumpsys window 2>/dev/null | grep -m 1 "mCurrentFocus=Window" || true)"
+awake_line="$(dumpsys window 2>/dev/null | grep -m 1 "mAwake=true" || true)"
 echo "$focus_line"
 echo "$awake_line"
 if echo "$focus_line" | grep -q "mCurrentFocus=Window" && echo "$awake_line" | grep -q "mAwake=true"; then
