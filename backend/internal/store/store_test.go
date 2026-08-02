@@ -2221,7 +2221,7 @@ func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 	mock.ExpectQuery("SELECT h.id FROM hosts h").
 		WithArgs(hostID, true, true, false, runtimeID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(hostID))
-	mock.ExpectQuery("UPDATE runtimes").
+	mock.ExpectQuery(`UPDATE runtimes(?s:.*?)started_at = NOW\(\)`).
 		WithArgs(accountID, runtimeID, hostID, sql.NullInt32{Int32: 46000, Valid: true}, true).
 		WillReturnRows(runtimeStartRows(now, runtimeID, accountID, hostID, 2, 46000))
 	mock.ExpectExec("INSERT INTO runtime_logs").
