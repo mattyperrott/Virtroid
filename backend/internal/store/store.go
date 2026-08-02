@@ -3026,6 +3026,9 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 		viewerPort = sql.NullInt32{Int32: int32(allocatedViewerPort), Valid: true}
 	}
 	rotatePersona := true
+	// A new start request must reset the idle clock before the node reports the
+	// guest running. Otherwise an old session timestamp can make the idle reaper
+	// stop a legitimately booting runtime before its new viewer session exists.
 	var runtime Runtime
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`UPDATE runtimes
@@ -3041,7 +3044,7 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 				     active_persona_json = CASE WHEN $5 THEN NULL ELSE active_persona_json END,
 				     container_name = CASE WHEN $5 THEN NULL ELSE container_name END,
 				     adb_port = CASE WHEN $5 THEN NULL ELSE adb_port END,
-				     started_at = CASE WHEN $5 THEN NULL ELSE started_at END,
+				     started_at = NOW(),
 				     deleted_at = NULL,
 				     updated_at = NOW()
 			 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
