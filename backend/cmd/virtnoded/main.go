@@ -1056,44 +1056,14 @@ func (n *nodeAgent) handleRuntimeFileImport(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime container is not running"})
 		return
 	}
-	serial, err := n.adbSerialForRuntime(runtime, inspect)
-	if err != nil || n.adbConnect(ctx, serial) != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "runtime ADB transport is unavailable"})
-		return
-	}
-
-	importDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "imports")
-	if err := os.MkdirAll(importDir, 0o700); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare import staging"})
-		return
-	}
-	tmp, err := os.CreateTemp(importDir, ".upload-*")
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare import staging"})
-		return
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "secure import staging"})
-		return
-	}
-	if _, err := tmp.Write(body); err != nil {
-		_ = tmp.Close()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "write import staging"})
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "close import staging"})
-		return
-	}
 	remotePath := "/sdcard/Download/" + filename
-	if err := n.adbPush(ctx, serial, tmpPath, remotePath); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "push file into runtime"})
+	if err := n.copyRuntimeMediaToContainer(ctx, containerNameForRuntime(runtime.ID), "/data/media/0/Download", filename, body); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "save file into runtime"})
 		return
 	}
-	_, _ = n.adbShellCapture(ctx, serial, "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "+shellQuote("file://"+remotePath)+" >/dev/null 2>&1 || true")
+	if err := n.notifyRuntimeMediaScanner(ctx, runtime, inspect, remotePath); err != nil {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Imported file was saved, but Android media indexing was deferred.")
+	}
 	digest := sha256.Sum256(body)
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Imported a file into the active runtime Download directory.")
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -1146,49 +1116,15 @@ func (n *nodeAgent) handleRuntimePhotoImport(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime container is not running"})
 		return
 	}
-	serial, err := n.adbSerialForRuntime(runtime, inspect)
-	if err != nil || n.adbConnect(ctx, serial) != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "runtime ADB transport is unavailable"})
-		return
-	}
-
-	importDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "imports")
-	if err := os.MkdirAll(importDir, 0o700); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare photo staging"})
-		return
-	}
-	tmp, err := os.CreateTemp(importDir, ".photo-*")
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "prepare photo staging"})
-		return
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "secure photo staging"})
-		return
-	}
-	if _, err := tmp.Write(body); err != nil {
-		_ = tmp.Close()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "write photo staging"})
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "close photo staging"})
-		return
-	}
 	remoteDir := "/sdcard/Pictures/Virtroid"
-	if _, err := n.adbShellCapture(ctx, serial, "mkdir -p "+shellQuote(remoteDir)); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "prepare runtime photo directory"})
-		return
-	}
 	remotePath := remoteDir + "/" + filename
-	if err := n.adbPush(ctx, serial, tmpPath, remotePath); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "push photo into runtime"})
+	if err := n.copyRuntimeMediaToContainer(ctx, containerNameForRuntime(runtime.ID), "/data/media/0/Pictures/Virtroid", filename, body); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "save photo into runtime"})
 		return
 	}
-	_, _ = n.adbShellCapture(ctx, serial, "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "+shellQuote("file://"+remotePath)+" >/dev/null 2>&1 || true")
+	if err := n.notifyRuntimeMediaScanner(ctx, runtime, inspect, remotePath); err != nil {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Physical-camera photo was saved, but Android media indexing was deferred.")
+	}
 	digest := sha256.Sum256(body)
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Imported a physical-camera photo into the active runtime media library.")
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -2822,13 +2758,88 @@ func (n *nodeAgent) adbConnect(ctx context.Context, serial string) error {
 	return err
 }
 
-func (n *nodeAgent) adbPush(ctx context.Context, serial string, localPath string, remotePath string) error {
-	cmd := exec.CommandContext(ctx, n.cfg.ADBPath, "-s", serial, "push", localPath, remotePath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+func (n *nodeAgent) copyRuntimeMediaToContainer(ctx context.Context, containerName, targetDir, filename string, contents []byte) error {
+	if path.Base(filename) != filename || filename == "." || filename == ".." {
+		return errors.New("runtime media filename is invalid")
 	}
+	uid, gid, err := n.runtimeMediaDirectoryOwnership(ctx, containerName, targetDir)
+	if err != nil {
+		return err
+	}
+	targetPath := path.Join(targetDir, filename)
+	if err := n.copyFileToContainer(ctx, containerName, targetPath, contents, 0o660, uid, gid); err != nil {
+		return err
+	}
+	restoreCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, _ = n.execInContainerCaptureAny(restoreCtx, containerName, "0", nil, [][]string{
+		{"restorecon", targetPath},
+		{"/system/bin/restorecon", targetPath},
+	})
 	return nil
+}
+
+func (n *nodeAgent) runtimeMediaDirectoryOwnership(ctx context.Context, containerName, targetDir string) (int, int, error) {
+	output, err := n.execInContainerCaptureAny(ctx, containerName, "0", nil, [][]string{
+		{"stat", "-c", "%u:%g", targetDir},
+		{"toybox", "stat", "-c", "%u:%g", targetDir},
+		{"/system/bin/toybox", "stat", "-c", "%u:%g", targetDir},
+	})
+	if err == nil {
+		return parseContainerOwnership(output)
+	}
+
+	parentDir := path.Dir(targetDir)
+	output, err = n.execInContainerCaptureAny(ctx, containerName, "0", nil, [][]string{
+		{"stat", "-c", "%u:%g", parentDir},
+		{"toybox", "stat", "-c", "%u:%g", parentDir},
+		{"/system/bin/toybox", "stat", "-c", "%u:%g", parentDir},
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("inspect runtime media parent: %w", err)
+	}
+	uid, gid, err := parseContainerOwnership(output)
+	if err != nil {
+		return 0, 0, err
+	}
+	if _, err := n.execInContainerCapture(ctx, containerName, "0", nil, []string{"mkdir", "-p", targetDir}); err != nil {
+		return 0, 0, fmt.Errorf("create runtime media directory: %w", err)
+	}
+	owner := strconv.Itoa(uid) + ":" + strconv.Itoa(gid)
+	if _, err := n.execInContainerCapture(ctx, containerName, "0", nil, []string{"chown", owner, targetDir}); err != nil {
+		return 0, 0, fmt.Errorf("own runtime media directory: %w", err)
+	}
+	if _, err := n.execInContainerCapture(ctx, containerName, "0", nil, []string{"chmod", "2770", targetDir}); err != nil {
+		return 0, 0, fmt.Errorf("protect runtime media directory: %w", err)
+	}
+	return uid, gid, nil
+}
+
+func parseContainerOwnership(output string) (int, int, error) {
+	parts := strings.Split(strings.TrimSpace(output), ":")
+	if len(parts) != 2 {
+		return 0, 0, errors.New("runtime media ownership is invalid")
+	}
+	uid, uidErr := strconv.Atoi(parts[0])
+	gid, gidErr := strconv.Atoi(parts[1])
+	if uidErr != nil || gidErr != nil || uid < 0 || gid < 0 {
+		return 0, 0, errors.New("runtime media ownership is invalid")
+	}
+	return uid, gid, nil
+}
+
+func (n *nodeAgent) notifyRuntimeMediaScanner(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse, remotePath string) error {
+	scanCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	serial, err := n.adbSerialForRuntime(runtime, inspect)
+	if err != nil {
+		return err
+	}
+	if err := n.adbConnect(scanCtx, serial); err != nil {
+		return err
+	}
+	_, err = n.adbShellCapture(scanCtx, serial, "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "+shellQuote("file://"+remotePath)+" >/dev/null 2>&1 || true")
+	return err
 }
 
 func (n *nodeAgent) adbShellCapture(ctx context.Context, serial string, shellCmd string) (string, error) {
@@ -4225,7 +4236,7 @@ func (n *nodeAgent) execInContainerCaptureAny(ctx context.Context, containerName
 	return lastOutput, lastErr
 }
 
-func (n *nodeAgent) copyFileToContainer(ctx context.Context, containerName string, targetPath string, contents []byte, mode int64) error {
+func (n *nodeAgent) copyFileToContainer(ctx context.Context, containerName string, targetPath string, contents []byte, mode int64, uid int, gid int) error {
 	parentDir := path.Dir(targetPath)
 	fileName := path.Base(targetPath)
 
@@ -4235,6 +4246,8 @@ func (n *nodeAgent) copyFileToContainer(ctx context.Context, containerName strin
 		Name: fileName,
 		Mode: mode,
 		Size: int64(len(contents)),
+		Uid:  uid,
+		Gid:  gid,
 	}); err != nil {
 		return err
 	}

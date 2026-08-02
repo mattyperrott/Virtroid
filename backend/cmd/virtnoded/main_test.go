@@ -146,6 +146,21 @@ func TestNodeCallbackBodyLimitIsRouteSpecific(t *testing.T) {
 	}
 }
 
+func TestParseContainerOwnership(t *testing.T) {
+	uid, gid, err := parseContainerOwnership("10079:1023\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 10079 || gid != 1023 {
+		t.Fatalf("ownership = %d:%d", uid, gid)
+	}
+	for _, invalid := range []string{"", "10079", "root:media_rw", "-1:1023", "10079:-1", "10079:1023:7"} {
+		if _, _, err := parseContainerOwnership(invalid); err == nil {
+			t.Fatalf("accepted invalid ownership %q", invalid)
+		}
+	}
+}
+
 func TestRuntimePhotoValidation(t *testing.T) {
 	var photo bytes.Buffer
 	if err := jpeg.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
