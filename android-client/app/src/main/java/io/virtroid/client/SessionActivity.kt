@@ -7,10 +7,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -48,7 +46,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.time.LocalTime
@@ -90,10 +87,6 @@ class SessionActivity : AppCompatActivity() {
     private var viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
     private var sessionUnavailable = false
     private var heartbeatFailureCount = 0
-    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let(::importSelectedFile)
-    }
-
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             launchPhysicalCamera()
@@ -226,15 +219,9 @@ class SessionActivity : AppCompatActivity() {
             viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
             retryViewerConnection()
         }
-        val fileImportEnabled = fileMode.equals("upload-only", ignoreCase = true) ||
-            fileMode.equals("bidirectional", ignoreCase = true)
         val cameraEnabled = cameraMode.equals("photo-import", ignoreCase = true)
-        binding.sessionUploadButton.isVisible = fileImportEnabled
         binding.sessionCameraButton.isVisible = cameraEnabled
-        binding.sessionOptionalActionsDivider.isVisible = fileImportEnabled || cameraEnabled
-        binding.sessionUploadButton.setOnClickListener {
-            filePicker.launch(arrayOf("*/*"))
-        }
+        binding.sessionOptionalActionsDivider.isVisible = cameraEnabled
         binding.sessionCameraButton.setOnClickListener {
             if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                 launchPhysicalCamera()
@@ -393,74 +380,6 @@ class SessionActivity : AppCompatActivity() {
     private fun disconnectViewer() {
         sessionHost?.destroy()
         sessionHost = null
-    }
-
-    private fun importSelectedFile(uri: Uri) {
-        val metadata = queryImportMetadata(uri)
-        if (metadata.second != null && metadata.second!! > MAX_RUNTIME_FILE_IMPORT_BYTES) {
-            toast(getString(R.string.session_file_too_large))
-            return
-        }
-        binding.sessionUploadButton.isEnabled = false
-        lifecycleScope.launch {
-            runCatching {
-                val bytes = readImportBytes(uri)
-                api.importRuntimeFile(
-                    baseUrl = baseUrl,
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    runtimeId = runtimeId,
-                    sessionId = sessionId,
-                    fileName = metadata.first,
-                    contentType = contentResolver.getType(uri).orEmpty(),
-                    body = bytes,
-                )
-            }.onSuccess { result ->
-                appLogs.info("Imported ${result.fileName} into active runtime", "session")
-                toast(getString(R.string.session_file_imported, result.fileName))
-            }.onFailure { error ->
-                appLogs.warn("Active runtime file import failed: ${error.message}", "session")
-                toast(error.virtroidDisplayMessage(this@SessionActivity))
-            }
-            binding.sessionUploadButton.isEnabled = true
-        }
-    }
-
-    private fun queryImportMetadata(uri: Uri): Pair<String, Long?> {
-        var name = "import-${System.currentTimeMillis()}"
-        var size: Long? = null
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (nameIndex >= 0) {
-                    name = cursor.getString(nameIndex)?.takeIf { it.isNotBlank() } ?: name
-                }
-                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
-                    size = cursor.getLong(sizeIndex)
-                }
-            }
-        }
-        return name.take(255) to size
-    }
-
-    private fun readImportBytes(uri: Uri): ByteArray {
-        val stream = contentResolver.openInputStream(uri) ?: throw IOException("selected file is unavailable")
-        return stream.use { input ->
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(64 * 1024)
-            var total = 0
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                total += read
-                if (total > MAX_RUNTIME_FILE_IMPORT_BYTES) {
-                    throw IOException("selected file exceeds 32 MiB")
-                }
-                output.write(buffer, 0, read)
-            }
-            output.toByteArray()
-        }
     }
 
     private fun launchPhysicalCamera() {
@@ -805,7 +724,6 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionBackToAppButton.isEnabled = isEnabled
         binding.sessionDisconnectButton.isEnabled = isEnabled
         binding.sessionControlsButton.isEnabled = isEnabled
-        binding.sessionUploadButton.isEnabled = isEnabled
         binding.sessionCameraButton.isEnabled = isEnabled
     }
 
@@ -974,7 +892,6 @@ class SessionActivity : AppCompatActivity() {
         private const val VIEWER_RECONNECT_INITIAL_DELAY_MS = 1_000L
         private const val VIEWER_RECONNECT_MAX_DELAY_MS = 10_000L
         private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182
-        private const val MAX_RUNTIME_FILE_IMPORT_BYTES = 32 * 1024 * 1024
         private const val MAX_RUNTIME_PHOTO_IMPORT_BYTES = 16 * 1024 * 1024
         private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 
