@@ -71,20 +71,11 @@
                     android:orientation="horizontal"
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="32dp">
-                    <ImageView
-                        android:id="@+id/icon_runtime_identity"
-                        android:layout_width="72dp"
-                        android:layout_height="72dp"
-                        android:padding="18dp"
-                        android:src="@drawable/ic_fingerprint"
-                        app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="16dp">
+                        android:orientation="vertical">
                         <TextView
                             android:id="@+id/controlsRuntimeNameText"
                             style="@style/VirtroidText.ContentHeading"
