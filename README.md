@@ -54,10 +54,17 @@ This separates:
 ## Project Status
 
 The repository contains a working **single-VPS remote Android release candidate**.
-The current code has local build, PostgreSQL integration, and green GitHub CI
-and code-scanning evidence; it has not yet been deployed or exercised end to
-end on the VPS/ReDroid guest. See the
-authoritative status report for the exact evidence boundary.
+The control plane and node are deployed on the production VPS and have been
+exercised end to end with a physical Android phone and disposable ReDroid
+guests. The current main branch also has local build, PostgreSQL integration,
+GitHub CI, and CodeQL evidence.
+
+Live acceptance has covered runtime creation/start/stop, encrypted viewer
+connection and reconnection, idle cleanup, audible runtime audio on the
+physical phone, active-runtime file delivery, physical-camera JPEG import,
+node-aware readiness, metrics, and alert-rule loading. This is release-candidate
+evidence, not a claim that the system is production-hardened against every
+failure mode.
 
 The release candidate includes:
 
@@ -94,12 +101,13 @@ flowchart LR
 
 | Capability                   |       Status      | Notes                                                   |
 | :--------------------------- | :---------------: | :------------------------------------------------------ |
-| Invite-gated account bootstrap | ✅ Implemented   | One-time expiring operator invite plus signed device proof |
+| Invite-gated account bootstrap | ✅ Deployed      | Server issues and consumes the one-time invitation internally; the user never enters it |
 | Trusted-device management    |     🟡 Partial     | Listing and revocation exist; additional-device enrolment does not |
-| Runtime creation             |   ✅ Implemented   | Creates independently managed Android environments      |
-| Runtime start and stop       |   ✅ Implemented   | Repository and prior single-node live proof              |
-| Remote Android viewer        |   ✅ Implemented   | Encrypted viewer sessions over TLS                      |
-| Runtime audio streaming      |     🟡 Candidate   | Wired node/server/client path; live ReDroid proof pending |
+| Runtime creation             |   ✅ Deployed      | Creates independently managed Android environments      |
+| Runtime start and stop       |   ✅ Deployed      | Live single-node guest lifecycle and idle cleanup proved |
+| Remote Android viewer        |   ✅ Deployed      | Encrypted TLS viewer and Back → Connect reconnection proved |
+| Runtime audio streaming      |   ✅ Deployed      | Virtual Android output was audibly accepted on a physical phone |
+| Physical microphone input    | ❌ Not implemented | Phone microphone audio is not passed into the virtual Android runtime |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
 | Runtime deletion             |   ✅ Implemented   | Includes explicit cleanup obligations                   |
@@ -110,12 +118,12 @@ flowchart LR
 | F-Droid installation         |     🟡 Partial    | Happy path implemented; broader failure testing remains |
 | Encrypted local snapshots    |   ✅ Implemented   | Repository path and last recorded VPS mechanism         |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
-| Reproducible VPS deployment  |   ✅ Implemented   | Hardened release and verification scripts included      |
-| Physical-camera photo import |  🚧 Release candidate | In-app capture imports a JPEG into guest media; live guest proof pending |
-| Active-runtime file import   |     🟡 Candidate   | Signed session path to bounded ADB import; live proof pending |
-| Metrics and trace context    |   ✅ Implemented   | Bounded Prometheus metrics and W3C trace propagation     |
-| Alerts                       |     🟡 Partial     | Rules included; operator notification receiver required  |
-| Node-aware readiness         |   ✅ Implemented   | Control readiness requires a fresh approved ready node    |
+| Reproducible VPS deployment  |   ✅ Deployed      | Protected local build, backup, immutable release state, and verification gates |
+| Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
+| Active-runtime file import   |   ✅ Backend path  | Signed bounded path is live-proved; the generic client upload button was intentionally removed |
+| Metrics and trace context    |   ✅ Deployed      | Bounded Prometheus metrics and W3C trace propagation     |
+| Alerts                       |     🟡 Partial     | Seven rules are deployed; an external notification receiver is still required |
+| Node-aware readiness         |   ✅ Deployed      | Control readiness requires and currently observes a fresh approved ready node |
 | Confidential VM isolation    | ❌ Not implemented | ReDroid currently runs on a trusted VPS                 |
 | Hardware attestation         | ❌ Not implemented | Design and proof-of-concept work only                   |
 | Operator-blind persistence   | ❌ Not implemented | Runtime host participates in snapshot operations        |
@@ -123,7 +131,8 @@ flowchart LR
 | Operator control-panel UI    | ❌ Not implemented | Current control plane is API infrastructure             |
 
 > [!NOTE]
-> See [`docs/current-status-and-roadmap.md`](docs/current-status-and-roadmap.md) for the authoritative implementation status and current engineering priorities.
+> Camera support is deliberate photo capture and media import. It is not a live
+> physical-camera device injected into Android's camera HAL.
 
 ---
 
@@ -345,8 +354,7 @@ The Android client currently provides:
 * Runtime reset actions
 * Encrypted viewer sessions
 * Runtime audio controls
-* Active-runtime document import
-* Explicit physical-camera capture and photo-import controls
+* A camera-only viewer action for explicit physical-camera capture and photo import
 * Trusted-device management
 * F-Droid catalog selection
 * Local application lock
@@ -532,6 +540,70 @@ Virtroid/
 | [`deploy/vps/`](deploy/vps/)   | VPS preparation, release, backup, rollback, and hardening         |
 | [`third_party/`](third_party/)  | Vendored source, provenance, and upstream license notices         |
 
+---
+
+## Development
+
+The Android client requires JDK 17 and Android SDK 36. The backend targets Go
+1.26.5. Run the primary local verification paths from the repository root:
+
+```bash
+cd android-client
+./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug verifyReleaseSecurityManifest
+
+cd ../backend
+go test ./...
+go test -race ./...
+go vet ./...
+```
+
+These checks validate source and build behavior. They do not replace physical
+phone, live VPS, PostgreSQL, or ReDroid acceptance.
+
+---
+
+## Signed Android Release
+
+Release APK generation fails closed unless all four signing inputs are
+available. Keep the keystore and passwords outside Git:
+
+```bash
+export VIRTROID_RELEASE_STORE_FILE=/secure/path/virtroid-release.jks
+export VIRTROID_RELEASE_STORE_PASSWORD='...'
+export VIRTROID_RELEASE_KEY_ALIAS=virtroid-release
+export VIRTROID_RELEASE_KEY_PASSWORD='...'
+
+cd android-client
+./gradlew --no-daemon clean testDebugUnitTest lintRelease assembleRelease
+```
+
+The output is `android-client/app/build/outputs/apk/release/app-release.apk`.
+The release gate rejects missing signing material, cleartext control-plane URLs,
+debuggable/test-only manifests, enabled Android backup, and missing network or
+data-extraction controls. Verify the final artifact independently with Android
+SDK `apksigner` before distribution.
+
+---
+
+## VPS Deployment
+
+Production deployment is built and applied locally on the VPS through the
+root-owned protected release helper. It creates a consistent backup, verifies
+the reviewed source and immutable image identity, applies the schema and
+deployment tree, and requires healthy control-plane, node, PostgreSQL,
+Prometheus, and Alertmanager checks. See
+[`deploy/vps/README.md`](deploy/vps/README.md) for the operator procedure.
+
+---
+
+## Roadmap
+
+The highest-priority remaining work is physical microphone passthrough,
+external alert delivery, searchable trace storage, broader lifecycle and
+storage fault injection, live multi-node acceptance, and a decision on stronger
+runtime isolation beyond the current trusted VPS/ReDroid boundary.
+
+---
 
 ## Disclaimer
 
