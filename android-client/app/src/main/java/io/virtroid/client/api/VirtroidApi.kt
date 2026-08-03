@@ -6,6 +6,8 @@ import io.virtroid.client.BuildConfig
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.BlobKeyEnvelopeCrypto
 import io.virtroid.client.security.BlobKeyLease
+import io.virtroid.client.security.AccountRecoveryChallenge
+import io.virtroid.client.security.AccountRecoveryCredential
 import io.virtroid.client.security.DeviceIdentityStore
 import io.virtroid.client.security.IdentityCrypto
 import io.virtroid.client.security.RuntimeCapabilityStore
@@ -214,6 +216,11 @@ data class AppCatalogEntry(
     val catalogUpdatedAt: String?,
 )
 
+data class AccountRecoveryStart(
+    val credential: AccountRecoveryCredential,
+    val challenge: AccountRecoveryChallenge,
+)
+
 class VirtroidApiException(
     val statusCode: Int,
     val code: String?,
@@ -262,6 +269,128 @@ class VirtroidApi(
                 body = requestBody,
             ),
         )
+    }
+
+    suspend fun getAccountRecoveryCredential(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+    ): AccountRecoveryCredential = withContext(Dispatchers.IO) {
+        val payload = executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/identity/recovery?account_id=$accountId&device_id=$deviceId",
+                method = "GET",
+                accountId = accountId,
+                deviceId = deviceId,
+            ),
+        )
+        payload.toAccountRecoveryCredential()
+    }
+
+    suspend fun registerAccountRecoveryCredential(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        credential: AccountRecoveryCredential,
+    ): AccountRecoveryCredential = withContext(Dispatchers.IO) {
+        val body = credential.toJson().toString()
+        val payload = executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/identity/recovery",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = body,
+            ),
+        )
+        payload.toAccountRecoveryCredential()
+    }
+
+    suspend fun beginAccountRecovery(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        deviceName: String,
+        publicKey: String,
+    ): AccountRecoveryStart = withContext(Dispatchers.IO) {
+        val requestJson = JSONObject()
+            .put("account_id", accountId)
+            .put("device_id", deviceId)
+            .put("device_name", deviceName)
+            .put("public_key", publicKey)
+            .toString()
+        val bodyBytes = requestJson.toByteArray(Charsets.UTF_8)
+        val request = Request.Builder()
+            .url(normalizeBaseUrl(baseUrl) + "/api/v1/recovery/challenge")
+            .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
+            .apply {
+                deviceIdentityStore.signedHeaders(
+                    method = "POST",
+                    requestUri = "/api/v1/recovery/challenge",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    body = bodyBytes,
+                ).forEach { (name, value) -> header(name, value) }
+            }
+            .build()
+        val payload = executeJson(request)
+        val start = AccountRecoveryStart(
+            credential = payload.getJSONObject("credential").toAccountRecoveryCredential(),
+            challenge = payload.getJSONObject("challenge").toAccountRecoveryChallenge(),
+        )
+        if (start.credential.accountId != accountId ||
+            start.challenge.accountId != accountId ||
+            start.challenge.deviceId != deviceId ||
+            start.challenge.deviceName != deviceName ||
+            start.challenge.devicePublicKey != publicKey ||
+            start.challenge.id.isBlank() ||
+            start.challenge.nonce.isBlank()
+        ) {
+            throw IOException("account recovery response did not match the replacement device")
+        }
+        start
+    }
+
+    suspend fun completeAccountRecovery(
+        baseUrl: String,
+        start: AccountRecoveryStart,
+        recoverySignature: String,
+    ): BootstrapResult = withContext(Dispatchers.IO) {
+        val challenge = start.challenge
+        val requestJson = JSONObject()
+            .put("account_id", challenge.accountId)
+            .put("device_id", challenge.deviceId)
+            .put("device_name", challenge.deviceName)
+            .put("public_key", challenge.devicePublicKey)
+            .put("challenge_id", challenge.id)
+            .put("recovery_signature", recoverySignature)
+            .toString()
+        val bodyBytes = requestJson.toByteArray(Charsets.UTF_8)
+        val request = Request.Builder()
+            .url(normalizeBaseUrl(baseUrl) + "/api/v1/recovery/complete")
+            .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
+            .apply {
+                deviceIdentityStore.signedHeaders(
+                    method = "POST",
+                    requestUri = "/api/v1/recovery/complete",
+                    accountId = challenge.accountId,
+                    deviceId = challenge.deviceId,
+                    body = bodyBytes,
+                ).forEach { (name, value) -> header(name, value) }
+            }
+            .build()
+        val payload = executeJson(request)
+        val result = BootstrapResult(
+            accountId = payload.getJSONObject("account").getString("id"),
+            deviceId = payload.getJSONObject("device").getString("id"),
+            runtimeId = payload.optJSONObject("runtime")?.optString("id").orEmpty(),
+        )
+        if (result.accountId != challenge.accountId || result.deviceId != challenge.deviceId) {
+            throw IOException("account recovery completion did not match the replacement device")
+        }
+        result
     }
 
     suspend fun bootstrap(
@@ -1188,6 +1317,41 @@ class VirtroidApi(
     }
 
     private fun normalizeBaseUrl(baseUrl: String): String = baseUrl.trim().trimEnd('/')
+
+    private fun AccountRecoveryCredential.toJson(): JSONObject = JSONObject()
+        .put("account_id", accountId)
+        .put("version", version)
+        .put("kdf_algorithm", kdfAlgorithm)
+        .put("kdf_salt", kdfSalt)
+        .put("kdf_iterations", kdfIterations)
+        .put("envelope_algorithm", envelopeAlgorithm)
+        .put("envelope_iv", envelopeIv)
+        .put("envelope_ciphertext", envelopeCiphertext)
+        .put("recovery_public_key", recoveryPublicKey)
+        .put("blob_key_verifier", blobKeyVerifier)
+
+    private fun JSONObject.toAccountRecoveryCredential(): AccountRecoveryCredential = AccountRecoveryCredential(
+        accountId = getString("account_id"),
+        version = getInt("version"),
+        kdfAlgorithm = getString("kdf_algorithm"),
+        kdfSalt = getString("kdf_salt"),
+        kdfIterations = getInt("kdf_iterations"),
+        envelopeAlgorithm = getString("envelope_algorithm"),
+        envelopeIv = getString("envelope_iv"),
+        envelopeCiphertext = getString("envelope_ciphertext"),
+        recoveryPublicKey = getString("recovery_public_key"),
+        blobKeyVerifier = getString("blob_key_verifier"),
+    )
+
+    private fun JSONObject.toAccountRecoveryChallenge(): AccountRecoveryChallenge = AccountRecoveryChallenge(
+        id = getString("id"),
+        accountId = getString("account_id"),
+        deviceId = getString("device_id"),
+        deviceName = getString("device_name"),
+        devicePublicKey = getString("device_public_key"),
+        nonce = getString("nonce"),
+        expiresAt = getString("expires_at"),
+    )
 
     private fun JSONObject.toRuntimeSummary(): RuntimeSummary {
         val persona = parsePersona()

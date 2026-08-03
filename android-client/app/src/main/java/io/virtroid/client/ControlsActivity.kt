@@ -26,6 +26,7 @@ import io.virtroid.client.data.ActiveSessionStore
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionControlsBinding
+import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
@@ -43,6 +44,7 @@ class ControlsActivity : AppCompatActivity() {
     private lateinit var sessionStore: SessionStore
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var identityKeyManager: IdentityKeyManager
     private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private lateinit var appLogs: AppLogStore
     private var runtimeId: String = ""
@@ -64,6 +66,7 @@ class ControlsActivity : AppCompatActivity() {
         sessionStore = SessionStore(this)
         activeSessionStore = ActiveSessionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        identityKeyManager = IdentityKeyManager(this, api)
         snapshotRollbackGuard = SnapshotRollbackGuard(this)
         appLogs = AppLogStore.get(this)
         runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID).orEmpty()
@@ -747,7 +750,12 @@ class ControlsActivity : AppCompatActivity() {
         if (password.isBlank()) {
             throw IOException(getString(R.string.identity_password_required))
         }
-        return identityPasswordStore.unlock(accountId, deviceId, password)
+        return identityKeyManager.unlockOrMigrate(
+            sessionStore.baseUrl,
+            accountId,
+            deviceId,
+            password,
+        )
     }
 
     private fun toast(message: String) {

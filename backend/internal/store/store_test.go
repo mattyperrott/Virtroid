@@ -2,7 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/base64"
@@ -123,6 +127,26 @@ func TestBootstrapSchemaUsesHashedSingleUseInvitations(t *testing.T) {
 	}
 	if strings.Contains(schemaSQL, "consumed_account_id UUID REFERENCES") {
 		t.Fatal("bootstrap invitation audit history would block or be rewritten by later account deletion")
+	}
+}
+
+func TestAccountRecoverySchemaUsesPasswordEnvelopeAndSingleUseChallenge(t *testing.T) {
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS account_recovery_credentials",
+		"PBKDF2_HMAC_SHA256_V2",
+		"AES_GCM_256_V1",
+		"recovery_public_key TEXT NOT NULL",
+		"blob_key_verifier TEXT NOT NULL",
+		"CREATE TABLE IF NOT EXISTS account_recovery_challenges",
+		"consumed_at TIMESTAMPTZ",
+		"WHERE consumed_at IS NULL",
+	} {
+		if !strings.Contains(schemaSQL, required) {
+			t.Fatalf("schema is missing account-recovery control %q", required)
+		}
+	}
+	if strings.Contains(schemaSQL, "recovery_private_key TEXT") || strings.Contains(schemaSQL, "account_master_key TEXT") {
+		t.Fatal("schema stores plaintext account recovery secrets")
 	}
 }
 
@@ -1204,6 +1228,92 @@ func TestRegisterDeviceBlobKeyVerifierRejectsOverwrite(t *testing.T) {
 	}
 }
 
+func TestValidateAccountRecoveryCredential(t *testing.T) {
+	credential := accountRecoveryCredentialForTest(t)
+	validated, err := ValidateAccountRecoveryCredential(credential)
+	if err != nil {
+		t.Fatalf("ValidateAccountRecoveryCredential returned error: %v", err)
+	}
+	if validated.AccountID != credential.AccountID || validated.BlobKeyVerifier != credential.BlobKeyVerifier {
+		t.Fatalf("validated credential changed identity fields: %#v", validated)
+	}
+
+	for name, mutate := range map[string]func(*AccountRecoveryCredential){
+		"weak kdf": func(value *AccountRecoveryCredential) { value.KDFIterations = AccountRecoveryMinIterations - 1 },
+		"bad iv":   func(value *AccountRecoveryCredential) { value.EnvelopeIV = "invalid" },
+		"bad curve": func(value *AccountRecoveryCredential) {
+			value.RecoveryPublicKey = base64.StdEncoding.EncodeToString([]byte("not a public key"))
+		},
+		"bad verifier": func(value *AccountRecoveryCredential) { value.BlobKeyVerifier = "invalid" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := credential
+			mutate(&invalid)
+			if _, err := ValidateAccountRecoveryCredential(invalid); err == nil {
+				t.Fatal("invalid account recovery credential was accepted")
+			}
+		})
+	}
+}
+
+func TestRegisterAccountRecoveryCredentialAtomicallyInitializesBlobIdentity(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	credential := accountRecoveryCredentialForTest(t)
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	now := time.Now().UTC()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT blob_key_verifier").
+		WithArgs(credential.AccountID, deviceID).
+		WillReturnRows(sqlmock.NewRows([]string{"blob_key_verifier"}).AddRow(nil))
+	mock.ExpectExec("UPDATE devices").
+		WithArgs(credential.AccountID, deviceID, credential.BlobKeyVerifier).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("INSERT INTO account_recovery_credentials").
+		WithArgs(
+			credential.AccountID,
+			credential.Version,
+			credential.KDFAlgorithm,
+			credential.KDFSalt,
+			credential.KDFIterations,
+			credential.EnvelopeAlgorithm,
+			credential.EnvelopeIV,
+			credential.EnvelopeCiphertext,
+			credential.RecoveryPublicKey,
+			credential.BlobKeyVerifier,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"account_id", "version", "kdf_algorithm", "kdf_salt", "kdf_iterations",
+			"envelope_algorithm", "envelope_iv", "envelope_ciphertext",
+			"recovery_public_key", "blob_key_verifier", "created_at", "updated_at",
+		}).AddRow(
+			credential.AccountID, credential.Version, credential.KDFAlgorithm, credential.KDFSalt,
+			credential.KDFIterations, credential.EnvelopeAlgorithm, credential.EnvelopeIV,
+			credential.EnvelopeCiphertext, credential.RecoveryPublicKey, credential.BlobKeyVerifier,
+			now, now,
+		))
+	mock.ExpectCommit()
+
+	registered, err := st.RegisterAccountRecoveryCredential(
+		context.Background(), credential.AccountID, deviceID, credential,
+	)
+	if err != nil {
+		t.Fatalf("RegisterAccountRecoveryCredential returned error: %v", err)
+	}
+	if registered.BlobKeyVerifier != credential.BlobKeyVerifier {
+		t.Fatalf("registered verifier = %q, want %q", registered.BlobKeyVerifier, credential.BlobKeyVerifier)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestChangeDeviceBlobKeyVerifierRequiresCurrentVerifier(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -1377,6 +1487,30 @@ func blobAccessKeyForTest(fill byte) string {
 
 func blobVerifierForTest(fill byte) string {
 	return blobVerifierFromAccessKeyForTest(nil, blobAccessKeyForTest(fill))
+}
+
+func accountRecoveryCredentialForTest(t *testing.T) AccountRecoveryCredential {
+	t.Helper()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate recovery key: %v", err)
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal recovery public key: %v", err)
+	}
+	return AccountRecoveryCredential{
+		AccountID:          "11111111-1111-1111-1111-111111111111",
+		Version:            AccountRecoveryVersion,
+		KDFAlgorithm:       AccountRecoveryKDFAlgorithm,
+		KDFSalt:            base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		KDFIterations:      AccountRecoveryMinIterations,
+		EnvelopeAlgorithm:  AccountRecoveryEnvelopeAlgorithm,
+		EnvelopeIV:         base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
+		EnvelopeCiphertext: base64.RawURLEncoding.EncodeToString(make([]byte, 96)),
+		RecoveryPublicKey:  base64.StdEncoding.EncodeToString(publicKeyDER),
+		BlobKeyVerifier:    blobVerifierForTest(0x44),
+	}
 }
 
 func blobVerifierFromAccessKeyForTest(t *testing.T, accessKey string) string {

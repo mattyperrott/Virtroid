@@ -354,6 +354,8 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/hosts", api.hosts)
 	mux.HandleFunc("GET /api/v1/apps/catalog", api.listAppCatalog)
 	mux.HandleFunc("POST /api/v1/bootstrap", api.bootstrap)
+	mux.HandleFunc("POST /api/v1/recovery/challenge", api.beginAccountRecovery)
+	mux.HandleFunc("POST /api/v1/recovery/complete", api.completeAccountRecovery)
 
 	mux.HandleFunc("GET /api/v1/me/runtimes", api.listMyRuntimes)
 	mux.HandleFunc("GET /api/v1/me/runtimes/state", api.listMyRuntimeStates)
@@ -366,6 +368,8 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/me/devices", api.listMyDevices)
 	mux.HandleFunc("DELETE /api/v1/me/devices/{device_id}", api.revokeMyDevice)
 	mux.HandleFunc("POST /api/v1/me/identity/register", api.registerMyIdentity)
+	mux.HandleFunc("GET /api/v1/me/identity/recovery", api.getMyAccountRecovery)
+	mux.HandleFunc("POST /api/v1/me/identity/recovery", api.registerMyAccountRecovery)
 	mux.HandleFunc("POST /api/v1/me/identity/change-password", api.changeMyIdentityPassword)
 	mux.HandleFunc("POST /api/v1/me/runtimes", api.createMyRuntime)
 	mux.HandleFunc("GET /api/v1/me/runtimes/{id}", api.getMyRuntime)
@@ -899,6 +903,201 @@ func (a *API) registerMyIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (a *API) getMyAccountRecovery(w http.ResponseWriter, r *http.Request) {
+	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+	credential, err := a.store.GetAccountRecoveryCredential(r.Context(), accountID)
+	if err != nil {
+		if errors.Is(err, store.ErrRecoveryNotConfigured) {
+			writeAPIError(w, http.StatusNotFound, "account_recovery_not_configured", "account recovery is not configured")
+			return
+		}
+		writeInternalAPIError(w, "account_recovery_lookup_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, credential)
+}
+
+func (a *API) registerMyAccountRecovery(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+	var credential store.AccountRecoveryCredential
+	if err := json.NewDecoder(r.Body).Decode(&credential); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if strings.TrimSpace(credential.AccountID) != "" && strings.TrimSpace(credential.AccountID) != accountID {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "signed account does not match recovery credential"})
+		return
+	}
+	if _, err := parseRecoveryPublicKey(credential.RecoveryPublicKey); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "account_recovery_invalid", "account recovery public key is invalid")
+		return
+	}
+	registered, err := a.store.RegisterAccountRecoveryCredential(r.Context(), accountID, deviceID, credential)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrDeviceNotFound), errors.Is(err, store.ErrRecoveryNotConfigured):
+			writeAPIError(w, http.StatusNotFound, "account_recovery_unavailable", "account recovery is unavailable")
+		case errors.Is(err, store.ErrIdentityAuthFailed):
+			writeAPIError(w, http.StatusForbidden, "account_recovery_key_mismatch", "account recovery key does not match the registered blob identity")
+		case errors.Is(err, store.ErrRecoveryAlreadyConfigured):
+			writeAPIError(w, http.StatusConflict, "account_recovery_already_configured", err.Error())
+		case errors.Is(err, store.ErrIdentityKeyRequired):
+			writeAPIError(w, http.StatusBadRequest, "account_recovery_invalid", err.Error())
+		default:
+			if _, validateErr := store.ValidateAccountRecoveryCredential(credential); validateErr != nil {
+				writeAPIError(w, http.StatusBadRequest, "account_recovery_invalid", validateErr.Error())
+			} else {
+				writeInternalAPIError(w, "account_recovery_registration_failed", err)
+			}
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, registered)
+}
+
+func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
+	if ok, retryAfter := a.bootstrapLimiter.allow("recovery|" + bootstrapClientKey(r, a.cfg.TrustProxyHeaders)); !ok {
+		if retryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
+		}
+		writeAPIError(w, http.StatusTooManyRequests, "account_recovery_rate_limited", "account recovery rate limit exceeded")
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read recovery request body"})
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var req struct {
+		AccountID  string `json:"account_id"`
+		DeviceID   string `json:"device_id"`
+		DeviceName string `json:"device_name"`
+		PublicKey  string `json:"public_key"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if !verifyBootstrapProof(r, body, req.AccountID, req.DeviceID, req.PublicKey) {
+		writeAPIError(w, http.StatusUnauthorized, "recovery_device_proof_invalid", "valid new-device signing proof is required")
+		return
+	}
+	if publicKey, err := parseECDSAPublicKeyMaterial(req.PublicKey); err != nil || publicKey.Curve.Params().Name != "P-256" {
+		writeAPIError(w, http.StatusBadRequest, "recovery_device_key_invalid", "new-device public key must be P-256")
+		return
+	}
+	credential, challenge, err := a.store.CreateAccountRecoveryChallenge(
+		r.Context(), req.AccountID, req.DeviceID, req.DeviceName, req.PublicKey,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrRecoveryNotConfigured):
+			writeAPIError(w, http.StatusNotFound, "account_recovery_unavailable", "account recovery is unavailable")
+		case errors.Is(err, store.ErrRecoveryDeviceExists):
+			writeAPIError(w, http.StatusConflict, "recovery_device_exists", err.Error())
+		default:
+			writeInternalAPIError(w, "account_recovery_challenge_failed", err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"credential": credential,
+		"challenge":  challenge,
+	})
+}
+
+func (a *API) completeAccountRecovery(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read recovery completion body"})
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var req struct {
+		AccountID         string `json:"account_id"`
+		DeviceID          string `json:"device_id"`
+		DeviceName        string `json:"device_name"`
+		PublicKey         string `json:"public_key"`
+		ChallengeID       string `json:"challenge_id"`
+		RecoverySignature string `json:"recovery_signature"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if !verifyBootstrapProof(r, body, req.AccountID, req.DeviceID, req.PublicKey) {
+		writeAPIError(w, http.StatusUnauthorized, "recovery_device_proof_invalid", "valid new-device signing proof is required")
+		return
+	}
+	challenge, err := a.store.GetAccountRecoveryChallenge(r.Context(), req.ChallengeID)
+	if err != nil || challenge.AccountID != strings.TrimSpace(req.AccountID) ||
+		challenge.DeviceID != strings.TrimSpace(req.DeviceID) ||
+		challenge.DeviceName != strings.TrimSpace(req.DeviceName) ||
+		challenge.DevicePublicKey != strings.TrimSpace(req.PublicKey) {
+		writeAPIError(w, http.StatusForbidden, "account_recovery_challenge_invalid", "account recovery challenge is invalid, expired, or already used")
+		return
+	}
+	credential, err := a.store.GetAccountRecoveryCredential(r.Context(), challenge.AccountID)
+	if err != nil {
+		writeAPIError(w, http.StatusForbidden, "account_recovery_challenge_invalid", "account recovery challenge is invalid, expired, or already used")
+		return
+	}
+	if !verifyRecoverySignature(credential.RecoveryPublicKey, challenge, req.RecoverySignature) {
+		writeAPIError(w, http.StatusForbidden, "account_recovery_proof_invalid", "account recovery password or proof is invalid")
+		return
+	}
+	account, device, err := a.store.CompleteAccountRecoveryEnrollment(r.Context(), challenge.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrRecoveryChallengeInvalid) {
+			writeAPIError(w, http.StatusForbidden, "account_recovery_challenge_invalid", err.Error())
+			return
+		}
+		writeInternalAPIError(w, "account_recovery_enrollment_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, store.BootstrapResult{Account: account, Device: device})
+}
+
+func recoverySignatureCanonical(challenge store.AccountRecoveryChallenge) string {
+	return strings.Join([]string{
+		"VIRTROID-ACCOUNT-RECOVERY-V1",
+		strings.TrimSpace(challenge.ID),
+		strings.TrimSpace(challenge.Nonce),
+		strings.TrimSpace(challenge.AccountID),
+		strings.TrimSpace(challenge.DeviceID),
+		strings.TrimSpace(challenge.DeviceName),
+		strings.TrimSpace(challenge.DevicePublicKey),
+	}, "\n")
+}
+
+func parseRecoveryPublicKey(material string) (*ecdsa.PublicKey, error) {
+	publicKey, err := parseECDSAPublicKeyMaterial(material)
+	if err != nil || publicKey.Curve.Params().Name != "P-256" {
+		return nil, errors.New("recovery public key must be P-256")
+	}
+	return publicKey, nil
+}
+
+func verifyRecoverySignature(publicKeyMaterial string, challenge store.AccountRecoveryChallenge, signatureRaw string) bool {
+	publicKey, err := parseRecoveryPublicKey(publicKeyMaterial)
+	if err != nil {
+		return false
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(signatureRaw))
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(recoverySignatureCanonical(challenge)))
+	return ecdsa.VerifyASN1(publicKey, digest[:], signature)
 }
 
 func (a *API) changeMyIdentityPassword(w http.ResponseWriter, r *http.Request) {
@@ -3236,6 +3435,8 @@ func withRecovery(next http.Handler) http.Handler {
 func responseMustNotBeStored(path string) bool {
 	path = strings.TrimSpace(path)
 	return path == "/api/v1/bootstrap" ||
+		path == "/api/v1/recovery" ||
+		strings.HasPrefix(path, "/api/v1/recovery/") ||
 		path == "/api/v1/hosts" ||
 		path == "/api/v1/me" ||
 		strings.HasPrefix(path, "/api/v1/me/") ||
