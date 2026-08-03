@@ -48,6 +48,7 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
         "last_active_device" -> context.getString(R.string.account_revoke_last_device_blocked)
         "bootstrap_invite_required" -> context.getString(R.string.onboarding_invite_required)
         "bootstrap_invite_invalid" -> context.getString(R.string.onboarding_invite_invalid)
+        "account_recovery_unavailable" -> context.getString(R.string.identity_recovery_unavailable)
         else -> when {
             rawMessage.contains("viewer prepare", ignoreCase = true) ||
                 rawMessage.contains("viewer service", ignoreCase = true) ||
@@ -61,8 +62,10 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
 
 internal fun Throwable.isIdentityAuthenticationFailure(): Boolean {
     val apiError = this as? VirtroidApiException
-    return apiError?.errorMessage?.equals("identity authentication failed", ignoreCase = true) == true ||
-        message.orEmpty().equals("identity authentication failed", ignoreCase = true)
+    return apiError?.code in setOf("account_recovery_key_mismatch", "account_recovery_proof_invalid") ||
+        apiError?.errorMessage?.equals("identity authentication failed", ignoreCase = true) == true ||
+        message.orEmpty().equals("identity authentication failed", ignoreCase = true) ||
+        message.orEmpty().equals("blob encryption password is incorrect", ignoreCase = true)
 }
 
 internal fun Throwable.isGoneSessionResponse(): Boolean {

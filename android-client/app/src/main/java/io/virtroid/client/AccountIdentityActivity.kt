@@ -20,7 +20,7 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAccountIdentityBinding
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.DeviceIdentityStore
-import io.virtroid.client.security.IdentityCrypto
+import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
@@ -37,6 +37,7 @@ class AccountIdentityActivity : AppCompatActivity() {
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var appSettings: AppSettingsStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var identityKeyManager: IdentityKeyManager
     private lateinit var appLockStore: AppLockStore
     private lateinit var appLogs: AppLogStore
     private val deviceIdentityStore = DeviceIdentityStore()
@@ -54,6 +55,7 @@ class AccountIdentityActivity : AppCompatActivity() {
         activeSessionStore = ActiveSessionStore(this)
         appSettings = AppSettingsStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        identityKeyManager = IdentityKeyManager(this, api)
         appLockStore = AppLockStore(this)
         appLogs = AppLogStore.get(this)
 
@@ -451,16 +453,12 @@ class AccountIdentityActivity : AppCompatActivity() {
             val password = promptIdentityPasswordSetup() ?: return@launch
 
             runCatching {
-                val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, password)
-                val verifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
-                api.registerIdentity(
-                    baseUrl = sessionStore.baseUrl,
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    blobKeyVerifier = verifier,
+                identityKeyManager.unlockOrMigrate(
+                    sessionStore.baseUrl,
+                    accountId,
+                    deviceId,
+                    password,
                 )
-                identityPasswordStore.unlock(accountId, deviceId, password)
-                identityPasswordStore.saveConfigured(accountId, deviceId)
             }.onSuccess {
                 appLogs.info("Identity blob password configured", "auth")
                 renderIdentity()

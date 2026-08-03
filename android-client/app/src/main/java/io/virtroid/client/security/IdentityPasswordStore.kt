@@ -80,6 +80,11 @@ class IdentityPasswordStore(context: Context) {
 
     fun unlock(accountId: String, deviceId: String, password: String): String {
         val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, password)
+        return cacheBlobAccessKey(accountId, deviceId, blobAccessKey)
+    }
+
+    fun cacheBlobAccessKey(accountId: String, deviceId: String, blobAccessKey: String): String {
+        require(IdentityCrypto.isValidBlobAccessKey(blobAccessKey)) { "invalid account master key" }
         unlockedAccountId = accountId
         unlockedDeviceId = deviceId
         unlockedBlobAccessKey = blobAccessKey

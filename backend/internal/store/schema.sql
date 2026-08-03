@@ -159,6 +159,37 @@ CREATE TABLE IF NOT EXISTS devices (
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS blob_key_verifier TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
+CREATE TABLE IF NOT EXISTS account_recovery_credentials (
+    account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK (version = 2),
+    kdf_algorithm TEXT NOT NULL CHECK (kdf_algorithm = 'PBKDF2_HMAC_SHA256_V2'),
+    kdf_salt TEXT NOT NULL,
+    kdf_iterations INTEGER NOT NULL CHECK (kdf_iterations BETWEEN 600000 AND 2000000),
+    envelope_algorithm TEXT NOT NULL CHECK (envelope_algorithm = 'AES_GCM_256_V1'),
+    envelope_iv TEXT NOT NULL,
+    envelope_ciphertext TEXT NOT NULL,
+    recovery_public_key TEXT NOT NULL,
+    blob_key_verifier TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS account_recovery_challenges (
+    id UUID PRIMARY KEY,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL,
+    device_name TEXT NOT NULL,
+    device_public_key TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_recovery_challenges_expiry
+    ON account_recovery_challenges (expires_at)
+    WHERE consumed_at IS NULL;
+
 -- The former enrollment-invitation experiment used a different trust model.
 -- Keep removing that obsolete table; bootstrap_invitations above is the
 -- audited, hashed, single-use replacement.

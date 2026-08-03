@@ -36,6 +36,7 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionViewerBinding
+import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.SnapshotRollbackException
@@ -75,6 +76,7 @@ class SessionActivity : AppCompatActivity() {
     private var endingSession = false
     private var viewerSurface: Surface? = null
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var identityKeyManager: IdentityKeyManager
     private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var sessionStore: SessionStore
@@ -194,6 +196,7 @@ class SessionActivity : AppCompatActivity() {
             baseUrl = sessionStore.baseUrl
         }
         identityPasswordStore = IdentityPasswordStore(this)
+        identityKeyManager = IdentityKeyManager(this, api)
         snapshotRollbackGuard = SnapshotRollbackGuard(this)
         activeSessionStore = ActiveSessionStore(this)
         appSettings = AppSettingsStore(this)
@@ -846,7 +849,7 @@ class SessionActivity : AppCompatActivity() {
         if (password.isBlank()) {
             throw IOException(getString(R.string.identity_password_required))
         }
-        return identityPasswordStore.unlock(accountId, deviceId, password)
+        return identityKeyManager.unlockOrMigrate(baseUrl, accountId, deviceId, password)
     }
 
     private fun RuntimeSummary.isRuntimeStopQueued(): Boolean {

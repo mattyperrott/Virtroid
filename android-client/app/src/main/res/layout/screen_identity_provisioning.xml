@@ -343,5 +343,13 @@
             android:layout_width="match_parent"
             android:layout_height="58dp"
             android:text="@string/onboarding_create_identity" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/recoverIdentityButton"
+            style="@style/VirtroidButton.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="10dp"
+            android:text="@string/identity_recovery_action" />
     </LinearLayout>
 </FrameLayout>

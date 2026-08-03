@@ -27,6 +27,7 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.RuntimeCardBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
+import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
@@ -51,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sessionStore: SessionStore
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var identityKeyManager: IdentityKeyManager
     private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private lateinit var appLogs: AppLogStore
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.US)
@@ -76,6 +78,7 @@ class MainActivity : AppCompatActivity() {
         sessionStore = SessionStore(this)
         activeSessionStore = ActiveSessionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        identityKeyManager = IdentityKeyManager(this, api)
         snapshotRollbackGuard = SnapshotRollbackGuard(this)
         appLogs = AppLogStore.get(this)
         if (sessionStore.baseUrl.isBlank()) {
@@ -769,7 +772,12 @@ class MainActivity : AppCompatActivity() {
         if (password.isBlank()) {
             throw IOException(getString(R.string.identity_password_required))
         }
-        return identityPasswordStore.unlock(accountId, deviceId, password)
+        return identityKeyManager.unlockOrMigrate(
+            sessionStore.baseUrl,
+            accountId,
+            deviceId,
+            password,
+        )
     }
 
     private fun currentBaseUrl(): String {

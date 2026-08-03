@@ -17,8 +17,6 @@ Securely create, control, reset, and destroy isolated Android runtimes from the 
 [Features](#feature-matrix) ·
 [Architecture](#architecture) ·
 [Security](#security-model) ·
-[Development](#development) ·
-[Deployment](#vps-deployment) ·
 [Roadmap](#roadmap)
 
 </div>
@@ -102,7 +100,8 @@ flowchart LR
 | Capability                   |       Status      | Notes                                                   |
 | :--------------------------- | :---------------: | :------------------------------------------------------ |
 | Invite-gated account bootstrap | ✅ Deployed      | Server issues and consumes the one-time invitation internally; the user never enters it |
-| Trusted-device management    |     🟡 Partial     | Listing and revocation exist; additional-device enrolment does not |
+| Trusted-device management    |   ✅ Implemented   | Listing, revocation, and password-authorized replacement-device enrolment are implemented; live recovery acceptance is pending |
+| Lost-phone identity recovery |   ✅ Implemented   | Account ID plus blob password unlocks a password-encrypted account-key envelope; the old phone is not required |
 | Runtime creation             |   ✅ Deployed      | Creates independently managed Android environments      |
 | Runtime start and stop       |   ✅ Deployed      | Live single-node guest lifecycle and idle cleanup proved |
 | Remote Android viewer        |   ✅ Deployed      | Encrypted TLS viewer and Back → Connect reconnection proved |
@@ -201,6 +200,31 @@ The backend enforces:
 * Replay rejection
 * Body-integrity verification
 * Device ownership checks
+
+### Recoverable snapshot identity
+
+New accounts use a random account master key for runtime snapshots. The key is
+not derived from the device ID. The Android client encrypts that key and a
+separate P-256 recovery private key with the user’s blob encryption password;
+the password and plaintext keys never leave the phone. The backend stores only
+the encrypted AES-GCM envelope, its KDF parameters, the recovery public key,
+and the existing blob-key verifier.
+
+On a replacement phone, the user enters the account ID and existing blob
+password. The new phone creates its own Android Keystore signing key, decrypts
+the recovery envelope locally, signs a short-lived single-use server challenge,
+and is atomically added as a trusted device. The old phone is not required and
+its private signing key is never copied.
+
+Existing accounts migrate without rewriting snapshots: after the updated
+client successfully unlocks the blob identity once, it wraps the exact legacy
+snapshot key in the new recovery envelope. Until that one-time migration has
+occurred on an already trusted phone, replacement-phone recovery is not yet
+available for that existing account.
+
+The encrypted envelope permits offline password guessing if it is stolen, so
+the client requires a unique blob password of at least 14 characters. This
+password is the recovery secret and should be kept with the account ID.
 
 ---
 

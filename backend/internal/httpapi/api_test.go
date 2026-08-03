@@ -41,6 +41,7 @@ func TestSensitiveAPIResponsesAreNonCacheableAndNosniff(t *testing.T) {
 		wantStore string
 	}{
 		{name: "bootstrap", method: http.MethodPost, path: "/api/v1/bootstrap", body: `{`, wantStore: "no-store"},
+		{name: "account recovery", method: http.MethodPost, path: "/api/v1/recovery/challenge", body: `{`, wantStore: "no-store"},
 		{name: "private", method: http.MethodGet, path: "/api/v1/me/runtimes", wantStore: "no-store"},
 		{name: "internal", method: http.MethodGet, path: "/api/v1/internal/hosts/node-1/assignments", wantStore: "no-store"},
 		{name: "public metadata", method: http.MethodGet, path: "/api/v1/meta"},
@@ -59,6 +60,40 @@ func TestSensitiveAPIResponsesAreNonCacheableAndNosniff(t *testing.T) {
 				t.Fatalf("Cache-Control = %q, want %q", got, tt.wantStore)
 			}
 		})
+	}
+}
+
+func TestRecoverySignatureBindsReplacementDeviceChallenge(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate recovery key: %v", err)
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal recovery key: %v", err)
+	}
+	challenge := store.AccountRecoveryChallenge{
+		ID:              "11111111-1111-1111-1111-111111111111",
+		AccountID:       "22222222-2222-2222-2222-222222222222",
+		DeviceID:        "33333333-3333-3333-3333-333333333333",
+		DeviceName:      "Replacement phone",
+		DevicePublicKey: "replacement-device-public-key",
+		Nonce:           "challenge-nonce",
+	}
+	digest := sha256.Sum256([]byte(recoverySignatureCanonical(challenge)))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		t.Fatalf("sign recovery challenge: %v", err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(publicKeyDER)
+	signatureEncoded := base64.RawURLEncoding.EncodeToString(signature)
+
+	if !verifyRecoverySignature(publicKey, challenge, signatureEncoded) {
+		t.Fatal("valid recovery signature was rejected")
+	}
+	challenge.DeviceID = "44444444-4444-4444-4444-444444444444"
+	if verifyRecoverySignature(publicKey, challenge, signatureEncoded) {
+		t.Fatal("recovery signature remained valid after replacement device was changed")
 	}
 }
 

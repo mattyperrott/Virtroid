@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/x509"
 	"database/sql"
 	_ "embed"
 	"encoding/base64"
@@ -30,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026080201
-	schemaVersionLabel               = "photo import and idle runtime cleanup 2026-08-02"
+	currentSchemaVersion       int64 = 2026080301
+	schemaVersionLabel               = "recoverable account master keys 2026-08-03"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -51,7 +53,8 @@ const (
 	idleRuntimeLastActivitySQL = "GREATEST(COALESCE(ls.last_session_at, r.started_at, r.created_at), COALESCE(r.started_at, r.created_at))"
 	// Keep this aligned with the Android client's MAX_CATALOG_ITEMS bound so a
 	// valid server response is never rejected solely because of cardinality.
-	catalogResponseLimit = 250
+	catalogResponseLimit        = 250
+	accountRecoveryChallengeTTL = 10 * time.Minute
 )
 
 var allowedAndroidImages = map[string]struct{}{
@@ -102,6 +105,10 @@ var (
 	ErrNodeKeyRotationOverlap     = errors.New("node key rotation overlap is outside the allowed range")
 	ErrNodeKeyAlreadyActive       = errors.New("node key is already active")
 	ErrBootstrapInviteInvalid     = errors.New("bootstrap invitation is invalid, expired, or already used")
+	ErrRecoveryNotConfigured      = errors.New("account recovery is not configured")
+	ErrRecoveryAlreadyConfigured  = errors.New("account recovery is already configured")
+	ErrRecoveryChallengeInvalid   = errors.New("account recovery challenge is invalid, expired, or already used")
+	ErrRecoveryDeviceExists       = errors.New("the recovery device is already enrolled")
 )
 
 const MaxNodeKeyRotationOverlap = 24 * time.Hour
@@ -141,6 +148,41 @@ type BootstrapInvitation struct {
 type Account struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+const (
+	AccountRecoveryVersion           = 2
+	AccountRecoveryKDFAlgorithm      = "PBKDF2_HMAC_SHA256_V2"
+	AccountRecoveryEnvelopeAlgorithm = "AES_GCM_256_V1"
+	AccountRecoveryMinIterations     = 600_000
+	AccountRecoveryMaxIterations     = 2_000_000
+)
+
+type AccountRecoveryCredential struct {
+	AccountID          string    `json:"account_id"`
+	Version            int       `json:"version"`
+	KDFAlgorithm       string    `json:"kdf_algorithm"`
+	KDFSalt            string    `json:"kdf_salt"`
+	KDFIterations      int       `json:"kdf_iterations"`
+	EnvelopeAlgorithm  string    `json:"envelope_algorithm"`
+	EnvelopeIV         string    `json:"envelope_iv"`
+	EnvelopeCiphertext string    `json:"envelope_ciphertext"`
+	RecoveryPublicKey  string    `json:"recovery_public_key"`
+	BlobKeyVerifier    string    `json:"blob_key_verifier"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+type AccountRecoveryChallenge struct {
+	ID              string     `json:"id"`
+	AccountID       string     `json:"account_id"`
+	DeviceID        string     `json:"device_id"`
+	DeviceName      string     `json:"device_name"`
+	DevicePublicKey string     `json:"device_public_key"`
+	Nonce           string     `json:"nonce"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	ConsumedAt      *time.Time `json:"consumed_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 type AccountStorage struct {
@@ -1929,6 +1971,362 @@ func (s *Store) setDeviceBlobKeyVerifier(
 		return ErrDeviceNotFound
 	}
 	return tx.Commit()
+}
+
+func ValidateAccountRecoveryCredential(input AccountRecoveryCredential) (AccountRecoveryCredential, error) {
+	input.AccountID = strings.TrimSpace(input.AccountID)
+	input.KDFAlgorithm = strings.TrimSpace(input.KDFAlgorithm)
+	input.KDFSalt = strings.TrimSpace(input.KDFSalt)
+	input.EnvelopeAlgorithm = strings.TrimSpace(input.EnvelopeAlgorithm)
+	input.EnvelopeIV = strings.TrimSpace(input.EnvelopeIV)
+	input.EnvelopeCiphertext = strings.TrimSpace(input.EnvelopeCiphertext)
+	input.RecoveryPublicKey = strings.TrimSpace(input.RecoveryPublicKey)
+	if input.Version != AccountRecoveryVersion || input.KDFAlgorithm != AccountRecoveryKDFAlgorithm ||
+		input.EnvelopeAlgorithm != AccountRecoveryEnvelopeAlgorithm {
+		return AccountRecoveryCredential{}, errors.New("unsupported account recovery credential")
+	}
+	if input.KDFIterations < AccountRecoveryMinIterations || input.KDFIterations > AccountRecoveryMaxIterations {
+		return AccountRecoveryCredential{}, errors.New("account recovery KDF iterations are outside the allowed range")
+	}
+	if err := validateRecoveryBase64URL(input.KDFSalt, 32, 32, "KDF salt"); err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	if err := validateRecoveryBase64URL(input.EnvelopeIV, 12, 12, "envelope IV"); err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	if err := validateRecoveryBase64URL(input.EnvelopeCiphertext, 64, 4096, "envelope ciphertext"); err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	publicKeyDER, err := base64.StdEncoding.DecodeString(input.RecoveryPublicKey)
+	if err != nil || len(publicKeyDER) < 64 || len(publicKeyDER) > 512 {
+		return AccountRecoveryCredential{}, errors.New("account recovery public key is invalid")
+	}
+	parsedPublicKey, err := x509.ParsePKIXPublicKey(publicKeyDER)
+	recoveryPublicKey, ok := parsedPublicKey.(*ecdsa.PublicKey)
+	if err != nil || !ok || recoveryPublicKey.Curve.Params().Name != "P-256" {
+		return AccountRecoveryCredential{}, errors.New("account recovery public key must be P-256")
+	}
+	input.BlobKeyVerifier, err = normalizeBlobKeyVerifier(input.BlobKeyVerifier)
+	if err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	return input, nil
+}
+
+func validateRecoveryBase64URL(value string, minBytes, maxBytes int, label string) error {
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil || len(raw) < minBytes || len(raw) > maxBytes {
+		return fmt.Errorf("account recovery %s is invalid", label)
+	}
+	return nil
+}
+
+func (s *Store) RegisterAccountRecoveryCredential(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	input AccountRecoveryCredential,
+) (AccountRecoveryCredential, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	input.AccountID = accountID
+	validated, err := ValidateAccountRecoveryCredential(input)
+	if err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	defer tx.Rollback()
+
+	var storedVerifier sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT blob_key_verifier
+		  FROM devices
+		 WHERE account_id = $1 AND id = $2 AND revoked_at IS NULL
+		 FOR UPDATE
+	`, accountID, deviceID).Scan(&storedVerifier); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AccountRecoveryCredential{}, ErrDeviceNotFound
+		}
+		return AccountRecoveryCredential{}, err
+	}
+	if !storedVerifier.Valid || strings.TrimSpace(storedVerifier.String) == "" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE devices
+			   SET blob_key_verifier = $3,
+			       last_seen_at = NOW()
+			 WHERE account_id = $1 AND id = $2 AND revoked_at IS NULL
+		`, accountID, deviceID, validated.BlobKeyVerifier); err != nil {
+			return AccountRecoveryCredential{}, err
+		}
+	} else {
+		currentVerifier, err := normalizeBlobKeyVerifier(storedVerifier.String)
+		if err != nil || subtle.ConstantTimeCompare([]byte(currentVerifier), []byte(validated.BlobKeyVerifier)) != 1 {
+			return AccountRecoveryCredential{}, ErrIdentityAuthFailed
+		}
+	}
+
+	var created AccountRecoveryCredential
+	err = scanAccountRecoveryCredential(tx.QueryRowContext(ctx, `
+		INSERT INTO account_recovery_credentials (
+			account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
+			envelope_algorithm, envelope_iv, envelope_ciphertext,
+			recovery_public_key, blob_key_verifier
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (account_id) DO NOTHING
+		RETURNING account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
+		          envelope_algorithm, envelope_iv, envelope_ciphertext,
+		          recovery_public_key, blob_key_verifier, created_at, updated_at
+	`, accountID, validated.Version, validated.KDFAlgorithm, validated.KDFSalt,
+		validated.KDFIterations, validated.EnvelopeAlgorithm, validated.EnvelopeIV,
+		validated.EnvelopeCiphertext, validated.RecoveryPublicKey, validated.BlobKeyVerifier), &created)
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return AccountRecoveryCredential{}, err
+		}
+		return created, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return AccountRecoveryCredential{}, err
+	}
+
+	existing, err := getAccountRecoveryCredentialTX(ctx, tx, accountID)
+	if err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	if !sameAccountRecoveryCredential(existing, validated) {
+		return AccountRecoveryCredential{}, ErrRecoveryAlreadyConfigured
+	}
+	if err := tx.Commit(); err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	return existing, nil
+}
+
+func sameAccountRecoveryCredential(left, right AccountRecoveryCredential) bool {
+	return left.AccountID == right.AccountID && left.Version == right.Version &&
+		left.KDFAlgorithm == right.KDFAlgorithm && left.KDFSalt == right.KDFSalt &&
+		left.KDFIterations == right.KDFIterations && left.EnvelopeAlgorithm == right.EnvelopeAlgorithm &&
+		left.EnvelopeIV == right.EnvelopeIV && left.EnvelopeCiphertext == right.EnvelopeCiphertext &&
+		left.RecoveryPublicKey == right.RecoveryPublicKey && left.BlobKeyVerifier == right.BlobKeyVerifier
+}
+
+func scanAccountRecoveryCredential(row interface{ Scan(...any) error }, destination *AccountRecoveryCredential) error {
+	if destination == nil {
+		return errors.New("account recovery credential scan destination is required")
+	}
+	return row.Scan(
+		&destination.AccountID,
+		&destination.Version,
+		&destination.KDFAlgorithm,
+		&destination.KDFSalt,
+		&destination.KDFIterations,
+		&destination.EnvelopeAlgorithm,
+		&destination.EnvelopeIV,
+		&destination.EnvelopeCiphertext,
+		&destination.RecoveryPublicKey,
+		&destination.BlobKeyVerifier,
+		&destination.CreatedAt,
+		&destination.UpdatedAt,
+	)
+}
+
+func (s *Store) GetAccountRecoveryCredential(ctx context.Context, accountID string) (AccountRecoveryCredential, error) {
+	return getAccountRecoveryCredentialQuery(ctx, s.db, strings.TrimSpace(accountID))
+}
+
+type recoveryCredentialQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func getAccountRecoveryCredentialTX(ctx context.Context, tx *sql.Tx, accountID string) (AccountRecoveryCredential, error) {
+	return getAccountRecoveryCredentialQuery(ctx, tx, accountID)
+}
+
+func getAccountRecoveryCredentialQuery(
+	ctx context.Context,
+	queryer recoveryCredentialQueryer,
+	accountID string,
+) (AccountRecoveryCredential, error) {
+	var credential AccountRecoveryCredential
+	err := scanAccountRecoveryCredential(queryer.QueryRowContext(ctx, `
+		SELECT account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
+		       envelope_algorithm, envelope_iv, envelope_ciphertext,
+		       recovery_public_key, blob_key_verifier, created_at, updated_at
+		  FROM account_recovery_credentials
+		 WHERE account_id = $1
+	`, strings.TrimSpace(accountID)), &credential)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AccountRecoveryCredential{}, ErrRecoveryNotConfigured
+	}
+	return credential, err
+}
+
+func (s *Store) CreateAccountRecoveryChallenge(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	deviceName string,
+	devicePublicKey string,
+) (AccountRecoveryCredential, AccountRecoveryChallenge, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	deviceName = strings.TrimSpace(deviceName)
+	devicePublicKey = strings.TrimSpace(devicePublicKey)
+	if accountID == "" || deviceID == "" || deviceName == "" || devicePublicKey == "" {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, errors.New("complete recovery device identity is required")
+	}
+	if _, err := uuid.Parse(accountID); err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, ErrRecoveryNotConfigured
+	}
+	if _, err := uuid.Parse(deviceID); err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, errors.New("recovery device id is invalid")
+	}
+	if len([]rune(deviceName)) > 120 || len(devicePublicKey) > 2048 {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, errors.New("recovery device identity is too large")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	defer tx.Rollback()
+	credential, err := getAccountRecoveryCredentialTX(ctx, tx, accountID)
+	if err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1)`, deviceID).Scan(&exists); err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	if exists {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, ErrRecoveryDeviceExists
+	}
+
+	nonceBytes := make([]byte, 32)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	challenge := AccountRecoveryChallenge{
+		ID:              uuid.NewString(),
+		AccountID:       accountID,
+		DeviceID:        deviceID,
+		DeviceName:      deviceName,
+		DevicePublicKey: devicePublicKey,
+		Nonce:           base64.RawURLEncoding.EncodeToString(nonceBytes),
+		ExpiresAt:       time.Now().UTC().Add(accountRecoveryChallengeTTL),
+	}
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO account_recovery_challenges (
+			id, account_id, device_id, device_name, device_public_key, nonce, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		RETURNING created_at
+	`, challenge.ID, challenge.AccountID, challenge.DeviceID, challenge.DeviceName,
+		challenge.DevicePublicKey, challenge.Nonce, challenge.ExpiresAt).Scan(&challenge.CreatedAt); err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM account_recovery_challenges
+		 WHERE account_id = $1 AND (expires_at <= NOW() OR consumed_at IS NOT NULL)
+	`, accountID); err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	return credential, challenge, nil
+}
+
+func (s *Store) GetAccountRecoveryChallenge(ctx context.Context, challengeID string) (AccountRecoveryChallenge, error) {
+	var challenge AccountRecoveryChallenge
+	var consumedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, account_id, device_id, device_name, device_public_key,
+		       nonce, expires_at, consumed_at, created_at
+		  FROM account_recovery_challenges
+		 WHERE id = $1
+	`, strings.TrimSpace(challengeID)).Scan(
+		&challenge.ID, &challenge.AccountID, &challenge.DeviceID, &challenge.DeviceName,
+		&challenge.DevicePublicKey, &challenge.Nonce, &challenge.ExpiresAt, &consumedAt, &challenge.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AccountRecoveryChallenge{}, ErrRecoveryChallengeInvalid
+		}
+		return AccountRecoveryChallenge{}, err
+	}
+	if consumedAt.Valid {
+		challenge.ConsumedAt = &consumedAt.Time
+	}
+	if challenge.ConsumedAt != nil || !challenge.ExpiresAt.After(time.Now().UTC()) {
+		return AccountRecoveryChallenge{}, ErrRecoveryChallengeInvalid
+	}
+	return challenge, nil
+}
+
+func (s *Store) CompleteAccountRecoveryEnrollment(
+	ctx context.Context,
+	challengeID string,
+) (Account, Device, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Account{}, Device{}, err
+	}
+	defer tx.Rollback()
+
+	var challenge AccountRecoveryChallenge
+	var consumedAt sql.NullTime
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id, account_id, device_id, device_name, device_public_key,
+		       nonce, expires_at, consumed_at, created_at
+		  FROM account_recovery_challenges
+		 WHERE id = $1
+		 FOR UPDATE
+	`, strings.TrimSpace(challengeID)).Scan(
+		&challenge.ID, &challenge.AccountID, &challenge.DeviceID, &challenge.DeviceName,
+		&challenge.DevicePublicKey, &challenge.Nonce, &challenge.ExpiresAt, &consumedAt, &challenge.CreatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Account{}, Device{}, ErrRecoveryChallengeInvalid
+		}
+		return Account{}, Device{}, err
+	}
+	if consumedAt.Valid || !challenge.ExpiresAt.After(time.Now().UTC()) {
+		return Account{}, Device{}, ErrRecoveryChallengeInvalid
+	}
+
+	credential, err := getAccountRecoveryCredentialTX(ctx, tx, challenge.AccountID)
+	if err != nil {
+		return Account{}, Device{}, err
+	}
+	var account Account
+	if err := tx.QueryRowContext(ctx, `SELECT id, created_at FROM accounts WHERE id = $1`, challenge.AccountID).Scan(
+		&account.ID, &account.CreatedAt,
+	); err != nil {
+		return Account{}, Device{}, err
+	}
+	var device Device
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO devices (id, account_id, name, public_key, blob_key_verifier, last_seen_at)
+		VALUES ($1,$2,$3,$4,$5,NOW())
+		RETURNING id, account_id, name, public_key, blob_key_verifier, created_at, last_seen_at, revoked_at
+	`, challenge.DeviceID, challenge.AccountID, challenge.DeviceName, challenge.DevicePublicKey,
+		credential.BlobKeyVerifier).Scan(
+		&device.ID, &device.AccountID, &device.Name, &device.PublicKey, &device.BlobKeyVerifier,
+		&device.CreatedAt, &device.LastSeenAt, &device.RevokedAt,
+	); err != nil {
+		return Account{}, Device{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE account_recovery_challenges SET consumed_at = NOW() WHERE id = $1`, challenge.ID); err != nil {
+		return Account{}, Device{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Account{}, Device{}, err
+	}
+	return account, device, nil
 }
 
 func (s *Store) GetAccountStorage(ctx context.Context, accountID string) (AccountStorage, error) {

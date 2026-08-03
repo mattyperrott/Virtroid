@@ -2,18 +2,25 @@ package io.virtroid.client.security
 
 import android.app.Dialog
 import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.drawable.toDrawable
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import io.virtroid.client.R
 import io.virtroid.client.databinding.DialogIdentityPasswordSetupBinding
+import io.virtroid.client.databinding.DialogIdentityRecoveryBinding
 import io.virtroid.client.databinding.DialogSecureTextEntryBinding
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.UUID
 import kotlin.coroutines.resume
+
+data class IdentityRecoveryInput(
+    val accountId: String,
+    val password: String,
+)
 
 private suspend fun AppCompatActivity.promptSecureEntry(
     title: String,
@@ -31,7 +38,7 @@ private suspend fun AppCompatActivity.promptSecureEntry(
     val dialog = Dialog(this).apply {
         setContentView(binding.root)
         setCancelable(true)
-        window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
         window?.setLayout(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -97,7 +104,7 @@ suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
         val dialog = Dialog(this).apply {
             setContentView(binding.root)
             setCancelable(true)
-            window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
             window?.setLayout(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -142,6 +149,54 @@ suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
         dialog.setOnCancelListener { finishWith(null) }
         dialog.show()
         binding.passwordInput.requestFocus()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        continuation.invokeOnCancellation { dialog.dismiss() }
+    }
+
+suspend fun AppCompatActivity.promptIdentityRecovery(): IdentityRecoveryInput? =
+    suspendCancellableCoroutine { continuation ->
+        val binding = DialogIdentityRecoveryBinding.inflate(layoutInflater)
+        binding.recoveryPasswordInput.inputType =
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        binding.recoveryPasswordInputLayout.configureAccessiblePasswordToggle(binding.recoveryPasswordInput)
+
+        val dialog = Dialog(this).apply {
+            setContentView(binding.root)
+            setCancelable(true)
+            window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
+            window?.setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+            )
+        }
+
+        fun finishWith(value: IdentityRecoveryInput?) {
+            if (continuation.isActive) {
+                continuation.resume(value)
+            }
+            dialog.dismiss()
+        }
+
+        binding.recoveryCancelButton.setOnClickListener { finishWith(null) }
+        binding.recoveryConfirmButton.setOnClickListener {
+            val accountId = binding.recoveryAccountInput.text?.toString()?.trim().orEmpty()
+            val password = binding.recoveryPasswordInput.text?.toString()?.trim().orEmpty()
+            val normalizedAccountId = runCatching { UUID.fromString(accountId).toString() }.getOrNull()
+            when {
+                normalizedAccountId == null -> {
+                    binding.recoveryAccountInputLayout.error =
+                        getString(R.string.identity_recovery_account_invalid)
+                }
+                password.isBlank() -> {
+                    binding.recoveryPasswordInputLayout.error =
+                        getString(R.string.identity_password_required)
+                }
+                else -> finishWith(IdentityRecoveryInput(normalizedAccountId, password))
+            }
+        }
+        dialog.setOnCancelListener { finishWith(null) }
+        dialog.show()
+        binding.recoveryAccountInput.requestFocus()
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         continuation.invokeOnCancellation { dialog.dismiss() }
     }

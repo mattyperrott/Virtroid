@@ -19,11 +19,13 @@ import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenIdentityProvisioningBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
+import io.virtroid.client.security.AccountMasterKeyCrypto
 import io.virtroid.client.security.DeviceIdentityStore
-import io.virtroid.client.security.IdentityCrypto
+import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPasswordSetup
+import io.virtroid.client.security.promptIdentityRecovery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -39,6 +41,7 @@ class OnboardingActivity : AppCompatActivity() {
     private val api = VirtroidApi()
     private lateinit var sessionStore: SessionStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var identityKeyManager: IdentityKeyManager
     private val deviceIdentityStore = DeviceIdentityStore()
     private var pendingIdentityPassword: String? = null
     private var pendingAccountId: String? = null
@@ -57,6 +60,7 @@ class OnboardingActivity : AppCompatActivity() {
 
         sessionStore = SessionStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
+        identityKeyManager = IdentityKeyManager(this, api)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.onboardingRoot) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -84,6 +88,11 @@ class OnboardingActivity : AppCompatActivity() {
                 } else {
                     createIdentity()
                 }
+            }
+        }
+        binding.recoverIdentityButton.setOnClickListener {
+            lifecycleScope.launch {
+                recoverExistingIdentity()
             }
         }
 
@@ -139,8 +148,7 @@ class OnboardingActivity : AppCompatActivity() {
             renderProvisionedDevice(result.deviceId, registered = true)
             markPreviousMilestone("Device ID registered", shortDescriptor(result.deviceId))
 
-            registerBlobIdentity(result, password)
-            markPreviousMilestone("Encrypted blob key sealed", "local password verifier registered")
+            registerBlobIdentity(result, password, createNewAccountKey = true)
             updateActiveMilestone(
                 title = "Identity Ready",
                 command = "> launch secure client",
@@ -182,8 +190,8 @@ class OnboardingActivity : AppCompatActivity() {
                 registerBlobIdentity(
                     BootstrapResult(accountId = accountId, deviceId = deviceId, runtimeId = ""),
                     password,
+                    createNewAccountKey = false,
                 )
-                markPreviousMilestone("Encrypted blob key sealed", "local password verifier registered")
                 updateActiveMilestone(
                     title = "Identity Ready",
                     command = "> launch secure client",
@@ -205,31 +213,115 @@ class OnboardingActivity : AppCompatActivity() {
         launchMain()
     }
 
-    private suspend fun registerBlobIdentity(result: BootstrapResult, password: String) {
+    private suspend fun registerBlobIdentity(
+        result: BootstrapResult,
+        password: String,
+        createNewAccountKey: Boolean,
+    ) {
         updateActiveMilestone(
-            title = "Generating Encrypted Blob Key ...",
-            command = "> pbkdf2-hmac-sha256 account + device + password",
-            detail = "... deriving runtime snapshot recovery material_",
+            title = "Protecting And Registering Account Key ...",
+            command = "> POST /api/v1/me/identity/recovery",
+            detail = "... encrypting recovery material locally; password stays here_",
         )
-        val blobAccessKey = IdentityCrypto.deriveBlobAccessKey(result.accountId, result.deviceId, password)
-        val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
-        markPreviousMilestone("Blob key verifier derived", "raw password remains local")
-
-        updateActiveMilestone(
-            title = "Registering Blob Verifier ...",
-            command = "> POST /api/v1/me/identity/register",
-            detail = "... sending verifier only; raw password stays local_",
-        )
-        api.registerIdentity(
-            baseUrl = sessionStore.baseUrl,
-            accountId = result.accountId,
-            deviceId = result.deviceId,
-            blobKeyVerifier = blobKeyVerifier,
-        )
-        identityPasswordStore.saveConfigured(result.accountId, result.deviceId)
-        identityPasswordStore.unlock(result.accountId, result.deviceId, password)
+        if (createNewAccountKey) {
+            identityKeyManager.createAndRegister(
+                sessionStore.baseUrl,
+                result.accountId,
+                result.deviceId,
+                password,
+            )
+        } else {
+            identityKeyManager.unlockOrMigrate(
+                sessionStore.baseUrl,
+                result.accountId,
+                result.deviceId,
+                password,
+            )
+        }
+        markPreviousMilestone("Account recovery envelope registered", "raw password remains local")
         pendingIdentityPassword = password
         renderPasswordRequirement()
+    }
+
+    private suspend fun recoverExistingIdentity() {
+        val input = promptIdentityRecovery() ?: return
+        binding.continueSetupButton.isEnabled = false
+        binding.recoverIdentityButton.isEnabled = false
+        showProvisioningLog()
+
+        runCatching {
+            updateActiveMilestone(
+                title = "Preparing Replacement Device ...",
+                command = "> android-keystore generate signing key",
+                detail = "... binding a new device identity_",
+            )
+            val publicKey = deviceIdentityStore.publicKeyMaterial()
+            val deviceId = deriveDeviceId(input.accountId)
+            val deviceName = deviceIdentityStore.defaultDeviceName(this@OnboardingActivity)
+            markPreviousMilestone("Replacement signing key ready", deviceName)
+
+            updateActiveMilestone(
+                title = "Requesting Recovery Challenge ...",
+                command = "> POST /api/v1/recovery/challenge",
+                detail = "... fetching the password-encrypted account key_",
+            )
+            val start = api.beginAccountRecovery(
+                baseUrl = sessionStore.baseUrl,
+                accountId = input.accountId,
+                deviceId = deviceId,
+                deviceName = deviceName,
+                publicKey = publicKey,
+            )
+            markPreviousMilestone("Recovery challenge received", shortDescriptor(start.challenge.id))
+
+            updateActiveMilestone(
+                title = "Unlocking Account Key ...",
+                command = "> decrypt recovery envelope locally",
+                detail = "... the blob password never leaves this phone_",
+            )
+            val unlocked = withContext(Dispatchers.Default) {
+                AccountMasterKeyCrypto.unlock(start.credential, input.password)
+            }
+            val recoverySignature = withContext(Dispatchers.Default) {
+                AccountMasterKeyCrypto.signRecoveryChallenge(start.challenge, unlocked.recoveryPrivateKey)
+            }
+            markPreviousMilestone("Account key unlocked", "recovery proof signed locally")
+
+            updateActiveMilestone(
+                title = "Enrolling This Phone ...",
+                command = "> POST /api/v1/recovery/complete",
+                detail = "... registering the new trusted device_",
+            )
+            val result = api.completeAccountRecovery(sessionStore.baseUrl, start, recoverySignature)
+            sessionStore.saveBootstrap(result.accountId, result.deviceId)
+            identityPasswordStore.saveConfigured(result.accountId, result.deviceId)
+            identityPasswordStore.cacheBlobAccessKey(result.accountId, result.deviceId, unlocked.blobAccessKey)
+            pendingIdentityPassword = input.password
+            pendingAccountId = result.accountId
+            pendingDeviceId = result.deviceId
+            renderProvisionedAccount(result.accountId, registered = true)
+            renderProvisionedDevice(result.deviceId, registered = true)
+            markPreviousMilestone("Replacement phone enrolled", shortDescriptor(result.deviceId))
+            updateActiveMilestone(
+                title = "Identity Recovered",
+                command = "> launch secure client",
+                detail = "... encrypted runtime snapshots are available_",
+            )
+            delay(FINAL_VISUAL_DELAY_MS)
+        }.onSuccess {
+            toast(getString(R.string.identity_recovery_success))
+            launchMain()
+        }.onFailure { error ->
+            val message = error.virtroidDisplayMessage(this@OnboardingActivity)
+            updateActiveMilestone(
+                title = "Recovery Failed",
+                command = "> recovery error",
+                detail = "... $message",
+            )
+            toast(message)
+            binding.continueSetupButton.isEnabled = true
+            binding.recoverIdentityButton.isEnabled = true
+        }
     }
 
     private suspend fun ensureIdentityPasswordReady(): Boolean {
@@ -270,6 +362,8 @@ class OnboardingActivity : AppCompatActivity() {
         }
         renderPasswordRequirement()
         binding.continueSetupButton.isEnabled = true
+        binding.recoverIdentityButton.isVisible = !sessionStore.hasAccess()
+        binding.recoverIdentityButton.isEnabled = true
         binding.continueSetupButton.setText(
             if (sessionStore.hasAccess()) R.string.onboarding_continue else R.string.onboarding_create_identity,
         )
