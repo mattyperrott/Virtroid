@@ -66,105 +66,109 @@
                 <LinearLayout
                     android:id="@+id/account_id_card"
                     android:layout_width="match_parent"
-                    android:layout_height="86dp"
+                    android:layout_height="76dp"
                     android:layout_marginBottom="12dp"
                     android:background="@drawable/bg_surface_stroke_24"
                     android:gravity="center_vertical"
-                    android:orientation="vertical"
+                    android:orientation="horizontal"
                     android:paddingStart="18dp"
                     android:paddingEnd="14dp">
 
                     <LinearLayout
-                        android:layout_width="match_parent"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
                         <TextView
                             android:id="@+id/account_id_label"
                             style="@style/VirtroidText.Label"
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:text="@string/onboarding_account_id" />
 
-                        <FrameLayout
-                            android:id="@+id/accountStatusIndicator"
-                            style="@style/VirtroidStatusCheck">
-
-                            <ImageView
-                                android:id="@+id/accountStatusCheck"
-                                android:layout_width="match_parent"
-                                android:layout_height="match_parent"
-                                android:src="@drawable/ic_check"
-                                app:tint="@color/v_text_dim" />
-                        </FrameLayout>
+                        <TextView
+                            android:id="@+id/onboardingAccountIdText"
+                            android:layout_width="match_parent"
+                            android:layout_height="20dp"
+                            android:layout_marginTop="3dp"
+                            android:ellipsize="end"
+                            android:fontFamily="monospace"
+                            android:gravity="center_vertical"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:singleLine="true"
+                            android:text="@string/onboarding_not_provisioned"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="12sp" />
                     </LinearLayout>
 
-                    <TextView
-                        android:id="@+id/onboardingAccountIdText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:ellipsize="end"
-                        android:fontFamily="monospace"
-                        android:includeFontPadding="false"
-                        android:maxLines="1"
-                        android:text="@string/onboarding_not_provisioned"
-                        android:textColor="@color/v_text_primary"
-                        android:textSize="14sp" />
+                    <FrameLayout
+                        android:id="@+id/accountStatusIndicator"
+                        style="@style/VirtroidStatusCheck"
+                        android:layout_marginStart="12dp">
+
+                        <ImageView
+                            android:id="@+id/accountStatusCheck"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:src="@drawable/ic_check"
+                            app:tint="@color/v_text_dim" />
+                    </FrameLayout>
                 </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/device_fingerprint_card"
                     android:layout_width="match_parent"
-                    android:layout_height="86dp"
+                    android:layout_height="76dp"
                     android:layout_marginBottom="28dp"
                     android:background="@drawable/bg_surface_stroke_24"
                     android:gravity="center_vertical"
-                    android:orientation="vertical"
+                    android:orientation="horizontal"
                     android:paddingStart="18dp"
                     android:paddingEnd="14dp">
 
                     <LinearLayout
-                        android:layout_width="match_parent"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
                         <TextView
                             android:id="@+id/device_fingerprint_label"
                             style="@style/VirtroidText.Label"
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:text="@string/onboarding_device_fingerprint" />
 
-                        <FrameLayout
-                            android:id="@+id/deviceFingerprintStatusIndicator"
-                            style="@style/VirtroidStatusCheck">
-
-                            <ImageView
-                                android:id="@+id/deviceFingerprintStatusCheck"
-                                android:layout_width="match_parent"
-                                android:layout_height="match_parent"
-                                android:src="@drawable/ic_check"
-                                app:tint="@color/v_text_dim" />
-                        </FrameLayout>
+                        <TextView
+                            android:id="@+id/onboardingDeviceIdText"
+                            android:layout_width="match_parent"
+                            android:layout_height="20dp"
+                            android:layout_marginTop="3dp"
+                            android:ellipsize="end"
+                            android:fontFamily="monospace"
+                            android:gravity="center_vertical"
+                            android:includeFontPadding="false"
+                            android:maxLines="1"
+                            android:singleLine="true"
+                            android:text="@string/onboarding_not_provisioned"
+                            android:textColor="@color/v_text_primary"
+                            android:textSize="12sp" />
                     </LinearLayout>
 
-                    <TextView
-                        android:id="@+id/onboardingDeviceIdText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:ellipsize="end"
-                        android:fontFamily="monospace"
-                        android:includeFontPadding="false"
-                        android:maxLines="1"
-                        android:text="@string/onboarding_not_provisioned"
-                        android:textColor="@color/v_text_primary"
-                        android:textSize="14sp" />
+                    <FrameLayout
+                        android:id="@+id/deviceFingerprintStatusIndicator"
+                        style="@style/VirtroidStatusCheck"
+                        android:layout_marginStart="12dp">
+
+                        <ImageView
+                            android:id="@+id/deviceFingerprintStatusCheck"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:src="@drawable/ic_check"
+                            app:tint="@color/v_text_dim" />
+                    </FrameLayout>
                 </LinearLayout>
 
                 <TextView
@@ -187,7 +191,7 @@
                     android:id="@+id/passphraseOptionCard"
                     android:contentDescription="@string/onboarding_passphrase_title"
                     android:layout_width="match_parent"
-                    android:layout_height="116dp"
+                    android:layout_height="92dp"
                     android:background="@drawable/bg_surface_stroke_24"
                     android:clickable="true"
                     android:focusable="true"
@@ -219,15 +223,6 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/onboarding_passphrase_title" />
-
-                        <TextView
-                            android:id="@+id/text_passphrase_subtitle"
-                            style="@style/VirtroidText.Body"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp"
-                            android:lineSpacingExtra="3dp"
-                            android:text="@string/onboarding_passphrase_body" />
                     </LinearLayout>
 
                     <View

@@ -355,7 +355,9 @@ class MainActivity : AppCompatActivity() {
                 appLogs.critical("Runtime ${runtime.name}: $error", "runtime")
             }
         }
+        cardBinding.liveRuntimeActionRow.isVisible = isLive
         cardBinding.connectRuntimeButton.isVisible = isLive
+        cardBinding.liveDeleteRuntimeButton.isVisible = isLive
         cardBinding.liveRuntimeControlsButton.isVisible = isLive
         cardBinding.liveRuntimeControlsButton.isEnabled = isLive
         cardBinding.runtimeActionRow.isVisible = !isLive
@@ -375,6 +377,7 @@ class MainActivity : AppCompatActivity() {
             (latestEntitlement?.canStartRuntime ?: true)
         cardBinding.actionControlsButton.isEnabled = actionsEnabled
         cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
+        cardBinding.liveDeleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
 
         cardBinding.connectRuntimeButton.setOnClickListener {
             if (isLocallyStopping) {
@@ -397,6 +400,9 @@ class MainActivity : AppCompatActivity() {
             connectRuntime(runtime)
         }
         cardBinding.deleteRuntimeButton.setOnClickListener {
+            confirmRuntimeDelete(runtime)
+        }
+        cardBinding.liveDeleteRuntimeButton.setOnClickListener {
             confirmRuntimeDelete(runtime)
         }
         cardBinding.actionControlsButton.setOnClickListener {

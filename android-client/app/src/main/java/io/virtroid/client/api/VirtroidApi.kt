@@ -867,15 +867,23 @@ class VirtroidApi(
         accountId: String,
         deviceId: String,
     ) = withContext(Dispatchers.IO) {
-        executeJson(
-            signedJsonRequest(
-                baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me?account_id=$accountId&device_id=$deviceId",
-                method = "DELETE",
-                accountId = accountId,
-                deviceId = deviceId,
-            ),
-        )
+        try {
+            executeJson(
+                signedJsonRequest(
+                    baseUrl = baseUrl,
+                    pathAndQuery = "/api/v1/me?account_id=$accountId&device_id=$deviceId",
+                    method = "DELETE",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                ),
+            )
+        } catch (error: VirtroidApiException) {
+            // Deletion is idempotent. A missing server account is already in the
+            // requested state, so allow the caller to clear its stale local key.
+            if (error.statusCode != 404) {
+                throw error
+            }
+        }
     }
 
     suspend fun listDevices(baseUrl: String, accountId: String, deviceId: String): List<TrustedDeviceSummary> =

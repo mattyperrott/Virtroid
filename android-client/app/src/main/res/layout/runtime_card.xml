@@ -194,17 +194,37 @@
             </LinearLayout>
         </LinearLayout>
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/connectRuntimeButton"
-            style="@style/VirtroidButton.Primary"
+        <LinearLayout
+            android:id="@+id/liveRuntimeActionRow"
             android:layout_width="match_parent"
-            android:layout_height="56dp"
+            android:layout_height="wrap_content"
             android:layout_marginTop="26dp"
-            android:text="@string/runtime_connect_display"
-            app:icon="@drawable/ic_chevron_right"
-            app:iconGravity="textEnd"
-            app:iconPadding="12dp"
-            app:iconTint="@color/v_bg" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/connectRuntimeButton"
+                style="@style/VirtroidButton.Primary"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:text="@string/runtime_connect_display"
+                app:icon="@drawable/ic_chevron_right"
+                app:iconGravity="textEnd"
+                app:iconPadding="12dp"
+                app:iconTint="@color/v_bg" />
+
+            <ImageButton
+                android:id="@+id/liveDeleteRuntimeButton"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/bg_red_soft_24"
+                android:contentDescription="@string/runtime_delete"
+                android:padding="15dp"
+                android:src="@drawable/ic_delete"
+                app:tint="@color/v_danger" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/runtimeActionRow"

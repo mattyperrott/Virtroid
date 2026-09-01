@@ -79,7 +79,7 @@
     <string name="account_wipe_local_body">Clears local caches, temporary files, transfer artifacts, and active session handles. Account and device identity stay linked.</string>
     <string name="account_wipe_local_done">Cleared %1$d local items</string>
     <string name="account_delete_local_identity_title">Delete Account Identity</string>
-    <string name="account_delete_local_identity_body">Permanently deletes the server-side account, linked devices, runtime metadata, sessions, logs, and storage metadata, then clears the local signing key, app lock credential, cached session handles, and local artifacts. This cannot be undone. Retained backups may expire later under the operator’s backup policy.</string>
+    <string name="account_delete_local_identity_body">Permanently deletes the server-side account, linked devices, runtime metadata, sessions, logs, and storage metadata, then clears the local signing key, app lock credential, cached session handles, and local artifacts.</string>
     <string name="account_delete_local_identity_confirm">Delete identity</string>
     <string name="app_locked">App locked</string>
     <string name="lock_invalid_pin">Incorrect PIN</string>
@@ -260,7 +260,7 @@
     <string name="runtime_lifecycle_detail_deleting">... waiting for node cleanup confirmation_</string>
 
     <string name="new_runtime_audio_passthrough">Audio Passthrough</string>
-    <string name="new_runtime_camera_passthrough">Physical Camera Photo Import</string>
+    <string name="new_runtime_camera_passthrough">Host Physical Camera</string>
     <string name="new_runtime_close">Close</string>
     <string name="new_runtime_missing_access">Link this device to an account before creating runtimes.</string>
     <string name="new_runtime_provision_title_request">Creating Runtime Profile ...</string>

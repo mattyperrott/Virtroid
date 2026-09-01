@@ -282,15 +282,6 @@
             </LinearLayout>
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/newRuntimeEntitlementText"
-            style="@style/VirtroidText.Body"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:gravity="center"
-            android:text="@string/entitlement_unavailable" />
-
         <com.google.android.material.button.MaterialButton
             android:id="@+id/provisionRuntimeButton"
             style="@style/VirtroidButton.Primary"

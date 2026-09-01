@@ -2745,17 +2745,48 @@ func normalizeViewerPrepareParams(requestedMaxSize, requestedBitRate int, runtim
 }
 
 func (n *nodeAgent) adbConnect(ctx context.Context, serial string) error {
-	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
+	return n.adbConnectWithRetry(ctx, serial, time.Second)
+}
 
-	cmd := exec.CommandContext(connectCtx, n.cfg.ADBPath, "connect", serial)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+func (n *nodeAgent) adbConnectWithRetry(ctx context.Context, serial string, retryDelay time.Duration) error {
+	connectCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	if retryDelay <= 0 {
+		retryDelay = time.Second
 	}
 
-	_, err = n.adbShellCapture(ctx, serial, "true")
-	return err
+	var lastErr error
+	for {
+		cmd := exec.CommandContext(connectCtx, n.cfg.ADBPath, "connect", serial)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			lastErr = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		} else if _, shellErr := n.adbShellCapture(connectCtx, serial, "true"); shellErr == nil {
+			return nil
+		} else {
+			lastErr = shellErr
+		}
+
+		// ADB can report an already-connected transport for the previous guest
+		// after a runtime is recreated on the same IP. Nudge and remove only this
+		// serial so the next connect creates a fresh transport, then retry until a
+		// shell command proves the new guest is online.
+		reconnect := exec.CommandContext(connectCtx, n.cfg.ADBPath, "-s", serial, "reconnect", "offline")
+		_, _ = reconnect.CombinedOutput()
+		disconnect := exec.CommandContext(connectCtx, n.cfg.ADBPath, "disconnect", serial)
+		_, _ = disconnect.CombinedOutput()
+
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-connectCtx.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("ADB device did not become online: %w", lastErr)
+		case <-timer.C:
+		}
+	}
 }
 
 func (n *nodeAgent) copyRuntimeMediaToContainer(ctx context.Context, containerName, targetDir, filename string, contents []byte) error {

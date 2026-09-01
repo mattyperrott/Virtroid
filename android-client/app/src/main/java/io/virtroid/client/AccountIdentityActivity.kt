@@ -93,7 +93,6 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
 
         renderIdentity()
-        refreshStorage()
         refreshAppSelections()
     }
 

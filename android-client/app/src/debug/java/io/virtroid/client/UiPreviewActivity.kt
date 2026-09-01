@@ -27,7 +27,7 @@ class UiPreviewActivity : AppCompatActivity() {
 
         val screen = intent.getStringExtra(EXTRA_SCREEN)
         when (screen) {
-            "privacy_security" -> {
+            "privacy_security_live" -> {
                 startActivity(PrivacySecurityActivity.createIntent(this))
                 finish()
                 return
@@ -91,6 +91,7 @@ class UiPreviewActivity : AppCompatActivity() {
                 runtimeStatOneValue.text = getString(R.string.runtime_stat_load_unknown)
                 runtimeStatTwoValue.text = getString(R.string.runtime_stat_load_unknown)
                 runtimeStatThreeValue.text = getString(R.string.runtime_stat_load_unknown)
+                liveRuntimeActionRow.isVisible = true
                 connectRuntimeButton.isVisible = true
                 runtimeActionRow.isVisible = false
             }.root,
@@ -103,7 +104,7 @@ class UiPreviewActivity : AppCompatActivity() {
                 runtimeIcon.setImageResource(R.drawable.ic_fingerprint)
                 runtimeIcon.setColorFilter(getColor(R.color.v_text_muted))
                 runtimeStatsRow.isVisible = false
-                connectRuntimeButton.isVisible = false
+                liveRuntimeActionRow.isVisible = false
                 runtimeActionRow.isVisible = true
             }.root,
         )
