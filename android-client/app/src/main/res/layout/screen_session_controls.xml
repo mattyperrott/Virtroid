@@ -103,34 +103,32 @@
                         android:src="@drawable/ic_tune"
                         app:tint="@color/v_text_muted" />
                 </LinearLayout>
-                <HorizontalScrollView
+                <LinearLayout
                     android:id="@+id/stats_scroller"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
                     android:overScrollMode="never"
                     android:scrollbars="none"
                     android:layout_marginBottom="36dp">
-                    <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
                         <LinearLayout
                             android:id="@+id/stat_state"
-                            android:layout_width="110dp"
-                            android:layout_height="130dp"
+                            android:layout_width="0dp"
+                            android:layout_height="108dp"
+                            android:layout_weight="1"
                             android:orientation="vertical"
                             android:background="@drawable/bg_surface2_24"
-                            android:padding="16dp"
-                            android:layout_marginEnd="12dp">
+                            android:padding="12dp"
+                            android:layout_marginEnd="8dp">
                             <ImageView
                                 android:id="@+id/stat_state_icon"
-                                android:layout_width="40dp"
-                                android:layout_height="40dp"
-                                android:padding="10dp"
+                                android:layout_width="32dp"
+                                android:layout_height="32dp"
+                                android:padding="8dp"
                                 android:src="@drawable/ic_terminal"
                                 app:tint="@color/v_accent"
-                                android:layout_marginBottom="18dp"
+                                android:layout_marginBottom="12dp"
                                 android:background="@drawable/bg_surface_light_circle" />
                             <TextView
                                 android:id="@+id/stat_state_label"
@@ -138,7 +136,7 @@
                                 android:layout_height="wrap_content"
                                 android:text="STATE"
                                 android:textColor="@color/v_text_muted"
-                                android:textSize="11sp"
+                                android:textSize="9sp"
                                 android:fontFamily="sans"
                                 android:includeFontPadding="false"
                                 android:letterSpacing="0.08"
@@ -147,29 +145,32 @@
                                 android:id="@+id/controlsStateValue"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
+                                android:ellipsize="end"
+                                android:maxLines="1"
                                 android:text="Running"
                                 android:textColor="@color/v_text_primary"
-                                android:textSize="15sp"
+                                android:textSize="12sp"
                                 android:textStyle="bold"
                                 android:fontFamily="sans"
                                 android:includeFontPadding="false" />
                         </LinearLayout>
                         <LinearLayout
                             android:id="@+id/stat_tunnel"
-                            android:layout_width="110dp"
-                            android:layout_height="130dp"
+                            android:layout_width="0dp"
+                            android:layout_height="108dp"
+                            android:layout_weight="1"
                             android:orientation="vertical"
                             android:background="@drawable/bg_surface2_24"
-                            android:padding="16dp"
-                            android:layout_marginEnd="12dp">
+                            android:padding="12dp"
+                            android:layout_marginEnd="8dp">
                             <ImageView
                                 android:id="@+id/stat_tunnel_icon"
-                                android:layout_width="40dp"
-                                android:layout_height="40dp"
-                                android:padding="10dp"
+                                android:layout_width="32dp"
+                                android:layout_height="32dp"
+                                android:padding="8dp"
                                 android:src="@drawable/ic_shield"
                                 app:tint="@color/v_blue"
-                                android:layout_marginBottom="18dp"
+                                android:layout_marginBottom="12dp"
                                 android:background="@drawable/bg_surface_light_circle" />
                             <TextView
                                 android:id="@+id/stat_tunnel_label"
@@ -177,38 +178,40 @@
                                 android:layout_height="wrap_content"
                                 android:text="TUNNEL"
                                 android:textColor="@color/v_text_muted"
-                                android:textSize="11sp"
+                                android:textSize="9sp"
                                 android:fontFamily="sans"
                                 android:includeFontPadding="false"
                                 android:letterSpacing="0.08"
                                 android:layout_marginBottom="6dp" />
                             <TextView
                                 android:id="@+id/controlsTunnelValue"
-                                android:layout_width="wrap_content"
+                                android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
+                                android:ellipsize="end"
+                                android:maxLines="1"
                                 android:text="-"
                                 android:textColor="@color/v_text_primary"
-                                android:textSize="15sp"
+                                android:textSize="12sp"
                                 android:textStyle="bold"
                                 android:fontFamily="sans"
                                 android:includeFontPadding="false" />
                         </LinearLayout>
                         <LinearLayout
                             android:id="@+id/stat_storage"
-                            android:layout_width="110dp"
-                            android:layout_height="130dp"
+                            android:layout_width="0dp"
+                            android:layout_height="108dp"
+                            android:layout_weight="1"
                             android:orientation="vertical"
                             android:background="@drawable/bg_surface2_24"
-                            android:padding="16dp"
-                            android:layout_marginEnd="12dp">
+                            android:padding="12dp">
                             <ImageView
                                 android:id="@+id/stat_storage_icon"
-                                android:layout_width="40dp"
-                                android:layout_height="40dp"
-                                android:padding="10dp"
+                                android:layout_width="32dp"
+                                android:layout_height="32dp"
+                                android:padding="8dp"
                                 android:src="@drawable/ic_storage"
                                 app:tint="@color/v_amber"
-                                android:layout_marginBottom="18dp"
+                                android:layout_marginBottom="12dp"
                                 android:background="@drawable/bg_surface_light_circle" />
                             <TextView
                                 android:id="@+id/stat_storage_label"
@@ -216,24 +219,25 @@
                                 android:layout_height="wrap_content"
                                 android:text="STORAGE"
                                 android:textColor="@color/v_text_muted"
-                                android:textSize="11sp"
+                                android:textSize="9sp"
                                 android:fontFamily="sans"
                                 android:includeFontPadding="false"
                                 android:letterSpacing="0.08"
                                 android:layout_marginBottom="6dp" />
                             <TextView
                                 android:id="@+id/controlsStorageValue"
-                                android:layout_width="wrap_content"
+                                android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
+                                android:ellipsize="end"
+                                android:maxLines="1"
                                 android:text="-"
                                 android:textColor="@color/v_text_primary"
-                                android:textSize="15sp"
+                                android:textSize="12sp"
                                 android:textStyle="bold"
                                 android:fontFamily="sans"
                                 android:includeFontPadding="false" />
                         </LinearLayout>
-                    </LinearLayout>
-                </HorizontalScrollView>
+                </LinearLayout>
                 <TextView
                     android:id="@+id/label_session_parameters"
                     style="@style/VirtroidText.SectionHeading"

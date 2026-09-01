@@ -63,7 +63,7 @@ if [ "${source_dir}" = "${target_dir}" ]; then
   exit 1
 fi
 
-for command_name in aa-enabled auditctl augenrules awk chmod chown cmp cp date dirname docker fail2ban-client find flock grep install mountpoint mktemp mv passwd readlink rsync sed sha256sum sort sshd stat sync systemctl tr ufw; do
+for command_name in aa-enabled auditctl augenrules awk chmod chown cmp cp date dirname docker fail2ban-client find flock grep install modprobe mountpoint mktemp mv passwd readlink rsync sed sha256sum sort sshd stat sync systemctl tr ufw; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "missing reviewed-tree installation command: ${command_name}" >&2
     exit 1
@@ -301,6 +301,7 @@ install_runtime_copies() {
     fi
   done
   systemctl daemon-reload
+  modprobe sch_fq_codel
   sysctl --system >/dev/null
   systemctl enable --now apparmor
   systemctl enable --now auditd
@@ -370,6 +371,7 @@ restore_runtime_copies() {
     fi
   done
   systemctl daemon-reload || restore_status=1
+  modprobe sch_fq_codel || restore_status=1
   sysctl --system >/dev/null || restore_status=1
   systemctl enable --now apparmor || restore_status=1
   systemctl enable --now auditd || restore_status=1

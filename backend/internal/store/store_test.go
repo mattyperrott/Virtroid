@@ -2704,6 +2704,17 @@ func TestBuildRuntimeStateBlocksStartUntilFailedRuntimeCleanupFinishes(t *testin
 	if !cleaned.CanStart || cleaned.CanStop || cleaned.EffectiveState != "stopped" {
 		t.Fatalf("cleaned stopped runtime state = %+v, want start only", cleaned)
 	}
+
+	pending := buildRuntimeState(Runtime{
+		Status:           "stopped",
+		DesiredState:     "stopped",
+		ConnectionStatus: "offline",
+		HostID:           &hostID,
+		CleanupPending:   true,
+	}, false, sql.NullString{})
+	if pending.CanStart || pending.CanDelete || !pending.IsBusy || pending.BlockedReason != ErrRuntimeCleanupPending.Error() {
+		t.Fatalf("cleanup-pending runtime state = %+v, want busy with lifecycle actions blocked", pending)
+	}
 }
 
 func TestGetRuntimeStateReportsDeletingRuntimeAsBusy(t *testing.T) {

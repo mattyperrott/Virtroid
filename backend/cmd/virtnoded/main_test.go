@@ -161,6 +161,59 @@ func TestParseContainerOwnership(t *testing.T) {
 	}
 }
 
+func TestADBConnectClearsOfflineTransport(t *testing.T) {
+	tempDir := t.TempDir()
+	counterPath := filepath.Join(tempDir, "shell-attempts")
+	resetPath := filepath.Join(tempDir, "transport-reset")
+	t.Setenv("ADB_TEST_COUNTER", counterPath)
+	t.Setenv("ADB_TEST_RESET", resetPath)
+	adbPath := filepath.Join(tempDir, "adb")
+	adbScript := `#!/bin/sh
+set -eu
+if [ "$1" = "connect" ]; then
+  exit 0
+fi
+if [ "$1" = "disconnect" ]; then
+  : >"$ADB_TEST_RESET"
+  exit 0
+fi
+if [ "$1" = "-s" ] && [ "$3" = "reconnect" ]; then
+  exit 0
+fi
+if [ "$1" = "-s" ] && [ "$3" = "shell" ]; then
+  attempts=0
+  if [ -f "$ADB_TEST_COUNTER" ]; then
+    attempts=$(cat "$ADB_TEST_COUNTER")
+  fi
+  attempts=$((attempts + 1))
+  printf '%s\n' "$attempts" >"$ADB_TEST_COUNTER"
+  if [ ! -f "$ADB_TEST_RESET" ]; then
+    printf '%s\n' 'error: device offline' >&2
+    exit 1
+  fi
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(adbPath, []byte(adbScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	node := &nodeAgent{cfg: config.NodeConfig{ADBPath: adbPath}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := node.adbConnectWithRetry(ctx, "127.0.0.1:5555", time.Millisecond); err != nil {
+		t.Fatalf("adbConnectWithRetry: %v", err)
+	}
+	contents, err := os.ReadFile(counterPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(contents)); got != "2" {
+		t.Fatalf("shell attempts = %s, want 2", got)
+	}
+}
+
 func TestRuntimePhotoValidation(t *testing.T) {
 	var photo bytes.Buffer
 	if err := jpeg.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {

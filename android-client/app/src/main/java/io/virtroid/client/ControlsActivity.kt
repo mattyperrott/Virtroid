@@ -388,14 +388,16 @@ class ControlsActivity : AppCompatActivity() {
             if (state.canStart) {
                 return state
             }
-            when (state.effectiveState.lowercase()) {
-                "stopped", "provisioned" -> throw IOException(
-                    state.blockedReason ?: getString(R.string.runtime_missing_for_session),
-                )
-                "error" -> throw IOException(
-                    state.runtime.lastError ?: state.blockedReason ?: getString(R.string.status_error),
-                )
-                "deleted", "deleting" -> throw IOException(getString(R.string.runtime_deleted))
+            if (!state.isBusy) {
+                when (state.effectiveState.lowercase()) {
+                    "stopped", "provisioned" -> throw IOException(
+                        state.blockedReason ?: getString(R.string.runtime_missing_for_session),
+                    )
+                    "error" -> throw IOException(
+                        state.runtime.lastError ?: state.blockedReason ?: getString(R.string.status_error),
+                    )
+                    "deleted", "deleting" -> throw IOException(getString(R.string.runtime_deleted))
+                }
             }
             if (System.currentTimeMillis() - startedAtMs >= CONNECT_WAIT_MAX_MS) {
                 throw IOException(getString(R.string.controls_restart_timeout))

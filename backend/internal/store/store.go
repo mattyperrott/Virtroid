@@ -7817,7 +7817,8 @@ func buildRuntimeState(runtime Runtime, hasActiveSession bool, currentDeviceSess
 	isBusy := effectiveState == "starting" ||
 		effectiveState == "stopping" ||
 		effectiveState == "wiping" ||
-		effectiveState == "deleting"
+		effectiveState == "deleting" ||
+		runtime.CleanupPending
 	deleted := effectiveState == "deleted" || runtime.DeletedAt != nil
 	hostAssigned := valueOrEmpty(runtime.HostID) != ""
 
@@ -7826,18 +7827,20 @@ func buildRuntimeState(runtime Runtime, hasActiveSession bool, currentDeviceSess
 	// guest and persisting encrypted userdata. Do not advertise it as startable
 	// until that recovery cleanup has completed; otherwise clients can race a
 	// new start against the outstanding stop and retain stale lifecycle state.
-	canStart := !deleted && !runtimeReady && !isBusy && (!hostAssigned || runtimeStoppedForSession(runtime))
+	canStart := !deleted && !runtimeReady && !isBusy && !runtime.CleanupPending && (!hostAssigned || runtimeStoppedForSession(runtime))
 	canStop := !deleted && hostAssigned && !runtimeStoppedForSession(runtime) &&
 		effectiveState != "stopping" &&
 		effectiveState != "wiping" &&
 		effectiveState != "deleting"
 	canWipe := !deleted && !isBusy
-	canDelete := !deleted && effectiveState != "deleting"
+	canDelete := !deleted && effectiveState != "deleting" && !runtime.CleanupPending
 
 	blockedReason := ""
 	switch {
 	case deleted:
 		blockedReason = "runtime deleted"
+	case runtime.CleanupPending:
+		blockedReason = ErrRuntimeCleanupPending.Error()
 	case isBusy:
 		blockedReason = "runtime lifecycle operation is already in progress"
 	case runtime.Status == "error" && runtime.LastError != nil:

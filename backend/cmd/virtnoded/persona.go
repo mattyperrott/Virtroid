@@ -34,10 +34,21 @@ type sessionPersona struct {
 var personaCatalog = []personaTemplate{
 	{Brand: "google", Manufacturer: "Google", Model: "Pixel 6", Device: "oriole", Product: "oriole"},
 	{Brand: "google", Manufacturer: "Google", Model: "Pixel 7", Device: "panther", Product: "panther"},
+	{Brand: "google", Manufacturer: "Google", Model: "Pixel 8", Device: "shiba", Product: "shiba"},
+	{Brand: "google", Manufacturer: "Google", Model: "Pixel 8 Pro", Device: "husky", Product: "husky"},
+	{Brand: "google", Manufacturer: "Google", Model: "Pixel 8a", Device: "akita", Product: "akita"},
+	{Brand: "google", Manufacturer: "Google", Model: "Pixel 9", Device: "tokay", Product: "tokay"},
+	{Brand: "google", Manufacturer: "Google", Model: "Pixel 9 Pro", Device: "caiman", Product: "caiman"},
 	{Brand: "samsung", Manufacturer: "samsung", Model: "SM-S901B", Device: "r0s", Product: "r0seea"},
 	{Brand: "samsung", Manufacturer: "samsung", Model: "SM-A528B", Device: "a52sxq", Product: "a52sxxeea"},
+	{Brand: "samsung", Manufacturer: "samsung", Model: "SM-S918B", Device: "dm3q", Product: "dm3qxxx"},
+	{Brand: "samsung", Manufacturer: "samsung", Model: "SM-S928B", Device: "e3q", Product: "e3qxxx"},
 	{Brand: "Xiaomi", Manufacturer: "Xiaomi", Model: "2201116SG", Device: "ingres", Product: "ingres_global"},
 	{Brand: "OnePlus", Manufacturer: "OnePlus", Model: "CPH2413", Device: "ossi", Product: "ossi_global"},
+	{Brand: "OnePlus", Manufacturer: "OnePlus", Model: "CPH2449", Device: "salami", Product: "CPH2449"},
+	{Brand: "motorola", Manufacturer: "motorola", Model: "XT2301-4", Device: "rtwo", Product: "rtwo_g"},
+	{Brand: "Sony", Manufacturer: "Sony", Model: "XQ-DQ54", Device: "pdx234", Product: "pdx234"},
+	{Brand: "Nothing", Manufacturer: "Nothing", Model: "A065", Device: "Pong", Product: "Pong"},
 }
 
 func buildSessionPersona(runtime runtimeAssignment) sessionPersona {
