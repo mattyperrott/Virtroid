@@ -71,7 +71,7 @@ profiles="${VIRTROID_PROFILES:-edge}"
 IFS=',' read -ra profile_list <<< "${profiles}"
 for profile in "${profile_list[@]}"; do
   case "${profile}" in
-    edge|renterd|falco|monitoring) ;;
+    edge|renterd|falco|nids|monitoring) ;;
     *) die "unsupported production profile: ${profile}" ;;
   esac
 done
@@ -297,7 +297,7 @@ compose() {
 }
 
 backend_services=(virtroidd virtnoded)
-if profile_enabled falco; then
+if profile_enabled falco || profile_enabled nids; then
   backend_services+=(falco-forwarder)
 fi
 docker stop --time 60 virtnoded virtroidd virtroid-falco-forwarder >/dev/null 2>&1 || true
@@ -357,8 +357,14 @@ for _ in $(seq 1 90); do
 done
 [ "${node_ready}" -eq 1 ] || die "approved node did not publish a fresh matching heartbeat"
 
+if profile_enabled falco || profile_enabled nids; then
+  compose up -d --no-deps --no-build --pull never falco-forwarder
+fi
 if profile_enabled falco; then
-  compose up -d --no-deps --no-build --pull never falco-forwarder falco
+  compose up -d --no-deps --no-build --pull never falco
+fi
+if profile_enabled nids; then
+  compose up -d --no-deps --no-build --pull never suricata
 fi
 if profile_enabled monitoring; then
   compose up -d --no-build --pull never alertmanager prometheus
@@ -377,7 +383,7 @@ for container_name in virtroidd virtnoded; do
   [ "$(docker inspect --format '{{.Image}}' "${container_name}")" = "${release_manifest_digest}" ] ||
     die "${container_name} is not running an expected engine image identity"
 done
-if profile_enabled falco; then
+if profile_enabled falco || profile_enabled nids; then
   falco_forwarder_image="$(docker inspect --format '{{.Image}}' virtroid-falco-forwarder)"
   [ "${falco_forwarder_image}" = "${release_image_id}" ] ||
   [ "${falco_forwarder_image}" = "${release_manifest_digest}" ] ||

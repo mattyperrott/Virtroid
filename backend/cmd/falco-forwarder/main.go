@@ -44,6 +44,21 @@ type falcoEvent struct {
 	OutputFields map[string]any `json:"output_fields"`
 }
 
+type suricataEvent struct {
+	Timestamp string `json:"timestamp"`
+	EventType string `json:"event_type"`
+	Proto     string `json:"proto"`
+	Alert     struct {
+		Signature string `json:"signature"`
+		Category  string `json:"category"`
+		Severity  int    `json:"severity"`
+	} `json:"alert"`
+	Anomaly struct {
+		Type  string `json:"type"`
+		Event string `json:"event"`
+	} `json:"anomaly"`
+}
+
 type securityEventPayload struct {
 	Time     *time.Time      `json:"time,omitempty"`
 	Source   string          `json:"source"`
@@ -99,6 +114,7 @@ func main() {
 	}
 
 	eventsFile := strings.TrimSpace(os.Getenv("FALCO_EVENTS_FILE"))
+	suricataEventsFile := strings.TrimSpace(os.Getenv("SURICATA_EVE_FILE"))
 	bindAddr := envOrDefault("FALCO_FORWARDER_BIND_ADDR", defaultForwarderBindAddr)
 	tailFromStart := parseBool(os.Getenv("FALCO_FORWARD_TAIL_FROM_START"))
 	f := &forwarder{
@@ -113,24 +129,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if eventsFile == "" {
-		log.Printf("listening for Falco HTTP events on %s and forwarding to %s as node %s", bindAddr, endpoint, nodeID)
-		if err := f.serve(ctx, bindAddr); err != nil && !errors.Is(err, context.Canceled) {
-			log.Fatalf("serve Falco HTTP forwarder: %v", err)
-		}
-		return
+	errCh := make(chan error, 3)
+	log.Printf("listening for host security events on %s and forwarding to %s as node %s", bindAddr, endpoint, nodeID)
+	go func() { errCh <- f.serve(ctx, bindAddr) }()
+	if eventsFile != "" {
+		go func() {
+			errCh <- f.tailLoop(ctx, eventsFile, tailFromStart, "Falco", f.forwardLine)
+		}()
 	}
-
-	log.Printf("forwarding Falco events from %s to %s as node %s", eventsFile, endpoint, nodeID)
-	for {
-		if err := f.tail(ctx, eventsFile, tailFromStart); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("tail error: %v", err)
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		tailFromStart = false
-		time.Sleep(2 * time.Second)
+	if suricataEventsFile != "" {
+		go func() {
+			errCh <- f.tailLoop(ctx, suricataEventsFile, false, "Suricata", f.forwardSuricataLine)
+		}()
+	}
+	if err := <-errCh; err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatalf("security event forwarder: %v", err)
 	}
 }
 
@@ -183,7 +196,33 @@ func (f *forwarder) handleFalcoEvent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (f *forwarder) tail(ctx context.Context, path string, fromStart bool) error {
+func (f *forwarder) tailLoop(
+	ctx context.Context,
+	path string,
+	fromStart bool,
+	sensor string,
+	handle func(context.Context, []byte) error,
+) error {
+	log.Printf("forwarding %s events from %s", sensor, path)
+	for {
+		if err := f.tail(ctx, path, fromStart, sensor, handle); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("%s tail error: %v", sensor, err)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		fromStart = false
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (f *forwarder) tail(
+	ctx context.Context,
+	path string,
+	fromStart bool,
+	sensor string,
+	handle func(context.Context, []byte) error,
+) error {
 	_, statErr := os.Stat(path)
 	missingAtStart := errors.Is(statErr, os.ErrNotExist)
 
@@ -204,9 +243,9 @@ func (f *forwarder) tail(ctx context.Context, path string, fromStart bool) error
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			if len(line) > maxFalcoLineBytes {
-				log.Printf("dropping oversized Falco event line: %d bytes", len(line))
-			} else if err := f.forwardLine(ctx, bytes.TrimSpace(line)); err != nil {
-				log.Printf("forward event: %v", err)
+				log.Printf("dropping oversized %s event line: %d bytes", sensor, len(line))
+			} else if err := handle(ctx, bytes.TrimSpace(line)); err != nil {
+				log.Printf("forward %s event: %v", sensor, err)
 			}
 		}
 		if err == nil {
@@ -236,27 +275,90 @@ func (f *forwarder) forwardLine(ctx context.Context, line []byte) error {
 	if strings.TrimSpace(event.Rule) == "" && strings.TrimSpace(event.Output) == "" {
 		return nil
 	}
-	now := time.Now().UTC()
-	if f.deduper != nil && !f.deduper.allow(eventFingerprint(event), now) {
-		return nil
-	}
-	if f.limiter != nil {
-		if ok, dropped := f.limiter.allow(now); !ok {
-			if dropped == 1 || dropped%defaultMaxEventsPerMinute == 0 {
-				log.Printf("dropping Falco events after per-minute forward limit; dropped in current window=%d", dropped)
-			}
-			return nil
-		}
-	}
-
 	payload := securityEventPayload{
 		Time:     parseFalcoTime(event.Time),
-		Source:   event.Source,
+		Source:   "falco",
 		Rule:     event.Rule,
 		Priority: event.Priority,
 		Output:   event.Output,
 		Tags:     event.Tags,
 		Event:    append(json.RawMessage(nil), line...),
+	}
+	return f.forwardPayload(ctx, payload, eventFingerprint(event), "Falco")
+}
+
+func (f *forwarder) forwardSuricataLine(ctx context.Context, line []byte) error {
+	if len(line) == 0 {
+		return nil
+	}
+	var event suricataEvent
+	if err := json.Unmarshal(line, &event); err != nil {
+		return fmt.Errorf("parse Suricata EVE JSON: %w", err)
+	}
+	event.EventType = strings.ToLower(strings.TrimSpace(event.EventType))
+	if event.EventType != "alert" && event.EventType != "anomaly" {
+		return nil
+	}
+	rule := strings.TrimSpace(event.Alert.Signature)
+	if rule == "" {
+		rule = strings.TrimSpace(event.Anomaly.Event)
+	}
+	if rule == "" {
+		rule = "Suricata network anomaly"
+	}
+	priority := suricataPriority(event.Alert.Severity)
+	reducedEvent, err := json.Marshal(map[string]any{
+		"timestamp":  event.Timestamp,
+		"event_type": event.EventType,
+		"proto":      strings.TrimSpace(event.Proto),
+		"alert": map[string]any{
+			"signature": strings.TrimSpace(event.Alert.Signature),
+			"category":  strings.TrimSpace(event.Alert.Category),
+			"severity":  event.Alert.Severity,
+		},
+		"anomaly": map[string]any{
+			"type":  strings.TrimSpace(event.Anomaly.Type),
+			"event": strings.TrimSpace(event.Anomaly.Event),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload := securityEventPayload{
+		Time:     parseSuricataTime(event.Timestamp),
+		Source:   "suricata",
+		Rule:     rule,
+		Priority: priority,
+		Output:   "network-security anomaly detected by Suricata",
+		Tags:     []string{"virtroid", "network", "nids"},
+		Event:    reducedEvent,
+	}
+	fingerprint := strings.Join([]string{
+		event.EventType,
+		rule,
+		strings.TrimSpace(event.Alert.Category),
+		strings.TrimSpace(event.Proto),
+	}, "\x00")
+	return f.forwardPayload(ctx, payload, fingerprint, "Suricata")
+}
+
+func (f *forwarder) forwardPayload(
+	ctx context.Context,
+	payload securityEventPayload,
+	fingerprint string,
+	sensor string,
+) error {
+	now := time.Now().UTC()
+	if f.deduper != nil && !f.deduper.allow(sensor+"\x00"+fingerprint, now) {
+		return nil
+	}
+	if f.limiter != nil {
+		if ok, dropped := f.limiter.allow(now); !ok {
+			if dropped == 1 || dropped%defaultMaxEventsPerMinute == 0 {
+				log.Printf("dropping security events after per-minute forward limit; dropped in current window=%d", dropped)
+			}
+			return nil
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -277,6 +379,19 @@ func (f *forwarder) forwardLine(ctx context.Context, line []byte) error {
 		}
 	}
 	return lastErr
+}
+
+func suricataPriority(severity int) string {
+	switch severity {
+	case 1:
+		return "critical"
+	case 2:
+		return "warning"
+	case 3:
+		return "notice"
+	default:
+		return "notice"
+	}
 }
 
 func (f *forwarder) post(ctx context.Context, body []byte) error {
@@ -447,6 +562,20 @@ func parseFalcoTime(value string) *time.Time {
 		return nil
 	}
 	return &parsed
+}
+
+func parseSuricataTime(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999-0700"} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return &parsed
+		}
+	}
+	return nil
 }
 
 func envOrDefault(key, fallback string) string {

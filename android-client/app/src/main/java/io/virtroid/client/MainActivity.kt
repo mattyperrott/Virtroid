@@ -35,7 +35,7 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
-import io.virtroid.client.security.showTypedConfirmation
+import io.virtroid.client.security.showConfirmation
 import io.virtroid.client.push.NotificationRelayManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -421,10 +421,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmRuntimeDelete(runtime: RuntimeSummary) {
-        showTypedConfirmation(
+        showConfirmation(
             title = getString(R.string.controls_delete_confirm_title),
             message = getString(R.string.controls_delete_confirm_body),
-            confirmationPhrase = "DELETE",
             confirmLabel = getString(R.string.controls_confirm),
             onConfirmed = { deleteRuntime(runtime) },
         )

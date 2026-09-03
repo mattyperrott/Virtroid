@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026090202
-	schemaVersionLabel               = "direct encrypted runtime notification stream 2026-09-02"
+	currentSchemaVersion       int64 = 2026090301
+	schemaVersionLabel               = "encrypted node security notices 2026-09-03"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -291,6 +291,16 @@ type DeviceNotificationSubscription struct {
 type RuntimeNotificationDelivery struct {
 	ID                 string
 	RuntimeID          string
+	EventID            string
+	DeviceID           string
+	EnvelopeCiphertext string
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+}
+
+type SecurityNoticeDelivery struct {
+	ID                 string
+	NodeID             string
 	EventID            string
 	DeviceID           string
 	EnvelopeCiphertext string
@@ -3035,6 +3045,39 @@ func (s *Store) ListDeviceNotificationSubscriptions(ctx context.Context, account
 	return subscriptions, nil
 }
 
+func (s *Store) ListDeviceNotificationSubscriptionsForNode(ctx context.Context, nodeID string) ([]DeviceNotificationSubscription, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT p.device_id, p.account_id, p.encryption_public_key, p.created_at,
+		        p.updated_at, p.last_connected_at
+		   FROM device_notification_subscriptions p
+		   JOIN devices d ON d.id = p.device_id AND d.account_id = p.account_id
+		   JOIN accounts a ON a.id = p.account_id
+		   JOIN runtimes r ON r.account_id = p.account_id
+		  WHERE r.host_id = $1 AND r.deleted_at IS NULL
+		    AND d.revoked_at IS NULL AND a.deleted_at IS NULL`,
+		strings.TrimSpace(nodeID),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var subscriptions []DeviceNotificationSubscription
+	for rows.Next() {
+		var item DeviceNotificationSubscription
+		if err := rows.Scan(
+			&item.DeviceID, &item.AccountID, &item.EncryptionPublicKey,
+			&item.CreatedAt, &item.UpdatedAt, &item.LastConnectedAt,
+		); err != nil {
+			return nil, err
+		}
+		subscriptions = append(subscriptions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return subscriptions, nil
+}
+
 func (s *Store) TouchDeviceNotificationSubscription(ctx context.Context, accountID, deviceID string) error {
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE device_notification_subscriptions p
@@ -3101,6 +3144,49 @@ func (s *Store) EnqueueRuntimeNotificationDelivery(ctx context.Context, delivery
 	return rows > 0, nil
 }
 
+func (s *Store) EnqueueSecurityNoticeDelivery(ctx context.Context, delivery SecurityNoticeDelivery) (bool, error) {
+	if _, err := uuid.Parse(strings.TrimSpace(delivery.ID)); err != nil {
+		return false, ErrNotificationDelivery
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(delivery.EventID)); err != nil {
+		return false, ErrNotificationDelivery
+	}
+	if strings.TrimSpace(delivery.NodeID) == "" || strings.TrimSpace(delivery.DeviceID) == "" ||
+		strings.TrimSpace(delivery.EnvelopeCiphertext) == "" || !delivery.ExpiresAt.After(time.Now().UTC()) {
+		return false, ErrNotificationDelivery
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM security_notice_deliveries
+		  WHERE expires_at < NOW()
+		     OR (delivered_at IS NOT NULL AND delivered_at < NOW() - INTERVAL '24 hours')`); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO security_notice_deliveries (
+		     id, node_id, event_id, device_id, envelope_ciphertext, expires_at
+		 ) VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (node_id, event_id, device_id) DO NOTHING`,
+		delivery.ID, strings.TrimSpace(delivery.NodeID), delivery.EventID, delivery.DeviceID,
+		delivery.EnvelopeCiphertext, delivery.ExpiresAt.UTC(),
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 func (s *Store) ListPendingNotificationDeliveries(
 	ctx context.Context,
 	accountID, deviceID string,
@@ -3110,16 +3196,25 @@ func (s *Store) ListPendingNotificationDeliveries(
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT n.id, n.runtime_id, n.event_id, n.device_id, n.envelope_ciphertext,
-		        n.created_at, n.expires_at
-		   FROM runtime_notification_deliveries n
-		   JOIN device_notification_subscriptions p ON p.device_id = n.device_id
+		`SELECT q.id, q.runtime_id, q.event_id, q.device_id, q.envelope_ciphertext,
+		        q.created_at, q.expires_at
+		   FROM (
+		         SELECT n.id, n.runtime_id::text AS runtime_id, n.event_id, n.device_id,
+		                n.envelope_ciphertext, n.created_at, n.expires_at
+		           FROM runtime_notification_deliveries n
+		          WHERE n.delivered_at IS NULL AND n.expires_at > NOW()
+		         UNION ALL
+		         SELECT s.id, ''::text AS runtime_id, s.event_id, s.device_id,
+		                s.envelope_ciphertext, s.created_at, s.expires_at
+		           FROM security_notice_deliveries s
+		          WHERE s.delivered_at IS NULL AND s.expires_at > NOW()
+		        ) q
+		   JOIN device_notification_subscriptions p ON p.device_id = q.device_id
 		   JOIN devices d ON d.id = p.device_id AND d.account_id = p.account_id
 		   JOIN accounts a ON a.id = p.account_id
 		  WHERE p.account_id = $1 AND p.device_id = $2
 		    AND d.revoked_at IS NULL AND a.deleted_at IS NULL
-		    AND n.delivered_at IS NULL AND n.expires_at > NOW()
-		  ORDER BY n.created_at ASC
+		  ORDER BY q.created_at ASC
 		  LIMIT $3`,
 		strings.TrimSpace(accountID), strings.TrimSpace(deviceID), limit,
 	)
@@ -3148,7 +3243,12 @@ func (s *Store) MarkNotificationDeliveryDelivered(ctx context.Context, accountID
 	if _, err := uuid.Parse(strings.TrimSpace(deliveryID)); err != nil {
 		return ErrNotificationDelivery
 	}
-	result, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx,
 		`UPDATE runtime_notification_deliveries n
 		    SET delivered_at = COALESCE(n.delivered_at, NOW())
 		   FROM device_notification_subscriptions p, devices d, accounts a
@@ -3166,9 +3266,28 @@ func (s *Store) MarkNotificationDeliveryDelivered(ctx context.Context, accountID
 		return err
 	}
 	if rows == 0 {
-		return ErrNotificationDelivery
+		result, err = tx.ExecContext(ctx,
+			`UPDATE security_notice_deliveries n
+			    SET delivered_at = COALESCE(n.delivered_at, NOW())
+			   FROM device_notification_subscriptions p, devices d, accounts a
+			  WHERE n.id = $3 AND n.device_id = $2
+			    AND p.device_id = n.device_id AND p.account_id = $1
+			    AND d.id = p.device_id AND d.account_id = p.account_id
+			    AND a.id = p.account_id AND d.revoked_at IS NULL AND a.deleted_at IS NULL`,
+			strings.TrimSpace(accountID), strings.TrimSpace(deviceID), strings.TrimSpace(deliveryID),
+		)
+		if err != nil {
+			return err
+		}
+		rows, err = result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return ErrNotificationDelivery
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) RememberDeviceRequestNonce(ctx context.Context, accountID, deviceID, nonce string, expiresAt time.Time) error {

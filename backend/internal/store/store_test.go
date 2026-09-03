@@ -3710,6 +3710,136 @@ func TestAppendSecurityEventLimitedStopsAfterNodeRateLimit(t *testing.T) {
 	}
 }
 
+func TestListDeviceNotificationSubscriptionsForNodeScopesThroughAssignedRuntimes(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	mock.ExpectQuery("SELECT DISTINCT p.device_id").
+		WithArgs("node-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"device_id", "account_id", "encryption_public_key", "created_at", "updated_at", "last_connected_at",
+		}).AddRow(
+			"22222222-2222-2222-2222-222222222222",
+			"11111111-1111-1111-1111-111111111111",
+			"public-key",
+			now,
+			now,
+			now,
+		))
+
+	subscriptions, err := st.ListDeviceNotificationSubscriptionsForNode(context.Background(), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subscriptions) != 1 || subscriptions[0].AccountID != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("subscriptions = %+v", subscriptions)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestEnqueueSecurityNoticeDeliveryUsesNodeDeviceDedupe(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	st := &Store{db: db}
+	delivery := SecurityNoticeDelivery{
+		ID:                 "33333333-3333-3333-3333-333333333333",
+		NodeID:             "node-1",
+		EventID:            "44444444-4444-4444-4444-444444444444",
+		DeviceID:           "22222222-2222-2222-2222-222222222222",
+		EnvelopeCiphertext: "opaque-envelope",
+		ExpiresAt:          time.Now().UTC().Add(time.Hour),
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM security_notice_deliveries").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO security_notice_deliveries").
+		WithArgs(delivery.ID, delivery.NodeID, delivery.EventID, delivery.DeviceID, delivery.EnvelopeCiphertext, delivery.ExpiresAt.UTC()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	inserted, err := st.EnqueueSecurityNoticeDelivery(context.Background(), delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("security notice was not inserted")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestMarkNotificationDeliveryDeliveredFallsBackToSecurityNotice(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	st := &Store{db: db}
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	deliveryID := "33333333-3333-3333-3333-333333333333"
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE runtime_notification_deliveries").
+		WithArgs(accountID, deviceID, deliveryID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE security_notice_deliveries").
+		WithArgs(accountID, deviceID, deliveryID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := st.MarkNotificationDeliveryDelivered(context.Background(), accountID, deviceID, deliveryID); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestListPendingNotificationDeliveriesIncludesSecurityNotices(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+	mock.ExpectQuery("UNION ALL").
+		WithArgs(accountID, deviceID, 20).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "runtime_id", "event_id", "device_id", "envelope_ciphertext", "created_at", "expires_at",
+		}).AddRow(
+			"33333333-3333-3333-3333-333333333333",
+			"",
+			"44444444-4444-4444-4444-444444444444",
+			deviceID,
+			"opaque-envelope",
+			now,
+			now.Add(time.Hour),
+		))
+
+	deliveries, err := st.ListPendingNotificationDeliveries(context.Background(), accountID, deviceID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].RuntimeID != "" || deliveries[0].EnvelopeCiphertext != "opaque-envelope" {
+		t.Fatalf("deliveries = %+v", deliveries)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

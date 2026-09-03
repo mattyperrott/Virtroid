@@ -26,7 +26,7 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPasswordSetup
-import io.virtroid.client.security.showTypedConfirmation
+import io.virtroid.client.security.showConfirmation
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -347,10 +347,9 @@ class AccountIdentityActivity : AppCompatActivity() {
         } else {
             getString(R.string.account_revoke_device_body)
         }
-        showTypedConfirmation(
+        showConfirmation(
             title = getString(R.string.account_revoke_device_title),
             message = message,
-            confirmationPhrase = "REVOKE",
             confirmLabel = getString(R.string.account_revoke_device_confirm),
             onConfirmed = { revokeDevice(device) },
         )
@@ -392,10 +391,9 @@ class AccountIdentityActivity : AppCompatActivity() {
     }
 
     private fun confirmLocalDataWipe() {
-        showTypedConfirmation(
+        showConfirmation(
             title = getString(R.string.account_wipe_local_title),
             message = getString(R.string.account_wipe_local_body),
-            confirmationPhrase = "CLEAR",
             confirmLabel = getString(R.string.privacy_force_clear_cache),
             onConfirmed = {
                 activeSessionStore.clear()
@@ -471,10 +469,9 @@ class AccountIdentityActivity : AppCompatActivity() {
     }
 
     private fun confirmLocalIdentityReset() {
-        showTypedConfirmation(
+        showConfirmation(
             title = getString(R.string.account_delete_local_identity_title),
             message = getString(R.string.account_delete_local_identity_body),
-            confirmationPhrase = "DELETE ACCOUNT",
             confirmLabel = getString(R.string.account_delete_local_identity_confirm),
             onConfirmed = ::deleteServerAccountAndResetLocal,
         )

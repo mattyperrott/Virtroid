@@ -91,7 +91,6 @@
     <string name="lock_pin_invalid_format">PIN must be exactly 8 digits.</string>
     <string name="lock_passphrase_prompt">Choose a passphrase</string>
     <string name="lock_pin_mismatch">PINs did not match</string>
-    <string name="typed_confirmation_instruction">Type %1$s exactly to confirm.</string>
     <string name="lock_passphrase_empty">Passphrase cannot be empty</string>
     <string name="identity_password_title">Blob Encryption Password</string>
     <string name="identity_password_prompt">Enter the longer blob encryption password created during onboarding. This is not your App Lock PIN.</string>
@@ -289,7 +288,7 @@
 
     <string name="controls_title">Controls</string>
     <string name="controls_back">Back</string>
-    <string name="controls_runtime_subtitle">Runtime ID: %1$s</string>
+    <string name="controls_runtime_subtitle">ID: %1$s</string>
     <string name="controls_state">STATE</string>
     <string name="controls_tunnel">TUNNEL</string>
     <string name="controls_storage">STORAGE</string>
@@ -441,6 +440,7 @@
     <string name="system_logs_title">System Logs</string>
     <string name="system_logs_capturing_live">Capturing Live</string>
     <string name="system_logs_filter_all">All</string>
+    <string name="system_logs_filter_security">Security</string>
     <string name="system_logs_filter_errors">Errors</string>
     <string name="system_logs_filter_warn">Warn</string>
     <string name="system_logs_path">/var/log/virtroid.log</string>

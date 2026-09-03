@@ -367,6 +367,16 @@ validate_environment() {
   if profile_enabled falco && ! require_digest_image FALCO_IMAGE; then
     invalid_image=1
   fi
+  if profile_enabled nids; then
+    require_env SURICATA_IMAGE SURICATA_INTERFACE
+    if ! require_digest_image SURICATA_IMAGE; then
+      invalid_image=1
+    fi
+    if [[ ! "${SURICATA_INTERFACE}" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$ ]]; then
+      echo "SURICATA_INTERFACE must be a single reviewed interface name" >&2
+      exit 1
+    fi
+  fi
   if profile_enabled monitoring; then
     require_env PROMETHEUS_IMAGE ALERTMANAGER_IMAGE
     if ! require_digest_image PROMETHEUS_IMAGE; then
@@ -613,6 +623,12 @@ validate_host() {
       exit 1
     fi
   fi
+  if profile_enabled nids; then
+    if [ "${SURICATA_INTERFACE}" = lo ] || [ ! -e "/sys/class/net/${SURICATA_INTERFACE}" ]; then
+      echo "SURICATA_INTERFACE is not a usable host network interface: ${SURICATA_INTERFACE}" >&2
+      exit 1
+    fi
+  fi
 }
 
 wait_for_health() {
@@ -650,6 +666,14 @@ wait_for_http_ready() {
   curl -fsS --connect-timeout 2 --max-time 5 "${url}"
 }
 
+require_running_container() {
+  local container_name="$1"
+  if [ "$(docker inspect --format '{{.State.Running}}' "${container_name}" 2>/dev/null || true)" != true ]; then
+    echo "required container is not running: ${container_name}" >&2
+    return 1
+  fi
+}
+
 health() {
   local public_authority public_hostname public_port
   wait_for_health http://127.0.0.1:8080/healthz
@@ -658,6 +682,15 @@ health() {
   if profile_enabled monitoring; then
     wait_for_http_ready http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}/-/ready
     wait_for_http_ready http://127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}/-/ready
+  fi
+  if profile_enabled falco || profile_enabled nids; then
+    require_running_container virtroid-falco-forwarder
+  fi
+  if profile_enabled falco; then
+    require_running_container virtroid-falco
+  fi
+  if profile_enabled nids; then
+    require_running_container virtroid-suricata
   fi
   if profile_enabled edge; then
     if [[ ! "${PUBLIC_BASE_URL}" =~ ^https://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$ ]]; then
@@ -693,9 +726,16 @@ if profile_enabled renterd; then
   core_services+=(renterd-mysql renterd)
   pull_services+=(renterd-mysql renterd)
 fi
+if profile_enabled falco || profile_enabled nids; then
+  core_services+=(falco-forwarder)
+fi
 if profile_enabled falco; then
-  core_services+=(falco-forwarder falco)
+  core_services+=(falco)
   pull_services+=(falco)
+fi
+if profile_enabled nids; then
+  core_services+=(suricata)
+  pull_services+=(suricata)
 fi
 if profile_enabled monitoring; then
   core_services+=(alertmanager prometheus)
@@ -731,7 +771,13 @@ case "${command_name}" in
       restart_services+=(renterd)
     fi
     if profile_enabled falco; then
-      restart_services+=(falco-forwarder falco)
+      restart_services+=(falco)
+    fi
+    if profile_enabled falco || profile_enabled nids; then
+      restart_services+=(falco-forwarder)
+    fi
+    if profile_enabled nids; then
+      restart_services+=(suricata)
     fi
     if profile_enabled monitoring; then
       restart_services+=(alertmanager prometheus)

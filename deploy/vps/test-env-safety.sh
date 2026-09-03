@@ -288,7 +288,10 @@ grep -q 'virtroid-renterd-smoke-test' "${script_dir}/install-reviewed-deployment
 grep -q 'OFFLINE COPIES VERIFIED' "${script_dir}/configure-renterd-secrets.sh"
 grep -q 'wallet_address_match' "${script_dir}/renterd-admin.sh"
 grep -q 'NODE_BLOB_SMOKE_TEST=1' "${script_dir}/renterd-smoke-test.sh"
-grep -q 'core_services+=(falco-forwarder falco)' "${script_dir}/deploy.sh"
+grep -q 'if profile_enabled falco || profile_enabled nids; then' "${script_dir}/deploy.sh"
+grep -q 'core_services+=(falco-forwarder)' "${script_dir}/deploy.sh"
+grep -q 'core_services+=(falco)' "${script_dir}/deploy.sh"
+grep -q 'core_services+=(suricata)' "${script_dir}/deploy.sh"
 grep -q 'name: ${NODE_DOCKER_NETWORK:' "${script_dir}/docker-compose.yml"
 grep -q 'NODE_RUNTIME_NETWORK_MODE: ${NODE_RUNTIME_NETWORK_MODE:-per-runtime}' "${script_dir}/docker-compose.yml"
 grep -q 'NODE_MIN_FREE_DISK_BYTES: ${NODE_MIN_FREE_DISK_BYTES:-10737418240}' "${script_dir}/docker-compose.yml"
@@ -388,6 +391,7 @@ grep -q 'GitHub automation must not exist on the production VPS' "${script_dir}/
 grep -q 'installer_digest_before=' "${script_dir}/release-on-vps.sh"
 grep -q 'installer_digest_after=' "${script_dir}/release-on-vps.sh"
 grep -q 'installer_digest_after.*installer_digest_before' "${script_dir}/release-on-vps.sh"
+grep -q 'VIRTROID_PROFILES=edge,monitoring,falco,nids' "${script_dir}/release-on-vps.sh"
 if grep -RniE 'restic|offsite|off-site' "${script_dir}" \
     --exclude=README.md \
     --exclude=test-env-safety.sh \

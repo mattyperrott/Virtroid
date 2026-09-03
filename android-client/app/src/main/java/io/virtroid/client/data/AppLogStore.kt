@@ -19,10 +19,15 @@ class AppLogStore private constructor(context: Context) {
 
     val entries: StateFlow<List<AppLogEntry>> = _entries.asStateFlow()
 
-    fun log(level: AppLogLevel, message: String, source: String = "app") {
+    fun log(
+        level: AppLogLevel,
+        message: String,
+        source: String = "app",
+        timestampMs: Long = System.currentTimeMillis(),
+    ) {
         val entry = AppLogEntry(
             id = UUID.randomUUID().toString(),
-            timestampMs = System.currentTimeMillis(),
+            timestampMs = timestampMs,
             level = level,
             source = source,
             message = sanitizeMessage(message),
@@ -33,6 +38,8 @@ class AppLogStore private constructor(context: Context) {
     }
 
     fun info(message: String, source: String = "app") = log(AppLogLevel.INFO, message, source)
+
+    fun security(message: String, source: String = "security") = log(AppLogLevel.SECURITY, message, source)
 
     fun warn(message: String, source: String = "app") = log(AppLogLevel.WARN, message, source)
 
@@ -199,6 +206,7 @@ internal object AppLogState {
 
 enum class AppLogLevel {
     INFO,
+    SECURITY,
     WARN,
     ERROR,
     CRITICAL;
@@ -215,12 +223,14 @@ enum class AppLogLevel {
 
 enum class AppLogFilter {
     ALL,
+    SECURITY,
     ERRORS,
     WARN;
 
     fun matches(level: AppLogLevel): Boolean {
         return when (this) {
             ALL -> true
+            SECURITY -> level == AppLogLevel.SECURITY
             ERRORS -> level == AppLogLevel.ERROR || level == AppLogLevel.CRITICAL
             WARN -> level == AppLogLevel.WARN
         }

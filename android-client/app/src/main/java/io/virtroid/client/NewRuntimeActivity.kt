@@ -51,6 +51,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         binding.newRuntimeCloseButton.setOnClickListener { finish() }
         binding.provisionRuntimeButton.setOnClickListener { provisionRuntime() }
         binding.provisionRuntimeButton.isEnabled = false
+        binding.audioPassthroughSwitch.isChecked = true
         binding.cameraPassthroughSwitch.isEnabled = true
         binding.cameraPassthroughSwitch.isChecked = true
         binding.switchCameraPassthroughLabel.text = getString(R.string.new_runtime_camera_passthrough)

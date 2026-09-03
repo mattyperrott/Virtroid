@@ -6,15 +6,17 @@ import org.junit.Test
 
 class AppLogStateTest {
     private val info = entry("info", AppLogLevel.INFO)
+    private val security = entry("security", AppLogLevel.SECURITY)
     private val warning = entry("warning", AppLogLevel.WARN)
     private val error = entry("error", AppLogLevel.ERROR)
     private val critical = entry("critical", AppLogLevel.CRITICAL)
 
     @Test
     fun allFilterIsTheDefaultCompleteProjection() {
-        val entries = listOf(info, warning, error, critical)
+        val entries = listOf(info, security, warning, error, critical)
 
         assertEquals(entries, AppLogState.visibleEntries(entries, AppLogFilter.ALL))
+        assertEquals(listOf(security), AppLogState.visibleEntries(entries, AppLogFilter.SECURITY))
         assertEquals(listOf(error, critical), AppLogState.visibleEntries(entries, AppLogFilter.ERRORS))
         assertEquals(listOf(warning), AppLogState.visibleEntries(entries, AppLogFilter.WARN))
     }
@@ -33,7 +35,7 @@ class AppLogStateTest {
 
         assertEquals(
             2,
-            AppLogState.unresolvedCriticalCount(listOf(info, warning, error, critical, resolvedError)),
+            AppLogState.unresolvedCriticalCount(listOf(info, security, warning, error, critical, resolvedError)),
         )
     }
 

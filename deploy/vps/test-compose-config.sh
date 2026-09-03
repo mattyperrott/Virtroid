@@ -36,6 +36,7 @@ compose_args=(
   --profile edge
   --profile renterd
   --profile falco
+  --profile nids
   --profile monitoring
 )
 
@@ -47,6 +48,7 @@ sed \
   -e '/^HAPROXY_IMAGE=/d' \
   -e '/^RENTERD_IMAGE=/d' \
   -e '/^FALCO_IMAGE=/d' \
+  -e '/^SURICATA_IMAGE=/d' \
   -e '/^PROMETHEUS_IMAGE=/d' \
   -e '/^ALERTMANAGER_IMAGE=/d' \
   "${env_file}" > "${core_env_file}"
@@ -69,6 +71,8 @@ grep -q "NODE_NOTIFICATION_AGENT_APK_SHA256: ${digest}" "${tmp_dir}/rendered-com
 grep -q 'NODE_PUBLIC_CONTROL_PLANE_URL: https://virtroid.example' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-prometheus' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-alertmanager' "${tmp_dir}/rendered-compose.yml"
+grep -q 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml"
+grep -q 'SURICATA_EVE_FILE: /var/log/suricata/eve.json' "${tmp_dir}/rendered-compose.yml"
 grep -q 'monitoring-egress:' "${tmp_dir}/rendered-compose.yml"
 if grep -q -- '--web.enable-lifecycle=false' "${tmp_dir}/rendered-compose.yml"; then
   echo "Prometheus must rely on its default-disabled lifecycle API" >&2

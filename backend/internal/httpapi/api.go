@@ -3020,8 +3020,26 @@ func (a *API) securityEventAppend(w http.ResponseWriter, r *http.Request) {
 		writeInternalAPIError(w, "security_event_append_failed", err)
 		return
 	}
+	fingerprintMaterial := strings.Join([]string{
+		node.id,
+		strings.TrimSpace(req.Source),
+		strings.TrimSpace(req.Rule),
+		strings.TrimSpace(req.Priority),
+		eventJSON,
+	}, "\x00")
+	observedAt := time.Now().UTC()
+	if req.Time != nil {
+		observedAt = req.Time.UTC()
+	}
+	queued, err := a.enqueueNodeSecurityNotice(
+		r.Context(), node.id, req.Source, req.Rule, req.Priority, fingerprintMaterial, observedAt,
+	)
+	if err != nil {
+		writeInternalAPIError(w, "security_notice_enqueue_failed", err)
+		return
+	}
 
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "client_notices_queued": queued})
 }
 
 func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request) (string, string, bool) {

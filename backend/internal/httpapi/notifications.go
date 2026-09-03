@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -40,6 +41,14 @@ type runtimeNotificationEvent struct {
 	AppLabel    string    `json:"app_label"`
 	PostedAt    time.Time `json:"posted_at"`
 	Title       string    `json:"title"`
+}
+
+type securityNoticeEvent struct {
+	EventID    string
+	Source     string
+	Severity   string
+	Summary    string
+	ObservedAt time.Time
 }
 
 type notificationStreamHub struct {
@@ -333,6 +342,108 @@ func encodeRuntimeNotificationPayload(event runtimeNotificationEvent) ([]byte, e
 		"posted_at":    event.PostedAt.UTC().Format(time.RFC3339Nano),
 		"title":        event.Title,
 	})
+}
+
+func (a *API) enqueueNodeSecurityNotice(
+	ctx context.Context,
+	nodeID, source, rule, priority, fingerprint string,
+	observedAt time.Time,
+) (int, error) {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source != "falco" && source != "suricata" {
+		return 0, nil
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	now := time.Now().UTC()
+	if observedAt.Before(now.Add(-notificationDeliveryTTL)) || observedAt.After(now.Add(5*time.Minute)) {
+		observedAt = now
+	}
+	event := securityNoticeEvent{
+		EventID: uuid.NewHash(
+			sha256.New(),
+			uuid.NameSpaceOID,
+			[]byte(strings.TrimSpace(nodeID)+"\x00"+fingerprint),
+			5,
+		).String(),
+		Source:     source,
+		Severity:   clientSecuritySeverity(priority),
+		Summary:    clientSecuritySummary(source, rule),
+		ObservedAt: observedAt.UTC(),
+	}
+	payload, err := encodeSecurityNoticePayload(event)
+	if err != nil {
+		return 0, err
+	}
+	subscriptions, err := a.store.ListDeviceNotificationSubscriptionsForNode(ctx, nodeID)
+	if err != nil {
+		return 0, err
+	}
+	queued := 0
+	expiresAt := time.Now().UTC().Add(notificationDeliveryTTL)
+	for _, subscription := range subscriptions {
+		envelope, err := push.EncryptEnvelope(subscription.EncryptionPublicKey, payload)
+		if err != nil {
+			return queued, err
+		}
+		inserted, err := a.store.EnqueueSecurityNoticeDelivery(ctx, store.SecurityNoticeDelivery{
+			ID:                 uuid.NewString(),
+			NodeID:             nodeID,
+			EventID:            event.EventID,
+			DeviceID:           subscription.DeviceID,
+			EnvelopeCiphertext: envelope,
+			ExpiresAt:          expiresAt,
+		})
+		if err != nil {
+			return queued, err
+		}
+		if inserted {
+			queued++
+		}
+		a.notificationHub.notify(subscription.DeviceID)
+	}
+	return queued, nil
+}
+
+func encodeSecurityNoticePayload(event securityNoticeEvent) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"version":     1,
+		"kind":        "security_notice",
+		"event_id":    event.EventID,
+		"source":      event.Source,
+		"severity":    event.Severity,
+		"summary":     event.Summary,
+		"observed_at": event.ObservedAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func clientSecuritySeverity(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "emergency", "alert", "critical", "error":
+		return "critical"
+	case "warning", "warn":
+		return "warning"
+	default:
+		return "notice"
+	}
+}
+
+func clientSecuritySummary(source, rule string) string {
+	rule = strings.ToLower(strings.TrimSpace(rule))
+	if source == "suricata" {
+		return "Network-security anomaly detected on the Virtroid host"
+	}
+	switch {
+	case strings.Contains(rule, "shell spawned"):
+		return "Unexpected shell activity detected on the Virtroid host"
+	case strings.Contains(rule, "runtime root access"):
+		return "Unexpected access to protected runtime storage detected"
+	case strings.Contains(rule, "docker socket"):
+		return "Unexpected container-management access detected"
+	default:
+		return "Host-security anomaly detected on the Virtroid host"
+	}
 }
 
 func validRuntimeNotification(event runtimeNotificationEvent) bool {

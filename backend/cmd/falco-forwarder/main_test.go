@@ -5,8 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,6 +60,39 @@ func TestForwardLineDeduplicatesRepeatedFalcoEvents(t *testing.T) {
 
 	if got := atomic.LoadInt32(&posts); got != 1 {
 		t.Fatalf("forwarded posts = %d, want 1 after dedupe", got)
+	}
+}
+
+func TestForwardSuricataLineReducesNetworkEventBeforeUpload(t *testing.T) {
+	var received securityEventPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Errorf("decode body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	f := testForwarder(t, server.URL)
+	f.limiter = newEventLimiter(0)
+	f.deduper = newEventDeduper(0)
+	line := []byte(`{"timestamp":"2026-09-03T10:00:00.000000+0000","event_type":"alert","src_ip":"203.0.113.5","dest_ip":"10.0.0.2","proto":"TCP","alert":{"signature":"Virtroid inbound TCP SYN scan","category":"Attempted Information Leak","severity":3}}`)
+	if err := f.forwardSuricataLine(context.Background(), line); err != nil {
+		t.Fatal(err)
+	}
+	if received.Source != "suricata" || received.Priority != "notice" {
+		t.Fatalf("received source/priority = %q/%q", received.Source, received.Priority)
+	}
+	if strings.Contains(string(received.Event), "src_ip") || strings.Contains(string(received.Event), "dest_ip") {
+		t.Fatalf("reduced event leaked network addresses: %s", received.Event)
 	}
 }
 
