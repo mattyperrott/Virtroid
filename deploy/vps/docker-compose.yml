@@ -408,6 +408,7 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      - DAC_OVERRIDE
       - NET_ADMIN
       - NET_RAW
       - SYS_NICE
@@ -424,6 +425,12 @@ services:
       - ./suricata/virtroid.rules:/etc/suricata/rules/virtroid.rules:ro
       - suricata-logs:/var/log/suricata
     read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/suricata/eve.json && kill -0 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
     tmpfs:
       - /run:rw,nosuid,nodev,size=16m
       - /tmp:rw,noexec,nosuid,nodev,size=32m
