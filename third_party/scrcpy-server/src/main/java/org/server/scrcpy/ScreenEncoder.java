@@ -135,7 +135,7 @@ public class ScreenEncoder implements Device.RotationListener {
         }).start();
     }
 
-    public void streamScreen(Options options, Device device, OutputStream outputStream) throws IOException {
+    public void streamScreen(Options options, Device device, OutputStream outputStream, Runnable onStreamHeaderWritten) throws IOException {
         // Log.d("ScreenCapture", buildDisplayListMessage());
         int[] buf = new int[]{device.getScreenInfo().getDeviceSize().getWidth(), device.getScreenInfo().getDeviceSize().getHeight()};
         final byte[] array = new byte[buf.length * 4];   // https://stackoverflow.com/questions/2183240/java-integer-to-byte-array
@@ -147,6 +147,8 @@ public class ScreenEncoder implements Device.RotationListener {
             array[j * 4 + 3] = (byte) (c & 0xFF);
         }
         outputStream.write(array, 0, array.length);   // Sending device resolution
+        outputStream.flush();
+        onStreamHeaderWritten.run();
 
         if(options.isEnableAudioForward()){
             startAudioCapture(outputStream);  // start audio capture

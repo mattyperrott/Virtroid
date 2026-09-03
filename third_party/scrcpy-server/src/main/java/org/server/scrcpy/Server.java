@@ -5,6 +5,7 @@ import org.server.scrcpy.util.Workarounds;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.concurrent.CountDownLatch;
 
 public final class Server {
 
@@ -21,28 +22,30 @@ public final class Server {
         try (DroidConnection connection = DroidConnection.open(ip)) {
             ScreenEncoder screenEncoder = new ScreenEncoder(options.getBitRate());
             OutputStream mediaStream = new SynchronizedOutputStream(connection.getOutputStream());
+            CountDownLatch streamHeaderWritten = new CountDownLatch(1);
 
             // asynchronous
-            startEventController(device, connection, screenEncoder);
+            startEventController(device, connection, screenEncoder, mediaStream, options.isEnableAudioForward(), streamHeaderWritten);
 
             try {
                 // synchronous
-                screenEncoder.streamScreen(options, device, mediaStream);
+                screenEncoder.streamScreen(options, device, mediaStream, streamHeaderWritten::countDown);
             } catch (IOException e) {
                 e.printStackTrace();
                 // this is expected on close
                 Ln.d("Screen streaming stopped");
-
+            } finally {
+                streamHeaderWritten.countDown();
             }
         }
     }
 
-    private static void startEventController(final Device device, final DroidConnection connection, ScreenEncoder screenEncoder) {
+    private static void startEventController(final Device device, final DroidConnection connection, ScreenEncoder screenEncoder, OutputStream mediaStream, boolean microphoneEnabled, CountDownLatch streamHeaderWritten) {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    new EventController(device, connection, screenEncoder).control();
+                    new EventController(device, connection, screenEncoder, mediaStream, microphoneEnabled, streamHeaderWritten).control();
                 } catch (IOException e) {
                     // this is expected on close
                     Ln.d("Event controller stopped");

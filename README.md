@@ -108,7 +108,7 @@ flowchart LR
 | Remote Android viewer        |   ✅ Deployed      | Encrypted TLS viewer and Back → Connect reconnection proved |
 | Runtime audio streaming      |   ✅ Deployed      | Virtual Android output was audibly accepted on a physical phone |
 | Runtime notification forwarding | ✅ Implemented  | Package, app label, timestamp, and title only; direct encrypted delivery awaits live device proof |
-| Physical microphone input    | ❌ Not implemented | Requires a supported ReDroid audio-input HAL; any future stream must be active only while the runtime is recording or in a call |
+| Physical microphone input    |   ✅ Implemented   | Runtime demand starts phone capture only while an app records or calls; live handset/ReDroid acceptance is pending |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
 | Runtime deletion             |   ✅ Implemented   | Includes explicit cleanup obligations                   |
@@ -475,6 +475,8 @@ Virtroid currently provides protections against several classes of client-side, 
 #### Android client interaction
 
 * Audio passthrough is enabled by default for newly generated runtimes
+* Phone microphone capture starts only after the connected runtime opens a matching recorder, then stops when recording ends
+* Microphone frames use the existing encrypted, session-bound viewer transport; no separate listener app or public audio port is required
 * Destructive and security-sensitive actions use standard Cancel/Confirm dialogs
 * Runtime controls use a compact `ID:` label and an inline pencil rename action
 * Runtime connection remains on the runtime card rather than the controls app bar
@@ -620,7 +622,7 @@ Virtroid/
 
 ## Roadmap
 
-The highest-priority remaining work is a supported, demand-activated ReDroid microphone input path,
+The highest-priority remaining work is live handset/ReDroid acceptance for the demand-activated microphone bridge,
 searchable trace storage, broader lifecycle and
 storage fault injection, live multi-node acceptance, and a decision on stronger
 runtime isolation beyond the current trusted VPS/ReDroid boundary.

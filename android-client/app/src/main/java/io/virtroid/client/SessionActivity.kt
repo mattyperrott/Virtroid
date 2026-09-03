@@ -88,6 +88,27 @@ class SessionActivity : AppCompatActivity() {
     private var viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
     private var sessionUnavailable = false
     private var heartbeatFailureCount = 0
+    private var microphonePermissionResolved = false
+    private var physicalMicrophoneEnabled = false
+    private var microphoneFailureReported = false
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        microphonePermissionResolved = true
+        physicalMicrophoneEnabled = audioEnabled && granted
+        if (granted) {
+            appLogs.info("Physical microphone bridge permission granted", "session")
+        } else {
+            appLogs.warn("Physical microphone bridge disabled because microphone permission was denied", "session")
+            toast(getString(R.string.session_microphone_permission_denied))
+        }
+        maybeRequestSessionNotificationPermission()
+        viewerSurface?.let { surface ->
+            attachOrConnectViewer(
+                surface,
+                binding.sessionSurfaceView.width,
+                binding.sessionSurfaceView.height,
+            )
+        }
+    }
     private val cameraPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         if (grants[Manifest.permission.CAMERA] == true) {
             val recordAudio = grants[Manifest.permission.RECORD_AUDIO] == true
@@ -133,6 +154,30 @@ class SessionActivity : AppCompatActivity() {
         override fun onFirstVideoFrame() {
             runOnUiThread {
                 binding.sessionStreamStatusOverlay.isVisible = false
+            }
+        }
+
+        override fun onPhysicalMicrophoneStateChanged(active: Boolean, detail: String) {
+            runOnUiThread {
+                when {
+                    active -> {
+                        microphoneFailureReported = false
+                        appLogs.info("Physical microphone bridge active for runtime recording", "session")
+                    }
+                    detail == "inactive" -> {
+                        appLogs.info("Physical microphone bridge stopped", "session")
+                    }
+                    detail == "runtime-unavailable" && !microphoneFailureReported -> {
+                        microphoneFailureReported = true
+                        appLogs.warn("Runtime microphone injection is unavailable on this Android image", "session")
+                        toast(getString(R.string.session_microphone_runtime_unavailable))
+                    }
+                    detail != "disabled" && !microphoneFailureReported -> {
+                        microphoneFailureReported = true
+                        appLogs.warn("Physical microphone bridge could not start: $detail", "session")
+                        toast(getString(R.string.session_microphone_bridge_failed))
+                    }
+                }
             }
         }
 
@@ -189,6 +234,9 @@ class SessionActivity : AppCompatActivity() {
         deviceId = intent.getStringExtra(EXTRA_DEVICE_ID).orEmpty()
         baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty()
         audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO_ENABLED, false)
+        physicalMicrophoneEnabled = audioEnabled &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        microphonePermissionResolved = !audioEnabled || physicalMicrophoneEnabled
         cameraMode = intent.getStringExtra(EXTRA_CAMERA_MODE).orEmpty().ifBlank { "disabled" }
         fileMode = intent.getStringExtra(EXTRA_FILE_MODE).orEmpty().ifBlank { "upload-only" }
         sessionStore = SessionStore(this)
@@ -207,7 +255,6 @@ class SessionActivity : AppCompatActivity() {
         activeSessionStore = ActiveSessionStore(this)
         appSettings = AppSettingsStore(this)
         appLogs = AppLogStore.get(this)
-        maybeRequestSessionNotificationPermission()
         persistActiveSession()
 
         if (relayHost.isBlank() || relayPort <= 0 || !relayTls || relayPath.isBlank() || relayToken.isBlank() || viewerPublicKey.isBlank()) {
@@ -296,6 +343,11 @@ class SessionActivity : AppCompatActivity() {
                 binding.sessionSurfaceView.height,
             )
         }
+        if (!microphonePermissionResolved) {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            maybeRequestSessionNotificationPermission()
+        }
         onBackPressedDispatcher.addCallback(this) {
             navigateBackToApp()
         }
@@ -340,6 +392,9 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun attachOrConnectViewer(surface: Surface, width: Int, height: Int) {
+        if (!microphonePermissionResolved) {
+            return
+        }
         val host = sessionHost
         if (host == null) {
             connectViewer(surface)
@@ -378,6 +433,7 @@ class SessionActivity : AppCompatActivity() {
             relayToken = relayToken,
             viewerPublicKey = viewerPublicKey,
             audioEnabled = audioEnabled,
+            physicalMicrophoneEnabled = physicalMicrophoneEnabled,
             surface = surface,
             displayWidth = binding.sessionSurfaceView.width.takeIf { it > 0 }
                 ?: resources.displayMetrics.widthPixels,

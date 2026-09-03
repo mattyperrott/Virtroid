@@ -46,8 +46,8 @@ android {
         applicationId = "io.virtroid.client"
         minSdk = 28
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3.0"
+        versionCode = 5
+        versionName = "0.3.1"
         buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(defaultControlPlaneUrl))
         manifestPlaceholders["usesCleartextTraffic"] = defaultControlPlaneUsesCleartext
     }
@@ -160,6 +160,15 @@ val verifyReleaseSecurityManifest = tasks.register("verifyReleaseSecurityManifes
         requireManifestControl(
             text.contains("android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"),
             "remote-messaging foreground-service permission must be present",
+        )
+        requireManifestControl(
+            text.contains("android.permission.FOREGROUND_SERVICE_MICROPHONE"),
+            "microphone foreground-service permission must be present",
+        )
+        requireManifestControl(
+            text.contains("org.client.scrcpy.Scrcpy") &&
+                text.contains("android:foregroundServiceType=\"dataSync|microphone\""),
+            "viewer foreground service must declare microphone capture",
         )
         requireManifestControl(
             text.contains("io.virtroid.client.push.NotificationRelayService") &&
