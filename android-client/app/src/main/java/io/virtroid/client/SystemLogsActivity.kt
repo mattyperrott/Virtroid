@@ -56,6 +56,7 @@ class SystemLogsActivity : AppCompatActivity() {
 
         binding.systemLogsBackButton.setOnClickListener { finish() }
         binding.filterAllButton.setOnClickListener { setFilter(AppLogFilter.ALL) }
+        binding.filterSecurityButton.setOnClickListener { setFilter(AppLogFilter.SECURITY) }
         binding.filterErrorsButton.setOnClickListener { setFilter(AppLogFilter.ERRORS) }
         binding.filterWarnButton.setOnClickListener { setFilter(AppLogFilter.WARN) }
         binding.copyLogsButton.setOnClickListener { copyLogs() }
@@ -86,10 +87,15 @@ class SystemLogsActivity : AppCompatActivity() {
         val inactiveMuted = getColor(R.color.v_text_muted)
         val danger = getColor(R.color.v_danger)
         val amber = getColor(R.color.v_amber)
+        val blue = getColor(R.color.v_blue)
         binding.filterAllButton.backgroundTintList = ColorStateList.valueOf(
             getColor(if (activeFilter == AppLogFilter.ALL) R.color.v_surface_light else R.color.v_surface),
         )
         binding.filterAllButton.setTextColor(if (activeFilter == AppLogFilter.ALL) activeColor else inactiveMuted)
+        binding.filterSecurityButton.backgroundTintList = ColorStateList.valueOf(
+            getColor(if (activeFilter == AppLogFilter.SECURITY) R.color.v_blue_soft else R.color.v_surface),
+        )
+        binding.filterSecurityButton.setTextColor(blue)
         binding.filterErrorsButton.backgroundTintList = ColorStateList.valueOf(
             getColor(if (activeFilter == AppLogFilter.ERRORS) R.color.v_danger_card else R.color.v_danger_soft),
         )
@@ -134,6 +140,7 @@ class SystemLogsActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             ).apply { bottomMargin = bottom }
             when (entry.level) {
+                AppLogLevel.SECURITY -> setBackgroundResource(R.drawable.bg_log_row_security)
                 AppLogLevel.WARN -> setBackgroundResource(R.drawable.bg_log_row_warning)
                 AppLogLevel.ERROR,
                 AppLogLevel.CRITICAL -> setBackgroundResource(R.drawable.bg_log_row_error)
@@ -167,6 +174,7 @@ class SystemLogsActivity : AppCompatActivity() {
     private fun levelColor(level: AppLogLevel, timestamp: Boolean): Int {
         return when (level) {
             AppLogLevel.INFO -> getColor(if (timestamp) R.color.v_accent else R.color.v_text_primary)
+            AppLogLevel.SECURITY -> getColor(R.color.v_blue)
             AppLogLevel.WARN -> getColor(R.color.v_amber)
             AppLogLevel.ERROR,
             AppLogLevel.CRITICAL -> getColor(R.color.v_danger)

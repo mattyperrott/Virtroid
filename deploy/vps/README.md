@@ -183,6 +183,11 @@ Build and release entirely on the VPS:
 sudo /usr/local/sbin/virtroid-release-on-vps
 ```
 
+The guarded release helper activates the reviewed edge, monitoring, Falco HIDS,
+and Suricata NIDS profiles. Configure the pinned sensor images and reviewed
+`SURICATA_INTERFACE` in the production `.env` before the first sensor-enabled
+release.
+
 The helper refuses a configured Git remote, `.github` content, non-root source
 ownership, a dirty checkout, or group/world-writable source. It snapshots the
 source, builds the `linux/amd64` backend image on the VPS, creates a root-only
@@ -439,6 +444,7 @@ Optional profiles:
 
 ```bash
 sudo VIRTROID_PROFILES=edge,falco ./deploy.sh up
+sudo VIRTROID_PROFILES=edge,falco,nids ./deploy.sh up
 sudo VIRTROID_PROFILES=edge,renterd ./deploy.sh up
 sudo VIRTROID_PROFILES=edge,monitoring ./deploy.sh up
 ```
@@ -450,6 +456,21 @@ before treating alerts as paged. The deployment health gate now checks node
 `/readyz` and control-plane `/readyz`, so a release is not declared healthy
 until PostgreSQL and at least one fresh, approved, Docker/binder-ready node are
 all present.
+
+The `falco` profile provides host/container runtime detection. The optional
+`nids` profile adds detection-only Suricata monitoring on the reviewed host
+interface. Both sensors use the local security forwarder and the node's signed
+control-plane identity. The control plane stores the operator event, finds
+accounts with a runtime assigned to that node, and sends each subscribed device
+an encrypted summary. The Android client records the summary in its existing
+log as a blue security notice, amber warning, or red critical entry.
+
+Client summaries never contain raw command lines, filesystem paths, network
+addresses, packet data, node identifiers, or another account's data. A
+host-wide detection is deliberately described as a node-level event; when a
+node is dedicated to one isolated runtime, the same scoping becomes specific to
+that runtime's owner. See `falco/README.md` and `suricata/README.md` for sensor
+setup and tuning boundaries.
 
 Physical-camera capture is handled by the Android client and imported as a
 bounded JPEG through the existing signed, session-bound node file-import path.

@@ -444,6 +444,9 @@ fi
 if docker inspect virtroid-falco >/dev/null 2>&1; then
   validate_infrastructure_container virtroid-falco FALCO_IMAGE
 fi
+if docker inspect virtroid-suricata >/dev/null 2>&1; then
+  validate_infrastructure_container virtroid-suricata SURICATA_IMAGE
+fi
 
 prior_tree_required=0
 if [ "${legacy_release}" -eq 1 ] ||
@@ -588,6 +591,9 @@ if docker inspect virtroid-renterd >/dev/null 2>&1; then
 fi
 if docker inspect virtroid-falco >/dev/null 2>&1; then
   validate_infrastructure_container virtroid-falco FALCO_IMAGE
+fi
+if docker inspect virtroid-suricata >/dev/null 2>&1; then
+  validate_infrastructure_container virtroid-suricata SURICATA_IMAGE
 fi
 
 source_bytes="$(du -sb /srv/virtroid | awk '{print $1}')"
@@ -762,7 +768,7 @@ fi
   date -u +%FT%TZ
   docker inspect --format '{{.Name}} configured_image={{.Config.Image}} image_id={{.Image}} source={{index .Config.Labels "org.opencontainers.image.revision"}} schema={{index .Config.Labels "com.virtroid.schema-version"}} deployment_tree={{index .Config.Labels "com.virtroid.deployment-tree-sha256"}} restart={{.RestartCount}}' \
     virtroid-postgres virtroidd virtnoded virtroid-edge
-  for container_name in virtroid-renterd-mysql virtroid-renterd virtroid-falco virtroid-falco-forwarder; do
+  for container_name in virtroid-renterd-mysql virtroid-renterd virtroid-falco virtroid-suricata virtroid-falco-forwarder; do
     if docker inspect "${container_name}" >/dev/null 2>&1; then
       docker inspect --format '{{.Name}} configured_image={{.Config.Image}} image_id={{.Image}} source={{index .Config.Labels "org.opencontainers.image.revision"}} schema={{index .Config.Labels "com.virtroid.schema-version"}} deployment_tree={{index .Config.Labels "com.virtroid.deployment-tree-sha256"}} restart={{.RestartCount}}' \
         "${container_name}"

@@ -31,12 +31,11 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
-import io.virtroid.client.security.showTypedConfirmation
+import io.virtroid.client.security.showConfirmation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.IOException
-import kotlin.math.max
 
 class ControlsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionControlsBinding
@@ -87,13 +86,6 @@ class ControlsActivity : AppCompatActivity() {
         }
 
         binding.controlsBackButton.setOnClickListener { finish() }
-        binding.controlsConnectButton.setOnClickListener {
-            if (runtimeState.shouldOfferRecoveryStop()) {
-                stopFailedRuntime()
-            } else {
-                connectOrStart()
-            }
-        }
         binding.buttonEditRuntime.setOnClickListener { showRenameDialog() }
         binding.displayOutputRow.setOnClickListener { showDisplayDialog() }
         binding.consoleLogsRow.setOnClickListener { toggleLogs() }
@@ -158,17 +150,6 @@ class ControlsActivity : AppCompatActivity() {
             runtime.densityDpi,
         )
         val lifecycleBusy = state?.isBusy ?: runtime.isLifecycleBusy()
-        val recoveryStop = state.shouldOfferRecoveryStop()
-        val canConnectOrStart = state?.let {
-            recoveryStop || it.canConnect || it.canStart || it.effectiveState.equals("starting", ignoreCase = true)
-        } ?: (!lifecycleBusy || runtime.isReadyForSession())
-        binding.controlsConnectButton.contentDescription = getString(
-            if (recoveryStop) R.string.runtime_stop else R.string.controls_connect,
-        )
-        binding.controlsConnectButton.setImageResource(
-            if (recoveryStop) R.drawable.ic_power else R.drawable.ic_hexagon,
-        )
-        binding.controlsConnectButton.isEnabled = canConnectOrStart && connectOrStartJob?.isActive != true
         binding.restartPersonaRow.isEnabled = !lifecycleBusy && connectOrStartJob?.isActive != true &&
             (state?.let { it.canStop || it.canStart } ?: true)
         binding.wipeRow.isEnabled = state?.canWipe ?: !lifecycleBusy
@@ -321,10 +302,9 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun confirmRestartPersona() {
         val current = runtime ?: return
-        showTypedConfirmation(
+        showConfirmation(
             title = getString(R.string.controls_restart_confirm_title),
             message = getString(R.string.controls_restart_confirm_body),
-            confirmationPhrase = "RESTART",
             confirmLabel = getString(R.string.controls_confirm),
             onConfirmed = { restartWithNewPersona(current) },
         )
@@ -408,10 +388,9 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun confirmWipe() {
         val current = runtime ?: return
-        showTypedConfirmation(
+        showConfirmation(
             title = getString(R.string.controls_wipe_confirm_title),
             message = getString(R.string.controls_wipe_confirm_body),
-            confirmationPhrase = "ERASE",
             confirmLabel = getString(R.string.controls_confirm),
             onConfirmed = wipe@{
                 val accountId = sessionStore.accountId ?: return@wipe
@@ -440,89 +419,6 @@ class ControlsActivity : AppCompatActivity() {
     private fun renderLogs(logs: List<RuntimeLogEntry>): String {
         return logs.joinToString("\n") { "[${it.createdAt}] ${it.level}/${it.source}: ${it.message}" }
             .ifBlank { getString(R.string.runtime_logs_empty) }
-    }
-
-    private fun connectOrStart() {
-        val current = runtime ?: return
-        if (connectOrStartJob?.isActive == true) {
-            return
-        }
-        binding.controlsConnectButton.isEnabled = false
-        connectOrStartJob = lifecycleScope.launch {
-            var handedOffToViewerPreparation = false
-            try {
-                runCatching {
-                    val accountId = sessionStore.accountId ?: throw IOException(getString(R.string.account_missing))
-                    val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
-                    val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, current.id)
-                    snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
-                    runtime = state.runtime
-                    runtimeState = state
-                    bindRuntime(state.runtime, state)
-                    if (state.canConnectRuntime(current.id)) {
-                        return@runCatching state.runtime
-                    }
-                    if (state.effectiveState.equals("starting", ignoreCase = true)) {
-                        return@runCatching waitForRuntimeReady(accountId, deviceId, state.runtime.id)
-                    }
-                    if (!state.canStart) {
-                        throw IOException(state.blockedReason ?: state.effectiveState.ifBlank { getString(R.string.runtime_missing_for_session) })
-                    }
-                    entitlement?.startRuntimeBlockedMessage(this@ControlsActivity)?.let {
-                        throw IOException(it)
-                    }
-                    val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                    api.startRuntime(sessionStore.baseUrl, accountId, deviceId, state.runtime.id, blobAccessKey)
-                    identityPasswordStore.saveConfigured(accountId, deviceId)
-                    waitForRuntimeReady(accountId, deviceId, state.runtime.id)
-                }.onSuccess {
-                    runtime = it
-                    runtimeState = null
-                    bindRuntime(it)
-                    handedOffToViewerPreparation = true
-                    connectRuntime(it)
-                }.onFailure {
-                    toast(it.virtroidDisplayMessage(this@ControlsActivity))
-                }
-            } finally {
-                connectOrStartJob = null
-                if (!handedOffToViewerPreparation) {
-                    runtime?.let { bindRuntime(it, runtimeState) }
-                }
-            }
-        }
-    }
-
-    private fun stopFailedRuntime() {
-        val current = runtime ?: return
-        if (connectOrStartJob?.isActive == true) {
-            return
-        }
-        binding.controlsConnectButton.isEnabled = false
-        connectOrStartJob = lifecycleScope.launch {
-            runCatching {
-                val accountId = sessionStore.accountId ?: throw IOException(getString(R.string.account_missing))
-                val deviceId = sessionStore.deviceId ?: throw IOException(getString(R.string.device_missing))
-                val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, current.id)
-                if (!state.shouldOfferRecoveryStop()) {
-                    throw IOException(state.blockedReason ?: getString(R.string.runtime_shutdown_in_progress))
-                }
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                api.stopRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
-                activeSessionStore.loadForRuntime(current.id)?.let { activeSessionStore.clear() }
-                waitForRuntimeStartable(accountId, deviceId, current.id)
-            }.onSuccess { stopped ->
-                runtime = stopped.runtime
-                runtimeState = stopped
-                bindRuntime(stopped.runtime, stopped)
-                toast(getString(R.string.runtime_stopped))
-            }.onFailure {
-                toast(it.virtroidDisplayMessage(this@ControlsActivity))
-                loadRuntime()
-            }
-            connectOrStartJob = null
-            runtime?.let { bindRuntime(it, runtimeState) }
-        }
     }
 
     private suspend fun waitForRuntimeReady(accountId: String, deviceId: String, runtimeId: String): RuntimeSummary {
@@ -578,124 +474,11 @@ class ControlsActivity : AppCompatActivity() {
         }
     }
 
-    private fun connectRuntime(runtime: RuntimeSummary) {
-        activeSessionStore.loadForRuntime(runtime.id)?.let { storedSession ->
-            lifecycleScope.launch {
-                runCatching {
-                    val state = api.getSessionState(
-                        baseUrl = storedSession.baseUrl,
-                        accountId = storedSession.accountId,
-                        deviceId = storedSession.deviceId,
-                        runtimeId = storedSession.runtimeId,
-                        sessionId = storedSession.sessionId,
-                    )
-                    val relayRefresh = if (state.canResumeRuntime(runtime.id)) {
-                        api.issueSessionRelayToken(
-                            storedSession.baseUrl,
-                            storedSession.accountId,
-                            storedSession.deviceId,
-                            storedSession.runtimeId,
-                            storedSession.sessionId,
-                        )
-                    } else {
-                        null
-                    }
-                    state to relayRefresh
-                }.onSuccess {
-                    val (state, relayRefresh) = it
-                    if (state.canResumeRuntime(runtime.id) && relayRefresh != null) {
-                        val updatedSession = storedSession.copy(
-                            relayToken = relayRefresh.relayToken,
-                            viewerPublicKey = relayRefresh.viewerPublicKey,
-                        )
-                        activeSessionStore.save(updatedSession)
-                        appLogs.info("Returning to active session from controls for ${runtime.name}", "session")
-                        startActivity(SessionActivity.createIntent(this@ControlsActivity, updatedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
-                    } else {
-                        activeSessionStore.clear()
-                        appLogs.warn("Stored active session from controls is ${state.effectiveStatus}; creating a fresh session", "session")
-                        connectRuntime(runtime)
-                    }
-                }.onFailure { error ->
-                    if (error.isGoneSessionResponse()) {
-                        activeSessionStore.clear()
-                        appLogs.warn("Stored active session from controls was gone on backend: ${error.message}", "session")
-                        connectRuntime(runtime)
-                    } else {
-                        appLogs.warn("Stored active session heartbeat from controls failed: ${error.message}", "session")
-                        toast(error.virtroidDisplayMessage(this@ControlsActivity))
-                    }
-                }
-            }
-            return
-        }
-
-        val accountId = sessionStore.accountId ?: return
-        val deviceId = sessionStore.deviceId ?: return
-        binding.controlsConnectButton.isEnabled = false
-        binding.controlsStateValue.text = getString(R.string.controls_state_preparing_viewer)
-        lifecycleScope.launch {
-            runCatching {
-                val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtime.id)
-                snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
-                runtimeState = state
-                this@ControlsActivity.runtime = state.runtime
-                bindRuntime(state.runtime, state)
-                binding.controlsConnectButton.isEnabled = false
-                if (!state.canConnectRuntime(runtime.id)) {
-                    throw IOException(state.blockedReason ?: getString(R.string.runtime_start_timeout))
-                }
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                val session = api.createSession(
-                    baseUrl = sessionStore.baseUrl,
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    runtimeId = state.runtime.id,
-                    maxSize = sessionMaxSize(),
-                    bitRate = DEFAULT_SESSION_BIT_RATE,
-                    blobAccessKey = blobAccessKey,
-                )
-                identityPasswordStore.saveConfigured(accountId, deviceId)
-                Pair(session, state.runtime)
-            }.onSuccess { (session, readyRuntime) ->
-                val activeSession = ActiveSessionStore.ActiveSession(
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    baseUrl = sessionStore.baseUrl,
-                    runtimeId = readyRuntime.id,
-                    runtimeName = readyRuntime.name,
-                    viewerAddress = session.viewerAddress,
-                    relayHost = session.relayHost,
-                    relayPort = session.relayPort,
-                    relayTls = session.relayTls,
-                    relayPath = session.relayPath,
-                    relayToken = session.relayToken,
-                    sessionId = session.sessionId,
-                    viewerPublicKey = session.viewerPublicKey,
-                    audioEnabled = readyRuntime.audioEnabled,
-                    cameraMode = readyRuntime.cameraMode,
-                    fileMode = readyRuntime.fileMode,
-                )
-                activeSessionStore.save(activeSession)
-                appLogs.info("Session created from controls for ${readyRuntime.name}", "session")
-                startActivity(
-                    SessionActivity.createIntent(this@ControlsActivity, activeSession),
-                )
-            }.onFailure {
-                appLogs.error(it.message ?: getString(R.string.status_error), "session")
-                binding.controlsConnectButton.isEnabled = true
-                binding.controlsStateValue.text = runtime.lifecycleLabel()
-                showSessionPrepareError(it, runtime)
-            }
-        }
-    }
-
     private fun confirmDelete() {
         val current = runtime ?: return
-        showTypedConfirmation(
+        showConfirmation(
             title = getString(R.string.controls_delete_confirm_title),
             message = getString(R.string.controls_delete_confirm_body),
-            confirmationPhrase = "DELETE",
             confirmLabel = getString(R.string.controls_confirm),
             onConfirmed = delete@{
                 val accountId = sessionStore.accountId ?: return@delete
@@ -738,11 +521,6 @@ class ControlsActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun sessionMaxSize(): Int {
-        val metrics = resources.displayMetrics
-        return max(metrics.widthPixels, metrics.heightPixels).coerceIn(720, 1600)
-    }
-
     private suspend fun requireBlobAccessKey(accountId: String, deviceId: String): String {
         identityPasswordStore.unlockedBlobAccessKey(accountId, deviceId)?.let { return it }
         val password = promptIdentityPassword(
@@ -769,13 +547,6 @@ class ControlsActivity : AppCompatActivity() {
             desiredState.equals("running", ignoreCase = true) &&
             connectionStatus.equals("online", ignoreCase = true) &&
             !hostId.isNullOrBlank()
-    }
-
-    private fun RuntimeState?.shouldOfferRecoveryStop(): Boolean {
-        return this != null &&
-            canStop &&
-            !canConnect &&
-            !effectiveState.equals("starting", ignoreCase = true)
     }
 
     private fun RuntimeSummary.lifecycleLabel(): String {
@@ -806,20 +577,8 @@ class ControlsActivity : AppCompatActivity() {
             connectionStatus.equals("preparing", ignoreCase = true)
     }
 
-    private fun showSessionPrepareError(error: Throwable, runtime: RuntimeSummary) {
-        MaterialAlertDialogBuilder(this)
-            .setTitle(getString(R.string.session_prepare_failed_title))
-            .setMessage(error.virtroidDisplayMessage(this))
-            .setNegativeButton(getString(R.string.controls_cancel), null)
-            .setPositiveButton(getString(R.string.session_prepare_retry)) { _, _ ->
-                connectRuntime(runtime)
-            }
-            .show()
-    }
-
     companion object {
         private const val EXTRA_RUNTIME_ID = "extra_runtime_id"
-        private const val DEFAULT_SESSION_BIT_RATE = 4_000_000
         private const val CONNECT_WAIT_MAX_MS = 10 * 60 * 1_000L
 
         fun createIntent(context: Context, runtimeId: String): Intent =

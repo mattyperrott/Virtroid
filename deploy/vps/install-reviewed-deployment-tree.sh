@@ -271,6 +271,7 @@ required_tree_files=(
   virtroid-backup.timer virtroid-binderfs-setup.sh
   monitoring/README.md monitoring/alertmanager.yml
   monitoring/prometheus.yml monitoring/virtroid-alerts.yml
+  suricata/README.md suricata/virtroid.rules
 )
 
 atomic_install_file() {

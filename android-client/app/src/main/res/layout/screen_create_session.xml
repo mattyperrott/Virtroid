@@ -150,7 +150,7 @@
                             android:contentDescription="@string/new_runtime_audio_passthrough"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:checked="false"
+                            android:checked="true"
                             android:text=""
                             android:thumbTint="@color/switch_thumb_tint"
                             android:trackTint="@color/switch_track_tint" />

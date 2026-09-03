@@ -98,3 +98,49 @@ func TestDecodeStrictJSONRejectsContentField(t *testing.T) {
 		t.Fatal("metadata endpoint accepted an undeclared message-content field")
 	}
 }
+
+func TestSecurityNoticePayloadContainsOnlySanitizedClientFields(t *testing.T) {
+	event := securityNoticeEvent{
+		EventID:    "d9c31cc4-5395-45d7-bc93-52f249c5245a",
+		Source:     "falco",
+		Severity:   "critical",
+		Summary:    clientSecuritySummary("falco", "Virtroid Runtime Root Access By Unexpected Process"),
+		ObservedAt: time.Now().UTC(),
+	}
+	payload, err := encodeSecurityNoticePayload(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"version": true, "kind": true, "event_id": true, "source": true,
+		"severity": true, "summary": true, "observed_at": true,
+	}
+	if len(decoded) != len(want) {
+		t.Fatalf("payload keys = %v", decoded)
+	}
+	for key := range decoded {
+		if !want[key] {
+			t.Fatalf("security payload contains unapproved key %q", key)
+		}
+	}
+	encoded := string(payload)
+	for _, forbidden := range []string{"command", "path", "node_id", "ip_address", "event_json"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("security payload contains forbidden detail %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestClientSecuritySeverityMapping(t *testing.T) {
+	for input, want := range map[string]string{
+		"NOTICE": "notice", "warning": "warning", "ERROR": "critical", "CRITICAL": "critical",
+	} {
+		if got := clientSecuritySeverity(input); got != want {
+			t.Fatalf("clientSecuritySeverity(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

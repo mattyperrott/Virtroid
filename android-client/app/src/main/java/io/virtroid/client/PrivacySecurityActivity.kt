@@ -22,7 +22,7 @@ import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptPinCode
-import io.virtroid.client.security.showTypedConfirmation
+import io.virtroid.client.security.showConfirmation
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -180,10 +180,9 @@ class PrivacySecurityActivity : AppCompatActivity() {
 
     private suspend fun setAppLockEnabled(enabled: Boolean) {
         if (!enabled) {
-            showTypedConfirmation(
+            showConfirmation(
                 title = getString(R.string.privacy_disable_app_lock_title),
                 message = getString(R.string.privacy_disable_app_lock_body),
-                confirmationPhrase = "DISABLE",
                 confirmLabel = getString(R.string.privacy_disable_app_lock_confirm),
                 onCancelled = ::renderSettings,
                 onConfirmed = {

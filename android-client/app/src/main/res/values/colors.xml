@@ -54,6 +54,7 @@
     <color name="v_amber_soft">#1AF59E0B</color>
     <color name="v_usdt">#26A17B</color>
     <color name="v_blue">#93C5FD</color>
+    <color name="v_blue_soft">#1A93C5FD</color>
     <color name="v_green">#4ADE80</color>
     <color name="v_dock">#CC1C1F1C</color>
     <color name="v_transparent">#00000000</color>

@@ -153,3 +153,10 @@ jobs:
             -v "${PWD}/deploy/vps/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
             prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286 \
             check-config /etc/alertmanager/alertmanager.yml
+
+      - name: NIDS rule validation
+        run: |
+          docker run --rm --entrypoint=suricata \
+            -v "${PWD}/deploy/vps/suricata/virtroid.rules:/etc/suricata/rules/virtroid.rules:ro" \
+            jasonish/suricata:8.0.6@sha256:51a59543dcb6e5f9d586c06053c6b71d462cea919b45719090443f4af1428780 \
+            -T -S /etc/suricata/rules/virtroid.rules -l /tmp

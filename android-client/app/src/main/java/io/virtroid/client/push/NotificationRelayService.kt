@@ -16,6 +16,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.virtroid.client.LauncherActivity
 import io.virtroid.client.R
+import io.virtroid.client.data.AppLogLevel
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.security.DeviceIdentityStore
 import io.virtroid.client.security.PushEncryptionKeyStore
@@ -36,6 +37,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 import java.time.Instant
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -143,7 +145,12 @@ class NotificationRelayService : Service() {
         val event = delivery.second
         val alreadyShown = hasSeenEvent(event.eventId)
         if (!alreadyShown) {
-            if (!canPostNotifications() || !showNotification(event)) return
+            when (event) {
+                is RuntimeRelayEvent -> {
+                    if (!canPostNotifications() || !showNotification(event)) return
+                }
+                is SecurityRelayEvent -> recordSecurityNotice(event)
+            }
             rememberEvent(event.eventId)
         }
         acknowledge(identity, delivery.first)
@@ -180,7 +187,7 @@ class NotificationRelayService : Service() {
             .build()
     }
 
-    private fun showNotification(event: RelayEvent): Boolean {
+    private fun showNotification(event: RuntimeRelayEvent): Boolean {
         val manager = getSystemService(NotificationManager::class.java) ?: return false
         val intent = Intent(this, LauncherActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
@@ -208,11 +215,19 @@ class NotificationRelayService : Service() {
     private fun parseEvent(raw: String): RelayEvent {
         val json = JSONObject(raw)
         require(json.getInt("version") == 1)
+        return if (json.optString("kind") == SECURITY_EVENT_KIND) {
+            parseSecurityEvent(json)
+        } else {
+            parseRuntimeEvent(json)
+        }
+    }
+
+    private fun parseRuntimeEvent(json: JSONObject): RuntimeRelayEvent {
         val keys = buildSet {
             val iterator = json.keys()
             while (iterator.hasNext()) add(iterator.next())
         }
-        require(keys == EXPECTED_EVENT_KEYS)
+        require(keys == EXPECTED_RUNTIME_EVENT_KEYS)
         val eventId = UUID.fromString(json.getString("event_id")).toString()
         val packageName = json.getString("package_name")
         val appLabel = json.getString("app_label")
@@ -221,9 +236,42 @@ class NotificationRelayService : Service() {
         require(packageName.length <= MAX_PACKAGE_CHARS && packageName.matches(PACKAGE_PATTERN))
         require(appLabel.isNotBlank() && appLabel.codePointCount(0, appLabel.length) <= MAX_APP_LABEL_CHARS)
         require(title.codePointCount(0, title.length) <= MAX_TITLE_CHARS)
-        require(postedAt.isAfter(Instant.now().minusSeconds(7 * 24 * 60 * 60L)))
-        require(postedAt.isBefore(Instant.now().plusSeconds(5 * 60L)))
-        return RelayEvent(eventId, packageName, appLabel, postedAt, title)
+        require(isFreshEventTime(postedAt))
+        return RuntimeRelayEvent(eventId, packageName, appLabel, postedAt, title)
+    }
+
+    private fun parseSecurityEvent(json: JSONObject): SecurityRelayEvent {
+        val keys = buildSet {
+            val iterator = json.keys()
+            while (iterator.hasNext()) add(iterator.next())
+        }
+        require(keys == EXPECTED_SECURITY_EVENT_KEYS)
+        val eventId = UUID.fromString(json.getString("event_id")).toString()
+        val source = json.getString("source")
+        val severity = json.getString("severity")
+        val summary = json.getString("summary")
+        val observedAt = Instant.parse(json.getString("observed_at"))
+        require(source in SECURITY_SOURCES)
+        require(severity in SECURITY_SEVERITIES)
+        require(summary.isNotBlank() && summary.codePointCount(0, summary.length) <= MAX_SECURITY_SUMMARY_CHARS)
+        require('\n' !in summary && '\r' !in summary)
+        require(isFreshEventTime(observedAt))
+        return SecurityRelayEvent(eventId, source, severity, summary, observedAt)
+    }
+
+    private fun isFreshEventTime(value: Instant): Boolean {
+        return value.isAfter(Instant.now().minusSeconds(7 * 24 * 60 * 60L)) &&
+            value.isBefore(Instant.now().plusSeconds(5 * 60L))
+    }
+
+    private fun recordSecurityNotice(event: SecurityRelayEvent) {
+        val message = "${event.summary} · ${event.source.uppercase(Locale.ROOT)}"
+        val level = when (event.severity) {
+            "critical" -> AppLogLevel.CRITICAL
+            "warning" -> AppLogLevel.WARN
+            else -> AppLogLevel.SECURITY
+        }
+        logs.log(level, message, "security", event.observedAt.toEpochMilli())
     }
 
     private fun canPostNotifications(): Boolean {
@@ -283,13 +331,25 @@ class NotificationRelayService : Service() {
             .build()
     }
 
-    private data class RelayEvent(
-        val eventId: String,
+    private sealed interface RelayEvent {
+        val eventId: String
+    }
+
+    private data class RuntimeRelayEvent(
+        override val eventId: String,
         val packageName: String,
         val appLabel: String,
         val postedAt: Instant,
         val title: String,
-    )
+    ) : RelayEvent
+
+    private data class SecurityRelayEvent(
+        override val eventId: String,
+        val source: String,
+        val severity: String,
+        val summary: String,
+        val observedAt: Instant,
+    ) : RelayEvent
 
     companion object {
         private const val ACTION_RECONNECT = "io.virtroid.client.NOTIFICATION_RELAY_RECONNECT"
@@ -303,10 +363,12 @@ class NotificationRelayService : Service() {
         private const val MAX_PACKAGE_CHARS = 255
         private const val MAX_APP_LABEL_CHARS = 100
         private const val MAX_TITLE_CHARS = 200
+        private const val MAX_SECURITY_SUMMARY_CHARS = 200
+        private const val SECURITY_EVENT_KIND = "security_notice"
         private const val INITIAL_RETRY_DELAY_MS = 2_000L
         private const val MAX_RETRY_DELAY_MS = 60_000L
         private val PACKAGE_PATTERN = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
-        private val EXPECTED_EVENT_KEYS = setOf(
+        private val EXPECTED_RUNTIME_EVENT_KEYS = setOf(
             "version",
             "event_id",
             "package_name",
@@ -314,6 +376,17 @@ class NotificationRelayService : Service() {
             "posted_at",
             "title",
         )
+        private val EXPECTED_SECURITY_EVENT_KEYS = setOf(
+            "version",
+            "kind",
+            "event_id",
+            "source",
+            "severity",
+            "summary",
+            "observed_at",
+        )
+        private val SECURITY_SOURCES = setOf("falco", "suricata")
+        private val SECURITY_SEVERITIES = setOf("notice", "warning", "critical")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val STREAM_CLIENT = OkHttpClient.Builder()
             .certificatePinner(TlsPins.certificatePinner())

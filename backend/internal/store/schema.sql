@@ -558,6 +558,25 @@ CREATE INDEX IF NOT EXISTS idx_runtime_notification_deliveries_pending
 CREATE INDEX IF NOT EXISTS idx_runtime_notification_deliveries_expires
     ON runtime_notification_deliveries (expires_at);
 
+CREATE TABLE IF NOT EXISTS security_notice_deliveries (
+    id UUID PRIMARY KEY,
+    node_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    event_id UUID NOT NULL,
+    device_id UUID NOT NULL REFERENCES device_notification_subscriptions(device_id) ON DELETE CASCADE,
+    envelope_ciphertext TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    delivered_at TIMESTAMPTZ,
+    UNIQUE (node_id, event_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_notice_deliveries_pending
+    ON security_notice_deliveries (device_id, created_at)
+    WHERE delivered_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_security_notice_deliveries_expires
+    ON security_notice_deliveries (expires_at);
+
 DROP TABLE IF EXISTS runtime_notification_event_receipts;
 
 CREATE TABLE IF NOT EXISTS runtime_blob_key_handoffs (

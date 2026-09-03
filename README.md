@@ -115,6 +115,7 @@ flowchart LR
 | Account deletion             |   ✅ Implemented   | Includes relational and runtime cleanup                 |
 | Local application lock       |   ✅ Implemented   | Includes retry controls and biometric support           |
 | Encrypted client state       |   ✅ Implemented   | Protected using Android Keystore-backed controls        |
+| Confirmation dialogs         |   ✅ Implemented   | Destructive actions use standard Cancel/Confirm modals without typed phrases |
 | F-Droid application catalog  |   ✅ Implemented   | Catalog entries include pinned APK hashes               |
 | F-Droid installation         |     🟡 Partial    | Happy path implemented; broader failure testing remains |
 | Encrypted local snapshots    |   ✅ Implemented   | Repository path and last recorded VPS mechanism         |
@@ -123,7 +124,10 @@ flowchart LR
 | Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
 | Active-runtime file import   |   ✅ Backend path  | Signed bounded path is live-proved; the generic client upload button was intentionally removed |
 | Metrics and trace context    |   ✅ Deployed      | Bounded Prometheus metrics and W3C trace propagation     |
-| Alerts                       |     🟡 Partial     | Seven rules are deployed; an external notification receiver is still required |
+| Operational alerts           |     🟡 Partial     | Seven health rules are deployed; independent outage paging is still required |
+| Host intrusion detection     |    ✅ Deployed     | Falco detects reviewed host/container anomalies and forwards bounded signed events |
+| Network intrusion detection  |    ✅ Deployed     | Suricata provides a detection-only network baseline; ongoing tuning remains |
+| Client security notices      |   ✅ Implemented   | Sanitized node-level detections enter the encrypted client log as blue, amber, or red events |
 | Node-aware readiness         |   ✅ Deployed      | Control readiness requires and currently observes a fresh approved ready node |
 | Confidential VM isolation    | ❌ Not implemented | ReDroid currently runs on a trusted VPS                 |
 | Hardware attestation         | ❌ Not implemented | Design and proof-of-concept work only                   |
@@ -468,6 +472,13 @@ Virtroid currently provides protections against several classes of client-side, 
 * Biometric authentication
 * Secure-window handling
 
+#### Android client interaction
+
+* Audio passthrough is enabled by default for newly generated runtimes
+* Destructive and security-sensitive actions use standard Cancel/Confirm dialogs
+* Runtime controls use a compact `ID:` label and an inline pencil rename action
+* Runtime connection remains on the runtime card rather than the controls app bar
+
 #### Notification forwarding security
 
 * Runtime-specific 256-bit bearer credentials stored as server-side SHA-256 digests
@@ -477,6 +488,16 @@ Virtroid currently provides protections against several classes of client-side, 
 * Signed physical-device subscription, stream, and acknowledgement requests
 * Ciphertext-only durable delivery outbox with seven-day expiry
 * Local event validation and deduplication before display
+
+#### Host security monitoring
+
+* Falco HIDS coverage for unexpected container shells, runtime-storage access, and Docker-socket use
+* Optional Suricata NIDS coverage for network alerts and protocol anomalies
+* Signed, bounded, and deduplicated sensor-event ingestion
+* Node-to-account scoping based on runtime placement
+* Encrypted per-device delivery of sanitized summaries only
+* Raw commands, paths, network addresses, packet details, and other accounts' data are excluded from client notices
+* Blue security notices, amber warnings, and red critical entries share the existing encrypted client log
 
 #### Deployment security
 

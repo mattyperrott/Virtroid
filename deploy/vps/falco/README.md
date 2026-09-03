@@ -19,6 +19,9 @@ docker logs --tail=100 -f virtroid-falco
 Falco posts JSON events directly to the local `falco-forwarder` over Docker
 network HTTP. The forwarder signs each accepted event with the node key and
 submits it to the control plane through the existing signed node-request path.
+The control plane also creates a sanitized, node-scoped security notice for
+subscribed devices belonging to accounts with runtimes assigned to that node.
+Raw Falco output remains server-side and is never placed in the client notice.
 
 The profile intentionally avoids a persistent Falco JSONL queue. Forwarding is
 bounded by `FALCO_FORWARD_MAX_EVENTS_PER_MINUTE` and

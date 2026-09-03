@@ -367,6 +367,7 @@ services:
     restart: unless-stopped
     profiles:
       - falco
+      - nids
     depends_on:
       - virtroidd
     environment:
@@ -376,6 +377,7 @@ services:
       FALCO_FORWARDER_BIND_ADDR: :8766
       FALCO_FORWARD_MAX_EVENTS_PER_MINUTE: ${FALCO_FORWARD_MAX_EVENTS_PER_MINUTE:-120}
       FALCO_FORWARD_DEDUP_WINDOW: ${FALCO_FORWARD_DEDUP_WINDOW:-5s}
+      SURICATA_EVE_FILE: /var/log/suricata/eve.json
       VIRTROID_HEALTHCHECK_URL: http://127.0.0.1:8766/healthz
     logging:
       driver: local
@@ -385,9 +387,52 @@ services:
     mem_limit: "${FALCO_FORWARDER_MEMORY_LIMIT:-256m}"
     cpus: "${FALCO_FORWARDER_CPU_LIMIT:-0.5}"
     pids_limit: ${FALCO_FORWARDER_PIDS_LIMIT:-128}
+    volumes:
+      - suricata-logs:/var/log/suricata:ro
     networks:
       - monitoring
       - control
+
+  suricata:
+    image: ${SURICATA_IMAGE:-virtroid-suricata-profile-disabled}
+    container_name: virtroid-suricata
+    restart: unless-stopped
+    profiles:
+      - nids
+    depends_on:
+      - falco-forwarder
+    network_mode: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - -i
+      - ${SURICATA_INTERFACE:?set SURICATA_INTERFACE to the reviewed host ingress interface}
+      - -S
+      - /etc/suricata/rules/virtroid.rules
+      - -l
+      - /var/log/suricata
+    volumes:
+      - ./suricata/virtroid.rules:/etc/suricata/rules/virtroid.rules:ro
+      - suricata-logs:/var/log/suricata
+    read_only: true
+    tmpfs:
+      - /run:rw,nosuid,nodev,size=16m
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+      - /var/lib/suricata:rw,nosuid,nodev,size=64m
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: "${SURICATA_MEMORY_LIMIT:-1g}"
+    cpus: "${SURICATA_CPU_LIMIT:-1.0}"
+    pids_limit: ${SURICATA_PIDS_LIMIT:-512}
 
   prometheus:
     image: ${PROMETHEUS_IMAGE:-virtroid-prometheus-profile-disabled}
@@ -491,3 +536,4 @@ volumes:
   renterd-mysql-data:
   prometheus-data:
   alertmanager-data:
+  suricata-logs:
