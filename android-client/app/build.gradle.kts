@@ -38,7 +38,6 @@ val defaultControlPlaneUsesCleartext = defaultControlPlaneUrl.startsWith("http:/
 val debugControlPlaneUrl = signingValue("VIRTROID_DEBUG_CONTROL_PLANE_URL")
     ?: defaultControlPlaneUrl
 val debugControlPlaneUsesCleartext = debugControlPlaneUrl.startsWith("http://", ignoreCase = true)
-
 android {
     namespace = "io.virtroid.client"
     compileSdk = 36
@@ -157,6 +156,20 @@ val verifyReleaseSecurityManifest = tasks.register("verifyReleaseSecurityManifes
         requireManifestControl(
             text.contains("android:dataExtractionRules="),
             "dataExtractionRules must be present",
+        )
+        requireManifestControl(
+            text.contains("android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"),
+            "remote-messaging foreground-service permission must be present",
+        )
+        requireManifestControl(
+            text.contains("io.virtroid.client.push.NotificationRelayService") &&
+                text.contains("android:foregroundServiceType=\"remoteMessaging\""),
+            "built-in remote-messaging relay service must be present",
+        )
+        requireManifestControl(
+            !text.contains("firebase", ignoreCase = true) &&
+                !text.contains("com.google.firebase.MESSAGING_EVENT"),
+            "third-party messaging components must not be present",
         )
         requireManifestControl(!text.contains("UiPreviewActivity"), "debug preview activity leaked into release")
     }

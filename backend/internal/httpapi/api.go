@@ -34,12 +34,14 @@ import (
 )
 
 type API struct {
-	cfg              config.ServerConfig
-	store            *store.Store
-	activeBlobKeys   *activeBlobKeyVault
-	bootstrapLimiter *bootstrapRateLimiter
-	observability    *observability.Service
-	httpClient       *http.Client
+	cfg                 config.ServerConfig
+	store               *store.Store
+	activeBlobKeys      *activeBlobKeyVault
+	bootstrapLimiter    *bootstrapRateLimiter
+	notificationLimiter *bootstrapRateLimiter
+	observability       *observability.Service
+	httpClient          *http.Client
+	notificationHub     *notificationStreamHub
 }
 
 type durableBlobKeyHandoffStore interface {
@@ -338,12 +340,14 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	}
 	telemetry := observability.New("virtroidd")
 	api := &API{
-		cfg:              cfg,
-		store:            st,
-		activeBlobKeys:   activeBlobKeys,
-		bootstrapLimiter: newBootstrapRateLimiter(cfg.BootstrapRateLimitPerMinute, bootstrapRateLimitWindow),
-		observability:    telemetry,
-		httpClient:       &http.Client{Transport: telemetry.Transport(http.DefaultTransport), Timeout: runtimeMediaProxyTimeout},
+		cfg:                 cfg,
+		store:               st,
+		activeBlobKeys:      activeBlobKeys,
+		bootstrapLimiter:    newBootstrapRateLimiter(cfg.BootstrapRateLimitPerMinute, bootstrapRateLimitWindow),
+		notificationLimiter: newBootstrapRateLimiter(cfg.RuntimeNotificationRateLimit, time.Minute),
+		observability:       telemetry,
+		httpClient:          &http.Client{Transport: telemetry.Transport(http.DefaultTransport), Timeout: runtimeMediaProxyTimeout},
+		notificationHub:     newNotificationStreamHub(),
 	}
 
 	mux := http.NewServeMux()
@@ -367,6 +371,10 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/me", api.deleteMyAccount)
 	mux.HandleFunc("GET /api/v1/me/devices", api.listMyDevices)
 	mux.HandleFunc("DELETE /api/v1/me/devices/{device_id}", api.revokeMyDevice)
+	mux.HandleFunc("PUT /api/v1/me/notification-subscription", api.upsertMyNotificationSubscription)
+	mux.HandleFunc("DELETE /api/v1/me/notification-subscription", api.deleteMyNotificationSubscription)
+	mux.HandleFunc("GET /api/v1/me/notification-stream", api.streamMyNotifications)
+	mux.HandleFunc("POST /api/v1/me/notification-deliveries/{id}/ack", api.ackMyNotificationDelivery)
 	mux.HandleFunc("POST /api/v1/me/identity/register", api.registerMyIdentity)
 	mux.HandleFunc("GET /api/v1/me/identity/recovery", api.getMyAccountRecovery)
 	mux.HandleFunc("POST /api/v1/me/identity/recovery", api.registerMyAccountRecovery)
@@ -399,7 +407,9 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/blob-key", api.runtimeBlobKey)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/status", api.runtimeStatusUpdate)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
+	mux.HandleFunc("PUT /api/v1/internal/runtimes/{id}/notification-agent", api.registerRuntimeNotificationAgent)
 	mux.HandleFunc("POST /api/v1/internal/security/events", api.securityEventAppend)
+	mux.HandleFunc("POST /api/v1/runtime-notifications/{id}", api.receiveRuntimeNotification)
 
 	return telemetry.Middleware(withRecovery(withJSON(mux)))
 }
@@ -449,10 +459,11 @@ func (a *API) readyz(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusServiceUnavailable
 	}
 	writeJSON(w, status, map[string]any{
-		"ok":       readiness.Ready,
-		"role":     "virtroidd",
-		"database": map[string]any{"ready": true},
-		"nodes":    readiness,
+		"ok":                  readiness.Ready,
+		"role":                "virtroidd",
+		"database":            map[string]any{"ready": true},
+		"nodes":               readiness,
+		"notification_stream": map[string]any{"ready": true},
 	})
 }
 

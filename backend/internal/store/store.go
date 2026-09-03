@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026080301
-	schemaVersionLabel               = "recoverable account master keys 2026-08-03"
+	currentSchemaVersion       int64 = 2026090202
+	schemaVersionLabel               = "direct encrypted runtime notification stream 2026-09-02"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -109,6 +109,9 @@ var (
 	ErrRecoveryAlreadyConfigured  = errors.New("account recovery is already configured")
 	ErrRecoveryChallengeInvalid   = errors.New("account recovery challenge is invalid, expired, or already used")
 	ErrRecoveryDeviceExists       = errors.New("the recovery device is already enrolled")
+	ErrNotificationSubscription   = errors.New("notification subscription is invalid")
+	ErrNotificationDelivery       = errors.New("notification delivery is invalid")
+	ErrNotificationAgent          = errors.New("runtime notification agent is not authorized")
 )
 
 const MaxNodeKeyRotationOverlap = 24 * time.Hour
@@ -274,6 +277,31 @@ type Device struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
 	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
+}
+
+type DeviceNotificationSubscription struct {
+	DeviceID            string
+	AccountID           string
+	EncryptionPublicKey string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastConnectedAt     *time.Time
+}
+
+type RuntimeNotificationDelivery struct {
+	ID                 string
+	RuntimeID          string
+	EventID            string
+	DeviceID           string
+	EnvelopeCiphertext string
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+}
+
+type RuntimeNotificationTarget struct {
+	AccountID   string
+	RuntimeID   string
+	RuntimeName string
 }
 
 type Runtime struct {
@@ -2921,6 +2949,226 @@ func (s *Store) DevicePublicKey(ctx context.Context, accountID, deviceID string)
 		return "", err
 	}
 	return strings.TrimSpace(publicKey), nil
+}
+
+func (s *Store) UpsertDeviceNotificationSubscription(ctx context.Context, subscription DeviceNotificationSubscription) error {
+	if strings.TrimSpace(subscription.AccountID) == "" || strings.TrimSpace(subscription.DeviceID) == "" ||
+		strings.TrimSpace(subscription.EncryptionPublicKey) == "" {
+		return ErrNotificationSubscription
+	}
+	result, err := s.db.ExecContext(ctx,
+		`INSERT INTO device_notification_subscriptions (
+		     device_id, account_id, encryption_public_key, updated_at
+		 )
+		 SELECT d.id, d.account_id, $3, NOW()
+		   FROM devices d
+		   JOIN accounts a ON a.id = d.account_id
+		  WHERE d.id = $2 AND d.account_id = $1
+		    AND d.revoked_at IS NULL AND a.deleted_at IS NULL
+		 ON CONFLICT (device_id) DO UPDATE
+		 SET encryption_public_key = EXCLUDED.encryption_public_key,
+		     account_id = EXCLUDED.account_id,
+		     updated_at = NOW()`,
+		subscription.AccountID,
+		subscription.DeviceID,
+		strings.TrimSpace(subscription.EncryptionPublicKey),
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrDeviceNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteDeviceNotificationSubscription(ctx context.Context, accountID, deviceID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM device_notification_subscriptions WHERE account_id = $1 AND device_id = $2`,
+		strings.TrimSpace(accountID), strings.TrimSpace(deviceID),
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotificationSubscription
+	}
+	return nil
+}
+
+func (s *Store) ListDeviceNotificationSubscriptions(ctx context.Context, accountID string) ([]DeviceNotificationSubscription, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT p.device_id, p.account_id, p.encryption_public_key, p.created_at,
+		        p.updated_at, p.last_connected_at
+		   FROM device_notification_subscriptions p
+		   JOIN devices d ON d.id = p.device_id AND d.account_id = p.account_id
+		   JOIN accounts a ON a.id = p.account_id
+		  WHERE p.account_id = $1 AND d.revoked_at IS NULL AND a.deleted_at IS NULL`,
+		strings.TrimSpace(accountID),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var subscriptions []DeviceNotificationSubscription
+	for rows.Next() {
+		var item DeviceNotificationSubscription
+		if err := rows.Scan(
+			&item.DeviceID, &item.AccountID, &item.EncryptionPublicKey,
+			&item.CreatedAt, &item.UpdatedAt, &item.LastConnectedAt,
+		); err != nil {
+			return nil, err
+		}
+		subscriptions = append(subscriptions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return subscriptions, nil
+}
+
+func (s *Store) TouchDeviceNotificationSubscription(ctx context.Context, accountID, deviceID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE device_notification_subscriptions p
+		    SET last_connected_at = NOW(), updated_at = NOW()
+		   FROM devices d, accounts a
+		  WHERE p.account_id = $1 AND p.device_id = $2
+		    AND d.id = p.device_id AND d.account_id = p.account_id
+		    AND a.id = p.account_id AND d.revoked_at IS NULL AND a.deleted_at IS NULL`,
+		strings.TrimSpace(accountID), strings.TrimSpace(deviceID),
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotificationSubscription
+	}
+	return nil
+}
+
+func (s *Store) EnqueueRuntimeNotificationDelivery(ctx context.Context, delivery RuntimeNotificationDelivery) (bool, error) {
+	if _, err := uuid.Parse(strings.TrimSpace(delivery.ID)); err != nil {
+		return false, ErrNotificationDelivery
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(delivery.EventID)); err != nil {
+		return false, ErrNotificationDelivery
+	}
+	if strings.TrimSpace(delivery.RuntimeID) == "" || strings.TrimSpace(delivery.DeviceID) == "" ||
+		strings.TrimSpace(delivery.EnvelopeCiphertext) == "" || !delivery.ExpiresAt.After(time.Now().UTC()) {
+		return false, ErrNotificationDelivery
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM runtime_notification_deliveries
+		  WHERE expires_at < NOW()
+		     OR (delivered_at IS NOT NULL AND delivered_at < NOW() - INTERVAL '24 hours')`); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO runtime_notification_deliveries (
+		     id, runtime_id, event_id, device_id, envelope_ciphertext, expires_at
+		 ) VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (runtime_id, event_id, device_id) DO NOTHING`,
+		delivery.ID, delivery.RuntimeID, delivery.EventID, delivery.DeviceID,
+		delivery.EnvelopeCiphertext, delivery.ExpiresAt.UTC(),
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func (s *Store) ListPendingNotificationDeliveries(
+	ctx context.Context,
+	accountID, deviceID string,
+	limit int,
+) ([]RuntimeNotificationDelivery, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT n.id, n.runtime_id, n.event_id, n.device_id, n.envelope_ciphertext,
+		        n.created_at, n.expires_at
+		   FROM runtime_notification_deliveries n
+		   JOIN device_notification_subscriptions p ON p.device_id = n.device_id
+		   JOIN devices d ON d.id = p.device_id AND d.account_id = p.account_id
+		   JOIN accounts a ON a.id = p.account_id
+		  WHERE p.account_id = $1 AND p.device_id = $2
+		    AND d.revoked_at IS NULL AND a.deleted_at IS NULL
+		    AND n.delivered_at IS NULL AND n.expires_at > NOW()
+		  ORDER BY n.created_at ASC
+		  LIMIT $3`,
+		strings.TrimSpace(accountID), strings.TrimSpace(deviceID), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var deliveries []RuntimeNotificationDelivery
+	for rows.Next() {
+		var item RuntimeNotificationDelivery
+		if err := rows.Scan(
+			&item.ID, &item.RuntimeID, &item.EventID, &item.DeviceID,
+			&item.EnvelopeCiphertext, &item.CreatedAt, &item.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		deliveries = append(deliveries, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return deliveries, nil
+}
+
+func (s *Store) MarkNotificationDeliveryDelivered(ctx context.Context, accountID, deviceID, deliveryID string) error {
+	if _, err := uuid.Parse(strings.TrimSpace(deliveryID)); err != nil {
+		return ErrNotificationDelivery
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE runtime_notification_deliveries n
+		    SET delivered_at = COALESCE(n.delivered_at, NOW())
+		   FROM device_notification_subscriptions p, devices d, accounts a
+		  WHERE n.id = $3 AND n.device_id = $2
+		    AND p.device_id = n.device_id AND p.account_id = $1
+		    AND d.id = p.device_id AND d.account_id = p.account_id
+		    AND a.id = p.account_id AND d.revoked_at IS NULL AND a.deleted_at IS NULL`,
+		strings.TrimSpace(accountID), strings.TrimSpace(deviceID), strings.TrimSpace(deliveryID),
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotificationDelivery
+	}
+	return nil
 }
 
 func (s *Store) RememberDeviceRequestNonce(ctx context.Context, accountID, deviceID, nonce string, expiresAt time.Time) error {
@@ -6206,6 +6454,76 @@ func (s *Store) RequireRuntimeAssignedToHost(ctx context.Context, runtimeID, hos
 		return err
 	}
 	return nil
+}
+
+func (s *Store) RegisterRuntimeNotificationAgent(
+	ctx context.Context,
+	runtimeID, hostID string,
+	tokenSHA256 []byte,
+	versionCode int64,
+) error {
+	if strings.TrimSpace(runtimeID) == "" || strings.TrimSpace(hostID) == "" ||
+		len(tokenSHA256) != sha256.Size || versionCode <= 0 {
+		return ErrNotificationAgent
+	}
+	result, err := s.db.ExecContext(ctx,
+		`INSERT INTO runtime_notification_agents (
+		     runtime_id, account_id, token_sha256, version_code, configured_at, last_seen_at
+		 )
+		 SELECT r.id, r.account_id, $3, $4, NOW(), NULL
+		   FROM runtimes r
+		  WHERE r.id = $1 AND r.host_id = $2
+		    AND r.deleted_at IS NULL AND r.desired_state = 'running'
+		 ON CONFLICT (runtime_id) DO UPDATE
+		 SET account_id = EXCLUDED.account_id,
+		     token_sha256 = EXCLUDED.token_sha256,
+		     version_code = EXCLUDED.version_code,
+		     configured_at = NOW(),
+		     last_seen_at = NULL`,
+		runtimeID, hostID, tokenSHA256, versionCode,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrRuntimeNotFound
+	}
+	return nil
+}
+
+func (s *Store) AuthenticateRuntimeNotificationAgent(
+	ctx context.Context,
+	runtimeID string,
+	tokenSHA256 []byte,
+) (RuntimeNotificationTarget, error) {
+	if strings.TrimSpace(runtimeID) == "" || len(tokenSHA256) != sha256.Size {
+		return RuntimeNotificationTarget{}, ErrNotificationAgent
+	}
+	var target RuntimeNotificationTarget
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE runtime_notification_agents a
+		    SET last_seen_at = NOW()
+		   FROM runtimes r
+		  WHERE a.runtime_id = $1
+		    AND a.token_sha256 = $2
+		    AND r.id = a.runtime_id
+		    AND r.account_id = a.account_id
+		    AND r.deleted_at IS NULL
+		    AND r.desired_state = 'running'
+		 RETURNING a.account_id, a.runtime_id, r.name`,
+		runtimeID, tokenSHA256,
+	).Scan(&target.AccountID, &target.RuntimeID, &target.RuntimeName)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RuntimeNotificationTarget{}, ErrNotificationAgent
+		}
+		return RuntimeNotificationTarget{}, err
+	}
+	return target, nil
 }
 
 func (s *Store) UpdateRuntimeObservation(ctx context.Context, runtimeID string, observation RuntimeObservation) error {

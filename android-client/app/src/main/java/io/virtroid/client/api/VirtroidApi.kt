@@ -928,6 +928,28 @@ class VirtroidApi(
         )
     }
 
+    suspend fun upsertNotificationSubscription(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        encryptionPublicKey: String,
+    ) = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("device_id", deviceId)
+            .put("encryption_public_key", encryptionPublicKey)
+            .toString()
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/notification-subscription",
+                method = "PUT",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = body,
+            ),
+        )
+    }
+
     suspend fun closeSession(
         baseUrl: String,
         accountId: String,

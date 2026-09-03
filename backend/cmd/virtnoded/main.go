@@ -83,6 +83,14 @@ const viewerInitMountPath = "/vendor/etc/init/virtroid-viewer.rc"
 const viewerPublicKeyPath = "/data/local/tmp/virtroid-viewer-public-key"
 
 const (
+	notificationAgentPackage  = "io.virtroid.runtimeagent"
+	notificationAgentListener = "io.virtroid.runtimeagent/.RuntimeNotificationListener"
+	notificationAgentReceiver = "io.virtroid.runtimeagent/.ProvisionReceiver"
+	notificationAgentAction   = "io.virtroid.runtimeagent.PROVISION"
+	notificationAgentVersion  = 1
+)
+
+const (
 	scrcpyPlainPort     = 7007
 	encryptedViewerPort = 7017
 )
@@ -543,6 +551,11 @@ func (n *nodeAgent) assetsReady() bool {
 	for _, candidate := range []string{n.scrcpyServerPath(), n.viewerCryptPath(), n.viewerScriptPath(), n.viewerInitPath()} {
 		info, err := os.Stat(candidate)
 		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			return false
+		}
+	}
+	if n.cfg.NotificationAgentEnabled {
+		if err := verifyAPKFile(n.cfg.NotificationAgentAPKPath, n.cfg.NotificationAgentAPKSHA256); err != nil {
 			return false
 		}
 	}
@@ -1622,6 +1635,10 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				LastError:        stringPtr(""),
 			})
 		}
+		if agentErr := n.ensureNotificationAgent(ctx, runtime, inspect); agentErr != nil {
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", fmt.Sprintf("Runtime notification agent setup failed: %v.", agentErr))
+			return fmt.Errorf("configure runtime notification agent: %w", agentErr)
+		}
 		if !strings.EqualFold(runtime.Status, "running") || !strings.EqualFold(runtime.ConnectionStatus, "online") {
 			interactive, detail, interactiveErr := n.ensureAndroidInteractive(ctx, containerName)
 			if interactiveErr != nil {
@@ -2102,12 +2119,16 @@ func (e *controlPlaneResponseError) Error() string {
 }
 
 func (n *nodeAgent) postControlPlane(ctx context.Context, path string, body any) error {
+	return n.sendControlPlane(ctx, http.MethodPost, path, body)
+}
+
+func (n *nodeAgent) sendControlPlane(ctx context.Context, method, path string, body any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.cfg.ControlPlaneURL+path, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, n.cfg.ControlPlaneURL+path, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -2893,6 +2914,86 @@ func adbShellArgs(serial, shellCmd string) []string {
 	// validated command in one remote-shell argument so probes such as `pm path`
 	// return their real result.
 	return []string{"-s", serial, "shell", shellCmd}
+}
+
+func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse) error {
+	if !n.cfg.NotificationAgentEnabled {
+		return nil
+	}
+	apkPath := strings.TrimSpace(n.cfg.NotificationAgentAPKPath)
+	if apkPath == "" {
+		return errors.New("notification agent APK path is required")
+	}
+	if err := verifyAPKFile(apkPath, n.cfg.NotificationAgentAPKSHA256); err != nil {
+		return fmt.Errorf("verify notification agent APK: %w", err)
+	}
+	markerValue := strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(n.cfg.NotificationAgentAPKSHA256)),
+		strings.TrimRight(strings.TrimSpace(n.cfg.PublicControlPlaneURL), "/"),
+		strconv.Itoa(notificationAgentVersion),
+	}, "\n") + "\n"
+	markerPath := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data", ".virtroid-notification-agent-ready")
+	if existing, err := os.ReadFile(markerPath); err == nil && string(existing) == markerValue {
+		return nil
+	}
+	serial, err := n.adbSerialForRuntime(runtime, inspect)
+	if err != nil {
+		return err
+	}
+	if err := n.adbConnect(ctx, serial); err != nil {
+		return fmt.Errorf("connect adb for notification agent: %w", err)
+	}
+	if err := n.adbInstallAPK(ctx, serial, apkPath); err != nil {
+		return fmt.Errorf("install notification agent: %w", err)
+	}
+	if !n.androidPackageInstalled(ctx, serial, notificationAgentPackage) {
+		return fmt.Errorf("%w: %s", errInstalledPackageMissing, notificationAgentPackage)
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return fmt.Errorf("generate notification agent token: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
+	tokenDigest := sha256.Sum256(tokenBytes)
+	registerPath := fmt.Sprintf("/api/v1/internal/runtimes/%s/notification-agent", url.PathEscape(runtime.ID))
+	if err := n.sendControlPlane(ctx, http.MethodPut, registerPath, map[string]any{
+		"token_sha256": base64.RawURLEncoding.EncodeToString(tokenDigest[:]),
+		"version_code": notificationAgentVersion,
+	}); err != nil {
+		return fmt.Errorf("register notification agent: %w", err)
+	}
+
+	provisionCommand := fmt.Sprintf(
+		"am broadcast -W -a %s -n %s --es base_url %s --es runtime_id %s --es token %s",
+		shellQuote(notificationAgentAction),
+		shellQuote(notificationAgentReceiver),
+		shellQuote(strings.TrimRight(n.cfg.PublicControlPlaneURL, "/")),
+		shellQuote(runtime.ID),
+		shellQuote(token),
+	)
+	output, err := n.adbShellCapture(ctx, serial, provisionCommand)
+	if err != nil {
+		return fmt.Errorf("provision notification agent: %w", err)
+	}
+	if !strings.Contains(output, "result=1") {
+		return fmt.Errorf("notification agent rejected provisioning: %s", output)
+	}
+	if _, err := n.adbShellCapture(ctx, serial, "cmd notification allow_listener "+shellQuote(notificationAgentListener)); err != nil {
+		return fmt.Errorf("enable notification listener: %w", err)
+	}
+	enabled, err := n.adbShellCapture(ctx, serial, "settings get secure enabled_notification_listeners")
+	if err != nil {
+		return fmt.Errorf("verify notification listener: %w", err)
+	}
+	if !strings.Contains(enabled, notificationAgentPackage) {
+		return errors.New("notification listener access was not enabled")
+	}
+	if err := os.WriteFile(markerPath, []byte(markerValue), 0o600); err != nil {
+		return fmt.Errorf("record notification agent readiness: %w", err)
+	}
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Metadata-only runtime notification forwarding is ready.")
+	return nil
 }
 
 func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse) error {

@@ -54,6 +54,10 @@ random_hex() {
   openssl rand -hex 32
 }
 
+random_base64url() {
+  openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
+}
+
 p256_private_key_b64() {
   tmp_key="$(mktemp)"
   trap 'rm -f "${tmp_key}"' RETURN
@@ -125,6 +129,7 @@ write_env_var() {
   write_env_var TRUST_PROXY_HEADERS true
   write_env_var PUBLIC_BASE_URL "${public_url}"
   write_env_var PUBLIC_RELAY_URL "${public_url}"
+  write_env_var RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE 120
   write_env_var NODE_ADVERTISE_ADDR virtnoded
   write_env_var NODE_ALLOWED_ADVERTISE_ADDRS virtnoded
   write_env_var HOST_API_BIND 127.0.0.1
@@ -137,6 +142,7 @@ write_env_var() {
   write_env_var NODE_DOCKER_NETWORK virtroid-guests
   write_env_var NODE_RUNTIME_NETWORK_MODE per-runtime
   write_env_var NODE_AGENT_CONTAINER_NAME virtnoded
+  write_env_var NODE_NOTIFICATION_AGENT_APK_SHA256 REPLACE_WITH_64_HEX
   write_env_var NODE_RUNTIME_MEMORY_BYTES 4294967296
   write_env_var NODE_RUNTIME_NANO_CPUS 2000000000
   write_env_var NODE_RUNTIME_PIDS_LIMIT 4096

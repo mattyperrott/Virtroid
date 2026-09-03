@@ -20,6 +20,7 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAccountIdentityBinding
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.DeviceIdentityStore
+import io.virtroid.client.push.NotificationRelayManager
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
@@ -511,6 +512,7 @@ class AccountIdentityActivity : AppCompatActivity() {
         identityPasswordStore.clearConfigured()
         appLockStore.clearCredential()
         appSettings.clearSafeLocalCache()
+        NotificationRelayManager(this).clearLocalRegistration()
         deviceIdentityStore.deleteDeviceKey()
         deviceIdentityStore.resetInstallDeviceId(this)
         sessionStore.clearLinkedIdentity()

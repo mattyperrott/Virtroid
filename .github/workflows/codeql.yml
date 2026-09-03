@@ -81,6 +81,7 @@ jobs:
           ./gradlew --no-daemon clean
           :app:compileReleaseKotlin
           :app:compileReleaseJavaWithJavac
+          :runtime-agent:compileReleaseKotlin
           :scrcpy-server:compileReleaseJavaWithJavac
 
       - name: Analyze

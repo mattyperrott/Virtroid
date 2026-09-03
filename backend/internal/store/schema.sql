@@ -159,6 +159,20 @@ CREATE TABLE IF NOT EXISTS devices (
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS blob_key_verifier TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
+CREATE TABLE IF NOT EXISTS device_notification_subscriptions (
+    device_id UUID PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    encryption_public_key TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_connected_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_notification_subscriptions_account
+    ON device_notification_subscriptions (account_id);
+
+DROP TABLE IF EXISTS device_push_subscriptions;
+
 CREATE TABLE IF NOT EXISTS account_recovery_credentials (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     version INTEGER NOT NULL CHECK (version = 2),
@@ -515,6 +529,36 @@ CREATE TABLE IF NOT EXISTS runtime_logs (
     message TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS runtime_notification_agents (
+    runtime_id UUID PRIMARY KEY REFERENCES runtimes(id) ON DELETE CASCADE,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    token_sha256 BYTEA NOT NULL UNIQUE CHECK (OCTET_LENGTH(token_sha256) = 32),
+    version_code BIGINT NOT NULL CHECK (version_code > 0),
+    configured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS runtime_notification_deliveries (
+    id UUID PRIMARY KEY,
+    runtime_id UUID NOT NULL REFERENCES runtimes(id) ON DELETE CASCADE,
+    event_id UUID NOT NULL,
+    device_id UUID NOT NULL REFERENCES device_notification_subscriptions(device_id) ON DELETE CASCADE,
+    envelope_ciphertext TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    delivered_at TIMESTAMPTZ,
+    UNIQUE (runtime_id, event_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_notification_deliveries_pending
+    ON runtime_notification_deliveries (device_id, created_at)
+    WHERE delivered_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_runtime_notification_deliveries_expires
+    ON runtime_notification_deliveries (expires_at);
+
+DROP TABLE IF EXISTS runtime_notification_event_receipts;
 
 CREATE TABLE IF NOT EXISTS runtime_blob_key_handoffs (
     runtime_id UUID PRIMARY KEY REFERENCES runtimes(id) ON DELETE CASCADE,

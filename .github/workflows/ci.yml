@@ -110,6 +110,10 @@ jobs:
           :app:lintRelease
           :app:assembleDebug
           :app:verifyReleaseSecurityManifest
+          :runtime-agent:testDebugUnitTest
+          :runtime-agent:lintDebug
+          :runtime-agent:lintRelease
+          :runtime-agent:assembleDebug
           :scrcpy-server:lintRelease
           :scrcpy-server:assembleRelease
 

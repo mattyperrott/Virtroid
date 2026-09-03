@@ -34,6 +34,7 @@ type ServerConfig struct {
 	AppCatalogSyncSHA256             string
 	AppCatalogSyncInterval           time.Duration
 	AppCatalogSyncMaxApps            int
+	RuntimeNotificationRateLimit     int
 }
 
 type NodeConfig struct {
@@ -42,6 +43,7 @@ type NodeConfig struct {
 	BindAddr                      string
 	RelayPort                     int
 	ControlPlaneURL               string
+	PublicControlPlaneURL         string
 	AdvertiseAddr                 string
 	ADBPath                       string
 	ADBHost                       string
@@ -60,6 +62,9 @@ type NodeConfig struct {
 	AppAPKDir                     string
 	AppManifestPath               string
 	DefaultAppPackages            []string
+	NotificationAgentEnabled      bool
+	NotificationAgentAPKPath      string
+	NotificationAgentAPKSHA256    string
 	ViewerCryptPath               string
 	HeartbeatInterval             time.Duration
 	ReconcileInterval             time.Duration
@@ -96,6 +101,10 @@ func LoadServer() ServerConfig {
 		securityEventRateLimit = 120
 	}
 	securityEventRetention := parseEnvDuration("SECURITY_EVENT_RETENTION", 7*24*time.Hour)
+	runtimeNotificationRateLimit, err := parseEnvInt("RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE", 120)
+	if err != nil || runtimeNotificationRateLimit <= 0 {
+		runtimeNotificationRateLimit = 120
+	}
 	runtimeLogRetention := parseEnvDuration("RUNTIME_LOG_RETENTION", 30*24*time.Hour)
 	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
 	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
@@ -133,6 +142,7 @@ func LoadServer() ServerConfig {
 		AppCatalogSyncSHA256:             strings.TrimSpace(os.Getenv("APP_CATALOG_SYNC_SHA256")),
 		AppCatalogSyncInterval:           appCatalogSyncInterval,
 		AppCatalogSyncMaxApps:            appCatalogSyncMaxApps,
+		RuntimeNotificationRateLimit:     runtimeNotificationRateLimit,
 	}
 }
 
@@ -184,6 +194,7 @@ func LoadNode() NodeConfig {
 		BindAddr:                      envOrDefault("NODE_BIND_ADDR", ":8090"),
 		RelayPort:                     relayPort,
 		ControlPlaneURL:               envOrDefault("CONTROL_PLANE_URL", "http://127.0.0.1:8080"),
+		PublicControlPlaneURL:         envOrDefault("NODE_PUBLIC_CONTROL_PLANE_URL", ""),
 		AdvertiseAddr:                 envOrDefault("NODE_ADVERTISE_ADDR", hostname),
 		ADBPath:                       envOrDefault("NODE_ADB_PATH", "adb"),
 		ADBHost:                       envOrDefault("NODE_ADB_HOST", ""),
@@ -202,6 +213,9 @@ func LoadNode() NodeConfig {
 		AppAPKDir:                     envOrDefault("NODE_APP_APK_DIR", "/srv/virtroid/apks"),
 		AppManifestPath:               envOrDefault("NODE_APP_MANIFEST_PATH", "/srv/virtroid/apks/manifest.json"),
 		DefaultAppPackages:            parseEnvCSV("NODE_DEFAULT_APP_PACKAGES", "org.fdroid.basic"),
+		NotificationAgentEnabled:      parseEnvBool("NODE_NOTIFICATION_AGENT_ENABLED", true),
+		NotificationAgentAPKPath:      envOrDefault("NODE_NOTIFICATION_AGENT_APK_PATH", "/srv/virtroid/apks/virtroid-runtime-agent.apk"),
+		NotificationAgentAPKSHA256:    strings.TrimSpace(os.Getenv("NODE_NOTIFICATION_AGENT_APK_SHA256")),
 		ViewerCryptPath:               envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtroid-viewercrypt"),
 		HeartbeatInterval:             heartbeatInterval,
 		ReconcileInterval:             reconcileInterval,
