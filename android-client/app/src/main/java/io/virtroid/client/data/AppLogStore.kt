@@ -19,6 +19,7 @@ class AppLogStore private constructor(context: Context) {
 
     val entries: StateFlow<List<AppLogEntry>> = _entries.asStateFlow()
 
+    @Synchronized
     fun log(
         level: AppLogLevel,
         message: String,
@@ -37,6 +38,29 @@ class AppLogStore private constructor(context: Context) {
         persist(next)
     }
 
+    @Synchronized
+    fun logCoalesced(
+        level: AppLogLevel,
+        message: String,
+        source: String = "app",
+        timestampMs: Long = System.currentTimeMillis(),
+        windowMs: Long,
+    ): Boolean {
+        val entry = AppLogEntry(
+            id = UUID.randomUUID().toString(),
+            timestampMs = timestampMs,
+            level = level,
+            source = source,
+            message = sanitizeMessage(message),
+            criticalResolved = false,
+        )
+        val current = _entries.value
+        val next = AppLogState.appendCoalesced(current, entry, MAX_ENTRIES, windowMs)
+        if (next === current) return false
+        persist(next)
+        return true
+    }
+
     fun info(message: String, source: String = "app") = log(AppLogLevel.INFO, message, source)
 
     fun security(message: String, source: String = "security") = log(AppLogLevel.SECURITY, message, source)
@@ -51,6 +75,7 @@ class AppLogStore private constructor(context: Context) {
         return AppLogState.unresolvedCriticalCount(_entries.value)
     }
 
+    @Synchronized
     fun clearAll() {
         _entries.value = AppLogState.clear()
         securePrefs.clear(KEY_ENTRIES)
@@ -191,6 +216,23 @@ data class AppLogEntry(
 internal object AppLogState {
     fun append(entries: List<AppLogEntry>, entry: AppLogEntry, maxEntries: Int): List<AppLogEntry> {
         return (entries + entry).takeLast(maxEntries)
+    }
+
+    fun appendCoalesced(
+        entries: List<AppLogEntry>,
+        entry: AppLogEntry,
+        maxEntries: Int,
+        windowMs: Long,
+    ): List<AppLogEntry> {
+        val duplicate = entries.asReversed().firstOrNull {
+            it.level == entry.level && it.source == entry.source && it.message == entry.message
+        }
+        if (duplicate != null && entry.timestampMs >= duplicate.timestampMs &&
+            entry.timestampMs - duplicate.timestampMs < windowMs
+        ) {
+            return entries
+        }
+        return append(entries, entry, maxEntries)
     }
 
     fun clear(): List<AppLogEntry> = emptyList()

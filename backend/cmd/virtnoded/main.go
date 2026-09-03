@@ -336,6 +336,8 @@ type nodeAgent struct {
 	appDownloadClient   *http.Client
 	appInstallStateMu   sync.Mutex
 	appInstallStates    map[string]runtimeAppInstallState
+	notificationAgentMu sync.Mutex
+	notificationAgentAt map[string]time.Time
 	nodePrivateKey      *ecdsa.PrivateKey
 	nodePublicKey       string
 	blobPreflightMu     sync.Mutex
@@ -1730,9 +1732,15 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				LastError:        stringPtr(""),
 			})
 		}
-		if agentErr := n.ensureNotificationAgent(ctx, runtime, inspect); agentErr != nil {
-			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", fmt.Sprintf("Runtime notification agent setup failed: %v.", agentErr))
-			return fmt.Errorf("configure runtime notification agent: %w", agentErr)
+		if n.shouldAttemptNotificationAgent(runtime.ID, time.Now()) {
+			agentErr := n.ensureNotificationAgent(ctx, runtime, inspect)
+			n.finishNotificationAgentAttempt(runtime.ID, agentErr == nil, time.Now())
+			if agentErr != nil {
+				// Notification forwarding is auxiliary. Keep the Android runtime usable
+				// and retry separately instead of blocking viewer readiness.
+				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Runtime notification forwarding is not ready yet: %v.", agentErr))
+				log.Printf("runtime %s notification agent deferred: %v", runtime.ID, agentErr)
+			}
 		}
 		transitioningOnline := !strings.EqualFold(runtime.Status, "running") || !strings.EqualFold(runtime.ConnectionStatus, "online")
 		if transitioningOnline {
@@ -3077,21 +3085,84 @@ func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtime
 	if !strings.Contains(output, "result=1") {
 		return fmt.Errorf("notification agent rejected provisioning: %s", output)
 	}
-	if _, err := n.adbShellCapture(ctx, serial, "cmd notification allow_listener "+shellQuote(notificationAgentListener)); err != nil {
-		return fmt.Errorf("enable notification listener: %w", err)
-	}
-	enabled, err := n.adbShellCapture(ctx, serial, "settings get secure enabled_notification_listeners")
-	if err != nil {
-		return fmt.Errorf("verify notification listener: %w", err)
-	}
-	if !strings.Contains(enabled, notificationAgentPackage) {
-		return errors.New("notification listener access was not enabled")
+	if err := n.enableNotificationListener(ctx, serial); err != nil {
+		return err
 	}
 	if err := os.WriteFile(markerPath, []byte(markerValue), 0o600); err != nil {
 		return fmt.Errorf("record notification agent readiness: %w", err)
 	}
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Metadata-only runtime notification forwarding is ready.")
 	return nil
+}
+
+func (n *nodeAgent) enableNotificationListener(ctx context.Context, serial string) error {
+	const attempts = 6
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		_, allowErr := n.adbShellCapture(
+			ctx,
+			serial,
+			"cmd notification allow_listener "+shellQuote(notificationAgentListener)+" 0",
+		)
+		if allowErr != nil {
+			lastErr = fmt.Errorf("enable notification listener: %w", allowErr)
+		} else {
+			enabled, verifyErr := n.adbShellCapture(ctx, serial, "settings --user 0 get secure enabled_notification_listeners")
+			switch {
+			case verifyErr != nil:
+				lastErr = fmt.Errorf("verify notification listener: %w", verifyErr)
+			case strings.Contains(enabled, notificationAgentListener), strings.Contains(enabled, notificationAgentPackage):
+				return nil
+			default:
+				lastErr = errors.New("notification listener access was not enabled")
+			}
+		}
+
+		if attempt+1 == attempts {
+			break
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return lastErr
+}
+
+func (n *nodeAgent) shouldAttemptNotificationAgent(runtimeID string, now time.Time) bool {
+	n.notificationAgentMu.Lock()
+	defer n.notificationAgentMu.Unlock()
+	if retryAt, ok := n.notificationAgentAt[runtimeID]; ok && now.Before(retryAt) {
+		return false
+	}
+	if n.notificationAgentAt == nil {
+		n.notificationAgentAt = make(map[string]time.Time)
+	} else if len(n.notificationAgentAt) > 256 {
+		for id, retryAt := range n.notificationAgentAt {
+			if !now.Before(retryAt) {
+				delete(n.notificationAgentAt, id)
+			}
+		}
+	}
+	// Reserve the attempt so concurrent reconciliation passes cannot duplicate it.
+	n.notificationAgentAt[runtimeID] = now.Add(time.Minute)
+	return true
+}
+
+func (n *nodeAgent) finishNotificationAgentAttempt(runtimeID string, succeeded bool, now time.Time) {
+	n.notificationAgentMu.Lock()
+	defer n.notificationAgentMu.Unlock()
+	if n.notificationAgentAt == nil {
+		n.notificationAgentAt = make(map[string]time.Time)
+	}
+	delay := time.Minute
+	if succeeded {
+		delay = 5 * time.Minute
+	}
+	n.notificationAgentAt[runtimeID] = now.Add(delay)
 }
 
 func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse) error {

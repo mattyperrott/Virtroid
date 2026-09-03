@@ -296,7 +296,9 @@ func (f *forwarder) forwardSuricataLine(ctx context.Context, line []byte) error 
 		return fmt.Errorf("parse Suricata EVE JSON: %w", err)
 	}
 	event.EventType = strings.ToLower(strings.TrimSpace(event.EventType))
-	if event.EventType != "alert" && event.EventType != "anomaly" {
+	// Parser anomalies are diagnostic telemetry, not reviewed intrusion rules.
+	// Forward only explicit alerts so protocol quirks cannot page client devices.
+	if event.EventType != "alert" {
 		return nil
 	}
 	rule := strings.TrimSpace(event.Alert.Signature)

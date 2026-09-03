@@ -1,6 +1,5 @@
 # Locally reviewed bootstrap rules. Add a separately reviewed, pinned ruleset
-# for broader threat coverage; the forwarder also accepts Suricata anomaly
-# records from the engine itself.
+# for broader threat coverage. Only explicit alert records are forwarded to
+# client devices; generic parser anomalies remain local diagnostics.
 
 alert tcp any any -> any any (msg:"Virtroid TCP SYN scan pattern"; flags:S; flow:stateless; threshold:type both, track by_src, count 250, seconds 10; classtype:attempted-recon; sid:9900001; rev:1;)
-alert tcp any any -> any 5555 (msg:"Virtroid unexpected Android debug bridge probe"; flags:S; flow:stateless,to_server; threshold:type limit, track by_src, count 1, seconds 60; classtype:attempted-admin; sid:9900002; rev:2;)

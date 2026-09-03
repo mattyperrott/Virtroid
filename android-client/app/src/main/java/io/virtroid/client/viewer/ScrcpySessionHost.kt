@@ -56,7 +56,7 @@ class ScrcpySessionHost(
             )
 
             thread(name = "scrcpy-connect-watch") {
-                var attempts = 100
+                var attempts = 200
                 while (!destroyed && attempts > 0 && service.check_socket_connection().not()) {
                     Thread.sleep(100)
                     attempts--

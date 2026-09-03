@@ -419,7 +419,8 @@ public class Scrcpy extends Service {
         DataOutputStream dataOutputStream = null;
         Socket socket = null;
         boolean relayTokenConsumed = false;
-        int attempts = 50;
+        int attempts = 12;
+        long retryDelayMs = 250L;
         while (attempts > 0 && LetServceRunning.get()) {
             try {
                 debugLog("Connecting to relay");
@@ -482,8 +483,11 @@ public class Scrcpy extends Service {
                         return;
                     }
                     try {
-                        Thread.sleep(100);
+                        Thread.sleep(retryDelayMs);
+                        retryDelayMs = Math.min(retryDelayMs * 2L, 1_500L);
                     } catch (InterruptedException ignore) {
+                        Thread.currentThread().interrupt();
+                        return;
                     }
                 }
                 debugLog("viewer connection retry scheduled");

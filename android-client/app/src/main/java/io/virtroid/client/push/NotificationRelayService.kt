@@ -40,6 +40,7 @@ import java.io.IOException
 import java.time.Instant
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
 
 class NotificationRelayService : Service() {
@@ -52,6 +53,7 @@ class NotificationRelayService : Service() {
 
     @Volatile
     private var activeCall: Call? = null
+    private val intentionalReconnect = AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -71,7 +73,10 @@ class NotificationRelayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_RECONNECT) {
-            activeCall?.cancel()
+            activeCall?.let { call ->
+                intentionalReconnect.set(true)
+                call.cancel()
+            }
         }
         startStreamLoop()
         return START_STICKY
@@ -90,6 +95,7 @@ class NotificationRelayService : Service() {
         if (streamJob?.isActive == true) return
         streamJob = scope.launch {
             var retryDelayMs = INITIAL_RETRY_DELAY_MS
+            var consecutiveFailures = 0
             while (currentCoroutineContext().isActive) {
                 val identity = identityStore.load()
                 if (identity == null) {
@@ -97,10 +103,17 @@ class NotificationRelayService : Service() {
                     return@launch
                 }
                 runCatching { consumeStream(identity) }
-                    .onSuccess { retryDelayMs = INITIAL_RETRY_DELAY_MS }
+                    .onSuccess {
+                        retryDelayMs = INITIAL_RETRY_DELAY_MS
+                        consecutiveFailures = 0
+                    }
                     .onFailure { error ->
-                        if (currentCoroutineContext().isActive && error !is InterruptedException) {
-                            logs.warn("Notification relay reconnecting: ${error.message}", "notifications")
+                        val expectedReconnect = intentionalReconnect.getAndSet(false)
+                        if (currentCoroutineContext().isActive && error !is InterruptedException && !expectedReconnect) {
+                            consecutiveFailures++
+                            if (consecutiveFailures == 3 || (consecutiveFailures > 3 && consecutiveFailures % 10 == 0)) {
+                                logs.warn("Notification relay reconnecting: ${error.message}", "notifications")
+                            }
                         }
                     }
                 if (!currentCoroutineContext().isActive) return@launch
@@ -274,7 +287,13 @@ class NotificationRelayService : Service() {
             "warning" -> AppLogLevel.WARN
             else -> AppLogLevel.SECURITY
         }
-        logs.log(level, message, "security", event.observedAt.toEpochMilli())
+        logs.logCoalesced(
+            level = level,
+            message = message,
+            source = "security",
+            timestampMs = event.observedAt.toEpochMilli(),
+            windowMs = SECURITY_NOTICE_COALESCE_WINDOW_MS,
+        )
     }
 
     private fun canPostNotifications(): Boolean {
@@ -365,6 +384,7 @@ class NotificationRelayService : Service() {
         private const val DEDUP_PREFS = "virtroid-notification-dedup"
         private const val DEDUP_KEY = "event_ids"
         private const val MAX_DEDUP_EVENTS = 200
+        private const val SECURITY_NOTICE_COALESCE_WINDOW_MS = 5 * 60 * 1_000L
         private const val MAX_PACKAGE_CHARS = 255
         private const val MAX_APP_LABEL_CHARS = 100
         private const val MAX_TITLE_CHARS = 200
