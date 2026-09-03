@@ -134,6 +134,9 @@ func TestAPIRequestBodyLimitAllowsOnlyBoundedMediaRoutes(t *testing.T) {
 	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/photos"); got != maxRuntimePhotoImportBytes {
 		t.Fatalf("photo limit = %d", got)
 	}
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/videos"); got != maxRuntimeVideoImportBytes {
+		t.Fatalf("video limit = %d", got)
+	}
 	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/session"); got != maxAPIRequestBodyBytes {
 		t.Fatalf("default limit = %d", got)
 	}
@@ -152,6 +155,19 @@ func TestValidateRuntimePhotoRequiresBoundedJPEG(t *testing.T) {
 	}
 	if err := validateRuntimePhoto("capture.jpg", []byte("not a jpeg")); err == nil {
 		t.Fatal("invalid JPEG was accepted")
+	}
+}
+
+func TestValidateRuntimeVideoRequiresBoundedMP4(t *testing.T) {
+	video := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
+	if err := validateRuntimeVideo("capture.mp4", video); err != nil {
+		t.Fatalf("valid MP4 rejected: %v", err)
+	}
+	if err := validateRuntimeVideo("capture.mov", video); err == nil {
+		t.Fatal("MP4 with a non-MP4 name was accepted")
+	}
+	if err := validateRuntimeVideo("capture.mp4", []byte("not an mp4")); err == nil {
+		t.Fatal("invalid MP4 was accepted")
 	}
 }
 

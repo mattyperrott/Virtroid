@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,37 +50,51 @@ func SyncFDroid(ctx context.Context, st Store, indexURL, expectedSHA256 string, 
 		maxApps = 1500
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("User-Agent", "virtroid-app-catalog/0.1")
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{
-		Timeout: 90 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("fdroid index returned HTTP %d", resp.StatusCode)
-	}
-	if resp.ContentLength > maxIndexBytes {
-		return 0, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
-	}
-
-	index, err := decodePinnedIndex(resp.Body, pinnedSHA256)
+	index, err := fetchPinnedIndex(ctx, fdroidHTTPClient(), indexURL, pinnedSHA256)
 	if err != nil {
 		return 0, err
 	}
 
 	return replaceFDroidIndex(ctx, st, index, maxApps)
+}
+
+func fdroidHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 90 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func fetchPinnedIndex(ctx context.Context, client *http.Client, indexURL, pinnedSHA256 string) (fdroidIndex, error) {
+	if client == nil {
+		return fdroidIndex{}, errors.New("F-Droid HTTP client is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
+	if err != nil {
+		return fdroidIndex{}, err
+	}
+	req.Header.Set("User-Agent", "virtroid-app-catalog/0.1")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fdroidIndex{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fdroidIndex{}, fmt.Errorf("fdroid index returned HTTP %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxIndexBytes {
+		return fdroidIndex{}, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
+	}
+
+	index, err := decodePinnedIndex(resp.Body, pinnedSHA256)
+	if err != nil {
+		return fdroidIndex{}, err
+	}
+	return index, nil
 }
 
 func replaceFDroidIndex(ctx context.Context, st Store, index fdroidIndex, maxApps int) (int, error) {

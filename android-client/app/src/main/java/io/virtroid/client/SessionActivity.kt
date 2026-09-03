@@ -88,9 +88,13 @@ class SessionActivity : AppCompatActivity() {
     private var viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
     private var sessionUnavailable = false
     private var heartbeatFailureCount = 0
-    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            launchPhysicalCamera()
+    private val cameraPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        if (grants[Manifest.permission.CAMERA] == true) {
+            val recordAudio = grants[Manifest.permission.RECORD_AUDIO] == true
+            if (!recordAudio) {
+                toast(getString(R.string.session_camera_audio_permission_required))
+            }
+            launchPhysicalCamera(recordAudio)
         } else {
             toast(getString(R.string.session_camera_permission_required))
         }
@@ -100,8 +104,11 @@ class SessionActivity : AppCompatActivity() {
         if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
         val path = result.data?.getStringExtra(CameraCaptureActivity.EXTRA_CAPTURE_PATH).orEmpty()
         val name = result.data?.getStringExtra(CameraCaptureActivity.EXTRA_CAPTURE_NAME).orEmpty()
+        val kind = result.data?.getStringExtra(CameraCaptureActivity.EXTRA_CAPTURE_KIND)
+            ?: CameraCaptureActivity.CAPTURE_KIND_PHOTO
+        val hasAudio = result.data?.getBooleanExtra(CameraCaptureActivity.EXTRA_CAPTURE_HAS_AUDIO, false) == true
         if (path.isNotBlank() && name.isNotBlank()) {
-            importCapturedPhoto(path, name)
+            importCapturedMedia(path, name, kind, hasAudio)
         }
     }
 
@@ -224,10 +231,12 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionCameraButton.isVisible = cameraEnabled
         binding.sessionOptionalActionsDivider.isVisible = cameraEnabled
         binding.sessionCameraButton.setOnClickListener {
-            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                launchPhysicalCamera()
+            val cameraGranted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            val audioGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (cameraGranted && audioGranted) {
+                launchPhysicalCamera(recordAudio = true)
             } else {
-                cameraPermission.launch(Manifest.permission.CAMERA)
+                cameraPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
             }
         }
         binding.sessionRetryButton.isVisible = false
@@ -383,20 +392,22 @@ class SessionActivity : AppCompatActivity() {
         sessionHost = null
     }
 
-    private fun launchPhysicalCamera() {
+    private fun launchPhysicalCamera(recordAudio: Boolean) {
         if (!cameraMode.equals("photo-import", ignoreCase = true)) {
             return
         }
-        cameraCapture.launch(CameraCaptureActivity.createIntent(this))
+        cameraCapture.launch(CameraCaptureActivity.createIntent(this, recordAudio))
     }
 
-    private fun importCapturedPhoto(path: String, name: String) {
-        val photo = File(path)
+    private fun importCapturedMedia(path: String, name: String, kind: String, hasAudio: Boolean) {
+        val media = File(path)
         val cacheRoot = cacheDir.canonicalFile
-        val candidate = runCatching { photo.canonicalFile }.getOrNull()
-        if (candidate == null || candidate.parentFile != cacheRoot || !candidate.isFile || candidate.length() !in 1..MAX_RUNTIME_PHOTO_IMPORT_BYTES.toLong()) {
+        val candidate = runCatching { media.canonicalFile }.getOrNull()
+        val video = kind == CameraCaptureActivity.CAPTURE_KIND_VIDEO
+        val maxBytes = if (video) MAX_RUNTIME_VIDEO_IMPORT_BYTES else MAX_RUNTIME_PHOTO_IMPORT_BYTES
+        if (candidate == null || candidate.parentFile != cacheRoot || !candidate.isFile || candidate.length() !in 1..maxBytes.toLong()) {
             candidate?.delete()
-            toast(getString(R.string.session_camera_capture_failed))
+            toast(getString(if (video) R.string.session_video_capture_failed else R.string.session_camera_capture_failed))
             return
         }
 
@@ -404,20 +415,33 @@ class SessionActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching {
                 val bytes = candidate.readBytes()
-                api.importRuntimePhoto(
-                    baseUrl = baseUrl,
-                    accountId = accountId,
-                    deviceId = deviceId,
-                    runtimeId = runtimeId,
-                    sessionId = sessionId,
-                    fileName = name,
-                    jpeg = bytes,
-                )
+                if (video) {
+                    api.importRuntimeVideo(
+                        baseUrl = baseUrl,
+                        accountId = accountId,
+                        deviceId = deviceId,
+                        runtimeId = runtimeId,
+                        sessionId = sessionId,
+                        fileName = name,
+                        mp4 = bytes,
+                    )
+                } else {
+                    api.importRuntimePhoto(
+                        baseUrl = baseUrl,
+                        accountId = accountId,
+                        deviceId = deviceId,
+                        runtimeId = runtimeId,
+                        sessionId = sessionId,
+                        fileName = name,
+                        jpeg = bytes,
+                    )
+                }
             }.onSuccess { result ->
-                appLogs.info("Imported physical-camera photo ${result.fileName} into active runtime", "session")
-                toast(getString(R.string.session_photo_imported, result.fileName))
+                val mediaKind = if (video) "video${if (hasAudio) " with sound" else " without sound"}" else "photo"
+                appLogs.info("Imported physical-camera $mediaKind ${result.fileName} into active runtime", "session")
+                toast(getString(if (video) R.string.session_video_imported else R.string.session_photo_imported, result.fileName))
             }.onFailure { error ->
-                appLogs.warn("Physical-camera photo import failed: ${error.message}", "session")
+                appLogs.warn("Physical-camera ${if (video) "video" else "photo"} import failed: ${error.message}", "session")
                 toast(error.virtroidDisplayMessage(this@SessionActivity))
             }
             candidate.delete()
@@ -875,6 +899,7 @@ class SessionActivity : AppCompatActivity() {
         private const val VIEWER_RECONNECT_MAX_DELAY_MS = 10_000L
         private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182
         private const val MAX_RUNTIME_PHOTO_IMPORT_BYTES = 16 * 1024 * 1024
+        private const val MAX_RUNTIME_VIDEO_IMPORT_BYTES = 32 * 1024 * 1024
         private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 
         fun createIntent(

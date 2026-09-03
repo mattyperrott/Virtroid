@@ -108,7 +108,7 @@ flowchart LR
 | Remote Android viewer        |   ✅ Deployed      | Encrypted TLS viewer and Back → Connect reconnection proved |
 | Runtime audio streaming      |   ✅ Deployed      | Virtual Android output was audibly accepted on a physical phone |
 | Runtime notification forwarding | ✅ Implemented  | Package, app label, timestamp, and title only; direct encrypted delivery awaits live device proof |
-| Physical microphone input    | ❌ Not implemented | Phone microphone audio is not passed into the virtual Android runtime |
+| Physical microphone input    | ❌ Not implemented | Requires a supported ReDroid audio-input HAL; any future stream must be active only while the runtime is recording or in a call |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
 | Runtime deletion             |   ✅ Implemented   | Includes explicit cleanup obligations                   |
@@ -117,14 +117,14 @@ flowchart LR
 | Encrypted client state       |   ✅ Implemented   | Protected using Android Keystore-backed controls        |
 | Confirmation dialogs         |   ✅ Implemented   | Destructive actions use standard Cancel/Confirm modals without typed phrases |
 | F-Droid application catalog  |   ✅ Implemented   | Catalog entries include pinned APK hashes               |
-| F-Droid installation         |     🟡 Partial    | Happy path implemented; broader failure testing remains |
+| F-Droid installation         |   ✅ Implemented   | New selections reconcile into running runtimes; pinned downloads fail closed on transport, compatibility, hash, size, and package-identity errors |
 | Encrypted local snapshots    |   ✅ Implemented   | Repository path and last recorded VPS mechanism         |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
 | Reproducible VPS deployment  |   ✅ Deployed      | Protected local build, backup, immutable release state, and verification gates |
 | Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
+| Physical-camera video import |   ✅ Implemented   | Hold the camera button to record up to 30 seconds; MP4 includes microphone sound when permission is granted |
 | Active-runtime file import   |   ✅ Backend path  | Signed bounded path is live-proved; the generic client upload button was intentionally removed |
 | Metrics and trace context    |   ✅ Deployed      | Bounded Prometheus metrics and W3C trace propagation     |
-| Operational alerts           |     🟡 Partial     | Seven health rules are deployed; independent outage paging is still required |
 | Host intrusion detection     |    ✅ Deployed     | Falco detects reviewed host/container anomalies and forwards bounded signed events |
 | Network intrusion detection  |    ✅ Deployed     | Suricata provides a detection-only network baseline; ongoing tuning remains |
 | Client security notices      |   ✅ Implemented   | Sanitized node-level detections enter the encrypted client log as blue, amber, or red events |
@@ -136,7 +136,7 @@ flowchart LR
 | Operator control-panel UI    | ❌ Not implemented | Current control plane is API infrastructure             |
 
 > [!NOTE]
-> Camera support is deliberate photo capture and media import. It is not a live
+> Camera support is deliberate photo/video capture and media import. It is not a live
 > physical-camera device injected into Android's camera HAL.
 
 ---
@@ -372,7 +372,7 @@ The runtime node agent is responsible for:
 * Opening viewer relay sessions
 * Feeding runtime audio to the viewer path
 * Importing bounded files into active runtimes
-* Importing user-captured physical-camera photos into the active runtime
+* Importing bounded user-captured physical-camera photos and videos into the active runtime
 * Installing approved applications
 * Installing, pinning, provisioning, and enabling the internal runtime notification agent
 * Encrypting runtime snapshots
@@ -398,7 +398,7 @@ The Android client currently provides:
 * Runtime reset actions
 * Encrypted viewer sessions
 * Runtime audio controls
-* A camera-only viewer action for explicit physical-camera capture and photo import
+* A camera-only viewer action for explicit physical-camera photo or video capture and media import
 * Trusted-device management
 * F-Droid catalog selection
 * Local application lock
@@ -620,8 +620,8 @@ Virtroid/
 
 ## Roadmap
 
-The highest-priority remaining work is physical microphone passthrough,
-external alert delivery, searchable trace storage, broader lifecycle and
+The highest-priority remaining work is a supported, demand-activated ReDroid microphone input path,
+searchable trace storage, broader lifecycle and
 storage fault injection, live multi-node acceptance, and a decision on stronger
 runtime isolation beyond the current trusted VPS/ReDroid boundary.
 

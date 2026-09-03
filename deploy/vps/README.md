@@ -472,11 +472,21 @@ node is dedicated to one isolated runtime, the same scoping becomes specific to
 that runtime's owner. See `falco/README.md` and `suricata/README.md` for sensor
 setup and tuning boundaries.
 
-Physical-camera capture is handled by the Android client and imported as a
-bounded JPEG through the existing signed, session-bound node file-import path.
-The node pushes captures to `/sdcard/Pictures/Virtroid` and requests an Android
-media scan. It does not require a VPS video device, V4L2 loopback module,
-`ffmpeg`, camera slot, or ReDroid camera HAL.
+Physical-camera capture is handled by the Android client and imported through
+the signed, session-bound node media path. A tap produces a bounded JPEG in
+`/sdcard/Pictures/Virtroid`; holding the shutter starts a bounded MP4 recording
+that continues until the Stop control is pressed and is saved under
+`/sdcard/Movies/Virtroid`. Video includes phone-microphone audio only when the
+user grants Android microphone permission. Temporary client captures are
+removed after import. This does not require a VPS video device, V4L2 loopback
+module, `ffmpeg`, camera slot, or ReDroid camera HAL.
+
+Approved F-Droid selections are reconciled while a runtime is online, so a new
+selection does not require a runtime restart. Successful selections are
+rechecked periodically and failed installs use a bounded retry interval. APK
+downloads reject redirects, non-success responses, size mismatches, hash
+mismatches, incompatible runtime metadata, and unexpected installed package
+identity.
 
 The renterd profile is fail-closed: it will not start until the installed
 ceremony helper verifies two offline seed copies, root-only mounted secret
