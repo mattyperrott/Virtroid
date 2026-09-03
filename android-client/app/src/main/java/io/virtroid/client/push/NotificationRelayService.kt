@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -189,7 +190,9 @@ class NotificationRelayService : Service() {
 
     private fun showNotification(event: RuntimeRelayEvent): Boolean {
         val manager = getSystemService(NotificationManager::class.java) ?: return false
-        val intent = Intent(this, LauncherActivity::class.java)
+        val intent = Intent()
+            .setComponent(ComponentName(this, LauncherActivity::class.java))
+            .setPackage(packageName)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -313,7 +316,9 @@ class NotificationRelayService : Service() {
     }
 
     private fun statusNotification(): Notification {
-        val intent = Intent(this, LauncherActivity::class.java)
+        val intent = Intent()
+            .setComponent(ComponentName(this, LauncherActivity::class.java))
+            .setPackage(packageName)
         val pendingIntent = PendingIntent.getActivity(
             this,
             STATUS_NOTIFICATION_ID,
