@@ -325,6 +325,7 @@ const (
 	maxRelayBytesPerDirection  = int64(8 * 1024 * 1024 * 1024)
 	maxRuntimeFileImportBytes  = int64(32 << 20)
 	maxRuntimePhotoImportBytes = int64(16 << 20)
+	maxRuntimeVideoImportBytes = int64(32 << 20)
 	maxRuntimeImportZipEntries = 1024
 )
 
@@ -332,6 +333,9 @@ type nodeAgent struct {
 	cfg                 config.NodeConfig
 	controlPlane        *http.Client
 	docker              *http.Client
+	appDownloadClient   *http.Client
+	appInstallStateMu   sync.Mutex
+	appInstallStates    map[string]runtimeAppInstallState
 	nodePrivateKey      *ecdsa.PrivateKey
 	nodePublicKey       string
 	blobPreflightMu     sync.Mutex
@@ -347,6 +351,11 @@ type nodeAgent struct {
 	lastHeartbeatAt     time.Time
 	lastHeartbeatOK     bool
 	observability       *observability.Service
+}
+
+type runtimeAppInstallState struct {
+	fingerprint string
+	nextCheck   time.Time
 }
 
 type runtimeContainerResources struct {
@@ -416,6 +425,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/internal/viewer/prepare", node.handlePrepareViewer)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/files", node.handleRuntimeFileImport)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/photos", node.handleRuntimePhotoImport)
+	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/videos", node.handleRuntimeVideoImport)
 	mux.HandleFunc("POST /api/v1/internal/blob-key/verify", node.handleVerifyBlobKeyEnvelope)
 	mux.HandleFunc("CONNECT /api/v1/relay/{id}", node.handleRelaySession)
 	mux.HandleFunc("GET /api/v1/relay/{id}", node.handleRelaySession)
@@ -960,6 +970,9 @@ func nodeCallbackBodyLimit(path string) int64 {
 	if strings.HasSuffix(path, "/photos") {
 		return maxRuntimePhotoImportBytes
 	}
+	if strings.HasSuffix(path, "/videos") {
+		return maxRuntimeVideoImportBytes
+	}
 	return 2 << 20
 }
 
@@ -1147,6 +1160,88 @@ func (n *nodeAgent) handleRuntimePhotoImport(w http.ResponseWriter, r *http.Requ
 		"sha256":       hex.EncodeToString(digest[:]),
 		"runtime_path": remotePath,
 	})
+}
+
+func (n *nodeAgent) handleRuntimeVideoImport(w http.ResponseWriter, r *http.Request) {
+	if !n.requireControlPlaneCallback(w, r) {
+		return
+	}
+	runtimeID := strings.TrimSpace(r.PathValue("id"))
+	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	filename, err = safeRuntimeVideoFilename(filename)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil || len(body) == 0 || int64(len(body)) > maxRuntimeVideoImportBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "video must be an MP4 no larger than 32 MiB"})
+		return
+	}
+	if err := validateRuntimeVideoContent(body); err != nil {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	runtime, err := n.assignedRuntime(ctx, runtimeID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	if runtime.Status != "running" || !strings.EqualFold(runtime.CameraMode, "photo-import") {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime is not ready for physical camera import"})
+		return
+	}
+	inspect, err := n.inspectContainer(ctx, containerNameForRuntime(runtime.ID))
+	if err != nil || !inspect.State.Running {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "runtime container is not running"})
+		return
+	}
+	remoteDir := "/sdcard/Movies/Virtroid"
+	remotePath := remoteDir + "/" + filename
+	if err := n.copyRuntimeMediaToContainer(ctx, containerNameForRuntime(runtime.ID), "/data/media/0/Movies/Virtroid", filename, body); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "save video into runtime"})
+		return
+	}
+	if err := n.notifyRuntimeMediaScanner(ctx, runtime, inspect, remotePath); err != nil {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Physical-camera video was saved, but Android media indexing was deferred.")
+	}
+	digest := sha256.Sum256(body)
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Imported a physical-camera video into the active runtime media library.")
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"ok":           true,
+		"file_name":    filename,
+		"bytes":        len(body),
+		"sha256":       hex.EncodeToString(digest[:]),
+		"runtime_path": remotePath,
+	})
+}
+
+func safeRuntimeVideoFilename(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.ContainsRune(name, 0) || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		return "", errors.New("invalid video name")
+	}
+	if strings.ToLower(filepath.Ext(name)) != ".mp4" {
+		return "", errors.New("captured video name must end in .mp4")
+	}
+	if len([]byte(name)) > 255 {
+		return "", errors.New("video name is too long")
+	}
+	return name, nil
+}
+
+func validateRuntimeVideoContent(body []byte) error {
+	if len(body) < 12 || int64(len(body)) > maxRuntimeVideoImportBytes || string(body[4:8]) != "ftyp" {
+		return errors.New("video must be an MP4 no larger than 32 MiB")
+	}
+	return nil
 }
 
 func safeRuntimePhotoFilename(name string) (string, error) {
@@ -1639,7 +1734,8 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", fmt.Sprintf("Runtime notification agent setup failed: %v.", agentErr))
 			return fmt.Errorf("configure runtime notification agent: %w", agentErr)
 		}
-		if !strings.EqualFold(runtime.Status, "running") || !strings.EqualFold(runtime.ConnectionStatus, "online") {
+		transitioningOnline := !strings.EqualFold(runtime.Status, "running") || !strings.EqualFold(runtime.ConnectionStatus, "online")
+		if transitioningOnline {
 			interactive, detail, interactiveErr := n.ensureAndroidInteractive(ctx, containerName)
 			if interactiveErr != nil {
 				return fmt.Errorf("probe Android interactive readiness: %w", interactiveErr)
@@ -1654,13 +1750,15 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 					LastError:        stringPtr(""),
 				})
 			}
-			if installErr := n.ensureSelectedAppsInstalled(ctx, runtime, inspect); installErr != nil {
-				if errors.Is(installErr, errInstalledPackageMissing) {
-					cleanupErr := n.discardTaintedRuntime(ctx, runtime, containerName)
-					return errors.Join(fmt.Errorf("selected app package identity verification failed: %w", installErr), cleanupErr)
-				}
-				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Selected app install failed: %v.", installErr))
+		}
+		if installErr := n.ensureSelectedAppsInstalled(ctx, runtime, inspect); installErr != nil {
+			if errors.Is(installErr, errInstalledPackageMissing) {
+				cleanupErr := n.discardTaintedRuntime(ctx, runtime, containerName)
+				return errors.Join(fmt.Errorf("selected app package identity verification failed: %w", installErr), cleanupErr)
 			}
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Selected app install failed: %v.", installErr))
+		}
+		if transitioningOnline {
 			prewarmMaxSize := max(runtime.WidthPx, runtime.HeightPx)
 			if prewarmMaxSize <= 0 {
 				prewarmMaxSize = viewerDefaultMaxSize
@@ -2998,7 +3096,17 @@ func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtime
 
 func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse) error {
 	apps := n.runtimeAppsToInstall(runtime)
+	fingerprint := runtimeAppInstallFingerprint(apps)
+	shouldCheck, applyExistingPolicy := n.beginRuntimeAppInstallCheck(runtime.ID, fingerprint, time.Now())
+	if !shouldCheck {
+		return nil
+	}
+	succeeded := false
+	defer func() {
+		n.finishRuntimeAppInstallCheck(runtime.ID, fingerprint, succeeded, time.Now())
+	}()
 	if len(apps) == 0 {
+		succeeded = true
 		return nil
 	}
 	serial, err := n.adbSerialForRuntime(runtime, inspect)
@@ -3018,10 +3126,12 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 			continue
 		}
 		if n.androidPackageInstalled(ctx, serial, packageName) {
-			if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
-				message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
-				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
-				failures = append(failures, fmt.Errorf("%s policy: %w", packageName, err))
+			if applyExistingPolicy {
+				if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
+					message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
+					_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", message)
+					failures = append(failures, fmt.Errorf("%s policy: %w", packageName, err))
+				}
 			}
 			continue
 		}
@@ -3057,7 +3167,54 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 	if len(failures) > 0 {
 		return errors.Join(failures...)
 	}
+	succeeded = true
 	return nil
+}
+
+func runtimeAppInstallFingerprint(apps []runtimeApp) string {
+	hash := sha256.New()
+	for _, app := range apps {
+		_, _ = io.WriteString(hash, strings.TrimSpace(app.PackageName)+"\x00")
+		_, _ = io.WriteString(hash, strings.TrimSpace(app.APKSHA256)+"\x00")
+		_, _ = io.WriteString(hash, strings.TrimSpace(app.Artifact)+"\x00")
+		_, _ = io.WriteString(hash, strings.TrimSpace(app.InstallMode)+"\x00")
+		_, _ = io.WriteString(hash, strconv.FormatBool(app.SetAsHome)+"\x00")
+		_, _ = io.WriteString(hash, strings.TrimSpace(app.HomeActivity)+"\x00")
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func (n *nodeAgent) beginRuntimeAppInstallCheck(runtimeID, fingerprint string, now time.Time) (bool, bool) {
+	n.appInstallStateMu.Lock()
+	defer n.appInstallStateMu.Unlock()
+	state, ok := n.appInstallStates[runtimeID]
+	if ok && state.fingerprint == fingerprint && now.Before(state.nextCheck) {
+		return false, false
+	}
+	if n.appInstallStates == nil {
+		n.appInstallStates = make(map[string]runtimeAppInstallState)
+	}
+	n.appInstallStates[runtimeID] = runtimeAppInstallState{
+		fingerprint: fingerprint,
+		nextCheck:   now.Add(time.Minute),
+	}
+	return true, !ok || state.fingerprint != fingerprint
+}
+
+func (n *nodeAgent) finishRuntimeAppInstallCheck(runtimeID, fingerprint string, succeeded bool, now time.Time) {
+	n.appInstallStateMu.Lock()
+	defer n.appInstallStateMu.Unlock()
+	if n.appInstallStates == nil {
+		n.appInstallStates = make(map[string]runtimeAppInstallState)
+	}
+	delay := time.Minute
+	if succeeded {
+		delay = 5 * time.Minute
+	}
+	n.appInstallStates[runtimeID] = runtimeAppInstallState{
+		fingerprint: fingerprint,
+		nextCheck:   now.Add(delay),
+	}
 }
 
 func (n *nodeAgent) applyRuntimeAppPolicy(ctx context.Context, serial string, app runtimeApp) error {
@@ -3717,11 +3874,14 @@ func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, 
 	if err != nil {
 		return err
 	}
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	client := n.appDownloadClient
+	if client == nil {
+		client = &http.Client{
+			Timeout: 5 * time.Minute,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -3737,6 +3897,12 @@ func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, 
 	if expectedSize > 0 && expectedSize+1024*1024 < limit {
 		limit = expectedSize + 1024*1024
 	}
+	if resp.ContentLength > limit {
+		return fmt.Errorf("APK exceeds configured download limit")
+	}
+	if expectedSize > 0 && resp.ContentLength >= 0 && resp.ContentLength != expectedSize {
+		return fmt.Errorf("APK Content-Length is %d bytes, expected %d", resp.ContentLength, expectedSize)
+	}
 	out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
@@ -3748,6 +3914,9 @@ func (n *nodeAgent) downloadAPK(ctx context.Context, apkURL, targetPath string, 
 	}
 	if written > limit {
 		return fmt.Errorf("APK exceeds configured download limit")
+	}
+	if expectedSize > 0 && written != expectedSize {
+		return fmt.Errorf("APK download is %d bytes, expected %d", written, expectedSize)
 	}
 	return nil
 }

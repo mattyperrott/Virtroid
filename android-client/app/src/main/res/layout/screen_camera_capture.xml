@@ -29,6 +29,41 @@
         android:layout_gravity="center"
         android:indeterminateTint="@color/v_accent" />
 
+    <TextView
+        android:id="@+id/cameraRecordingStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="30dp"
+        android:background="@drawable/bg_red_soft_12"
+        android:paddingStart="14dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="8dp"
+        android:text="@string/session_camera_recording"
+        android:textColor="@color/v_danger"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/cameraCaptureHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="132dp"
+        android:background="@drawable/bg_surface_24"
+        android:gravity="center"
+        android:paddingStart="16dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="9dp"
+        android:text="@string/session_camera_capture_hint"
+        android:textColor="@color/v_text_primary"
+        android:textSize="13sp" />
+
     <ImageButton
         android:id="@+id/cameraShutterButton"
         android:layout_width="76dp"

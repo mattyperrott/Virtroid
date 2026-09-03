@@ -862,6 +862,41 @@ class VirtroidApi(
         )
     }
 
+    suspend fun importRuntimeVideo(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        sessionId: String,
+        fileName: String,
+        mp4: ByteArray,
+    ): RuntimeFileImport = withContext(Dispatchers.IO) {
+        require(mp4.size in 12..MAX_RUNTIME_VIDEO_IMPORT_BYTES) {
+            "video must be an MP4 no larger than 32 MiB"
+        }
+        ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
+        val encodedFileName = Base64.encodeToString(
+            fileName.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+        )
+        val payload = executeJson(
+            capabilityBinaryRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/videos?session_id=$sessionId&name=$encodedFileName",
+                method = "POST",
+                runtimeId = runtimeId,
+                body = mp4,
+                contentType = "video/mp4",
+            ),
+        )
+        RuntimeFileImport(
+            fileName = payload.getString("file_name"),
+            bytes = payload.getLong("bytes"),
+            sha256 = payload.getString("sha256"),
+            runtimePath = payload.getString("runtime_path"),
+        )
+    }
+
     suspend fun deleteAccount(
         baseUrl: String,
         accountId: String,
@@ -1539,6 +1574,7 @@ class VirtroidApi(
         const val MAX_CATALOG_ITEMS = 250
         const val MAX_RUNTIME_FILE_IMPORT_BYTES = 32 * 1024 * 1024
         const val MAX_RUNTIME_PHOTO_IMPORT_BYTES = 16 * 1024 * 1024
+        const val MAX_RUNTIME_VIDEO_IMPORT_BYTES = 32 * 1024 * 1024
         val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
         val registeredRuntimeCapabilities = mutableSetOf<String>()
     }

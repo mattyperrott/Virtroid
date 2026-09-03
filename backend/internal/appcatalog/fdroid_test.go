@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,6 +69,83 @@ func TestDecodePinnedIndexRequiresExactDigestAndSingleJSONValue(t *testing.T) {
 	}
 	if _, err := decodePinnedIndex(strings.NewReader(payload), ""); err == nil {
 		t.Fatal("empty digest unexpectedly succeeded")
+	}
+}
+
+func TestFetchPinnedIndexHandlesHTTPFailuresAndRejectsRedirects(t *testing.T) {
+	payload := []byte(`{"packages":{}}`)
+	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index-v2.json":
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			_, _ = w.Write(payload)
+		case "/redirect":
+			http.Redirect(w, r, "/index-v2.json", http.StatusFound)
+		case "/unavailable":
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		case "/oversized":
+			w.Header().Set("Content-Length", strconv.FormatInt(maxIndexBytes+1, 10))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if _, err := fetchPinnedIndex(context.Background(), fdroidHTTPClient(), server.URL+"/index-v2.json", digest); err != nil {
+		t.Fatalf("fetch pinned index: %v", err)
+	}
+	if _, err := fetchPinnedIndex(context.Background(), fdroidHTTPClient(), server.URL+"/redirect", digest); err == nil || !strings.Contains(err.Error(), "HTTP 302") {
+		t.Fatalf("redirect error = %v, want fail-closed status", err)
+	}
+	if _, err := fetchPinnedIndex(context.Background(), fdroidHTTPClient(), server.URL+"/unavailable", digest); err == nil || !strings.Contains(err.Error(), "HTTP 503") {
+		t.Fatalf("server error = %v, want HTTP status", err)
+	}
+	if _, err := fetchPinnedIndex(context.Background(), fdroidHTTPClient(), server.URL+"/oversized", digest); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized error = %v, want size rejection", err)
+	}
+	if _, err := fetchPinnedIndex(context.Background(), nil, server.URL+"/index-v2.json", digest); err == nil {
+		t.Fatal("nil HTTP client unexpectedly accepted")
+	}
+}
+
+func TestBuildEntriesKeepsOnlyLatestRuntimeCompatibleArtifact(t *testing.T) {
+	index := fdroidIndex{Packages: map[string]fdroidPackage{
+		"org.example.compatible": {
+			Metadata: fdroidMetadata{Name: map[string]string{"en-US": "Compatible"}},
+			Versions: map[string]fdroidVersion{
+				"old": {
+					File:     fdroidFile{Name: "org.example.compatible_1.apk", SHA256: strings.Repeat("a", 64), Size: 100},
+					Manifest: fdroidManifest{VersionName: "1", VersionCode: 1, UsesSDK: fdroidUsesSDK{MinSDKVersion: 28}},
+				},
+				"new": {
+					File:     fdroidFile{Name: "org.example.compatible_2.apk", SHA256: strings.Repeat("b", 64), Size: 200},
+					Manifest: fdroidManifest{VersionName: "2", VersionCode: 2, NativeCode: []string{"x86_64"}, UsesSDK: fdroidUsesSDK{MinSDKVersion: 34}},
+				},
+			},
+		},
+		"org.example.armonly": {
+			Metadata: fdroidMetadata{Name: map[string]string{"en": "ARM only"}},
+			Versions: map[string]fdroidVersion{"one": {
+				File:     fdroidFile{Name: "org.example.armonly_1.apk", SHA256: strings.Repeat("c", 64), Size: 100},
+				Manifest: fdroidManifest{VersionName: "1", VersionCode: 1, NativeCode: []string{"arm64-v8a"}},
+			}},
+		},
+		"org.example.future": {
+			Metadata: fdroidMetadata{Name: map[string]string{"en": "Future"}},
+			Versions: map[string]fdroidVersion{"one": {
+				File:     fdroidFile{Name: "org.example.future_1.apk", SHA256: strings.Repeat("d", 64), Size: 100},
+				Manifest: fdroidManifest{VersionName: "1", VersionCode: 1, UsesSDK: fdroidUsesSDK{MinSDKVersion: runtimeMinSDK + 1}},
+			}},
+		},
+	}}
+
+	entries := buildEntries(index, 250)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v, want one compatible package", entries)
+	}
+	if entries[0].PackageName != "org.example.compatible" || entries[0].VersionCode != 2 {
+		t.Fatalf("selected entry = %+v, want latest compatible version", entries[0])
 	}
 }
 

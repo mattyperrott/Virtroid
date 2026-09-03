@@ -141,6 +141,9 @@ func TestNodeCallbackBodyLimitIsRouteSpecific(t *testing.T) {
 	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/photos"); got != maxRuntimePhotoImportBytes {
 		t.Fatalf("photo callback limit = %d", got)
 	}
+	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/videos"); got != maxRuntimeVideoImportBytes {
+		t.Fatalf("video callback limit = %d", got)
+	}
 	if got := nodeCallbackBodyLimit("/api/v1/internal/viewer/prepare"); got != 2<<20 {
 		t.Fatalf("default callback limit = %d", got)
 	}
@@ -229,6 +232,24 @@ func TestRuntimePhotoValidation(t *testing.T) {
 		if _, err := safeRuntimePhotoFilename(name); err == nil {
 			t.Fatalf("unsafe photo name %q was accepted", name)
 		}
+	}
+}
+
+func TestRuntimeVideoValidation(t *testing.T) {
+	video := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
+	if err := validateRuntimeVideoContent(video); err != nil {
+		t.Fatalf("valid MP4 rejected: %v", err)
+	}
+	if got, err := safeRuntimeVideoFilename("Virtroid-20260802.mp4"); err != nil || got != "Virtroid-20260802.mp4" {
+		t.Fatalf("safe video name = %q, %v", got, err)
+	}
+	for _, name := range []string{"../capture.mp4", "capture.mov", "capture.mp4/other"} {
+		if _, err := safeRuntimeVideoFilename(name); err == nil {
+			t.Fatalf("unsafe video name %q was accepted", name)
+		}
+	}
+	if err := validateRuntimeVideoContent([]byte("not an mp4")); err == nil {
+		t.Fatal("invalid MP4 was accepted")
 	}
 }
 
@@ -331,6 +352,30 @@ func TestRuntimeAppsToInstallMergesDefaultsAndSelections(t *testing.T) {
 	}
 	if apps[1].PackageName != "org.videolan.vlc" {
 		t.Fatalf("second app = %+v, want selected VLC after defaults", apps[1])
+	}
+}
+
+func TestRuntimeAppInstallCheckRunsOnSelectionChangeAndRetriesFailures(t *testing.T) {
+	node := &nodeAgent{}
+	now := time.Now()
+	first := runtimeAppInstallFingerprint([]runtimeApp{{PackageName: "org.example.one", APKSHA256: strings.Repeat("a", 64)}})
+	second := runtimeAppInstallFingerprint([]runtimeApp{{PackageName: "org.example.two", APKSHA256: strings.Repeat("b", 64)}})
+	if run, applyPolicy := node.beginRuntimeAppInstallCheck("runtime-1", first, now); !run || !applyPolicy {
+		t.Fatal("initial app install check was suppressed")
+	}
+	node.finishRuntimeAppInstallCheck("runtime-1", first, true, now)
+	if run, _ := node.beginRuntimeAppInstallCheck("runtime-1", first, now.Add(4*time.Minute)); run {
+		t.Fatal("successful unchanged selection was checked before the five-minute verification interval")
+	}
+	if run, applyPolicy := node.beginRuntimeAppInstallCheck("runtime-1", second, now.Add(time.Second)); !run || !applyPolicy {
+		t.Fatal("changed app selection did not trigger an immediate check")
+	}
+	node.finishRuntimeAppInstallCheck("runtime-1", second, false, now)
+	if run, _ := node.beginRuntimeAppInstallCheck("runtime-1", second, now.Add(30*time.Second)); run {
+		t.Fatal("failed install retried before the one-minute backoff")
+	}
+	if run, applyPolicy := node.beginRuntimeAppInstallCheck("runtime-1", second, now.Add(61*time.Second)); !run || applyPolicy {
+		t.Fatal("failed install did not retry after backoff")
 	}
 }
 
@@ -480,6 +525,45 @@ func TestAPKPathForSelectedAppDoesNotTrustImplicitLocalPackageAPK(t *testing.T) 
 	})
 	if err == nil || !strings.Contains(err.Error(), "no trusted artifact") {
 		t.Fatalf("apkPathForSelectedApp error = %v, want no trusted artifact", err)
+	}
+}
+
+func TestDownloadAPKEnforcesStatusRedirectAndExactSize(t *testing.T) {
+	payload := []byte("signed-apk-fixture")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ok.apk":
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			_, _ = w.Write(payload)
+		case "/redirect.apk":
+			http.Redirect(w, r, "/ok.apk", http.StatusFound)
+		case "/error.apk":
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		case "/wrong-size.apk":
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			_, _ = w.Write(payload)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	node := &nodeAgent{}
+	target := filepath.Join(t.TempDir(), "app.apk")
+	if err := node.downloadAPK(context.Background(), server.URL+"/ok.apk", target, int64(len(payload))); err != nil {
+		t.Fatalf("download valid APK: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("downloaded payload = %q, err=%v", got, err)
+	}
+	if err := node.downloadAPK(context.Background(), server.URL+"/redirect.apk", target, int64(len(payload))); err == nil || !strings.Contains(err.Error(), "status=302") {
+		t.Fatalf("redirect error = %v, want fail-closed status", err)
+	}
+	if err := node.downloadAPK(context.Background(), server.URL+"/error.apk", target, int64(len(payload))); err == nil || !strings.Contains(err.Error(), "status=503") {
+		t.Fatalf("server error = %v, want HTTP status", err)
+	}
+	if err := node.downloadAPK(context.Background(), server.URL+"/wrong-size.apk", target, int64(len(payload)+1)); err == nil || !strings.Contains(err.Error(), "Content-Length") {
+		t.Fatalf("size error = %v, want Content-Length mismatch", err)
 	}
 }
 
