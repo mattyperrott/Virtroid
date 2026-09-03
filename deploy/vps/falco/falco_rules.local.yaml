@@ -17,7 +17,7 @@
   desc: Detect interactive shells started inside Virtroid managed containers.
   condition: >
     spawned_process and container.id != host and virtroid_managed_container and
-    proc.name in (shell_binaries) and
+    proc.name in (shell_binaries) and proc.tty != 0 and
     not (container.name = "virtroid-postgres" and proc.cmdline contains "pg_isready")
   output: >
     shell spawned in Virtroid container

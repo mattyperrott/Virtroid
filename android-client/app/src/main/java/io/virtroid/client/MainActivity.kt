@@ -175,7 +175,7 @@ class MainActivity : AppCompatActivity() {
 
         refreshJob = lifecycleScope.launch {
             runCatching {
-                appLogs.info("Refreshing runtime list", "runtime")
+                if (showBusy) appLogs.info("Refreshing runtime list", "runtime")
                 val entitlement = api.getEntitlement(baseUrl, accountId, deviceId)
                 val runtimeStates = api.listRuntimeStates(baseUrl, accountId, deviceId)
                 runtimeStates.forEach { snapshotRollbackGuard.verifyAndRecord(accountId, it.runtime) }
@@ -846,9 +846,15 @@ class MainActivity : AppCompatActivity() {
     ) {
         val transitioningIds = runtimes
             .filter {
-                stateByRuntimeId[it.id]?.needsRuntimePolling() == true ||
-                    it.isTransitioning() ||
-                    it.id in locallyStoppingRuntimeIds
+                val effectiveState = stateByRuntimeId[it.id]?.effectiveState.orEmpty()
+                val deleted = it.desiredState.equals("deleted", ignoreCase = true) ||
+                    effectiveState.equals("deleted", ignoreCase = true) ||
+                    effectiveState.equals("deleting", ignoreCase = true)
+                !deleted && (
+                    stateByRuntimeId[it.id]?.needsRuntimePolling() == true ||
+                        it.isTransitioning() ||
+                        it.id in locallyStoppingRuntimeIds
+                    )
             }
             .map { it.id }
             .toSet()

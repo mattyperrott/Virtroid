@@ -96,6 +96,26 @@ func TestForwardSuricataLineReducesNetworkEventBeforeUpload(t *testing.T) {
 	}
 }
 
+func TestForwardSuricataLineIgnoresParserAnomalies(t *testing.T) {
+	var posts int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&posts, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	f := testForwarder(t, server.URL)
+	f.limiter = newEventLimiter(0)
+	f.deduper = newEventDeduper(0)
+	line := []byte(`{"timestamp":"2026-09-03T10:00:00.000000+0000","event_type":"anomaly","proto":"TCP","anomaly":{"type":"applayer","event":"RESPONSE_BODY_UNEXPECTED"}}`)
+	if err := f.forwardSuricataLine(context.Background(), line); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&posts); got != 0 {
+		t.Fatalf("forwarded posts = %d, want 0 for a parser anomaly", got)
+	}
+}
+
 func testForwarder(t *testing.T, endpoint string) *forwarder {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

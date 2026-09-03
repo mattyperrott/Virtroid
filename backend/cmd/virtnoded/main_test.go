@@ -217,6 +217,25 @@ exit 1
 	}
 }
 
+func TestNotificationAgentAttemptsAreThrottledAfterFailure(t *testing.T) {
+	node := &nodeAgent{}
+	startedAt := time.Date(2026, time.September, 3, 19, 31, 0, 0, time.UTC)
+
+	if !node.shouldAttemptNotificationAgent("runtime-1", startedAt) {
+		t.Fatal("first notification-agent attempt was unexpectedly throttled")
+	}
+	if node.shouldAttemptNotificationAgent("runtime-1", startedAt.Add(10*time.Second)) {
+		t.Fatal("concurrent notification-agent attempt was not throttled")
+	}
+	node.finishNotificationAgentAttempt("runtime-1", false, startedAt)
+	if node.shouldAttemptNotificationAgent("runtime-1", startedAt.Add(59*time.Second)) {
+		t.Fatal("failed notification-agent attempt retried before cooldown")
+	}
+	if !node.shouldAttemptNotificationAgent("runtime-1", startedAt.Add(time.Minute)) {
+		t.Fatal("failed notification-agent attempt did not retry after cooldown")
+	}
+}
+
 func TestRuntimePhotoValidation(t *testing.T) {
 	var photo bytes.Buffer
 	if err := jpeg.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {

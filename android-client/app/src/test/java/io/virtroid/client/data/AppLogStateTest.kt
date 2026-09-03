@@ -46,6 +46,27 @@ class AppLogStateTest {
         assertEquals(listOf(warning, error, critical), entries)
     }
 
+    @Test
+    fun appendCoalescedSuppressesEquivalentRecentSecurityNotices() {
+        val first = critical.copy(timestampMs = 1_000L, source = "security", message = "shell alert")
+        val duplicate = first.copy(id = "duplicate", timestampMs = 30_000L)
+        val entries = listOf(first)
+
+        val result = AppLogState.appendCoalesced(entries, duplicate, maxEntries = 200, windowMs = 60_000L)
+
+        assertTrue(result === entries)
+    }
+
+    @Test
+    fun appendCoalescedKeepsEquivalentNoticesOutsideWindow() {
+        val first = critical.copy(timestampMs = 1_000L, source = "security", message = "shell alert")
+        val later = first.copy(id = "later", timestampMs = 61_000L)
+
+        val result = AppLogState.appendCoalesced(listOf(first), later, maxEntries = 200, windowMs = 60_000L)
+
+        assertEquals(listOf(first, later), result)
+    }
+
     private fun entry(id: String, level: AppLogLevel): AppLogEntry {
         return AppLogEntry(
             id = id,

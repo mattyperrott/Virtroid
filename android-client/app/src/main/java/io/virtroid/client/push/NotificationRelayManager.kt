@@ -15,10 +15,10 @@ import kotlinx.coroutines.launch
 class NotificationRelayManager(context: Context) {
     private val appContext = context.applicationContext
     private val identityStore = NotificationRelayIdentityStore(appContext)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun ensureRegistered() {
-        identityStore.load()?.let { startService() }
+        val previousIdentity = identityStore.load()
+        previousIdentity?.let { startService() }
 
         val session = SessionStore(appContext)
         val accountId = session.accountId?.trim().orEmpty()
@@ -26,22 +26,32 @@ class NotificationRelayManager(context: Context) {
         val baseUrl = session.baseUrl.trim().trimEnd('/')
         if (accountId.isBlank() || deviceId.isBlank() || !baseUrl.startsWith("https://")) return
 
+        val identity = NotificationRelayIdentityStore.RelayIdentity(baseUrl, accountId, deviceId)
+        val identityChanged = previousIdentity != null && previousIdentity != identity
+        val encryptionPublicKey = PushEncryptionKeyStore(appContext).publicKeyMaterial()
+        val registrationKey = listOf(baseUrl, accountId, deviceId, encryptionPublicKey).joinToString("\u0000")
+
         identityStore.save(baseUrl, accountId, deviceId)
         startService()
-        scope.launch {
+        synchronized(registrationLock) {
+            if (registeredKey == registrationKey || !registrationsInFlight.add(registrationKey)) return
+        }
+        registrationScope.launch {
             runCatching {
                 VirtroidApi().upsertNotificationSubscription(
                     baseUrl = baseUrl,
                     accountId = accountId,
                     deviceId = deviceId,
-                    encryptionPublicKey = PushEncryptionKeyStore(appContext).publicKeyMaterial(),
+                    encryptionPublicKey = encryptionPublicKey,
                 )
             }.onSuccess {
-                NotificationRelayService.reconnect(appContext)
+                synchronized(registrationLock) { registeredKey = registrationKey }
+                if (identityChanged) NotificationRelayService.reconnect(appContext)
                 AppLogStore.get(appContext).info("Runtime notification relay registered", "notifications")
             }.onFailure { error ->
                 AppLogStore.get(appContext).warn("Notification relay registration deferred: ${error.message}", "notifications")
             }
+            synchronized(registrationLock) { registrationsInFlight.remove(registrationKey) }
         }
     }
 
@@ -49,6 +59,10 @@ class NotificationRelayManager(context: Context) {
         identityStore.clear()
         appContext.stopService(Intent(appContext, NotificationRelayService::class.java))
         PushEncryptionKeyStore(appContext).clear()
+        synchronized(registrationLock) {
+            registeredKey = null
+            registrationsInFlight.clear()
+        }
     }
 
     private fun startService() {
@@ -56,5 +70,14 @@ class NotificationRelayManager(context: Context) {
             appContext,
             Intent(appContext, NotificationRelayService::class.java),
         )
+    }
+
+    private companion object {
+        val registrationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val registrationLock = Any()
+        val registrationsInFlight = mutableSetOf<String>()
+
+        @Volatile
+        var registeredKey: String? = null
     }
 }

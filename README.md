@@ -107,8 +107,8 @@ flowchart LR
 | Runtime start and stop       |   ✅ Deployed      | Live single-node guest lifecycle and idle cleanup proved |
 | Remote Android viewer        |   ✅ Deployed      | Encrypted TLS viewer and Back → Connect reconnection proved |
 | Runtime audio streaming      |   ✅ Deployed      | Virtual Android output was audibly accepted on a physical phone |
-| Runtime notification forwarding | ✅ Implemented  | Package, app label, timestamp, and title only; direct encrypted delivery awaits live device proof |
-| Physical microphone input    |   ✅ Implemented   | Runtime demand starts phone capture only while an app records or calls; live handset/ReDroid acceptance is pending |
+| Runtime notification forwarding | ✅ Implemented  | Package, app label, timestamp, and title only; registration and reconnect handling are idempotent |
+| Physical microphone input    |   ✅ Deployed      | Live handset/ReDroid proof confirms runtime demand starts phone capture only while an app records or calls |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
 | Runtime deletion             |   ✅ Implemented   | Includes explicit cleanup obligations                   |
@@ -125,9 +125,9 @@ flowchart LR
 | Physical-camera video import |   ✅ Implemented   | Hold the camera button to record up to 30 seconds; MP4 includes microphone sound when permission is granted |
 | Active-runtime file import   |   ✅ Backend path  | Signed bounded path is live-proved; the generic client upload button was intentionally removed |
 | Metrics and trace context    |   ✅ Deployed      | Bounded Prometheus metrics and W3C trace propagation     |
-| Host intrusion detection     |    ✅ Deployed     | Falco detects reviewed host/container anomalies and forwards bounded signed events |
-| Network intrusion detection  |    ✅ Deployed     | Suricata provides a detection-only network baseline; ongoing tuning remains |
-| Client security notices      |   ✅ Implemented   | Sanitized node-level detections enter the encrypted client log as blue, amber, or red events |
+| Host intrusion detection     |    ✅ Deployed     | Falco detects interactive container shells and protected-resource access without classifying routine health checks or node ADB work |
+| Network intrusion detection  |    ✅ Deployed     | Suricata forwards reviewed detection rules while keeping generic parser diagnostics local |
+| Client security notices      |   ✅ Implemented   | Sanitized node-level detections enter the encrypted client log as coalesced blue, amber, or red events |
 | Node-aware readiness         |   ✅ Deployed      | Control readiness requires and currently observes a fresh approved ready node |
 | Confidential VM isolation    | ❌ Not implemented | ReDroid currently runs on a trusted VPS                 |
 | Hardware attestation         | ❌ Not implemented | Design and proof-of-concept work only                   |
@@ -489,12 +489,12 @@ Virtroid currently provides protections against several classes of client-side, 
 * Per-device P-256 ECDH, HKDF-SHA-256, and AES-256-GCM envelopes
 * Signed physical-device subscription, stream, and acknowledgement requests
 * Ciphertext-only durable delivery outbox with seven-day expiry
-* Local event validation and deduplication before display
+* Local event validation, deduplication, and five-minute summary coalescing before display
 
 #### Host security monitoring
 
-* Falco HIDS coverage for unexpected container shells, runtime-storage access, and Docker-socket use
-* Optional Suricata NIDS coverage for network alerts and protocol anomalies
+* Falco HIDS coverage for interactive container shells, runtime-storage access, and Docker-socket use
+* Optional Suricata NIDS coverage for explicit alerts from reviewed signatures
 * Signed, bounded, and deduplicated sensor-event ingestion
 * Node-to-account scoping based on runtime placement
 * Encrypted per-device delivery of sanitized summaries only

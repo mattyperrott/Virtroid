@@ -361,7 +361,8 @@ Split-directory installs are intentionally not trusted.
 The physical user installs only the Virtroid client. `virtnoded` automatically
 installs the separate, non-launchable `io.virtroid.runtimeagent` package inside
 each ReDroid runtime and grants its notification-listener role through ADB. The
-agent accepts provisioning only from the Android shell identity, authenticates
+node retries transient listener activation without blocking viewer readiness.
+The agent accepts provisioning only from the Android shell identity, authenticates
 to one runtime-specific backend endpoint, and sends only event ID, package
 name, app label, notification timestamp, and title. Unknown JSON fields are
 rejected; notification bodies, expanded text, and previews are never serialized.
@@ -479,8 +480,10 @@ The `falco` profile provides host/container runtime detection. The optional
 interface. Both sensors use the local security forwarder and the node's signed
 control-plane identity. The control plane stores the operator event, finds
 accounts with a runtime assigned to that node, and sends each subscribed device
-an encrypted summary. The Android client records the summary in its existing
-log as a blue security notice, amber warning, or red critical entry.
+an encrypted summary. Only explicit reviewed Suricata alerts leave the sensor;
+generic parser anomalies stay local. The Android client coalesces equivalent
+summaries over five minutes and records them in its existing log as a blue
+security notice, amber warning, or red critical entry.
 
 Client summaries never contain raw command lines, filesystem paths, network
 addresses, packet data, node identifiers, or another account's data. A
