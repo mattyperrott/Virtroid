@@ -72,6 +72,8 @@ grep -q 'NODE_PUBLIC_CONTROL_PLANE_URL: https://virtroid.example' "${tmp_dir}/re
 grep -q 'container_name: virtroid-prometheus' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-alertmanager' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml"
+grep -A7 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml" | grep -q -- '- suricata'
+grep -A14 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml" | grep -q "com.virtroid.deployment-tree-sha256: ${deployment_tree_digest}"
 grep -q 'SURICATA_EVE_FILE: /var/log/suricata/eve.json' "${tmp_dir}/rendered-compose.yml"
 grep -q 'monitoring-egress:' "${tmp_dir}/rendered-compose.yml"
 if grep -q -- '--web.enable-lifecycle=false' "${tmp_dir}/rendered-compose.yml"; then
