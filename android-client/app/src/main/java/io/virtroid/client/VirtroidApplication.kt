@@ -9,6 +9,7 @@ import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.RuntimeCapabilityStore
 import io.virtroid.client.security.applyScreenCaptureProtection
+import io.virtroid.client.push.NotificationRelayManager
 
 class VirtroidApplication : Application(), Application.ActivityLifecycleCallbacks {
     private var startedActivities = 0
@@ -17,6 +18,7 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
     override fun onCreate() {
         super.onCreate()
         RuntimeCapabilityStore.initialize(this)
+        NotificationRelayManager(this).ensureRegistered()
         registerActivityLifecycleCallbacks(this)
         AppLogStore.get(this).info("App startup", "lifecycle")
     }

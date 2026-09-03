@@ -351,6 +351,34 @@ Split-directory installs are intentionally not trusted.
 `set_as_home` makes the node call Android's package manager to set the supplied
 `home_activity` as the default launcher after installation.
 
+## Runtime Notification Forwarding
+
+The physical user installs only the Virtroid client. `virtnoded` automatically
+installs the separate, non-launchable `io.virtroid.runtimeagent` package inside
+each ReDroid runtime and grants its notification-listener role through ADB. The
+agent accepts provisioning only from the Android shell identity, authenticates
+to one runtime-specific backend endpoint, and sends only event ID, package
+name, app label, notification timestamp, and title. Unknown JSON fields are
+rejected; notification bodies, expanded text, and previews are never serialized.
+
+Build the runtime agent from the reviewed Android source, sign the release APK,
+then install and pin it on the node:
+
+```bash
+cd android-client
+./gradlew :runtime-agent:assembleRelease
+sudo install -o root -g root -m 0644 \
+  runtime-agent/build/outputs/apk/release/runtime-agent-release.apk \
+  /srv/virtroid/apks/virtroid-runtime-agent.apk
+sudo sha256sum /srv/virtroid/apks/virtroid-runtime-agent.apk
+```
+
+Put that digest in `NODE_NOTIFICATION_AGENT_APK_SHA256`. The Virtroid client
+maintains an authenticated foreground remote-messaging stream over HTTPS. The
+backend queues only a per-device opaque P-256 ECDH/AES-GCM envelope, and
+decryption happens in the client. Android notification permission is requested
+by the Virtroid client.
+
 ## Health Checks
 
 Local checks:

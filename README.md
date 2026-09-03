@@ -70,6 +70,7 @@ The release candidate includes:
 * Go control plane
 * Go runtime node agent
 * ReDroid Android containers
+* Automatically provisioned ReDroid notification-listener agent
 * PostgreSQL
 * HAProxy
 * Encrypted local runtime snapshots
@@ -106,6 +107,7 @@ flowchart LR
 | Runtime start and stop       |   ✅ Deployed      | Live single-node guest lifecycle and idle cleanup proved |
 | Remote Android viewer        |   ✅ Deployed      | Encrypted TLS viewer and Back → Connect reconnection proved |
 | Runtime audio streaming      |   ✅ Deployed      | Virtual Android output was audibly accepted on a physical phone |
+| Runtime notification forwarding | ✅ Implemented  | Package, app label, timestamp, and title only; direct encrypted delivery awaits live device proof |
 | Physical microphone input    | ❌ Not implemented | Phone microphone audio is not passed into the virtual Android runtime |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
@@ -273,6 +275,7 @@ flowchart TB
         CL[Application lock]
         CR[Runtime controls]
         CW[Encrypted viewer]
+        CN[Notification relay<br/>Local envelope decryption]
     end
 
     subgraph Edge["Public Edge"]
@@ -286,17 +289,25 @@ flowchart TB
 
     subgraph Data["State and Runtime"]
         PG[(PostgreSQL)]
-        RD[ReDroid containers]
+        subgraph Guest["ReDroid container"]
+            RD[Android apps and system]
+            RA[Runtime notification agent]
+            RD -->|Posted notification| RA
+        end
         SS[(Encrypted snapshots)]
         APK[Approved APK storage]
     end
 
-    Client -->|HTTPS| HP
+    CR -->|Signed control HTTPS| HP
+    CW -->|Encrypted viewer transport| HP
+    CN -->|Signed HTTPS event stream| HP
     HP --> CP
     HP --> NA
     CP --> PG
     CP --> NA
     NA --> RD
+    NA -->|ADB install and provision| RA
+    RA -->|Metadata-only HTTPS event| HP
     NA --> SS
     NA --> APK
 ```
@@ -305,12 +316,13 @@ flowchart TB
 
 | Component            | Responsibility                                                                      |
 | :------------------- | :---------------------------------------------------------------------------------- |
-| **Android client**   | Device identity, onboarding, runtime controls, local security, and remote viewer    |
+| **Android client**   | Device identity, onboarding, runtime controls, local security, remote viewer, and encrypted notification relay |
 | **HAProxy**          | Public HTTPS termination and controlled ingress                                     |
-| **`virtroidd`**      | Accounts, devices, entitlements, runtimes, capabilities, sessions, and policy       |
-| **`virtnoded`**      | ReDroid lifecycle, media/file paths, relay handling, snapshots, and cleanup          |
-| **PostgreSQL**       | Authoritative control-plane and lifecycle state                                     |
+| **`virtroidd`**      | Accounts, devices, entitlements, runtimes, capabilities, sessions, policy, and encrypted notification delivery |
+| **`virtnoded`**      | ReDroid lifecycle, runtime-agent provisioning, media/file paths, relay handling, snapshots, and cleanup |
+| **PostgreSQL**       | Authoritative control-plane/lifecycle state and encrypted notification outbox       |
 | **ReDroid**          | Remote Android runtime containers                                                   |
+| **Runtime agent**    | Reads the approved notification metadata fields and uploads them with runtime-scoped authentication |
 | **Snapshot storage** | Encrypted stopped-runtime persistence                                               |
 
 ---
@@ -335,6 +347,9 @@ The control plane is responsible for:
 * Storage quotas
 * Cleanup tracking
 * Audit state
+* Device notification-key registration
+* Strict metadata-only notification ingestion
+* Per-device notification-envelope encryption and durable delivery tracking
 
 The term **control plane** refers to the backend service infrastructure.
 
@@ -355,6 +370,7 @@ The runtime node agent is responsible for:
 * Importing bounded files into active runtimes
 * Importing user-captured physical-camera photos into the active runtime
 * Installing approved applications
+* Installing, pinning, provisioning, and enabling the internal runtime notification agent
 * Encrypting runtime snapshots
 * Restoring runtime snapshots
 * Enforcing snapshot generations
@@ -387,6 +403,8 @@ The Android client currently provides:
 * Keystore-protected secrets
 * Encrypted local state
 * Security and lifecycle logs
+* Built-in encrypted delivery of metadata-only runtime notifications
+* Foreground remote-messaging connection with boot and network reconnection
 
 ---
 
@@ -449,6 +467,16 @@ Virtroid currently provides protections against several classes of client-side, 
 * Retry controls
 * Biometric authentication
 * Secure-window handling
+
+#### Notification forwarding security
+
+* Runtime-specific 256-bit bearer credentials stored as server-side SHA-256 digests
+* Strict request schema that rejects undeclared notification fields
+* Package, label, timestamp, and title allowlist with size and freshness bounds
+* Per-device P-256 ECDH, HKDF-SHA-256, and AES-256-GCM envelopes
+* Signed physical-device subscription, stream, and acknowledgement requests
+* Ciphertext-only durable delivery outbox with seven-day expiry
+* Local event validation and deduplication before display
 
 #### Deployment security
 
@@ -545,7 +573,9 @@ This is encrypted local persistence, not independent or operator-blind storage.
 
 ```text
 Virtroid/
-├── android-client/          # Virtroid Android client
+├── android-client/
+│   ├── app/                 # Virtroid Android client
+│   └── runtime-agent/       # Auto-installed ReDroid notification listener
 ├── backend/
 │   ├── cmd/                 # Go service and administration entry points
 │   ├── internal/            # Backend domain and infrastructure logic
@@ -559,6 +589,7 @@ Virtroid/
 | Path                           | Purpose                                                           |
 | :----------------------------- | :---------------------------------------------------------------- |
 | [`android-client/`](android-client/)         | Android client source, resources, tests, and build configuration  |
+| [`android-client/runtime-agent/`](android-client/runtime-agent/) | Internal metadata-only listener automatically installed inside ReDroid |
 | [`backend/cmd/`](backend/cmd/)                 | Backend service and administration command entry points           |
 | [`backend/internal/`](backend/internal/)       | Security, lifecycle, storage, persistence, and runtime logic      |
 | [`deploy/vps/`](deploy/vps/)   | VPS preparation, release, backup, rollback, and hardening         |

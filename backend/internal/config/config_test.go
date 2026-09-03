@@ -129,6 +129,23 @@ func TestAppCatalogSyncIsFailClosedByDefaultAndLoadsExplicitPin(t *testing.T) {
 	}
 }
 
+func TestRuntimeNotificationRateLimitDefaultsAndFailsSafe(t *testing.T) {
+	t.Setenv("RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE", "")
+	if got := LoadServer().RuntimeNotificationRateLimit; got != 120 {
+		t.Fatalf("default runtime notification rate limit = %d, want 120", got)
+	}
+
+	t.Setenv("RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE", "45")
+	if got := LoadServer().RuntimeNotificationRateLimit; got != 45 {
+		t.Fatalf("configured runtime notification rate limit = %d, want 45", got)
+	}
+
+	t.Setenv("RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE", "0")
+	if got := LoadServer().RuntimeNotificationRateLimit; got != 120 {
+		t.Fatalf("unsafe runtime notification rate limit = %d, want safe default", got)
+	}
+}
+
 func TestRenterdPasswordLoadsFromMountedSecretFile(t *testing.T) {
 	secretPath := filepath.Join(t.TempDir(), "renterd-api-password")
 	if err := os.WriteFile(secretPath, []byte("file-secret\n"), 0o600); err != nil {
