@@ -674,6 +674,25 @@ require_running_container() {
   fi
 }
 
+wait_for_healthy_container() {
+  local container_name="$1"
+  local attempt container_state health_state
+  for attempt in $(seq 1 60); do
+    container_state="$(docker inspect --format '{{.State.Status}}' "${container_name}" 2>/dev/null || true)"
+    health_state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${container_name}" 2>/dev/null || true)"
+    if [ "${container_state}" = running ] && [ "${health_state}" = healthy ]; then
+      return 0
+    fi
+    if [ "${container_state}" = dead ] || [ "${container_state}" = exited ]; then
+      break
+    fi
+    sleep 1
+  done
+  echo "required container did not become healthy: ${container_name}" >&2
+  docker inspect --format 'state={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}} restarts={{.RestartCount}}' "${container_name}" >&2 || true
+  return 1
+}
+
 health() {
   local public_authority public_hostname public_port
   wait_for_health http://127.0.0.1:8080/healthz
@@ -690,7 +709,7 @@ health() {
     require_running_container virtroid-falco
   fi
   if profile_enabled nids; then
-    require_running_container virtroid-suricata
+    wait_for_healthy_container virtroid-suricata
   fi
   if profile_enabled edge; then
     if [[ ! "${PUBLIC_BASE_URL}" =~ ^https://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$ ]]; then
