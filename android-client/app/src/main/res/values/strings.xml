@@ -397,6 +397,7 @@
     <string name="viewer_service_channel_name">Viewer sessions</string>
     <string name="viewer_service_notification_title">Virtroid viewer active</string>
     <string name="viewer_service_notification_body">Keeping the relay connection active in background.</string>
+    <string name="viewer_service_notification_microphone_active">Phone microphone is active for the connected runtime.</string>
     <string name="onboarding_title">Generate Identity</string>
     <string name="onboarding_subtitle">This device creates a local signing key. The control plane issues and consumes a device-bound one-time enrollment credential during registration.</string>
     <string name="onboarding_invite_required">Automatic identity provisioning is unavailable</string>
@@ -512,4 +513,7 @@
     <string name="new_runtime_persistent_title">Persistent runtime data</string>
     <string name="new_runtime_persistent_body">Runtime /data is retained between sessions in encrypted snapshots. Disconnecting does not erase apps, accounts, or local data; use Wipe Runtime when you need to remove stored state.</string>
     <string name="account_storage_operator_managed">Operator managed</string>
+    <string name="session_microphone_permission_denied">Phone microphone access was denied. Runtime microphone passthrough is disabled for this session.</string>
+    <string name="session_microphone_runtime_unavailable">This runtime image could not activate microphone passthrough.</string>
+    <string name="session_microphone_bridge_failed">Phone microphone passthrough could not start.</string>
 </resources>

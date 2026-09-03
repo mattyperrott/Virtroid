@@ -14,6 +14,8 @@ Virtroid changes are deliberately small and reviewable:
 - retain ReDroid display and power-service fallbacks;
 - bind the plaintext scrcpy-to-viewercrypt hop to guest loopback;
 - serialize audio/video writes to the multiplexed viewer stream;
+- carry demand-gated physical-microphone PCM over the existing encrypted viewer
+  stream and inject it into matching runtime recorders with an Android audio policy;
 - validate all five server arguments; and
 - build the tracked server asset from this source in CI.
 
@@ -30,7 +32,7 @@ sources are compiled under a different JDK major version.
 The resulting APK is a zip-compatible app-process payload. The sync task copies
 it to `../backend/cmd/virtnoded/assets/scrcpy-server.jar`; then run the backend
 and Android test suites. The tracked asset's pinned SHA-256 digest is
-`4ec08c4211e73f9b293e53dc6b141b0360210ada4e6fcb71213320ba2d8d40a0`.
+`acb3499b6484568f0c8dc9f1a3a3f70fbecb67551f041a1f4149598e03b2c11c`.
 CI independently rebuilds the module and checks every decompressed ZIP member
 byte against the tracked asset. This ignores container-level APK ordering and
 compression metadata, which Android build tools may vary between platforms,

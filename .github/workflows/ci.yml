@@ -117,6 +117,7 @@ jobs:
           :runtime-agent:lintDebug
           :runtime-agent:lintRelease
           :runtime-agent:assembleDebug
+          :scrcpy-server:testDebugUnitTest
           :scrcpy-server:lintRelease
           :scrcpy-server:assembleRelease
 

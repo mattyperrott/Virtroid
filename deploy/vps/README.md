@@ -366,6 +366,23 @@ to one runtime-specific backend endpoint, and sends only event ID, package
 name, app label, notification timestamp, and title. Unknown JSON fields are
 rejected; notification bodies, expanded text, and previews are never serialized.
 
+## Physical Microphone Bridge
+
+The physical user installs only the Virtroid client. When runtime audio is
+enabled, the embedded viewer server registers an Android audio-policy injection
+mix under its existing shell identity. It watches the runtime's active recording
+configurations and asks the client for microphone audio only while an app is
+actually recording, including common voice-call and voice-recorder capture
+sources. The client then starts its foreground microphone capture and stops it
+as soon as runtime demand ends.
+
+Mono 48 kHz PCM travels inside the existing authenticated, encrypted,
+session-bound viewer stream. The bridge does not expose a second network port,
+does not use a third-party push or cloud service, and does not require another
+user-installed APK. A newly built embedded viewer payload must be deployed on
+the node, and compatibility must still be accepted against the target ReDroid
+image and physical handset before describing the feature as deployed.
+
 Build the runtime agent from the reviewed Android source, sign the release APK,
 then install and pin it on the node:
 

@@ -89,7 +89,7 @@ public final class DroidConnection implements Closeable {
 
         int size = ByteUtils.bytesToInt(packetSize);
 
-        if (size > 4 * 1024 * 1024) {  // 如果单个数据包大于 4m ，直接断开连接
+        if (size < 1 || size > 4 * 1024 * 1024) {  // 如果单个数据包大于 4m ，直接断开连接
             throw new EOFException("Event controller socket closed");
         }
         byte[] packet = new byte[size];

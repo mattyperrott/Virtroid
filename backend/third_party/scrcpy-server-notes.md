@@ -12,12 +12,16 @@ ip max_size bit_rate tunnel_forward audio_enabled
 ```
 
 The node passes the runtime's `audio_enabled` value through both viewer launch
-paths. Audio and video packets share one synchronized multiplexed stream before
-the encrypted viewer proxy, preventing concurrent packet writes from corrupting
-the transport.
+paths. Audio, video, control, and demand-gated physical-microphone packets share
+one synchronized multiplexed stream before the encrypted viewer proxy,
+preventing concurrent packet writes from corrupting the transport. The server
+uses its existing Android shell identity to register the runtime microphone
+injection policy; no separately installed microphone package or public listener
+port is required.
 
 CI builds the vendored module and compares the complete unsigned APK
 byte-for-byte with the tracked payload. This is source/build evidence; an
 Android build alone is not proof that
-the ReDroid audio capture API works on a deployed image. Runtime proof still
-requires a live session with decoded audio on the client.
+the ReDroid audio paths work on a deployed image. Runtime proof still requires
+a live session with decoded runtime output and successful microphone recording
+on the deployed ReDroid image.

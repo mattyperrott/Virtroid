@@ -1,7 +1,5 @@
 package org.server.scrcpy;
 
-import static org.server.scrcpy.model.CommandPacket.CmdType.VIDEO_NEW_KEY_FRAME;
-
 import android.media.MediaCodec;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,9 +19,11 @@ import org.server.scrcpy.wrappers.InputManager;
 import org.server.scrcpy.control.PointersState;
 import org.server.scrcpy.control.Pointer;
 import org.server.scrcpy.device.Point;
+import org.server.scrcpy.audio.MicrophoneInjector;
 
 import java.io.IOException;
-import java.util.Objects;
+import java.io.OutputStream;
+import java.util.concurrent.CountDownLatch;
 
 
 public class EventController {
@@ -32,6 +32,10 @@ public class EventController {
     private final DroidConnection connection;
 
     private final ScreenEncoder screenEncoder;
+    private final OutputStream mediaStream;
+    private final boolean microphoneEnabled;
+    private final CountDownLatch streamHeaderWritten;
+    private MicrophoneInjector microphoneInjector;
 
     private final MotionEvent.PointerProperties[] pointerProperties = new MotionEvent.PointerProperties[PointersState.MAX_POINTERS];
     private final MotionEvent.PointerCoords[] pointerCoords = new MotionEvent.PointerCoords[PointersState.MAX_POINTERS];
@@ -43,10 +47,13 @@ public class EventController {
     private boolean hit = false;
     private boolean proximity = false;
 
-    public EventController(Device device, DroidConnection connection, ScreenEncoder screenEncoder) {
+    public EventController(Device device, DroidConnection connection, ScreenEncoder screenEncoder, OutputStream mediaStream, boolean microphoneEnabled, CountDownLatch streamHeaderWritten) {
         this.device = device;
         this.connection = connection;
         this.screenEncoder = screenEncoder;
+        this.mediaStream = mediaStream;
+        this.microphoneEnabled = microphoneEnabled;
+        this.streamHeaderWritten = streamHeaderWritten;
         initPointers();
     }
 
@@ -140,33 +147,78 @@ public class EventController {
 
     private void extraCommand(CommandPacket commandPacket) {
 
-        switch (Objects.requireNonNull(CommandPacket.CmdType.getFlag(commandPacket.cmdType))) {
+        CommandPacket.CmdType type = CommandPacket.CmdType.getFlag(commandPacket.cmdType);
+        if (type == null) {
+            return;
+        }
+        switch (type) {
             case VIDEO_NEW_KEY_FRAME:
                 screenEncoder.asyncRequestKeyFrame();
                 break;
+            case MICROPHONE_AUDIO:
+                if (microphoneInjector != null) {
+                    microphoneInjector.offer(commandPacket.data);
+                }
+                break;
+            case MICROPHONE_END:
+                if (microphoneInjector != null) {
+                    microphoneInjector.endInput();
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void sendMicrophoneState(int state) {
+        try {
+            mediaStream.write(CommandPacket.toArray(
+                    MediaPacket.Type.COMMAND,
+                    CommandPacket.CmdType.MICROPHONE_STATE,
+                    new byte[]{(byte) state}
+            ));
+            mediaStream.flush();
+        } catch (IOException error) {
+            Ln.e("Could not send microphone state", error);
         }
     }
 
     public void control() throws IOException {
         // on start, turn screen on
         turnScreenOn();
+        try {
+            streamHeaderWritten.await();
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        if (microphoneEnabled) {
+            microphoneInjector = new MicrophoneInjector(this::sendMicrophoneState);
+            microphoneInjector.start();
+        }
 
-        while (true) {
-            //           handleEvent();
-            MediaPacket mediaPacket = connection.NewReceiveEvent();
-            try {
-                if (mediaPacket != null) {
-                    switch (mediaPacket.type) {
-                        case CONTROL:
-                            injectControlEvenv(((ControlPacket) mediaPacket).data);
-                            break;
-                        case COMMAND:
-                            extraCommand((CommandPacket) mediaPacket);
-                            break;
+        try {
+            while (true) {
+                MediaPacket mediaPacket = connection.NewReceiveEvent();
+                try {
+                    if (mediaPacket != null) {
+                        switch (mediaPacket.type) {
+                            case CONTROL:
+                                injectControlEvenv(((ControlPacket) mediaPacket).data);
+                                break;
+                            case COMMAND:
+                                extraCommand((CommandPacket) mediaPacket);
+                                break;
+                        }
                     }
+                } catch (Exception e) {
+                    Log.e("Scrcpy", "error : " + e);
                 }
-            } catch (Exception e) {
-                Log.e("Scrcpy", "error : " + e);
+            }
+        } finally {
+            if (microphoneInjector != null) {
+                microphoneInjector.close();
+                microphoneInjector = null;
             }
         }
     }

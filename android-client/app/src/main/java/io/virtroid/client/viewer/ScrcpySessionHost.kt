@@ -20,6 +20,7 @@ class ScrcpySessionHost(
     private val relayToken: String,
     private val viewerPublicKey: String,
     private val audioEnabled: Boolean,
+    private val physicalMicrophoneEnabled: Boolean,
     private val surface: Surface,
     private val displayWidth: Int,
     private val displayHeight: Int,
@@ -48,6 +49,7 @@ class ScrcpySessionHost(
                 relayToken,
                 viewerPublicKey,
                 audioEnabled,
+                physicalMicrophoneEnabled,
                 displayHeight,
                 displayWidth,
                 50,
@@ -82,7 +84,10 @@ class ScrcpySessionHost(
     }
 
     fun connect() {
-        val intent = Intent(context, Scrcpy::class.java)
+        val intent = Intent(context, Scrcpy::class.java).putExtra(
+            Scrcpy.EXTRA_PHYSICAL_MICROPHONE_ENABLED,
+            physicalMicrophoneEnabled,
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
         } else {
@@ -134,9 +139,14 @@ class ScrcpySessionHost(
         callback.onFirstVideoFrame()
     }
 
+    override fun physicalMicrophoneStateChanged(active: Boolean, detail: String) {
+        callback.onPhysicalMicrophoneStateChanged(active, detail)
+    }
+
     interface Callback {
         fun onConnected(remoteWidth: Int, remoteHeight: Int)
         fun onFirstVideoFrame()
+        fun onPhysicalMicrophoneStateChanged(active: Boolean, detail: String)
         fun onDisconnected(message: String)
     }
 }

@@ -23,6 +23,7 @@ import io.virtroid.client.security.TlsPins;
 import org.client.scrcpy.decoder.AudioDecoder;
 import org.client.scrcpy.decoder.VideoDecoder;
 import org.client.scrcpy.crypto.ViewerEncryption;
+import org.client.scrcpy.audio.PhysicalMicrophoneBridge;
 import org.client.scrcpy.model.AudioPacket;
 import org.client.scrcpy.model.ByteUtils;
 import org.client.scrcpy.model.CommandPacket;
@@ -63,6 +64,8 @@ public class Scrcpy extends Service {
     private String relayToken = "";
     private String viewerPublicKey = "";
     private boolean audioEnabled = false;
+    private boolean physicalMicrophoneEnabled = false;
+    private volatile boolean physicalMicrophoneActive = false;
     private Surface surface;
     private int screenWidth;
     private int screenHeight;
@@ -84,6 +87,8 @@ public class Scrcpy extends Service {
     private DataInputStream socketInputStream = null;
     private DataOutputStream socketOutputStream = null;
     private volatile Socket activeSocket = null;
+    private final Object socketWriteLock = new Object();
+    private PhysicalMicrophoneBridge physicalMicrophoneBridge;
 
     @Override
     public void onCreate() {
@@ -93,6 +98,9 @@ public class Scrcpy extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null) {
+            physicalMicrophoneEnabled = intent.getBooleanExtra(EXTRA_PHYSICAL_MICROPHONE_ENABLED, false);
+        }
         ensureForeground();
         return START_STICKY;
     }
@@ -129,7 +137,7 @@ public class Scrcpy extends Service {
         return decoder;
     }
 
-    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, String viewerPublicKey, boolean audioEnabled, int screenHeight, int screenWidth, int delay) {
+    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, String viewerPublicKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
         first_time = true;
@@ -144,6 +152,8 @@ public class Scrcpy extends Service {
         this.relayToken = relayToken;
         this.viewerPublicKey = viewerPublicKey;
         this.audioEnabled = audioEnabled;
+        this.physicalMicrophoneEnabled = physicalMicrophoneEnabled;
+        ensureForeground();
 
         this.screenHeight = screenHeight;
         this.screenWidth = screenWidth;
@@ -185,6 +195,7 @@ public class Scrcpy extends Service {
 
     public void StopService() {
         LetServceRunning.set(false);
+        stopPhysicalMicrophone();
         stopForegroundCompat();
         closeActiveSocketAsync();
         if (videoDecoder != null) {
@@ -199,6 +210,7 @@ public class Scrcpy extends Service {
     @Override
     public void onDestroy() {
         LetServceRunning.set(false);
+        stopPhysicalMicrophone();
         closeActiveSocketAsync();
         if (videoDecoder != null) {
             videoDecoder.stop();
@@ -230,7 +242,11 @@ public class Scrcpy extends Service {
         createNotificationChannel();
         Notification notification = buildForegroundNotification();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            int foregroundTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && physicalMicrophoneEnabled) {
+                foregroundTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            }
+            startForeground(NOTIFICATION_ID, notification, foregroundTypes);
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
@@ -274,7 +290,9 @@ public class Scrcpy extends Service {
         return builder
                 .setSmallIcon(R.drawable.ic_phone)
                 .setContentTitle(getString(R.string.viewer_service_notification_title))
-                .setContentText(getString(R.string.viewer_service_notification_body))
+                .setContentText(getString(physicalMicrophoneActive
+                        ? R.string.viewer_service_notification_microphone_active
+                        : R.string.viewer_service_notification_body))
                 .setContentIntent(contentIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -494,6 +512,7 @@ public class Scrcpy extends Service {
                 socketInputStream = null;
                 socketOutputStream = null;
                 activeSocket = null;
+                stopPhysicalMicrophone();
                 // 清除事件队列
                 event.clear();
 
@@ -575,7 +594,7 @@ public class Scrcpy extends Service {
      */
     public boolean requestNewKeyFrame() throws IOException {
         if (LetServceRunning.get() && socketOutputStream != null) {
-            socketOutputStream.write(CommandPacket.toArray(MediaPacket.Type.COMMAND, CommandPacket.CmdType.VIDEO_NEW_KEY_FRAME, new byte[0]));
+            writeCommand(CommandPacket.CmdType.VIDEO_NEW_KEY_FRAME, new byte[0], false);
             return true;
         }
         return false;
@@ -600,7 +619,9 @@ public class Scrcpy extends Service {
                     waitEvent = false;
                     try {
                         byte[] data = ControlPacket.toArray(MediaPacket.Type.CONTROL, sendevent);
-                        dataOutputStream.write(data);
+                        synchronized (socketWriteLock) {
+                            dataOutputStream.write(data);
+                        }
                     } catch (IOException e) {
                         debugLog("write control packet failed", e);
                         if (serviceCallbacks != null) {
@@ -616,7 +637,7 @@ public class Scrcpy extends Service {
                     waitEvent = false;
                     dataInputStream.readFully(packetSize, 0, 4);
                     int size = ByteUtils.bytesToInt(packetSize);
-                    if (size > 4 * 1024 * 1024) {  // 如果单个数据包大于 4m ，直接断开连接
+                    if (size < 1 || size > 4 * 1024 * 1024) {  // 如果单个数据包大于 4m ，直接断开连接
                         if (serviceCallbacks != null) {
                             serviceCallbacks.errorDisconnect();
                         }
@@ -686,6 +707,8 @@ public class Scrcpy extends Service {
                             }
                         }
                         first_time = false;
+                    } else if (MediaPacket.Type.getType(packet[0]) == MediaPacket.Type.COMMAND) {
+                        handleRuntimeCommand(new CommandPacket().fromArray(packet));
                     } else if (audioDecoder != null && MediaPacket.Type.getType(packet[0]) == MediaPacket.Type.AUDIO) {
                         AudioPacket audioPacket = AudioPacket.readHead(packet);
                         // byte[] data = audioPacket.data;
@@ -728,6 +751,87 @@ public class Scrcpy extends Service {
         }
     }
 
+    private void handleRuntimeCommand(CommandPacket command) {
+        CommandPacket.CmdType type = CommandPacket.CmdType.getFlag(command.cmdType);
+        if (type != CommandPacket.CmdType.MICROPHONE_STATE || command.data == null || command.data.length != 1) {
+            return;
+        }
+        if (command.data[0] == 2) {
+            stopPhysicalMicrophone();
+            if (serviceCallbacks != null) {
+                serviceCallbacks.physicalMicrophoneStateChanged(false, "runtime-unavailable");
+            }
+            return;
+        }
+        boolean requested = command.data[0] == 1;
+        if (!requested) {
+            stopPhysicalMicrophone();
+            return;
+        }
+        if (!physicalMicrophoneEnabled) {
+            sendMicrophoneEnd();
+            if (serviceCallbacks != null) {
+                serviceCallbacks.physicalMicrophoneStateChanged(false, "disabled");
+            }
+            return;
+        }
+        if (physicalMicrophoneBridge == null) {
+            physicalMicrophoneBridge = new PhysicalMicrophoneBridge(
+                    this,
+                    new PhysicalMicrophoneBridge.FrameSink() {
+                        @Override
+                        public void send(byte[] pcm) throws Exception {
+                            writeCommand(CommandPacket.CmdType.MICROPHONE_AUDIO, pcm, true);
+                        }
+
+                        @Override
+                        public void end() {
+                            sendMicrophoneEnd();
+                        }
+                    },
+                    (active, detail) -> {
+                        physicalMicrophoneActive = active;
+                        ensureForeground();
+                        if (serviceCallbacks != null) {
+                            serviceCallbacks.physicalMicrophoneStateChanged(active, detail);
+                        }
+                    }
+            );
+        }
+        physicalMicrophoneBridge.setRequested(true);
+    }
+
+    private void stopPhysicalMicrophone() {
+        PhysicalMicrophoneBridge bridge = physicalMicrophoneBridge;
+        physicalMicrophoneBridge = null;
+        physicalMicrophoneActive = false;
+        if (bridge != null) {
+            bridge.stop();
+        }
+    }
+
+    private void sendMicrophoneEnd() {
+        try {
+            writeCommand(CommandPacket.CmdType.MICROPHONE_END, new byte[0], true);
+        } catch (Exception error) {
+            debugLog("microphone end write failed", error);
+        }
+    }
+
+    private void writeCommand(CommandPacket.CmdType type, byte[] data, boolean flush) throws IOException {
+        DataOutputStream output = socketOutputStream;
+        if (!LetServceRunning.get() || output == null) {
+            throw new IOException("viewer socket is unavailable");
+        }
+        byte[] packet = CommandPacket.toArray(MediaPacket.Type.COMMAND, type, data);
+        synchronized (socketWriteLock) {
+            output.write(packet);
+            if (flush) {
+                output.flush();
+            }
+        }
+    }
+
     private static void debugLog(String message) {
         if (BuildConfig.DEBUG) {
             Log.d("Scrcpy", message);
@@ -746,7 +850,12 @@ public class Scrcpy extends Service {
         void errorDisconnect();
 
         void firstVideoFrame();
+
+        void physicalMicrophoneStateChanged(boolean active, String detail);
     }
+
+    public static final String EXTRA_PHYSICAL_MICROPHONE_ENABLED =
+            "org.client.scrcpy.extra.PHYSICAL_MICROPHONE_ENABLED";
 
     public class MyServiceBinder extends Binder {
         public Scrcpy getService() {
