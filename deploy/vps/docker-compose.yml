@@ -396,6 +396,9 @@ services:
   suricata:
     image: ${SURICATA_IMAGE:-virtroid-suricata-profile-disabled}
     container_name: virtroid-suricata
+    labels:
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
+    entrypoint: ["suricata"]
     restart: unless-stopped
     profiles:
       - nids
