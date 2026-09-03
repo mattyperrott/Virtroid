@@ -104,7 +104,7 @@ write_env_var() {
 {
   write_env_var COMPOSE_PROJECT_NAME virtroid
   write_env_var POSTGRES_IMAGE "${POSTGRES_IMAGE:-postgres:18@sha256:REPLACE_WITH_64_HEX}"
-  write_env_var GO_BUILD_IMAGE "${GO_BUILD_IMAGE:-golang:1.26.5-bookworm@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var GO_BUILD_IMAGE "${GO_BUILD_IMAGE:-golang:1.26.6-bookworm@sha256:REPLACE_WITH_64_HEX}"
   write_env_var BACKEND_RUNTIME_IMAGE "${BACKEND_RUNTIME_IMAGE:-alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40}"
   write_env_var NODE_RUNTIME_IMAGE "${NODE_RUNTIME_IMAGE:-redroid/redroid:14.0.0_64only-latest@sha256:REPLACE_WITH_64_HEX}"
   write_env_var HAPROXY_IMAGE "${HAPROXY_IMAGE:-haproxy:lts@sha256:REPLACE_WITH_64_HEX}"

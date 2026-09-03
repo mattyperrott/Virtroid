@@ -72,8 +72,15 @@ grep -q 'NODE_PUBLIC_CONTROL_PLANE_URL: https://virtroid.example' "${tmp_dir}/re
 grep -q 'container_name: virtroid-prometheus' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-alertmanager' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml"
-grep -A7 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml" | grep -q -- '- suricata'
-grep -A14 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml" | grep -q "com.virtroid.deployment-tree-sha256: ${deployment_tree_digest}"
+awk '
+  /^  suricata:$/ { in_service = 1; next }
+  in_service && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_service { print }
+' "${tmp_dir}/rendered-compose.yml" > "${tmp_dir}/suricata-compose.yml"
+grep -q -- '- suricata' "${tmp_dir}/suricata-compose.yml"
+grep -q "com.virtroid.deployment-tree-sha256: ${deployment_tree_digest}" "${tmp_dir}/suricata-compose.yml"
+grep -q -- '- DAC_OVERRIDE' "${tmp_dir}/suricata-compose.yml"
+grep -q 'test -f /var/log/suricata/eve.json && kill -0 1' "${tmp_dir}/suricata-compose.yml"
 grep -q 'SURICATA_EVE_FILE: /var/log/suricata/eve.json' "${tmp_dir}/rendered-compose.yml"
 grep -q 'monitoring-egress:' "${tmp_dir}/rendered-compose.yml"
 if grep -q -- '--web.enable-lifecycle=false' "${tmp_dir}/rendered-compose.yml"; then
