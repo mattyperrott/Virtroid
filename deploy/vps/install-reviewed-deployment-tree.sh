@@ -10,7 +10,6 @@ readonly target_dir=/opt/virtroid/deploy/vps
 readonly target_parent=/opt/virtroid/deploy
 readonly state_root=/var/lib/virtroid-deploy
 readonly maintenance_lock=${state_root}/maintenance.lock
-readonly backup_root=/var/backups/virtroid-deploy-tree
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "run as root" >&2
@@ -148,29 +147,7 @@ calculate_tree_digest() {
   done
 }
 
-read_state_value() {
-  local input_file="$1"
-  local wanted_key="$2"
-  awk -v wanted="${wanted_key}" '
-    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-    {
-      separator = index($0, "=")
-      if (separator == 0) next
-      key = substr($0, 1, separator - 1)
-      if (key == wanted) {
-        found++
-        value = substr($0, separator + 1)
-      }
-    }
-    END {
-      if (found != 1) exit 1
-      print value
-    }
-  ' "${input_file}"
-}
-
 runtime_sources=(
-  virtroid-backup.sh
   configure-renterd-secrets.sh
   renterd-admin.sh
   renterd-smoke-test.sh
@@ -185,8 +162,6 @@ runtime_sources=(
   release-on-vps.sh
   sshd-key-only.conf
   redroid-binderfs.service
-  virtroid-backup.service
-  virtroid-backup.timer
   fail2ban-virtroid.conf
   audit-virtroid.rules
   sshd-virtroid-hardening.conf
@@ -195,7 +170,6 @@ runtime_sources=(
   unattended-upgrades-virtroid.conf
 )
 runtime_destinations=(
-  /usr/local/sbin/virtroid-backup.sh
   /usr/local/sbin/virtroid-configure-renterd-secrets
   /usr/local/sbin/virtroid-renterd-admin
   /usr/local/sbin/virtroid-renterd-smoke-test
@@ -210,8 +184,6 @@ runtime_destinations=(
   /usr/local/sbin/virtroid-release-on-vps
   /usr/local/share/virtroid/sshd-key-only.conf
   /etc/systemd/system/redroid-binderfs.service
-  /etc/systemd/system/virtroid-backup.service
-  /etc/systemd/system/virtroid-backup.timer
   /etc/fail2ban/jail.d/virtroid.conf
   /etc/audit/rules.d/99-virtroid-hardening.rules
   /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
@@ -220,13 +192,16 @@ runtime_destinations=(
   /etc/apt/apt.conf.d/52virtroid-unattended-upgrades
 )
 runtime_modes=(
-  0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
-  0644
-  0644 0644 0644 0644 0640 0644 0644
+  0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
+  0644 0644 0644 0640 0644 0644
   0755 0644
 )
 
 retired_runtime_destinations=(
+  /usr/local/sbin/virtroid-backup.sh
+  /etc/systemd/system/virtroid-backup.service
+  /etc/systemd/system/virtroid-backup.timer
+  /var/lib/virtroid-deploy/preinstall-tree.env
   /usr/local/sbin/virtroid-offsite-backup.sh
   /usr/local/share/virtroid/restic.env.example
   /etc/systemd/system/virtroid-offsite-backup.service
@@ -235,6 +210,8 @@ retired_runtime_destinations=(
   /etc/systemd/system/virtroid-offsite-restore-check.timer
 )
 retired_units=(
+  virtroid-backup.service
+  virtroid-backup.timer
   virtroid-offsite-backup.service
   virtroid-offsite-backup.timer
   virtroid-offsite-restore-check.service
@@ -267,10 +244,7 @@ required_tree_files=(
   test-env-safety.sh test-node-fingerprint.sh
   test-certbot-deploy-hook.sh
   unattended-upgrades-virtroid.conf verify-host-hardening.sh
-  virtroid-backup.service virtroid-backup.sh
-  virtroid-backup.timer virtroid-binderfs-setup.sh
-  monitoring/README.md monitoring/alertmanager.yml
-  monitoring/prometheus.yml monitoring/virtroid-alerts.yml
+  virtroid-binderfs-setup.sh
   suricata/README.md suricata/virtroid.rules
 )
 
@@ -286,7 +260,7 @@ atomic_install_file() {
 }
 
 install_runtime_copies() {
-  local index retired_destination retired_unit
+  local index retired_backup_root retired_destination retired_unit
   for ((index = 0; index < ${#runtime_sources[@]}; index++)); do
     atomic_install_file \
       "${target_dir}/${runtime_sources[index]}" \
@@ -301,6 +275,17 @@ install_runtime_copies() {
       find "${retired_destination}" -maxdepth 0 -delete
     fi
   done
+  for retired_backup_root in /var/backups/virtroid /var/backups/virtroid-deploy-tree; do
+    if [ -e "${retired_backup_root}" ] || [ -L "${retired_backup_root}" ]; then
+      [ -d "${retired_backup_root}" ] && [ ! -L "${retired_backup_root}" ] &&
+        [ "$(stat -c '%u' "${retired_backup_root}")" -eq 0 ] || {
+        echo "retired backup root is unsafe: ${retired_backup_root}" >&2
+        return 1
+      }
+      find "${retired_backup_root}" -xdev -depth -delete
+    fi
+  done
+  remove_retired_operational_monitoring
   systemctl daemon-reload
   modprobe sch_fq_codel
   sysctl --system >/dev/null
@@ -320,6 +305,40 @@ install_runtime_copies() {
     /usr/local/sbin/virtroid-verify-host-hardening
 }
 
+remove_retired_operational_monitoring() {
+  local container_name expected_service project service volume_name expected_volume volume_project volume_label
+  for container_name in virtroid-prometheus virtroid-alertmanager; do
+    case "${container_name}" in
+      virtroid-prometheus) expected_service=prometheus ;;
+      virtroid-alertmanager) expected_service=alertmanager ;;
+    esac
+    if docker inspect "${container_name}" >/dev/null 2>&1; then
+      project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${container_name}")"
+      service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_name}")"
+      [ "${project}" = virtroid ] && [ "${service}" = "${expected_service}" ] || {
+        echo "refusing to remove unexpected container: ${container_name}" >&2
+        return 1
+      }
+      docker rm --force "${container_name}" >/dev/null
+    fi
+  done
+  for volume_name in virtroid_prometheus-data virtroid_alertmanager-data; do
+    case "${volume_name}" in
+      virtroid_prometheus-data) expected_volume=prometheus-data ;;
+      virtroid_alertmanager-data) expected_volume=alertmanager-data ;;
+    esac
+    if docker volume inspect "${volume_name}" >/dev/null 2>&1; then
+      volume_project="$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "${volume_name}")"
+      volume_label="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "${volume_name}")"
+      [ "${volume_project}" = virtroid ] && [ "${volume_label}" = "${expected_volume}" ] || {
+        echo "refusing to remove unexpected volume: ${volume_name}" >&2
+        return 1
+      }
+      docker volume rm "${volume_name}" >/dev/null
+    fi
+  done
+}
+
 verify_runtime_copies() {
   local index protected_unit retired_destination
   for ((index = 0; index < ${#runtime_sources[@]}; index++)); do
@@ -336,10 +355,7 @@ verify_runtime_copies() {
       return 1
     fi
   done
-  for protected_unit in \
-    virtroid-backup.service \
-    virtroid-backup.timer \
-    redroid-binderfs.service; do
+  for protected_unit in redroid-binderfs.service; do
     if [ -n "$(systemctl show --property=DropInPaths --value "${protected_unit}")" ]; then
       echo "${protected_unit} must not have unreviewed systemd drop-ins" >&2
       return 1
@@ -348,16 +364,16 @@ verify_runtime_copies() {
 }
 
 restore_runtime_copies() {
-  local index destination relative backup_file temporary
+  local index destination relative rollback_file temporary
   local restore_status=0
   for ((index = 0; index < ${#managed_runtime_destinations[@]}; index++)); do
     destination="${managed_runtime_destinations[index]}"
     relative="${destination#/}"
-    backup_file="${backup_dir}/system/${relative}"
-    if [ -f "${backup_file}" ] && [ ! -L "${backup_file}" ]; then
+    rollback_file="${rollback_dir}/system/${relative}"
+    if [ -f "${rollback_file}" ] && [ ! -L "${rollback_file}" ]; then
       temporary=
       if temporary="$(mktemp "$(dirname "${destination}")/.virtroid-restore.XXXXXX")"; then
-        if ! cp -a "${backup_file}" "${temporary}" ||
+        if ! cp -a "${rollback_file}" "${temporary}" ||
            ! mv -Tf "${temporary}" "${destination}"; then
           restore_status=1
           if [ -e "${temporary}" ]; then
@@ -431,13 +447,6 @@ case "$(stat -c '%a' "${target_dir}/.env")" in
     ;;
 esac
 
-if [ -e "${backup_root}" ] || [ -L "${backup_root}" ]; then
-  require_safe_directory "${backup_root}"
-else
-  install -d -o root -g root -m 0700 "${backup_root}"
-fi
-require_safe_directory "${backup_root}"
-
 for destination_dir in \
   /etc/apt /etc/apt/apt.conf.d \
   /usr/local/share/virtroid \
@@ -453,14 +462,9 @@ snapshot_dir="$(mktemp -d "${state_root}/staged-tree.XXXXXX")"
 candidate_dir="$(mktemp -d "${target_parent}/.vps.candidate.XXXXXX")"
 old_swap="${target_parent}/.vps.previous.${run_id}.$$"
 failed_swap="${target_parent}/.vps.failed.${run_id}.$$"
-backup_dir="$(mktemp -d "${backup_root}/${run_id}.XXXXXX")"
+rollback_dir="$(mktemp -d "${state_root}/install-rollback.XXXXXX")"
 tree_switched=0
 installation_complete=0
-preinstall_state_file="${state_root}/preinstall-tree.env"
-preinstall_state_existed=0
-state_marker_changed=0
-preserve_preinstall_state=0
-state_temp=
 
 cleanup_installation() {
   local original_status="$?"
@@ -476,19 +480,7 @@ cleanup_installation() {
       echo "failed to restore the prior production deployment tree" >&2
     fi
   fi
-  if [ "${state_marker_changed}" -eq 1 ] && [ "${installation_complete}" -ne 1 ]; then
-    if [ "${preinstall_state_existed}" -eq 1 ] &&
-       [ -f "${backup_dir}/state/preinstall-tree.env" ]; then
-      atomic_install_file \
-        "${backup_dir}/state/preinstall-tree.env" \
-        "${preinstall_state_file}" 0600 ||
-        echo "failed to restore the prior pre-install tree marker" >&2
-    elif [ -e "${preinstall_state_file}" ] || [ -L "${preinstall_state_file}" ]; then
-      find "${preinstall_state_file}" -maxdepth 0 -delete ||
-        echo "failed to remove the uncommitted pre-install tree marker" >&2
-    fi
-  fi
-  for temporary_path in "${snapshot_dir}" "${candidate_dir}" "${failed_swap}" "${state_temp}"; do
+  for temporary_path in "${snapshot_dir}" "${candidate_dir}" "${failed_swap}" "${rollback_dir}"; do
     if [ -n "${temporary_path}" ] && [ -e "${temporary_path}" ]; then
       find "${temporary_path}" -depth -delete
     fi
@@ -529,91 +521,21 @@ if [ "${candidate_digest}" != "${expected_digest}" ]; then
   exit 1
 fi
 
-old_tree_digest="$(calculate_tree_digest "${target_dir}")"
-if [ -e "${preinstall_state_file}" ] || [ -L "${preinstall_state_file}" ]; then
-  [ -f "${preinstall_state_file}" ] && [ ! -L "${preinstall_state_file}" ] || {
-    echo "pre-install deployment-tree marker is unsafe" >&2
-    exit 1
-  }
-  [ "$(stat -c '%u' "${preinstall_state_file}")" -eq 0 ] || {
-    echo "pre-install deployment-tree marker is not root-owned" >&2
-    exit 1
-  }
-  case "$(stat -c '%a' "${preinstall_state_file}")" in
-    400|600) ;;
-    *)
-      echo "pre-install deployment-tree marker has an unsafe mode" >&2
-      exit 1
-      ;;
-  esac
-  prior_marker_path="$(read_state_value "${preinstall_state_file}" VIRTROID_PREINSTALL_TREE_PATH)"
-  prior_marker_tree="$(read_state_value "${preinstall_state_file}" VIRTROID_PREINSTALL_TREE_SHA256)"
-  prior_marker_installed="$(read_state_value "${preinstall_state_file}" VIRTROID_INSTALLED_TREE_SHA256)"
-  [[ "${prior_marker_tree}" =~ ^[0-9a-f]{64}$ ]] &&
-    [[ "${prior_marker_installed}" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "pre-install deployment-tree marker contains invalid digests" >&2
-    exit 1
-  }
-  case "${prior_marker_path}" in
-    "${backup_root}"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.*) ;;
-    *)
-      echo "pre-install deployment-tree marker points outside the protected backup root" >&2
-      exit 1
-      ;;
-  esac
-  [ -d "${prior_marker_path}/vps" ] && [ ! -L "${prior_marker_path}" ] &&
-    [ -f "${prior_marker_path}/DEPLOYMENT_TREE_SHA256" ] || {
-    echo "pre-install deployment-tree marker target is incomplete" >&2
-    exit 1
-  }
-  recorded_prior_marker_tree="$(tr -d '\n' < "${prior_marker_path}/DEPLOYMENT_TREE_SHA256")"
-  actual_prior_marker_tree="$(calculate_tree_digest "${prior_marker_path}/vps")"
-  if [ "${recorded_prior_marker_tree}" != "${prior_marker_tree}" ] ||
-     [ "${actual_prior_marker_tree}" != "${prior_marker_tree}" ]; then
-    echo "pre-install deployment-tree marker target failed digest verification" >&2
-    exit 1
-  fi
-
-  running_release_tree=
-  if [ -e "${state_root}/current.env" ] || [ -L "${state_root}/current.env" ]; then
-    running_release_file="$(readlink -f "${state_root}/current.env")"
-    case "${running_release_file}" in
-      "${state_root}"/releases/*.env) ;;
-      *)
-        echo "current release state points outside the protected releases directory" >&2
-        exit 1
-        ;;
-    esac
-    running_release_tree="$(read_state_value "${running_release_file}" VIRTROID_DEPLOYMENT_TREE_SHA256)"
-  fi
-  if [ "${running_release_tree}" != "${old_tree_digest}" ]; then
-    if [ "${prior_marker_installed}" != "${old_tree_digest}" ] ||
-       [ "${expected_digest}" != "${old_tree_digest}" ]; then
-      echo "an earlier deployment-tree transition is still awaiting a protected release; refusing to overwrite its recovery lineage" >&2
-      exit 75
-    fi
-    preserve_preinstall_state=1
-  fi
-fi
-
-install -d -o root -g root -m 0700 "${backup_dir}/vps" "${backup_dir}/system" "${backup_dir}/state"
-if [ -f "${preinstall_state_file}" ] && [ ! -L "${preinstall_state_file}" ]; then
-  cp -a "${preinstall_state_file}" "${backup_dir}/state/preinstall-tree.env"
-  preinstall_state_existed=1
-fi
-rsync -a --one-file-system "${target_dir}/" "${backup_dir}/vps/"
+install -d -o root -g root -m 0700 "${rollback_dir}/vps" "${rollback_dir}/system"
+rsync -a --one-file-system \
+  --exclude=/.env \
+  --exclude=/release.env \
+  "${target_dir}/" "${rollback_dir}/vps/"
 for ((index = 0; index < ${#managed_runtime_destinations[@]}; index++)); do
   destination="${managed_runtime_destinations[index]}"
   if [ -f "${destination}" ] && [ ! -L "${destination}" ]; then
-    install -d -o root -g root -m 0700 "${backup_dir}/system/$(dirname "${destination#/}")"
-    cp -a "${destination}" "${backup_dir}/system/${destination#/}"
+    install -d -o root -g root -m 0700 "${rollback_dir}/system/$(dirname "${destination#/}")"
+    cp -a "${destination}" "${rollback_dir}/system/${destination#/}"
   elif [ -e "${destination}" ] || [ -L "${destination}" ]; then
     echo "managed runtime destination is not a regular file: ${destination}" >&2
     exit 1
   fi
 done
-printf '%s\n' "${old_tree_digest}" > "${backup_dir}/DEPLOYMENT_TREE_SHA256"
-chmod 0600 "${backup_dir}/DEPLOYMENT_TREE_SHA256"
 sync
 
 mv -T "${target_dir}" "${old_swap}"
@@ -633,15 +555,6 @@ if [ "${installed_digest}" != "${expected_digest}" ]; then
 fi
 verify_runtime_copies
 
-if [ "${preserve_preinstall_state}" -ne 1 ]; then
-  state_temp="$(mktemp "${state_root}/preinstall-tree.XXXXXX")"
-  printf 'VIRTROID_PREINSTALL_TREE_PATH=%s\nVIRTROID_PREINSTALL_TREE_SHA256=%s\nVIRTROID_INSTALLED_TREE_SHA256=%s\n' \
-    "${backup_dir}" "${old_tree_digest}" "${installed_digest}" > "${state_temp}"
-  chmod 0600 "${state_temp}"
-  state_marker_changed=1
-  mv -Tf "${state_temp}" "${preinstall_state_file}"
-  state_temp=
-fi
 sync
 
 installation_complete=1
@@ -652,7 +565,6 @@ sync
 tree_switched=0
 trap - EXIT HUP INT TERM
 find "${snapshot_dir}" -depth -delete
+find "${rollback_dir}" -depth -delete
 
-printf 'reviewed deployment tree installed digest=%s prior_tree_backup=%s\n' \
-  "${installed_digest}" \
-  "$(read_state_value "${preinstall_state_file}" VIRTROID_PREINSTALL_TREE_PATH)"
+printf 'reviewed deployment tree installed digest=%s\n' "${installed_digest}"

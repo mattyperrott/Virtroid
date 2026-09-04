@@ -353,7 +353,7 @@ services:
     cpus: "${FALCO_CPU_LIMIT:-1.0}"
     pids_limit: ${FALCO_PIDS_LIMIT:-512}
     networks:
-      - monitoring
+      - security-events
 
   falco-forwarder:
     image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
@@ -390,7 +390,7 @@ services:
     volumes:
       - suricata-logs:/var/log/suricata:ro
     networks:
-      - monitoring
+      - security-events
       - control
 
   suricata:
@@ -444,79 +444,6 @@ services:
     cpus: "${SURICATA_CPU_LIMIT:-1.0}"
     pids_limit: ${SURICATA_PIDS_LIMIT:-512}
 
-  prometheus:
-    image: ${PROMETHEUS_IMAGE:-virtroid-prometheus-profile-disabled}
-    container_name: virtroid-prometheus
-    restart: unless-stopped
-    profiles:
-      - monitoring
-    depends_on:
-      - virtroidd
-      - virtnoded
-      - alertmanager
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/virtroid-alerts.yml:/etc/prometheus/rules/virtroid-alerts.yml:ro
-      - prometheus-data:/prometheus
-    ports:
-      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=32m
-    mem_limit: "${PROMETHEUS_MEMORY_LIMIT:-1g}"
-    cpus: "${PROMETHEUS_CPU_LIMIT:-1.0}"
-    pids_limit: ${PROMETHEUS_PIDS_LIMIT:-256}
-    logging:
-      driver: local
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - monitoring-egress
-      - monitoring
-      - control
-
-  alertmanager:
-    image: ${ALERTMANAGER_IMAGE:-virtroid-alertmanager-profile-disabled}
-    container_name: virtroid-alertmanager
-    restart: unless-stopped
-    profiles:
-      - monitoring
-    command:
-      - --config.file=/etc/alertmanager/alertmanager.yml
-      - --storage.path=/alertmanager
-    volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - alertmanager-data:/alertmanager
-    ports:
-      - "127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}:9093"
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m
-    mem_limit: "${ALERTMANAGER_MEMORY_LIMIT:-256m}"
-    cpus: "${ALERTMANAGER_CPU_LIMIT:-0.5}"
-    pids_limit: ${ALERTMANAGER_PIDS_LIMIT:-128}
-    logging:
-      driver: local
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - monitoring-egress
-      - monitoring
-
 networks:
   database:
     internal: true
@@ -524,10 +451,8 @@ networks:
     internal: true
   blob:
     internal: true
-  monitoring:
+  security-events:
     internal: true
-  monitoring-egress:
-    driver: bridge
   guest:
     name: ${NODE_DOCKER_NETWORK:?set NODE_DOCKER_NETWORK to the dedicated guest network name}
     driver: bridge
@@ -544,6 +469,4 @@ volumes:
   postgres-data:
   renterd-data:
   renterd-mysql-data:
-  prometheus-data:
-  alertmanager-data:
   suricata-logs:

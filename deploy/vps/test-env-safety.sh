@@ -379,29 +379,38 @@ grep -q 'kernel.unprivileged_bpf_disabled 0' "${script_dir}/verify-host-hardenin
 grep -q 'lost 0' "${script_dir}/verify-host-hardening.sh"
 grep -q "docker inspect virtroidd --format '{{.HostConfig.ReadonlyRootfs}}'" "${script_dir}/verify-host-hardening.sh"
 grep -q 'UFW rules differ from the reviewed policy' "${script_dir}/verify-host-hardening.sh"
-grep -q '^OnCalendar=\*-\*-\* 02:30:00 UTC$' "${script_dir}/virtroid-backup.timer"
-grep -q '/var/backups/virtroid' "${script_dir}/virtroid-backup.sh"
-grep -q 'cd "${partial_dir}"' "${script_dir}/virtroid-backup.sh"
-grep -q 'mapfile -t completed_backups' "${script_dir}/virtroid-backup.sh"
-grep -q 'index = retention_days' "${script_dir}/virtroid-backup.sh"
-if grep -q '"${partial_dir}/deploy.env".*SHA256SUMS' "${script_dir}/virtroid-backup.sh"; then
-  echo "backup checksum manifest contains temporary absolute paths" >&2
+for retired_backup_source in \
+  virtroid-backup.sh \
+  virtroid-backup.service \
+  virtroid-backup.timer; do
+  if [ -e "${script_dir}/${retired_backup_source}" ]; then
+    echo "retired backup source still exists: ${retired_backup_source}" >&2
+    exit 1
+  fi
+done
+if [ -d "${script_dir}/monitoring" ]; then
+  echo "retired operational monitoring configuration still exists" >&2
   exit 1
 fi
+if grep -q 'virtroid-backup' "${script_dir}/apply-local-release.sh"; then
+  echo "release cutover still invokes the retired backup feature" >&2
+  exit 1
+fi
+grep -q 'remove_retired_operational_monitoring' "${script_dir}/install-reviewed-deployment-tree.sh"
+grep -q '/var/backups/virtroid /var/backups/virtroid-deploy-tree' "${script_dir}/install-reviewed-deployment-tree.sh"
 grep -q '/usr/local/sbin/virtroid-release-on-vps' "${script_dir}/release-on-vps.sh"
 grep -q 'production VPS source repository must not have a Git remote' "${script_dir}/release-on-vps.sh"
 grep -q 'GitHub automation must not exist on the production VPS' "${script_dir}/release-on-vps.sh"
 grep -q 'installer_digest_before=' "${script_dir}/release-on-vps.sh"
 grep -q 'installer_digest_after=' "${script_dir}/release-on-vps.sh"
 grep -q 'installer_digest_after.*installer_digest_before' "${script_dir}/release-on-vps.sh"
-grep -q 'VIRTROID_PROFILES=edge,monitoring,falco,nids' "${script_dir}/release-on-vps.sh"
+grep -q 'VIRTROID_PROFILES=edge,falco,nids' "${script_dir}/release-on-vps.sh"
 if grep -RniE 'restic|offsite|off-site' "${script_dir}" \
     --exclude=README.md \
     --exclude=test-env-safety.sh \
     --exclude=deployment-tree-digest.sh \
     --exclude=build-local-release.sh \
-    --exclude=install-reviewed-deployment-tree.sh \
-    --exclude=virtroid-backup.sh >/dev/null; then
+    --exclude=install-reviewed-deployment-tree.sh >/dev/null; then
   echo "external backup integration remains in the isolated VPS deployment tree" >&2
   exit 1
 fi

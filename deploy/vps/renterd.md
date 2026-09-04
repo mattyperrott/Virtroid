@@ -228,28 +228,18 @@ Failed remote deletes are durably journaled at
 `/srv/virtroid/runtimes/_blobstore/pending-renterd-deletes.json` and retried by
 preflight. A backlog reports degraded storage rather than being hidden.
 
-## Backup and recovery requirements
+## Future recovery requirements
 
-The daily local backup stops renterd before capture and includes:
-
-- a logical MySQL dump of `renterd` and `renterd_metrics`;
-- renterd's `/data` volume, including partial slab buffers;
-- the control-plane database and `/srv/virtroid` state;
-- checksums and immutable release identity.
-
-It intentionally excludes `/etc/virtroid/secrets`; the seed recovery source is
-the two physical offline copies, not another plaintext seed inside a VPS backup.
-
-The local backup is a rollback copy, not disaster recovery. Before treating Sia
-storage as final production, store an encrypted renterd metadata backup on a
-separate machine/provider and test restoration. Seed alone restores wallet
-control but not renterd's object metadata. Do not store the only metadata backup
-on Sia itself because recovery would be circular.
+The current deployment does not create automated local application-data or
+database backups. Before treating Sia storage as final production, design and
+test independent recovery for renterd's object metadata. Seed alone restores
+wallet control but not renterd's object metadata, and the only metadata recovery
+copy must not be stored on Sia itself because recovery would be circular.
 
 renterd must remain online often enough to renew contracts, scan hosts, repair
 degraded slabs, and migrate data away from failed hosts. Monitor consensus,
 spendable balance, contract count, object health, deferred deletes, MySQL health,
-and local/off-machine backup freshness.
+and the chosen recovery mechanism.
 
 ## Future confidential runtimes
 

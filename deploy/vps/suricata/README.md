@@ -17,7 +17,7 @@ Set `SURICATA_INTERFACE` to the reviewed host ingress interface, resolve and pin
 `SURICATA_IMAGE`, then start the profile with:
 
 ```sh
-VIRTROID_PROFILES=edge,falco,nids,monitoring ./deploy.sh up
+VIRTROID_PROFILES=edge,falco,nids ./deploy.sh up
 ```
 
 The sensor is detection-only. It does not block traffic.

@@ -120,11 +120,11 @@ flowchart LR
 | F-Droid installation         |   ✅ Implemented   | New selections reconcile into running runtimes; pinned downloads fail closed on transport, compatibility, hash, size, and package-identity errors |
 | Encrypted local snapshots    |   ✅ Implemented   | Repository path and last recorded VPS mechanism         |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
-| Reproducible VPS deployment  |   ✅ Deployed      | Protected local build, backup, immutable release state, and verification gates |
+| Reproducible VPS deployment  |   ✅ Deployed      | Protected local build, immutable release state, and verification gates |
 | Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
 | Physical-camera video import |   ✅ Implemented   | Hold the camera button to record up to 30 seconds; MP4 includes microphone sound when permission is granted |
 | Active-runtime file import   |   ✅ Backend path  | Signed bounded path is live-proved; the generic client upload button was intentionally removed |
-| Metrics and trace context    |   ✅ Deployed      | Bounded Prometheus metrics and W3C trace propagation     |
+| Metrics and trace context    |   ✅ Implemented   | Internal bounded metrics and W3C trace propagation; no Prometheus/Alertmanager deployment |
 | Host intrusion detection     |    ✅ Deployed     | Falco detects interactive container shells and protected-resource access without classifying routine health checks or node ADB work |
 | Network intrusion detection  |    ✅ Deployed     | Suricata forwards reviewed detection rules while keeping generic parser diagnostics local |
 | Client security notices      |   ✅ Implemented   | Sanitized node-level detections enter the encrypted client log as coalesced blue, amber, or red events |
@@ -605,7 +605,7 @@ Virtroid/
 │   ├── go.mod
 │   └── go.sum
 ├── deploy/
-│   └── vps/                 # VPS deployment, monitoring, and hardening system
+│   └── vps/                 # VPS deployment, HIDS/NIDS, and hardening system
 └── third_party/             # Reviewable vendored source and upstream notices
 ```
 
@@ -615,7 +615,7 @@ Virtroid/
 | [`android-client/runtime-agent/`](android-client/runtime-agent/) | Internal metadata-only listener automatically installed inside ReDroid |
 | [`backend/cmd/`](backend/cmd/)                 | Backend service and administration command entry points           |
 | [`backend/internal/`](backend/internal/)       | Security, lifecycle, storage, persistence, and runtime logic      |
-| [`deploy/vps/`](deploy/vps/)   | VPS preparation, release, backup, rollback, and hardening         |
+| [`deploy/vps/`](deploy/vps/)   | VPS preparation, release, HIDS/NIDS, and hardening                |
 | [`third_party/`](third_party/)  | Vendored source, provenance, and upstream license notices         |
 
 ---

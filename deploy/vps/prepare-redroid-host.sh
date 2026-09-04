@@ -55,7 +55,6 @@ install -m 0644 "${script_dir}/fail2ban-virtroid.conf" /etc/fail2ban/jail.d/virt
 install -m 0640 "${script_dir}/audit-virtroid.rules" /etc/audit/rules.d/99-virtroid-hardening.rules
 install -m 0644 "${script_dir}/sshd-virtroid-hardening.conf" /etc/ssh/sshd_config.d/60-virtroid-hardening.conf
 install -m 0644 "${script_dir}/sysctl-virtroid-hardening.conf" /etc/sysctl.d/99-virtroid-hardening.conf
-install -m 0755 "${script_dir}/virtroid-backup.sh" /usr/local/sbin/virtroid-backup.sh
 install -m 0755 "${script_dir}/configure-renterd-secrets.sh" /usr/local/sbin/virtroid-configure-renterd-secrets
 install -m 0755 "${script_dir}/renterd-admin.sh" /usr/local/sbin/virtroid-renterd-admin
 install -m 0755 "${script_dir}/renterd-smoke-test.sh" /usr/local/sbin/virtroid-renterd-smoke-test
@@ -77,8 +76,15 @@ install -d -o root -g root -m 0700 /var/lib/virtroid-build /var/lib/virtroid-rel
 install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 install -m 0755 "${script_dir}/certbot-deploy-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
 install -m 0644 "${script_dir}/sshd-key-only.conf" /usr/local/share/virtroid/sshd-key-only.conf
-install -m 0644 "${script_dir}/virtroid-backup.service" /etc/systemd/system/virtroid-backup.service
-install -m 0644 "${script_dir}/virtroid-backup.timer" /etc/systemd/system/virtroid-backup.timer
+systemctl disable --now virtroid-backup.timer virtroid-backup.service >/dev/null 2>&1 || true
+for retired_backup_path in \
+  /usr/local/sbin/virtroid-backup.sh \
+  /etc/systemd/system/virtroid-backup.service \
+  /etc/systemd/system/virtroid-backup.timer; do
+  if [ -e "${retired_backup_path}" ] || [ -L "${retired_backup_path}" ]; then
+    find "${retired_backup_path}" -maxdepth 0 -delete
+  fi
+done
 install -m 0644 "${script_dir}/unattended-upgrades-virtroid.conf" \
   /etc/apt/apt.conf.d/52virtroid-unattended-upgrades
 systemctl daemon-reload
@@ -94,7 +100,6 @@ systemctl enable --now fail2ban
 systemctl enable --now ufw
 systemctl enable --now unattended-upgrades
 systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
-systemctl enable --now virtroid-backup.timer
 /usr/local/sbin/virtroid-configure-host-firewall
 
 if ! mountpoint -q /dev/binderfs; then
