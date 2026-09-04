@@ -108,6 +108,9 @@ flowchart LR
 | Runtime audio streaming      |   ✅ Deployed      | Virtual Android output was audibly accepted on a physical phone |
 | Runtime notification forwarding | ✅ Implemented  | Package, app label, timestamp, and title only; registration and reconnect handling are idempotent |
 | Physical microphone input    |   ✅ Deployed      | Live handset/ReDroid proof confirms runtime demand starts phone capture only while an app records or calls |
+| Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
+| Physical-camera video import |   ✅ Implemented   | Hold the camera button to record up to 30 seconds; MP4 includes microphone sound when permission is granted |
+| Active-runtime file import   |   ✅ Backend path  | Signed bounded path is live-proved; the generic client upload button was intentionally removed |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
 | Account deletion             |   ✅ Implemented   | Includes relational and runtime cleanup                 |
@@ -117,9 +120,6 @@ flowchart LR
 | Encrypted local snapshots    |   ✅ Implemented   | Core stopped-runtime persistence on the active VPS; not an independent backup |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
 | Reproducible VPS deployment  |   ✅ Deployed      | Protected local build, immutable release state, and verification gates |
-| Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
-| Physical-camera video import |   ✅ Implemented   | Hold the camera button to record up to 30 seconds; MP4 includes microphone sound when permission is granted |
-| Active-runtime file import   |   ✅ Backend path  | Signed bounded path is live-proved; the generic client upload button was intentionally removed |
 | Metrics and trace context    |   ✅ Implemented   | Internal bounded metrics and W3C trace propagation; no Prometheus/Alertmanager deployment |
 | Host intrusion detection     |    ✅ Deployed     | Falco detects interactive container shells and protected-resource access without classifying routine health checks or node ADB work |
 | Network intrusion detection  |    ✅ Deployed     | Suricata forwards reviewed detection rules while keeping generic parser diagnostics local |
