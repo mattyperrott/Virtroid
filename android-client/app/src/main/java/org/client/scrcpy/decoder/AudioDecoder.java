@@ -6,9 +6,6 @@ import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Build;
-import android.util.Log;
-import android.view.Surface;
-
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -19,8 +16,10 @@ public class AudioDecoder {
     public static final String MIMETYPE_AUDIO_AAC = "audio/mp4a-latm";
 
     private MediaCodec mCodec;
-    private Worker mWorker;
-    private AtomicBoolean mIsConfigured = new AtomicBoolean(false);
+    private volatile Worker mWorker;
+    private final AtomicBoolean mIsConfigured = new AtomicBoolean(false);
+    private final Object lifecycleLock = new Object();
+    private final Object resourceLock = new Object();
 
     private AudioTrack audioTrack;
     private final int SAMPLE_RATE = 48000;
@@ -32,40 +31,73 @@ public class AudioDecoder {
     }
 
     public void decodeSample(byte[] data, int offset, int size, long presentationTimeUs, int flags) {
-        if (mWorker != null) {
-            mWorker.decodeSample(data, offset, size, presentationTimeUs, flags);
+        Worker worker = mWorker;
+        if (worker != null) {
+            worker.decodeSample(data, offset, size, presentationTimeUs, flags);
         }
     }
 
     public void configure(byte[] data) {
-        if (mWorker != null) {
-            mWorker.configure(data);
+        Worker worker = mWorker;
+        if (worker != null) {
+            worker.configure(data);
         }
     }
 
 
     public void start() {
-        if (mWorker == null) {
-            mWorker = new Worker();
-            mWorker.setRunning(true);
-            mWorker.start();
+        synchronized (lifecycleLock) {
+            if (mWorker == null) {
+                Worker worker = new Worker();
+                worker.setRunning(true);
+                mWorker = worker;
+                worker.start();
+            }
         }
     }
 
     public void stop() {
-        Worker worker = mWorker;
-        mWorker = null;
-        if (worker != null) {
+        synchronized (lifecycleLock) {
+            Worker worker = mWorker;
+            mWorker = null;
+            mIsConfigured.set(false);
+            if (worker == null) {
+                synchronized (resourceLock) {
+                    releaseResourcesLocked();
+                }
+                return;
+            }
             worker.setRunning(false);
             worker.interrupt();
+            boolean interrupted = false;
+            while (worker.isAlive()) {
+                try {
+                    worker.join();
+                } catch (InterruptedException ignored) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            // The worker can no longer be using either object, so releasing
+            // them cannot race releaseOutputBuffer() or AudioTrack.write().
+            synchronized (resourceLock) {
+                releaseResourcesLocked();
+            }
         }
-        mIsConfigured.set(false);
+    }
+
+    private void releaseResourcesLocked() {
         if (mCodec != null) {
             try {
                 mCodec.stop();
             } catch (IllegalStateException ignored) {
             }
-            mCodec.release();
+            try {
+                mCodec.release();
+            } catch (IllegalStateException ignored) {
+            }
             mCodec = null;
         }
         if (audioTrack != null) {
@@ -73,7 +105,10 @@ public class AudioDecoder {
                 audioTrack.stop();
             } catch (IllegalStateException ignored) {
             }
-            audioTrack.release();
+            try {
+                audioTrack.release();
+            } catch (IllegalStateException ignored) {
+            }
             audioTrack = null;
         }
     }
@@ -83,6 +118,7 @@ public class AudioDecoder {
         private AtomicBoolean mIsRunning = new AtomicBoolean(false);
 
         Worker() {
+            super("virtroid-audio-decoder");
         }
 
         private void setRunning(boolean isRunning) {
@@ -90,64 +126,52 @@ public class AudioDecoder {
         }
 
         private void configure(byte[] data) {
-            if (mIsConfigured.get()) {
+            synchronized (resourceLock) {
+                if (!mIsRunning.get() || mWorker != this) {
+                    return;
+                }
                 mIsConfigured.set(false);
-                if (mCodec != null) {
-                    try {
-                        mCodec.stop();
-                    } catch (IllegalStateException ignored) {
-                    }
-                    mCodec.release();
-                    mCodec = null;
-                }
-                if (audioTrack != null) {
-                    try {
-                        audioTrack.stop();
-                    } catch (IllegalStateException ignored) {
-                    }
-                    audioTrack.release();
-                    audioTrack = null;
-                }
-            }
-            MediaFormat format = MediaFormat.createAudioFormat(MIMETYPE_AUDIO_AAC, SAMPLE_RATE, 2);
-            // 设置比特率
-            format.setInteger(MediaFormat.KEY_BIT_RATE, 128000);
-            // adts 0
-            // format.setInteger(MediaFormat.KEY_IS_ADTS, 1);
-            format.setByteBuffer("csd-0", ByteBuffer.wrap(data));
+                releaseResourcesLocked();
 
-            try {
-                mCodec = MediaCodec.createDecoderByType(MIMETYPE_AUDIO_AAC);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to create codec", e);
-            }
-            mCodec.configure(format, null, null, 0);
-            mCodec.start();
-            mIsConfigured.set(true);
+                MediaFormat format = MediaFormat.createAudioFormat(MIMETYPE_AUDIO_AAC, SAMPLE_RATE, 2);
+                format.setInteger(MediaFormat.KEY_BIT_RATE, 128000);
+                format.setByteBuffer("csd-0", ByteBuffer.wrap(data));
 
-            // 初始化音频播放器
-            initAudioTrack();
-            // audio track 启动
-            audioTrack.play();
+                try {
+                    mCodec = MediaCodec.createDecoderByType(MIMETYPE_AUDIO_AAC);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to create codec", e);
+                }
+                mCodec.configure(format, null, null, 0);
+                mCodec.start();
+
+                initAudioTrack();
+                audioTrack.play();
+                mIsConfigured.set(true);
+            }
         }
 
 
         @SuppressWarnings("deprecation")
         public void decodeSample(byte[] data, int offset, int size, long presentationTimeUs, int flags) {
-            if (mIsConfigured.get() && mIsRunning.get()) {
-                int index = mCodec.dequeueInputBuffer(-1);
+            synchronized (resourceLock) {
+                MediaCodec codec = mCodec;
+                if (!mIsConfigured.get() || !mIsRunning.get() || mWorker != this || codec == null) {
+                    return;
+                }
+                int index = codec.dequeueInputBuffer(0);
                 if (index >= 0) {
                     ByteBuffer buffer;
 
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-                        buffer = mCodec.getInputBuffers()[index];
+                        buffer = codec.getInputBuffers()[index];
                         buffer.clear();
                     } else {
-                        buffer = mCodec.getInputBuffer(index);
+                        buffer = codec.getInputBuffer(index);
                     }
                     if (buffer != null) {
                         buffer.put(data, offset, size);
-                        mCodec.queueInputBuffer(index, 0, size, presentationTimeUs, flags);
+                        codec.queueInputBuffer(index, 0, size, presentationTimeUs, flags);
                     }
                 }
             }
@@ -158,37 +182,42 @@ public class AudioDecoder {
             try {
                 MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
                 while (mIsRunning.get()) {
-                    if (mIsConfigured.get()) {
-                        int index = mCodec.dequeueOutputBuffer(info, 0);
-                        // Log.e("Scrcpy", "Audio Decoder: " + index);
-                        if (index >= 0) {
-                            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
-                                break;
-                            }
-                            // Log.e("Scrcpy", "Audio success get frame: " + index);
+                    boolean waitingForConfiguration = true;
+                    synchronized (resourceLock) {
+                        MediaCodec codec = mCodec;
+                        AudioTrack track = audioTrack;
+                        if (mIsRunning.get() && mIsConfigured.get() && codec != null && track != null) {
+                            waitingForConfiguration = false;
+                            int index = codec.dequeueOutputBuffer(info, 0);
+                            if (index >= 0) {
+                                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
+                                    codec.releaseOutputBuffer(index, false);
+                                    break;
+                                }
 
-                            // 读取 pcm 数据，写入 audiotrack 播放
-                            ByteBuffer outputBuffer = mCodec.getOutputBuffer(index);
-                            if (outputBuffer != null) {
-                                byte[] data = new byte[info.size];
-                                outputBuffer.get(data);
-                                outputBuffer.clear();
-                                audioTrack.write(data, 0, info.size);
+                                ByteBuffer outputBuffer = codec.getOutputBuffer(index);
+                                if (outputBuffer != null) {
+                                    byte[] data = new byte[info.size];
+                                    outputBuffer.get(data);
+                                    outputBuffer.clear();
+                                    track.write(data, 0, info.size);
+                                }
+                                codec.releaseOutputBuffer(index, false);
                             }
-                            // Audio output buffers are consumed by AudioTrack, not rendered to a Surface.
-                            mCodec.releaseOutputBuffer(index, false);
                         }
-                    } else {
-                        // just waiting to be configured, then decode and render
+                    }
+                    if (waitingForConfiguration) {
                         try {
                             Thread.sleep(5);
                         } catch (InterruptedException ignore) {
+                            if (!mIsRunning.get()) {
+                                break;
+                            }
                         }
                     }
                 }
-            } catch (IllegalStateException e) {
+            } catch (RuntimeException ignored) {
             }
-
         }
     }
 }

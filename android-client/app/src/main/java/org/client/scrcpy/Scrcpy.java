@@ -39,8 +39,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.net.ssl.SSLParameters;
@@ -88,6 +93,22 @@ public class Scrcpy extends Service {
     private DataOutputStream socketOutputStream = null;
     private volatile Socket activeSocket = null;
     private final Object socketWriteLock = new Object();
+    private final ThreadPoolExecutor socketCommandExecutor = new ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(256),
+            runnable -> {
+                Thread thread = new Thread(runnable, "virtroid-viewer-command");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+    );
+    private final AtomicBoolean commandWriteFailureNotified = new AtomicBoolean(false);
+    private final AtomicBoolean keyFrameRequestQueued = new AtomicBoolean(false);
+    private final AtomicBoolean shutdownStarted = new AtomicBoolean(false);
     private PhysicalMicrophoneBridge physicalMicrophoneBridge;
 
     @Override
@@ -98,11 +119,16 @@ public class Scrcpy extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null) {
-            physicalMicrophoneEnabled = intent.getBooleanExtra(EXTRA_PHYSICAL_MICROPHONE_ENABLED, false);
+        if (intent == null) {
+            shutdownViewerResources();
+            stopSelf(startId);
+            return START_NOT_STICKY;
         }
+        physicalMicrophoneEnabled = intent.getBooleanExtra(EXTRA_PHYSICAL_MICROPHONE_ENABLED, false);
         ensureForeground();
-        return START_STICKY;
+        // A viewer transport cannot be reconstructed safely without the
+        // single-use relay token and active Surface held by SessionActivity.
+        return START_NOT_STICKY;
     }
 
     @Override
@@ -153,6 +179,7 @@ public class Scrcpy extends Service {
         this.viewerPublicKey = viewerPublicKey;
         this.audioEnabled = audioEnabled;
         this.physicalMicrophoneEnabled = physicalMicrophoneEnabled;
+        commandWriteFailureNotified.set(false);
         ensureForeground();
 
         this.screenHeight = screenHeight;
@@ -186,39 +213,63 @@ public class Scrcpy extends Service {
         }
         updateAvailable.set(true);
 
-        try {  // 请求关键帧, 避免花屏
-            requestNewKeyFrame();
-        } catch (IOException e) {
-            debugLog("request keyframe failed", e);
-        }
+        // Request asynchronously so Surface/activity callbacks never perform
+        // encrypted network I/O on Android's main thread.
+        requestNewKeyFrame();
     }
 
     public void StopService() {
-        LetServceRunning.set(false);
-        stopPhysicalMicrophone();
-        stopForegroundCompat();
-        closeActiveSocketAsync();
-        if (videoDecoder != null) {
-            videoDecoder.stop();
-        }
-        if (audioDecoder != null) {
-            audioDecoder.stop();
-        }
+        shutdownViewerResources();
         stopSelf();
     }
 
     @Override
-    public void onDestroy() {
+    public void onTimeout(int startId, int fgsType) {
+        debugLog("viewer foreground service timed out");
+        boolean ownsCleanup = beginViewerShutdown();
+        // Android gives a timed-out foreground service only a few seconds to
+        // leave the foreground and stop itself. Do that before waiting for
+        // codec workers or AudioRecord to finish.
+        stopForegroundCompat();
+        stopSelf(startId);
+        if (ownsCleanup) {
+            Thread cleanupThread = new Thread(this::releaseViewerResources, "virtroid-viewer-timeout-cleanup");
+            cleanupThread.setDaemon(true);
+            cleanupThread.start();
+        }
+    }
+
+    private void shutdownViewerResources() {
+        if (!beginViewerShutdown()) {
+            return;
+        }
+        releaseViewerResources();
+        stopForegroundCompat();
+    }
+
+    private boolean beginViewerShutdown() {
+        if (!shutdownStarted.compareAndSet(false, true)) {
+            return false;
+        }
         LetServceRunning.set(false);
-        stopPhysicalMicrophone();
+        socketCommandExecutor.shutdownNow();
         closeActiveSocketAsync();
+        return true;
+    }
+
+    private void releaseViewerResources() {
+        stopPhysicalMicrophone();
         if (videoDecoder != null) {
             videoDecoder.stop();
         }
         if (audioDecoder != null) {
             audioDecoder.stop();
         }
-        stopForegroundCompat();
+    }
+
+    @Override
+    public void onDestroy() {
+        shutdownViewerResources();
         super.onDestroy();
     }
 
@@ -596,12 +647,20 @@ public class Scrcpy extends Service {
      * Request Keyframe
      * 请求关键帧
      */
-    public boolean requestNewKeyFrame() throws IOException {
-        if (LetServceRunning.get() && socketOutputStream != null) {
-            writeCommand(CommandPacket.CmdType.VIDEO_NEW_KEY_FRAME, new byte[0], false);
+    public boolean requestNewKeyFrame() {
+        if (!keyFrameRequestQueued.compareAndSet(false, true)) {
             return true;
         }
-        return false;
+        boolean queued = enqueueCommand(
+                CommandPacket.CmdType.VIDEO_NEW_KEY_FRAME,
+                new byte[0],
+                false,
+                () -> keyFrameRequestQueued.set(false)
+        );
+        if (!queued) {
+            keyFrameRequestQueued.set(false);
+        }
+        return queued;
     }
 
     private void loop(DataInputStream dataInputStream, DataOutputStream dataOutputStream, int delay) throws IOException, InterruptedException {
@@ -785,7 +844,9 @@ public class Scrcpy extends Service {
                     new PhysicalMicrophoneBridge.FrameSink() {
                         @Override
                         public void send(byte[] pcm) throws Exception {
-                            writeCommand(CommandPacket.CmdType.MICROPHONE_AUDIO, pcm, true);
+                            if (!enqueueCommand(CommandPacket.CmdType.MICROPHONE_AUDIO, pcm, true)) {
+                                throw new IOException("viewer command queue is unavailable");
+                            }
                         }
 
                         @Override
@@ -815,23 +876,55 @@ public class Scrcpy extends Service {
     }
 
     private void sendMicrophoneEnd() {
+        enqueueCommand(CommandPacket.CmdType.MICROPHONE_END, new byte[0], true);
+    }
+
+    private boolean enqueueCommand(CommandPacket.CmdType type, byte[] data, boolean flush) {
+        return enqueueCommand(type, data, flush, null);
+    }
+
+    private boolean enqueueCommand(CommandPacket.CmdType type, byte[] data, boolean flush, Runnable completion) {
+        DataOutputStream output = socketOutputStream;
+        if (!LetServceRunning.get() || output == null || socketCommandExecutor.isShutdown()) {
+            return false;
+        }
+        byte[] commandData = data == null ? new byte[0] : Arrays.copyOf(data, data.length);
+        byte[] packet = CommandPacket.toArray(MediaPacket.Type.COMMAND, type, commandData);
         try {
-            writeCommand(CommandPacket.CmdType.MICROPHONE_END, new byte[0], true);
-        } catch (Exception error) {
-            debugLog("microphone end write failed", error);
+            socketCommandExecutor.execute(() -> {
+                try {
+                    writeCommandPacket(output, packet, flush);
+                } finally {
+                    if (completion != null) {
+                        completion.run();
+                    }
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException rejected) {
+            debugLog("viewer command queue rejected packet", rejected);
+            return false;
         }
     }
 
-    private void writeCommand(CommandPacket.CmdType type, byte[] data, boolean flush) throws IOException {
-        DataOutputStream output = socketOutputStream;
-        if (!LetServceRunning.get() || output == null) {
-            throw new IOException("viewer socket is unavailable");
-        }
-        byte[] packet = CommandPacket.toArray(MediaPacket.Type.COMMAND, type, data);
-        synchronized (socketWriteLock) {
-            output.write(packet);
-            if (flush) {
-                output.flush();
+    private void writeCommandPacket(DataOutputStream expectedOutput, byte[] packet, boolean flush) {
+        try {
+            synchronized (socketWriteLock) {
+                if (!LetServceRunning.get() || socketOutputStream != expectedOutput) {
+                    return;
+                }
+                expectedOutput.write(packet);
+                if (flush) {
+                    expectedOutput.flush();
+                }
+            }
+        } catch (IOException error) {
+            debugLog("viewer command write failed", error);
+            socket_status = false;
+            LetServceRunning.set(false);
+            closeActiveSocketAsync();
+            if (commandWriteFailureNotified.compareAndSet(false, true) && serviceCallbacks != null) {
+                serviceCallbacks.errorDisconnect();
             }
         }
     }
