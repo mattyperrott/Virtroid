@@ -306,7 +306,9 @@ install_runtime_copies() {
 }
 
 remove_retired_operational_monitoring() {
-  local container_name expected_service project service volume_name expected_volume volume_project volume_label
+  local container_name env_mode env_temp expected_network expected_service expected_volume
+  local network_endpoints network_label network_name network_project project service
+  local volume_label volume_name volume_project
   for container_name in virtroid-prometheus virtroid-alertmanager; do
     case "${container_name}" in
       virtroid-prometheus) expected_service=prometheus ;;
@@ -337,6 +339,33 @@ remove_retired_operational_monitoring() {
       docker volume rm "${volume_name}" >/dev/null
     fi
   done
+  for network_name in virtroid_monitoring virtroid_monitoring-egress; do
+    case "${network_name}" in
+      virtroid_monitoring) expected_network=monitoring ;;
+      virtroid_monitoring-egress) expected_network=monitoring-egress ;;
+    esac
+    if docker network inspect "${network_name}" >/dev/null 2>&1; then
+      network_project="$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "${network_name}")"
+      network_label="$(docker network inspect --format '{{index .Labels "com.docker.compose.network"}}' "${network_name}")"
+      network_endpoints="$(docker network inspect --format '{{len .Containers}}' "${network_name}")"
+      [ "${network_project}" = virtroid ] && [ "${network_label}" = "${expected_network}" ] &&
+        [ "${network_endpoints}" -eq 0 ] || {
+        echo "refusing to remove unexpected or active network: ${network_name}" >&2
+        return 1
+      }
+      docker network rm "${network_name}" >/dev/null
+    fi
+  done
+  env_mode="$(stat -c '%a' "${target_dir}/.env")"
+  env_temp="$(mktemp "${target_dir}/.env.retired.XXXXXX")"
+  awk '!/^(PROMETHEUS|ALERTMANAGER)_/' "${target_dir}/.env" > "${env_temp}"
+  chown root:root "${env_temp}"
+  chmod "${env_mode}" "${env_temp}"
+  if cmp -s "${env_temp}" "${target_dir}/.env"; then
+    find "${env_temp}" -maxdepth 0 -delete
+  else
+    mv -Tf "${env_temp}" "${target_dir}/.env"
+  fi
 }
 
 verify_runtime_copies() {
