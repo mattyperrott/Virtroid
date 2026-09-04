@@ -398,6 +398,8 @@ if grep -q 'virtroid-backup' "${script_dir}/apply-local-release.sh"; then
 fi
 grep -q 'remove_retired_operational_monitoring' "${script_dir}/install-reviewed-deployment-tree.sh"
 grep -q '/var/backups/virtroid /var/backups/virtroid-deploy-tree' "${script_dir}/install-reviewed-deployment-tree.sh"
+grep -q 'virtroid_monitoring virtroid_monitoring-egress' "${script_dir}/install-reviewed-deployment-tree.sh"
+grep -Fq "awk '!/^(PROMETHEUS|ALERTMANAGER)_/'" "${script_dir}/install-reviewed-deployment-tree.sh"
 grep -q '/usr/local/sbin/virtroid-release-on-vps' "${script_dir}/release-on-vps.sh"
 grep -q 'production VPS source repository must not have a Git remote' "${script_dir}/release-on-vps.sh"
 grep -q 'GitHub automation must not exist on the production VPS' "${script_dir}/release-on-vps.sh"
