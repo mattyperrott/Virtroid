@@ -4479,8 +4479,11 @@ func (n *nodeAgent) execInContainerCapture(ctx context.Context, containerName st
 		"AttachStderr": true,
 		"Cmd":          cmd,
 		"Env":          env,
-		"Tty":          true,
-		"User":         user,
+		// Captured node automation is non-interactive. Allocating a TTY here
+		// makes routine readiness and viewer-bootstrap commands indistinguishable
+		// from a human opening an interactive shell to Falco.
+		"Tty":  false,
+		"User": user,
 	})
 	if err != nil {
 		return "", err
@@ -4520,7 +4523,7 @@ func (n *nodeAgent) execInContainerCapture(ctx context.Context, containerName st
 
 	startPayload, err := json.Marshal(map[string]any{
 		"Detach": false,
-		"Tty":    true,
+		"Tty":    false,
 	})
 	if err != nil {
 		return "", err
@@ -4543,12 +4546,13 @@ func (n *nodeAgent) execInContainerCapture(ctx context.Context, containerName st
 	}
 	defer startResp.Body.Close()
 
-	output, readErr := io.ReadAll(io.LimitReader(startResp.Body, 64*1024))
 	if startResp.StatusCode >= 300 {
+		output, _ := io.ReadAll(io.LimitReader(startResp.Body, 64*1024))
 		return string(output), fmt.Errorf("docker exec start failed: status=%d body=%s", startResp.StatusCode, string(output))
 	}
+	output, readErr := readDockerExecOutput(startResp.Body, 64*1024)
 	if readErr != nil {
-		return string(output), readErr
+		return output, readErr
 	}
 
 	inspectReq, err := http.NewRequestWithContext(
@@ -4558,18 +4562,18 @@ func (n *nodeAgent) execInContainerCapture(ctx context.Context, containerName st
 		nil,
 	)
 	if err != nil {
-		return string(output), err
+		return output, err
 	}
 
 	inspectResp, err := n.docker.Do(inspectReq)
 	if err != nil {
-		return string(output), err
+		return output, err
 	}
 	defer inspectResp.Body.Close()
 
 	if inspectResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(inspectResp.Body, 4096))
-		return string(output), fmt.Errorf("docker exec inspect failed: status=%d body=%s", inspectResp.StatusCode, string(body))
+		return output, fmt.Errorf("docker exec inspect failed: status=%d body=%s", inspectResp.StatusCode, string(body))
 	}
 
 	var inspect struct {
@@ -4577,16 +4581,60 @@ func (n *nodeAgent) execInContainerCapture(ctx context.Context, containerName st
 		Running  bool `json:"Running"`
 	}
 	if err := json.NewDecoder(inspectResp.Body).Decode(&inspect); err != nil {
-		return string(output), err
+		return output, err
 	}
 	if inspect.Running {
-		return string(output), errors.New("docker exec capture still running")
+		return output, errors.New("docker exec capture still running")
 	}
 	if inspect.ExitCode != 0 {
-		return string(output), fmt.Errorf("docker exec exited with code %d", inspect.ExitCode)
+		return output, fmt.Errorf("docker exec exited with code %d", inspect.ExitCode)
 	}
 
-	return string(output), nil
+	return output, nil
+}
+
+// readDockerExecOutput consumes Docker's multiplexed stdout/stderr stream used
+// when an exec session does not allocate a TTY. Output remains bounded while
+// complete frames are drained so callers can safely reuse the HTTP connection.
+func readDockerExecOutput(reader io.Reader, maxBytes int64) (string, error) {
+	var output bytes.Buffer
+	header := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(reader, header); err != nil {
+			if errors.Is(err, io.EOF) {
+				return output.String(), nil
+			}
+			return output.String(), fmt.Errorf("read docker exec stream header: %w", err)
+		}
+
+		streamType := header[0]
+		if streamType != 1 && streamType != 2 {
+			return output.String(), fmt.Errorf("invalid docker exec stream type %d", streamType)
+		}
+		frameBytes := int64(binary.BigEndian.Uint32(header[4:8]))
+		if frameBytes == 0 {
+			continue
+		}
+
+		remaining := maxBytes - int64(output.Len())
+		copyBytes := frameBytes
+		if remaining < copyBytes {
+			copyBytes = remaining
+		}
+		if copyBytes < 0 {
+			copyBytes = 0
+		}
+		if copyBytes > 0 {
+			if _, err := io.CopyN(&output, reader, copyBytes); err != nil {
+				return output.String(), fmt.Errorf("read docker exec stream payload: %w", err)
+			}
+		}
+		if discardBytes := frameBytes - copyBytes; discardBytes > 0 {
+			if _, err := io.CopyN(io.Discard, reader, discardBytes); err != nil {
+				return output.String(), fmt.Errorf("discard docker exec stream payload: %w", err)
+			}
+		}
+	}
 }
 
 func (n *nodeAgent) execInContainerCaptureAny(ctx context.Context, containerName string, user string, env []string, candidates [][]string) (string, error) {

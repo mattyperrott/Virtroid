@@ -952,6 +952,93 @@ func TestContainerUsesExpectedRuntimeNetworkRejectsAdditionalSharedBridge(t *tes
 	}
 }
 
+func TestExecInContainerCaptureUsesNonTTYAndDemultiplexesOutput(t *testing.T) {
+	node := &nodeAgent{}
+	requests := 0
+	node.docker = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if req.Method != http.MethodPost || req.URL.Path != "/containers/virtroid-runtime-test/exec" {
+				t.Fatalf("create request = %s %s", req.Method, req.URL.Path)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode exec create request: %v", err)
+			}
+			if tty, ok := payload["Tty"].(bool); !ok || tty {
+				t.Fatalf("exec create Tty = %#v, want false", payload["Tty"])
+			}
+			return dockerTestResponse(http.StatusCreated, `{"Id":"exec-test"}`), nil
+		case 2:
+			if req.Method != http.MethodPost || req.URL.Path != "/exec/exec-test/start" {
+				t.Fatalf("start request = %s %s", req.Method, req.URL.Path)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode exec start request: %v", err)
+			}
+			if tty, ok := payload["Tty"].(bool); !ok || tty {
+				t.Fatalf("exec start Tty = %#v, want false", payload["Tty"])
+			}
+			var stream bytes.Buffer
+			writeDockerTestFrame(t, &stream, 1, "ready\n")
+			writeDockerTestFrame(t, &stream, 2, "diagnostic\n")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(stream.Bytes())),
+				Header:     make(http.Header),
+			}, nil
+		case 3:
+			if req.Method != http.MethodGet || req.URL.Path != "/exec/exec-test/json" {
+				t.Fatalf("inspect request = %s %s", req.Method, req.URL.Path)
+			}
+			return dockerTestResponse(http.StatusOK, `{"ExitCode":0,"Running":false}`), nil
+		default:
+			t.Fatalf("unexpected Docker request %d: %s %s", requests, req.Method, req.URL.Path)
+			return nil, nil
+		}
+	})}
+
+	output, err := node.execInContainerCapture(
+		context.Background(),
+		"virtroid-runtime-test",
+		"0",
+		nil,
+		[]string{"sh", "-c", "echo ready"},
+	)
+	if err != nil {
+		t.Fatalf("execInContainerCapture: %v", err)
+	}
+	if output != "ready\ndiagnostic\n" {
+		t.Fatalf("captured output = %q", output)
+	}
+	if requests != 3 {
+		t.Fatalf("Docker request count = %d, want 3", requests)
+	}
+}
+
+func dockerTestResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}
+}
+
+func writeDockerTestFrame(t *testing.T, output io.Writer, streamType byte, payload string) {
+	t.Helper()
+	header := make([]byte, 8)
+	header[0] = streamType
+	binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+	if _, err := output.Write(header); err != nil {
+		t.Fatalf("write Docker frame header: %v", err)
+	}
+	if _, err := io.WriteString(output, payload); err != nil {
+		t.Fatalf("write Docker frame payload: %v", err)
+	}
+}
+
 func TestCreateContainerUsesBoundedLocalLogging(t *testing.T) {
 	t.Setenv("NODE_RUNTIME_NETWORK_MODE", "shared")
 	t.Setenv("NODE_RUNTIME_IMAGE", "redroid/redroid:test@sha256:"+strings.Repeat("a", 64))
