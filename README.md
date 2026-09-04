@@ -116,7 +116,6 @@ flowchart LR
 | F-Droid applications         |   ✅ Implemented   | Catalog entries use pinned APK hashes; selections reconcile into running runtimes and fail closed on transport, compatibility, hash, size, or package-identity errors |
 | Encrypted local snapshots    |   ✅ Implemented   | Core stopped-runtime persistence on the active VPS; not an independent backup |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
-| VPS backup and recovery      | ❌ Not implemented | Automated local backups were removed; persistent state currently exists only on the active VPS |
 | Reproducible VPS deployment  |   ✅ Deployed      | Protected local build, immutable release state, and verification gates |
 | Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
 | Physical-camera video import |   ✅ Implemented   | Hold the camera button to record up to 30 seconds; MP4 includes microphone sound when permission is granted |
