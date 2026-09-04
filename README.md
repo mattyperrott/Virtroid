@@ -60,9 +60,9 @@ GitHub CI, and CodeQL evidence.
 Live acceptance has covered runtime creation/start/stop, encrypted viewer
 connection and reconnection, idle cleanup, audible runtime audio on the
 physical phone, active-runtime file delivery, physical-camera JPEG import,
-node-aware readiness, metrics, and alert-rule loading. This is release-candidate
-evidence, not a claim that the system is production-hardened against every
-failure mode.
+node-aware readiness, metrics, and Falco/Suricata security-event delivery. This
+is release-candidate evidence, not a claim that the system is
+production-hardened against every failure mode.
 
 The release candidate includes:
 
@@ -118,8 +118,9 @@ flowchart LR
 | Confirmation dialogs         |   ✅ Implemented   | Destructive actions use standard Cancel/Confirm modals without typed phrases |
 | F-Droid application catalog  |   ✅ Implemented   | Catalog entries include pinned APK hashes               |
 | F-Droid installation         |   ✅ Implemented   | New selections reconcile into running runtimes; pinned downloads fail closed on transport, compatibility, hash, size, and package-identity errors |
-| Encrypted local snapshots    |   ✅ Implemented   | Repository path and last recorded VPS mechanism         |
+| Encrypted local snapshots    |   ✅ Implemented   | Core stopped-runtime persistence on the active VPS; not an independent backup |
 | Snapshot rollback protection |   ✅ Implemented   | Uses authenticated, monotonic generations               |
+| VPS backup and recovery      | ❌ Not implemented | Automated local backups were removed; persistent state currently exists only on the active VPS |
 | Reproducible VPS deployment  |   ✅ Deployed      | Protected local build, immutable release state, and verification gates |
 | Physical-camera photo import |   ✅ Deployed      | Viewer camera opens in-app Camera2 capture and imports the JPEG into guest media |
 | Physical-camera video import |   ✅ Implemented   | Hold the camera button to record up to 30 seconds; MP4 includes microphone sound when permission is granted |
