@@ -103,15 +103,13 @@ flowchart LR
 | Invite-gated account bootstrap | ✅ Deployed      | Server issues and consumes the one-time invitation internally; the user never enters it |
 | Trusted-device management    |   ✅ Implemented   | Listing, revocation, and password-authorized replacement-device enrolment are implemented; live recovery acceptance is pending |
 | Lost-phone identity recovery |   ✅ Implemented   | Account ID plus blob password unlocks a password-encrypted account-key envelope; the old phone is not required |
-| Runtime creation             |   ✅ Deployed      | Creates independently managed Android environments      |
-| Runtime start and stop       |   ✅ Deployed      | Live single-node guest lifecycle and idle cleanup proved |
+| Runtime lifecycle            |   ✅ Deployed      | Creation, start, stop, and idle cleanup are live-proved; permanent deletion and associated resource cleanup are implemented |
 | Remote Android viewer        |   ✅ Deployed      | Encrypted TLS viewer and Back → Connect reconnection proved |
 | Runtime audio streaming      |   ✅ Deployed      | Virtual Android output was audibly accepted on a physical phone |
 | Runtime notification forwarding | ✅ Implemented  | Package, app label, timestamp, and title only; registration and reconnect handling are idempotent |
 | Physical microphone input    |   ✅ Deployed      | Live handset/ReDroid proof confirms runtime demand starts phone capture only while an app records or calls |
 | Persona restart              |   ✅ Implemented   | Additional fault and orphan testing remains             |
 | Factory reset                |   ✅ Implemented   | Cleanup semantics are present                           |
-| Runtime deletion             |   ✅ Implemented   | Includes explicit cleanup obligations                   |
 | Account deletion             |   ✅ Implemented   | Includes relational and runtime cleanup                 |
 | Local application lock       |   ✅ Implemented   | Includes retry controls and biometric support           |
 | Encrypted client state       |   ✅ Implemented   | Protected using Android Keystore-backed controls        |
