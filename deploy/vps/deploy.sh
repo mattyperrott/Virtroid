@@ -377,15 +377,6 @@ validate_environment() {
       exit 1
     fi
   fi
-  if profile_enabled monitoring; then
-    require_env PROMETHEUS_IMAGE ALERTMANAGER_IMAGE
-    if ! require_digest_image PROMETHEUS_IMAGE; then
-      invalid_image=1
-    fi
-    if ! require_digest_image ALERTMANAGER_IMAGE; then
-      invalid_image=1
-    fi
-  fi
   if [ "${invalid_image}" -ne 0 ]; then
     exit 1
   fi
@@ -434,7 +425,7 @@ validate_environment() {
     exit 1
   fi
   case "${NODE_DOCKER_NETWORK}" in
-    virtroid_default|default|database|control|blob|monitoring)
+    virtroid_default|default|database|control|blob)
       echo "NODE_DOCKER_NETWORK=${NODE_DOCKER_NETWORK} is not an isolated guest network" >&2
       exit 1
       ;;
@@ -698,10 +689,6 @@ health() {
   wait_for_health http://127.0.0.1:8080/healthz
   wait_for_health http://127.0.0.1:8090/readyz
   wait_for_health http://127.0.0.1:8080/readyz
-  if profile_enabled monitoring; then
-    wait_for_http_ready http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}/-/ready
-    wait_for_http_ready http://127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}/-/ready
-  fi
   if profile_enabled falco || profile_enabled nids; then
     require_running_container virtroid-falco-forwarder
   fi
@@ -756,10 +743,6 @@ if profile_enabled nids; then
   core_services+=(suricata)
   pull_services+=(suricata)
 fi
-if profile_enabled monitoring; then
-  core_services+=(alertmanager prometheus)
-  pull_services+=(alertmanager prometheus)
-fi
 
 case "${command_name}" in
   validate)
@@ -797,9 +780,6 @@ case "${command_name}" in
     fi
     if profile_enabled nids; then
       restart_services+=(suricata)
-    fi
-    if profile_enabled monitoring; then
-      restart_services+=(alertmanager prometheus)
     fi
     compose up -d --no-build --pull never --force-recreate "${restart_services[@]}"
     health

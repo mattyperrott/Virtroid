@@ -71,7 +71,7 @@ profiles="${VIRTROID_PROFILES:-edge}"
 IFS=',' read -ra profile_list <<< "${profiles}"
 for profile in "${profile_list[@]}"; do
   case "${profile}" in
-    edge|renterd|falco|nids|monitoring) ;;
+    edge|renterd|falco|nids) ;;
     *) die "unsupported production profile: ${profile}" ;;
   esac
 done
@@ -247,28 +247,6 @@ image_tree="$(docker image inspect --format '{{index .Config.Labels "com.virtroi
 
 release_name="${release_source_sha}-${release_image_id#sha256:}.env"
 release_path="${releases_root}/${release_name}"
-current_same=0
-if [ -e "${state_root}/current.env" ] || [ -L "${state_root}/current.env" ]; then
-  current_path="$(readlink -f "${state_root}/current.env")"
-  case "${current_path}" in
-    "${releases_root}"/*.env) ;;
-    *) die "current release state points outside the protected releases directory" ;;
-  esac
-  if cmp -s "${current_path}" "${bundle_snapshot}/release.env"; then
-    current_same=1
-  fi
-fi
-
-existing_backend_containers=0
-for container_name in virtroidd virtnoded virtroid-falco-forwarder; do
-  if docker inspect "${container_name}" >/dev/null 2>&1; then
-    existing_backend_containers=$((existing_backend_containers + 1))
-  fi
-done
-if [ "${current_same}" -eq 0 ] && [ "${existing_backend_containers}" -gt 0 ]; then
-  VIRTROID_MAINTENANCE_LOCK_HELD=1 /usr/local/sbin/virtroid-backup.sh
-fi
-
 if [ -e "${release_path}" ] || [ -L "${release_path}" ]; then
   [ -f "${release_path}" ] && [ ! -L "${release_path}" ] &&
     cmp -s "${release_path}" "${bundle_snapshot}/release.env" || die "protected release filename already contains different state"
@@ -365,9 +343,6 @@ if profile_enabled falco; then
 fi
 if profile_enabled nids; then
   compose up -d --no-deps --no-build --pull never suricata
-fi
-if profile_enabled monitoring; then
-  compose up -d --no-build --pull never alertmanager prometheus
 fi
 if profile_enabled edge; then
   compose up -d --no-deps --no-build --pull never edge

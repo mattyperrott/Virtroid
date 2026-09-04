@@ -126,7 +126,6 @@ if [ "${1}" = enable ]; then
   /usr/local/sbin/virtroid-renterd-admin prepare-smoke >/dev/null
   [ "$(state_value "${deploy_env}" NODE_BLOB_STORE_KIND)" = local-disk ] ||
     fail "live blob storage is not in the required local-disk pre-cutover state"
-  /usr/local/sbin/virtroid-backup.sh
   update_blob_store_kind sia-renterd
   if ! VIRTROID_PROFILES=edge,renterd "${deployment_dir}/deploy.sh" up; then
     echo "Sia cutover failed; restoring local-disk mode" >&2

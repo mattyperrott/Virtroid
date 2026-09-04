@@ -37,7 +37,6 @@ compose_args=(
   --profile renterd
   --profile falco
   --profile nids
-  --profile monitoring
 )
 
 docker "${compose_args[@]}" config --quiet
@@ -49,8 +48,6 @@ sed \
   -e '/^RENTERD_IMAGE=/d' \
   -e '/^FALCO_IMAGE=/d' \
   -e '/^SURICATA_IMAGE=/d' \
-  -e '/^PROMETHEUS_IMAGE=/d' \
-  -e '/^ALERTMANAGER_IMAGE=/d' \
   "${env_file}" > "${core_env_file}"
 docker compose \
   --env-file "${core_env_file}" \
@@ -69,9 +66,11 @@ grep -q 'NODE_MIN_FREE_DISK_PERCENT: "5"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE: "120"' "${tmp_dir}/rendered-compose.yml"
 grep -q "NODE_NOTIFICATION_AGENT_APK_SHA256: ${digest}" "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_PUBLIC_CONTROL_PLANE_URL: https://virtroid.example' "${tmp_dir}/rendered-compose.yml"
-grep -q 'container_name: virtroid-prometheus' "${tmp_dir}/rendered-compose.yml"
-grep -q 'container_name: virtroid-alertmanager' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml"
+if grep -Eq 'container_name: virtroid-(prometheus|alertmanager)|prometheus-data:|alertmanager-data:' "${tmp_dir}/rendered-compose.yml"; then
+  echo "retired operational monitoring resources remain in Compose" >&2
+  exit 1
+fi
 awk '
   /^  suricata:$/ { in_service = 1; next }
   in_service && /^  [A-Za-z0-9_-]+:$/ { exit }
@@ -82,11 +81,7 @@ grep -q "com.virtroid.deployment-tree-sha256: ${deployment_tree_digest}" "${tmp_
 grep -q -- '- DAC_OVERRIDE' "${tmp_dir}/suricata-compose.yml"
 grep -q 'test -f /var/log/suricata/eve.json && kill -0 1' "${tmp_dir}/suricata-compose.yml"
 grep -q 'SURICATA_EVE_FILE: /var/log/suricata/eve.json' "${tmp_dir}/rendered-compose.yml"
-grep -q 'monitoring-egress:' "${tmp_dir}/rendered-compose.yml"
-if grep -q -- '--web.enable-lifecycle=false' "${tmp_dir}/rendered-compose.yml"; then
-  echo "Prometheus must rely on its default-disabled lifecycle API" >&2
-  exit 1
-fi
+grep -q 'security-events:' "${tmp_dir}/rendered-compose.yml"
 grep -q 'image: virtroid-backend:release-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"
 grep -q 'com.virtroid.source-sha: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${tmp_dir}/rendered-compose.yml"
 grep -q 'com.virtroid.schema-version: "2026071903"' "${tmp_dir}/rendered-compose.yml"

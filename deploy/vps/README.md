@@ -5,10 +5,11 @@
 > `2026073001`; the previously observed VPS release used schema `2026072102`,
 > and the node-registry release used schema `2026071903`, with the
 > approved production node registry. Production builds, release bundles,
-> rollback state, operational secrets, and local backups remain on the VPS.
+> release state and operational secrets remain on the VPS. Virtroid does not
+> create automated VPS-local application-data or database backups.
 > A renterd recovery seed is the deliberate exception: two physical offline
 > copies must exist outside both the VPS and developer machines. Developer
-> machines and source-hosting services are not release runners or backup targets.
+> machines and source-hosting services are not release runners.
 
 This folder is intended to be deployable on a fresh Ubuntu VPS with:
 
@@ -49,8 +50,8 @@ sudo VIRTROID_AUTHORIZED_KEY_FILE=/tmp/virtroid-deploy.pub \
 ```
 
 Host preparation installs and enables Docker, binderfs, AppArmor, auditd,
-Fail2ban, UFW, unattended security upgrades, the local backup timer, and the
-reviewed sysctl/SSH hardening. UFW is configured deny-by-default with only
+Fail2ban, UFW, unattended security upgrades, and the reviewed sysctl/SSH
+hardening. UFW is configured deny-by-default with only
 OpenSSH, HTTPS, and HTTP for Certbot's standalone HTTP-01 renewal allowed.
 Set `VIRTROID_ALLOW_HTTP_ACME=false` when certificates are managed without
 HTTP-01. If an existing server has additional UFW rules, preparation refuses
@@ -183,8 +184,8 @@ Build and release entirely on the VPS:
 sudo /usr/local/sbin/virtroid-release-on-vps
 ```
 
-The guarded release helper activates the reviewed edge, monitoring, Falco HIDS,
-and Suricata NIDS profiles. Configure the pinned sensor images and reviewed
+The guarded release helper activates the reviewed edge, Falco HIDS, and
+Suricata NIDS profiles. Configure the pinned sensor images and reviewed
 `SURICATA_INTERFACE` in the production `.env` before the first sensor-enabled
 release.
 
@@ -192,8 +193,8 @@ The helper refuses a configured Git remote, `.github` content, non-root source
 ownership, a dirty checkout, or group/world-writable source. It snapshots the
 source, builds the `linux/amd64` backend image on the VPS, creates a root-only
 checksummed bundle under `/var/lib/virtroid-release-bundles`, installs the
-reviewed deployment tree atomically, takes a consistent local backup, applies
-the schema, verifies the stored node fingerprint and fresh heartbeat, and opens
+reviewed deployment tree atomically, applies the schema, verifies the stored
+node fingerprint and fresh heartbeat, and opens
 HTTPS ingress last. An interrupted or uncertain cutover leaves ingress stopped.
 
 The image tag is only a readable local name. The bundle records both the
@@ -205,14 +206,13 @@ is used.
 
 `deploy.sh up`, `pull`, `restart`, and `down` are root-only recovery commands.
 They use the same maintenance lock, accept only the installed root-owned tree,
-verify the active local image ID, and cannot race a backup. Normal releases use
+verify the active local image ID. Normal releases use
 the bundle helpers above.
 
 The node-registry migration used schema `2026071903`; public signed bootstrap
 used `2026072102`; invite-gated bootstrap used `2026073001`; runtime media paths
-and node-capability readiness use `2026080201`. Retained VPS backups remain the recovery
-boundary; an older schema image must never be started automatically against a
-newer database.
+and node-capability readiness use `2026080201`. An older schema image must never
+be started automatically against a newer database.
 
 Put a full PEM bundle at `/srv/virtroid/tls/virtroid.pem`. It must contain the
 certificate chain and private key in one file:
@@ -247,16 +247,8 @@ The direct release helper starts:
 - `edge` via HAProxy by default
 
 Host preparation also enables Fail2ban, conservative SSH attempt/grace limits,
-bounded container logs, and a daily root-only local backup timer. Daily backups
-refuse active sessions or running managed guests, drain ingress, and pause the
-control plane, node, and renterd writers while capturing a PostgreSQL dump,
-`/srv/virtroid`, renterd's MySQL databases and partial-slab data when configured,
-the reviewed deploy tree, and current/previous release state. The first
-legacy-to-immutable backup also saves
-the exact immutable Docker image IDs used by each backend container. Portable
-checksums cover the complete set, and the seven newest successful sets are kept
-under `/var/backups/virtroid`. They are rollback copies on the same host and
-never leave it. Deleted account data can remain in retained backups.
+and bounded container logs. It does not install or schedule application-data or
+database backups.
 
 ## Operator revocation and reactivation
 
@@ -310,13 +302,13 @@ sudo docker exec virtroid-postgres psql -U virtroid -d virtroid -x -c \
     LIMIT 50;'
 ```
 
-## VPS-local backups
+## Persistence and recovery boundary
 
-`virtroid-backup.timer` writes root-only checksummed recovery sets under
-`/var/backups/virtroid`. No Mac, GitHub service, or external storage
-participates. These backups intentionally do not survive total VPS or provider
-loss. That is an explicit limitation of the requested isolation boundary, not
-off-site disaster recovery.
+Runtime state and the control-plane database are persistent on the active VPS.
+There is no automated Virtroid backup service, retained database dump, or
+`/srv/virtroid` archive. A VPS or provider storage failure can therefore cause
+permanent data loss until a separately designed renterd recovery architecture is
+introduced.
 
 ## Preinstalled Runtime Apps
 
@@ -454,8 +446,6 @@ sudo ./deploy.sh logs virtroidd
 sudo ./deploy.sh logs virtnoded
 sudo ./deploy.sh ps
 sudo ./deploy.sh health
-sudo systemctl start virtroid-backup.service
-sudo systemctl status virtroid-backup.timer
 ```
 
 Optional profiles:
@@ -464,16 +454,12 @@ Optional profiles:
 sudo VIRTROID_PROFILES=edge,falco ./deploy.sh up
 sudo VIRTROID_PROFILES=edge,falco,nids ./deploy.sh up
 sudo VIRTROID_PROFILES=edge,renterd ./deploy.sh up
-sudo VIRTROID_PROFILES=edge,monitoring ./deploy.sh up
 ```
 
-The monitoring profile keeps Prometheus and Alertmanager on loopback and uses
-the reviewed rules under `monitoring/`. Replace the intentionally empty
-Alertmanager receiver with a root-owned operator notification configuration
-before treating alerts as paged. The deployment health gate now checks node
-`/readyz` and control-plane `/readyz`, so a release is not declared healthy
-until PostgreSQL and at least one fresh, approved, Docker/binder-ready node are
-all present.
+The deployment health gate checks node `/readyz` and control-plane `/readyz`, so
+a release is not declared healthy until PostgreSQL and at least one fresh,
+approved, Docker/binder-ready node are all present. No Prometheus,
+Alertmanager, operational health rules, or outage-paging profile is installed.
 
 The `falco` profile provides host/container runtime detection. The optional
 `nids` profile adds detection-only Suricata monitoring on the reviewed host
