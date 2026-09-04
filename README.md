@@ -113,7 +113,6 @@ flowchart LR
 | Account deletion             |   ✅ Implemented   | Includes relational and runtime cleanup                 |
 | Local application lock       |   ✅ Implemented   | Includes retry controls and biometric support           |
 | Encrypted client state       |   ✅ Implemented   | Protected using Android Keystore-backed controls        |
-| Confirmation dialogs         |   ✅ Implemented   | Destructive actions use standard Cancel/Confirm modals without typed phrases |
 | F-Droid application catalog  |   ✅ Implemented   | Catalog entries include pinned APK hashes               |
 | F-Droid installation         |   ✅ Implemented   | New selections reconcile into running runtimes; pinned downloads fail closed on transport, compatibility, hash, size, and package-identity errors |
 | Encrypted local snapshots    |   ✅ Implemented   | Core stopped-runtime persistence on the active VPS; not an independent backup |
