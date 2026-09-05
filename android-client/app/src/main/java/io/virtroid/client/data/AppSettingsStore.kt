@@ -32,6 +32,10 @@ class AppSettingsStore(private val context: Context) {
         get() = prefs.getBoolean(KEY_BLOCK_SCREEN_CAPTURE, true)
         set(value) = prefs.edit().putBoolean(KEY_BLOCK_SCREEN_CAPTURE, value).apply()
 
+    var permissionsSetupCompleted: Boolean
+        get() = prefs.getBoolean(KEY_PERMISSIONS_SETUP_COMPLETED, false)
+        set(value) = prefs.edit().putBoolean(KEY_PERMISSIONS_SETUP_COMPLETED, value).apply()
+
     var uiInactivityTimeoutMs: Long
         get() = prefs.getLong(KEY_UI_INACTIVITY_TIMEOUT_MS, DEFAULT_UI_INACTIVITY_TIMEOUT_MS)
         set(value) = prefs.edit().putLong(KEY_UI_INACTIVITY_TIMEOUT_MS, value.coerceAtLeast(30_000L)).apply()
@@ -215,6 +219,7 @@ class AppSettingsStore(private val context: Context) {
         private const val KEY_REQUIRE_UNLOCK_ON_RESUME = "require_unlock_on_resume"
         private const val KEY_FAILED_ATTEMPTS_THRESHOLD = "failed_attempts_threshold"
         private const val KEY_BLOCK_SCREEN_CAPTURE = "block_screen_capture"
+        private const val KEY_PERMISSIONS_SETUP_COMPLETED = "permissions_setup_completed"
         private const val KEY_UI_INACTIVITY_TIMEOUT_MS = "ui_inactivity_timeout_ms"
         private const val LEGACY_KEY_AUTO_DELETE_METADATA = "auto_delete_metadata"
         private const val LEGACY_KEY_CLEAR_POST_TRANSFER_ARTIFACTS = "clear_post_transfer_artifacts"

@@ -19,7 +19,6 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -85,41 +84,12 @@ class SessionActivity : AppCompatActivity() {
     private var inactivityJob: Job? = null
     private var heartbeatJob: Job? = null
     private var viewerReconnectJob: Job? = null
+    private var viewerSurfaceResumeJob: Job? = null
     private var viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
     private var sessionUnavailable = false
     private var heartbeatFailureCount = 0
-    private var microphonePermissionResolved = false
     private var physicalMicrophoneEnabled = false
     private var microphoneFailureReported = false
-    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        microphonePermissionResolved = true
-        physicalMicrophoneEnabled = audioEnabled && granted
-        if (granted) {
-            appLogs.info("Physical microphone bridge permission granted", "session")
-        } else {
-            appLogs.warn("Physical microphone bridge disabled because microphone permission was denied", "session")
-            toast(getString(R.string.session_microphone_permission_denied))
-        }
-        maybeRequestSessionNotificationPermission()
-        viewerSurface?.let { surface ->
-            attachOrConnectViewer(
-                surface,
-                binding.sessionSurfaceView.width,
-                binding.sessionSurfaceView.height,
-            )
-        }
-    }
-    private val cameraPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants[Manifest.permission.CAMERA] == true) {
-            val recordAudio = grants[Manifest.permission.RECORD_AUDIO] == true
-            if (!recordAudio) {
-                toast(getString(R.string.session_camera_audio_permission_required))
-            }
-            launchPhysicalCamera(recordAudio)
-        } else {
-            toast(getString(R.string.session_camera_permission_required))
-        }
-    }
 
     private val cameraCapture = registerForActivityResult(StartActivityForResult()) { result ->
         if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
@@ -153,6 +123,8 @@ class SessionActivity : AppCompatActivity() {
 
         override fun onFirstVideoFrame() {
             runOnUiThread {
+                viewerSurfaceResumeJob?.cancel()
+                viewerSurfaceResumeJob = null
                 binding.sessionStreamStatusOverlay.isVisible = false
             }
         }
@@ -191,6 +163,8 @@ class SessionActivity : AppCompatActivity() {
                     getString(R.string.session_failed_message_inline, message)
                 }
                 if (!endingSession) {
+                    viewerSurfaceResumeJob?.cancel()
+                    viewerSurfaceResumeJob = null
                     viewerReconnectDelayMs =
                         (viewerReconnectDelayMs * 2).coerceAtMost(VIEWER_RECONNECT_MAX_DELAY_MS)
                     appLogs.error("Session stream disconnected: $message", "session")
@@ -236,7 +210,6 @@ class SessionActivity : AppCompatActivity() {
         audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO_ENABLED, false)
         physicalMicrophoneEnabled = audioEnabled &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        microphonePermissionResolved = !audioEnabled || physicalMicrophoneEnabled
         cameraMode = intent.getStringExtra(EXTRA_CAMERA_MODE).orEmpty().ifBlank { "disabled" }
         fileMode = intent.getStringExtra(EXTRA_FILE_MODE).orEmpty().ifBlank { "upload-only" }
         sessionStore = SessionStore(this)
@@ -282,8 +255,11 @@ class SessionActivity : AppCompatActivity() {
             val audioGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
             if (cameraGranted && audioGranted) {
                 launchPhysicalCamera(recordAudio = true)
+            } else if (cameraGranted) {
+                toast(getString(R.string.session_camera_audio_permission_required))
+                launchPhysicalCamera(recordAudio = false)
             } else {
-                cameraPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
+                toast(getString(R.string.session_camera_permissions_setup_required))
             }
         }
         binding.sessionRetryButton.isVisible = false
@@ -343,11 +319,6 @@ class SessionActivity : AppCompatActivity() {
                 binding.sessionSurfaceView.height,
             )
         }
-        if (!microphonePermissionResolved) {
-            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-        } else {
-            maybeRequestSessionNotificationPermission()
-        }
         onBackPressedDispatcher.addCallback(this) {
             navigateBackToApp()
         }
@@ -382,6 +353,7 @@ class SessionActivity : AppCompatActivity() {
         inactivityJob?.cancel()
         heartbeatJob?.cancel()
         viewerReconnectJob?.cancel()
+        viewerSurfaceResumeJob?.cancel()
         disconnectViewer()
         super.onDestroy()
     }
@@ -392,9 +364,6 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun attachOrConnectViewer(surface: Surface, width: Int, height: Int) {
-        if (!microphonePermissionResolved) {
-            return
-        }
         val host = sessionHost
         if (host == null) {
             connectViewer(surface)
@@ -411,6 +380,19 @@ class SessionActivity : AppCompatActivity() {
             width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels,
             height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels,
         )
+        viewerSurfaceResumeJob?.cancel()
+        viewerSurfaceResumeJob = lifecycleScope.launch {
+            delay(VIEWER_SURFACE_RESUME_TIMEOUT_MS)
+            if (!endingSession && !sessionUnavailable && sessionHost === host &&
+                binding.sessionStreamStatusOverlay.isVisible
+            ) {
+                appLogs.warn("Viewer surface resume did not render a frame before timeout", "session")
+                binding.sessionStreamProgress.isVisible = false
+                binding.sessionStreamStatusText.text = getString(R.string.session_stream_resume_delayed)
+                binding.sessionRetryButton.isVisible = true
+            }
+            viewerSurfaceResumeJob = null
+        }
     }
 
     private fun connectViewer(surface: Surface) {
@@ -444,6 +426,8 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun disconnectViewer() {
+        viewerSurfaceResumeJob?.cancel()
+        viewerSurfaceResumeJob = null
         sessionHost?.destroy()
         sessionHost = null
     }
@@ -764,19 +748,6 @@ class SessionActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    private fun maybeRequestSessionNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return
-        }
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-        requestPermissions(
-            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-            REQUEST_SESSION_NOTIFICATION_PERMISSION,
-        )
-    }
-
     private fun showEndingError(error: Throwable) {
         val message = error.virtroidDisplayMessage(this)
         binding.sessionSubtitleText.text = message
@@ -953,7 +924,7 @@ class SessionActivity : AppCompatActivity() {
         private const val HEARTBEAT_RETRY_VISIBLE_THRESHOLD = 2
         private const val VIEWER_RECONNECT_INITIAL_DELAY_MS = 1_000L
         private const val VIEWER_RECONNECT_MAX_DELAY_MS = 10_000L
-        private const val REQUEST_SESSION_NOTIFICATION_PERMISSION = 4182
+        private const val VIEWER_SURFACE_RESUME_TIMEOUT_MS = 5_000L
         private const val MAX_RUNTIME_PHOTO_IMPORT_BYTES = 16 * 1024 * 1024
         private const val MAX_RUNTIME_VIDEO_IMPORT_BYTES = 32 * 1024 * 1024
         private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)

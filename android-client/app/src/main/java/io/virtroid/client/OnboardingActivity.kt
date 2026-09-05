@@ -538,7 +538,7 @@ class OnboardingActivity : AppCompatActivity() {
 
     private fun launchMain() {
         startActivity(
-            Intent(this, MainActivity::class.java)
+            PermissionsActivity.createIntent(this)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         )
         finish()

@@ -46,6 +46,9 @@
             android:name=".OnboardingActivity"
             android:exported="false" />
         <activity
+            android:name=".PermissionsActivity"
+            android:exported="false" />
+        <activity
             android:name=".LauncherActivity"
             android:exported="true">
             <intent-filter>

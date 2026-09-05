@@ -27,6 +27,11 @@ class UiPreviewActivity : AppCompatActivity() {
 
         val screen = intent.getStringExtra(EXTRA_SCREEN)
         when (screen) {
+            "permissions_live" -> {
+                startActivity(PermissionsActivity.createIntent(this))
+                finish()
+                return
+            }
             "privacy_security_live" -> {
                 startActivity(PrivacySecurityActivity.createIntent(this))
                 finish()
@@ -55,6 +60,7 @@ class UiPreviewActivity : AppCompatActivity() {
         }
         val layout = when (screen) {
             "identity_provisioning" -> R.layout.screen_identity_provisioning
+            "permissions" -> R.layout.screen_permissions
             "pin_authentication" -> R.layout.screen_pin_authentication
             "my_runtimes" -> R.layout.screen_my_runtimes
             "create_session" -> R.layout.screen_create_session

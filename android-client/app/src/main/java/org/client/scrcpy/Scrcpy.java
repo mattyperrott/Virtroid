@@ -80,7 +80,7 @@ public class Scrcpy extends Service {
     private VideoDecoder videoDecoder;
     private AudioDecoder audioDecoder;
     private final AtomicBoolean updateAvailable = new AtomicBoolean(false);
-    private final AtomicBoolean firstVideoFrameDelivered = new AtomicBoolean(false);
+    private final FirstFrameGate firstVideoFrameGate = new FirstFrameGate();
     private final IBinder mBinder = new MyServiceBinder();
     private boolean first_time = true;
 
@@ -144,6 +144,7 @@ public class Scrcpy extends Service {
         this.screenWidth = NewWidth;
         this.screenHeight = NewHeight;
         this.surface = NewSurface;
+        firstVideoFrameGate.reset();
 
         if (videoDecoder != null) {
             videoDecoder.start();
@@ -169,7 +170,7 @@ public class Scrcpy extends Service {
         first_time = true;
         remote_dev_resolution[0] = 0;
         remote_dev_resolution[1] = 0;
-        firstVideoFrameDelivered.set(false);
+        firstVideoFrameGate.reset();
 
         this.serverHost = serverHost;
         this.serverPort = serverPort;
@@ -809,7 +810,7 @@ public class Scrcpy extends Service {
     }
 
     private void notifyFirstVideoFrame() {
-        if (firstVideoFrameDelivered.compareAndSet(false, true) && serviceCallbacks != null) {
+        if (firstVideoFrameGate.markDelivered() && serviceCallbacks != null) {
             serviceCallbacks.firstVideoFrame();
         }
     }

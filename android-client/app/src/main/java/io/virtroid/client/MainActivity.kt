@@ -1,10 +1,7 @@
 package io.virtroid.client
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -86,7 +83,6 @@ class MainActivity : AppCompatActivity() {
         snapshotRollbackGuard = SnapshotRollbackGuard(this)
         appLogs = AppLogStore.get(this)
         NotificationRelayManager(this).ensureRegistered()
-        requestRuntimeNotificationPermission()
         if (sessionStore.baseUrl.isBlank()) {
             sessionStore.baseUrl = DEFAULT_CONTROL_PLANE_URL
         }
@@ -1146,14 +1142,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun requestRuntimeNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_RUNTIME_NOTIFICATION_PERMISSION)
-        }
-    }
-
     private fun markRuntimeLocallyStopping(runtimeId: String) {
         locallyStoppingRuntimeIds.add(runtimeId)
         locallyStoppingRuntimeStartedAtMs[runtimeId] = System.currentTimeMillis()
@@ -1207,7 +1195,6 @@ class MainActivity : AppCompatActivity() {
     )
 
     companion object {
-        private const val REQUEST_RUNTIME_NOTIFICATION_PERMISSION = 7319
         val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
         private const val EXTRA_STOPPING_RUNTIME_ID = "io.virtroid.client.extra.STOPPING_RUNTIME_ID"
         const val DEFAULT_SESSION_BIT_RATE = 4_000_000
