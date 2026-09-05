@@ -382,6 +382,42 @@
                 android:orientation="vertical">
 
                 <LinearLayout
+                    android:id="@+id/appPermissionsRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="72dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/VirtroidSettingsTitle"
+                            android:text="@string/privacy_app_permissions" />
+
+                        <TextView
+                            style="@style/VirtroidSettingsSubtitle"
+                            android:layout_marginTop="8dp"
+                            android:text="@string/privacy_app_permissions_body" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
+                </LinearLayout>
+
+                <View style="@style/VirtroidSettingsDivider" />
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="76dp"
                     android:gravity="center_vertical"
@@ -465,6 +501,7 @@
                 android:layout_marginTop="12dp"
                 android:background="@drawable/bg_settings_section"
                 android:orientation="vertical">
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="68dp"

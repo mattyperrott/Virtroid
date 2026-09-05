@@ -60,6 +60,9 @@ class PrivacySecurityActivity : AppCompatActivity() {
         binding.autoLockTimerRow.setOnClickListener { chooseAutoLockTimer() }
         binding.failedAttemptsRow.setOnClickListener { chooseFailedAttemptsThreshold() }
         binding.uiInactivityTimeoutRow.setOnClickListener { chooseInactivityTimeout() }
+        binding.appPermissionsRow.setOnClickListener {
+            startActivity(PermissionsActivity.createIntent(this, settingsMode = true))
+        }
         binding.forceClearCacheButton.setOnClickListener { forceClearCache() }
 
         binding.requirePinSwitch.contentDescription = getString(R.string.privacy_require_pin_biometric)

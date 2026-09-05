@@ -387,12 +387,14 @@ The runtime node agent is responsible for:
 The Android client currently provides:
 
 * Signed onboarding
+* A dedicated post-identity permissions screen for notifications, microphone, and camera access
 * Device proof-of-possession
 * Runtime creation
 * Runtime startup
 * Runtime stop
 * Runtime reset actions
 * Encrypted viewer sessions
+* Permission-free viewer startup with surface-resume recovery
 * Runtime audio controls
 * A camera-only viewer action for explicit physical-camera photo or video capture and media import
 * Trusted-device management

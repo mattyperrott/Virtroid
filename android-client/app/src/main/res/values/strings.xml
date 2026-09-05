@@ -516,4 +516,27 @@
     <string name="session_microphone_permission_denied">Phone microphone access was denied. Runtime microphone passthrough is disabled for this session.</string>
     <string name="session_microphone_runtime_unavailable">This runtime image could not activate microphone passthrough.</string>
     <string name="session_microphone_bridge_failed">Phone microphone passthrough could not start.</string>
+    <string name="session_stream_resume_delayed">Live display did not resume. Retry the viewer connection.</string>
+
+    <string name="permissions_title">Permissions</string>
+    <string name="permissions_heading">Choose device access</string>
+    <string name="permissions_subtitle">Virtroid can work without these permissions. Allow the features you want before opening a runtime viewer.</string>
+    <string name="permissions_notifications_title">Notifications</string>
+    <string name="permissions_notifications_body">Show security warnings and metadata-only runtime notification alerts.</string>
+    <string name="permissions_microphone_title">Microphone</string>
+    <string name="permissions_microphone_body">Used only while a connected runtime app is recording audio or handling a call.</string>
+    <string name="permissions_camera_title">Camera</string>
+    <string name="permissions_camera_body">Capture photos or videos for import into an active runtime.</string>
+    <string name="permissions_privacy_note">No camera or microphone capture starts from this screen. Access begins only when you use the related feature and can be changed later in Android settings.</string>
+    <string name="permissions_allow">Allow</string>
+    <string name="permissions_allowed">Allowed</string>
+    <string name="permissions_unavailable">Unavailable</string>
+    <string name="permissions_allow_remaining">Allow remaining</string>
+    <string name="permissions_continue">Continue</string>
+    <string name="permissions_done">Done</string>
+    <string name="permissions_not_now">Not now</string>
+    <string name="permissions_open_settings">Open Android permission settings</string>
+    <string name="privacy_app_permissions">App permissions</string>
+    <string name="privacy_app_permissions_body">Review notifications, microphone, and camera access</string>
+    <string name="session_camera_permissions_setup_required">Grant camera access from Settings → Privacy &amp; Security → App permissions before using camera import.</string>
 </resources>

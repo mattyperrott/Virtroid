@@ -243,17 +243,15 @@ class UnlockActivity : AppCompatActivity() {
         }
         val sessionStore = SessionStore(this)
         val identityPasswordStore = IdentityPasswordStore(this)
-        val destination = if (
-            sessionStore.hasAccess() &&
+        val hasIdentity = sessionStore.hasAccess() &&
             identityPasswordStore.isConfigured(sessionStore.accountId, sessionStore.deviceId)
-        ) {
-            MainActivity::class.java
-        } else {
-            OnboardingActivity::class.java
+        val destination = when {
+            !hasIdentity -> Intent(this, OnboardingActivity::class.java)
+            !AppSettingsStore(this).permissionsSetupCompleted -> PermissionsActivity.createIntent(this)
+            else -> Intent(this, MainActivity::class.java)
         }
         startActivity(
-            Intent(this, destination)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            destination.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         )
         finish()
     }
