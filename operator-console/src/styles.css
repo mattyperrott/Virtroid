@@ -1056,12 +1056,16 @@ kbd {
 .incident-list {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow-y: hidden;
   overscroll-behavior: contain;
   padding: 0 20px;
   scrollbar-color: rgba(172, 218, 188, 0.28) transparent;
-  scrollbar-gutter: stable;
   scrollbar-width: thin;
+}
+
+.incident-list--scrollable {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .incident-list:focus-visible {
