@@ -1,0 +1,13 @@
+**
+!backend/
+!backend/**
+!operator-console/
+!operator-console/index.html
+!operator-console/package.json
+!operator-console/package-lock.json
+!operator-console/tsconfig.json
+!operator-console/tsconfig.app.json
+!operator-console/tsconfig.node.json
+!operator-console/vite.config.ts
+!operator-console/src/
+!operator-console/src/**

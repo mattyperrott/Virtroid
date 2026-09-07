@@ -1,0 +1,1 @@
+Production assets are generated from operator-console during the release build.

@@ -316,6 +316,31 @@ validate_environment() {
   require_p256_private_key CONTROL_PLANE_CALLBACK_PRIVATE_KEY_B64
   require_matching_callback_keypair
 
+  case "${OPERATOR_CONSOLE_ENABLED:-false}" in
+    true)
+      require_env OPERATOR_CONSOLE_TOKEN_FILE
+      if [ "${OPERATOR_CONSOLE_TOKEN_FILE}" != /etc/virtroid/secrets/operator-console-token ]; then
+        echo "operator console must use the fixed root-owned token path under /etc/virtroid/secrets" >&2
+        exit 1
+      fi
+      if [ ! -f "${OPERATOR_CONSOLE_TOKEN_FILE}" ] || [ -L "${OPERATOR_CONSOLE_TOKEN_FILE}" ] ||
+         [ "$(stat -c '%u' "${OPERATOR_CONSOLE_TOKEN_FILE}")" -ne 0 ]; then
+        echo "operator console token must be a root-owned regular file" >&2
+        exit 1
+      fi
+      case "$(stat -c '%a' "${OPERATOR_CONSOLE_TOKEN_FILE}")" in
+        400|600) ;;
+        *) echo "operator console token must have mode 0400 or 0600" >&2; exit 1 ;;
+      esac
+      if ! tr -d '\r\n' < "${OPERATOR_CONSOLE_TOKEN_FILE}" | grep -Eq '^[A-Za-z0-9_-]{43,128}$'; then
+        echo "operator console token must contain one generated 256-bit base64url token" >&2
+        exit 1
+      fi
+      ;;
+    false) ;;
+    *) echo "OPERATOR_CONSOLE_ENABLED must be true or false" >&2; exit 1 ;;
+  esac
+
   local invalid_image=0
   local image_key
   for image_key in POSTGRES_IMAGE NODE_RUNTIME_IMAGE; do

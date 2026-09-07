@@ -6,6 +6,8 @@
 *.aab
 *.idsig
 /dist/
+/operator-console/dist/
+/operator-console/node_modules/
 /docs/
 /Virtroid-source-code.html
 /android-client/dist/
