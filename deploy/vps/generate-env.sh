@@ -132,6 +132,7 @@ write_env_var() {
   write_env_var RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE 120
   write_env_var OPERATOR_CONSOLE_ENABLED false
   write_env_var OPERATOR_CONSOLE_TOKEN_FILE ""
+  write_env_var OPERATOR_SECRET_GID 65534
   write_env_var OPERATOR_SESSION_TTL 8h
   write_env_var OPERATOR_LOGIN_RATE_LIMIT_PER_MINUTE 5
   write_env_var NODE_ADVERTISE_ADDR virtnoded

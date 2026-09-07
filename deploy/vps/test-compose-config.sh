@@ -66,6 +66,13 @@ grep -q 'NODE_MIN_FREE_DISK_PERCENT: "5"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE: "120"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'OPERATOR_CONSOLE_ENABLED: "false"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'OPERATOR_CONSOLE_TOKEN_FILE: /run/secrets/operator-console-token' "${tmp_dir}/rendered-compose.yml"
+awk '
+  /^  virtroidd:$/ { in_service = 1; next }
+  in_service && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_service { print }
+' "${tmp_dir}/rendered-compose.yml" > "${tmp_dir}/virtroidd-compose.yml"
+grep -q 'group_add:' "${tmp_dir}/virtroidd-compose.yml"
+grep -q -- '- "65534"' "${tmp_dir}/virtroidd-compose.yml"
 grep -q 'source: .*/operator-console-disabled' "${tmp_dir}/rendered-compose.yml"
 grep -q 'target: /run/secrets/operator-console-token' "${tmp_dir}/rendered-compose.yml"
 grep -q "NODE_NOTIFICATION_AGENT_APK_SHA256: ${digest}" "${tmp_dir}/rendered-compose.yml"

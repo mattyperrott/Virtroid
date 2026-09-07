@@ -35,6 +35,8 @@ services:
       com.virtroid.schema-version: ${VIRTROID_SCHEMA_VERSION:?set VIRTROID_SCHEMA_VERSION to the backend schema compatibility version}
       com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
     restart: unless-stopped
+    group_add:
+      - "${OPERATOR_SECRET_GID:-65534}"
     depends_on:
       postgres:
         condition: service_healthy
