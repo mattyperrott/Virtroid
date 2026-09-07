@@ -574,6 +574,7 @@ function CommandCentre({
   const totalSessions = overview.activity.reduce((sum, point) => sum + point.sessions, 0);
   const totalOperations = overview.activity.reduce((sum, point) => sum + point.operations, 0);
   const hasCriticalIncidents = overview.incidents.some((incident) => incident.severity === "critical");
+  const hasScrollableIncidents = overview.incidents.length > 2;
 
   return (
     <>
@@ -611,7 +612,12 @@ function CommandCentre({
 
         <section className="panel attention-panel reveal" style={{ "--delay": "340ms" } as React.CSSProperties}>
           <PanelHeader eyebrow="Triage queue" title="Needs attention" action="View all" />
-          <div className="incident-list" role="region" aria-label="Triage queue incidents" tabIndex={0}>
+          <div
+            className={`incident-list${hasScrollableIncidents ? " incident-list--scrollable" : ""}`}
+            role="region"
+            aria-label="Triage queue incidents"
+            tabIndex={hasScrollableIncidents ? 0 : undefined}
+          >
             {overview.incidents.map((incident) => <IncidentRow key={incident.id} incident={incident} />)}
           </div>
           <div className="attention-panel__footer">
