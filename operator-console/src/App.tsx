@@ -391,7 +391,7 @@ function IncidentRow({ incident }: { incident: Incident }) {
       <span className={`incident-row__icon incident-row__icon--${incident.severity}`}><Icon size={16} /></span>
       <div>
         <div className="incident-row__topline">
-          <strong>{incident.title}</strong>
+          <strong title={incident.title}>{incident.title}</strong>
           <span>{incident.age}</span>
         </div>
         <p>{incident.detail}</p>

@@ -1096,7 +1096,25 @@ kbd {
 
 @media (min-width: 1161px) {
   .dashboard-grid--primary .incident-row {
+    height: 99px;
+    overflow: hidden;
     padding-block: 11px;
+  }
+}
+
+@media (min-width: 1161px) and (max-width: 1319px) {
+  .dashboard-grid--primary .incident-row strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard-grid--primary .incident-row p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 }
 
