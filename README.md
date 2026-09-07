@@ -129,7 +129,7 @@ flowchart LR
 | Hardware attestation         | ❌ Not implemented | Design and proof-of-concept work only                   |
 | Operator-blind persistence   | ❌ Not implemented | Runtime host participates in snapshot operations        |
 | Multi-node scheduling        |     🟡 Candidate   | Capability-aware control logic exists; live multi-node proof is pending |
-| Operator control-panel UI    |    🟡 Prototype    | Read-only Command Centre and runtime inspector are runnable from `operator-console`; authenticated operator APIs and privileged actions are not connected |
+| Operator control-panel UI    |    🟢 Deployed     | Authenticated read-only Command Centre and sanitized live overview are deployed at `/operator/`; privileged actions remain locked pending RBAC, step-up approval, and immutable audit execution |
 
 > [!NOTE]
 > Camera support is deliberate photo/video capture and media import. It is not a live

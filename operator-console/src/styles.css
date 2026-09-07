@@ -900,6 +900,7 @@ kbd {
 }
 
 .dashboard-grid--primary {
+  align-items: start;
   grid-template-columns: minmax(0, 1.54fr) minmax(310px, 0.86fr);
 }
 

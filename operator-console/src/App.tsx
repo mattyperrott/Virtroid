@@ -607,9 +607,13 @@ function CommandCentre({
         <section className="panel attention-panel reveal" style={{ "--delay": "340ms" } as React.CSSProperties}>
           <PanelHeader eyebrow="Triage queue" title="Needs attention" action="View all" />
           <div className="incident-list">
-            {overview.incidents.map((incident) => <IncidentRow key={incident.id} incident={incident} />)}
+            {overview.incidents.slice(0, 4).map((incident) => <IncidentRow key={incident.id} incident={incident} />)}
           </div>
-          <div className="attention-panel__footer">{hasCriticalIncidents ? <AlertTriangle size={15} /> : <Check size={15} />} {hasCriticalIncidents ? "Critical incident present" : "No critical incidents"}</div>
+          <div className="attention-panel__footer">
+            {hasCriticalIncidents ? <AlertTriangle size={15} /> : <Check size={15} />}
+            {overview.incidents.length > 4 ? `${overview.incidents.length - 4} more signals · ` : ""}
+            {hasCriticalIncidents ? "Critical incident present" : "No critical incidents"}
+          </div>
         </section>
       </div>
 
