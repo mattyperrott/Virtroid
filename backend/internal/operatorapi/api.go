@@ -1,6 +1,7 @@
 package operatorapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -36,7 +37,7 @@ type snapshotStore interface {
 type API struct {
 	cfg     config.ServerConfig
 	store   snapshotStore
-	files   http.Handler
+	assets  fs.FS
 	limiter *loginLimiter
 	now     func() time.Time
 }
@@ -49,7 +50,7 @@ func New(cfg config.ServerConfig, st snapshotStore) http.Handler {
 	a := &API{
 		cfg:     cfg,
 		store:   st,
-		files:   http.FileServer(http.FS(assets)),
+		assets:  assets,
 		limiter: newLoginLimiter(cfg.OperatorLoginRateLimitPerMinute),
 		now:     time.Now,
 	}
@@ -164,25 +165,21 @@ func (a *API) serveApp(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "index.html"
 	}
-	if _, err := fs.Stat(mustSubFS(webAssets, "web"), path); err != nil {
+	content, err := fs.ReadFile(a.assets, path)
+	if err != nil {
 		path = "index.html"
+		content, err = fs.ReadFile(a.assets, path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 	}
-	clone := r.Clone(r.Context())
-	clone.URL.Path = "/" + path
 	if path == "index.html" {
 		w.Header().Set("Cache-Control", "no-store")
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
-	a.files.ServeHTTP(w, clone)
-}
-
-func mustSubFS(root fs.FS, dir string) fs.FS {
-	sub, err := fs.Sub(root, dir)
-	if err != nil {
-		panic(err)
-	}
-	return sub
+	http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(content))
 }
 
 type sessionResponse struct {

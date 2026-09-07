@@ -134,6 +134,22 @@ func TestProductionSessionCookieSecurity(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAppIndexDoesNotRedirect(t *testing.T) {
+	handler := New(config.ServerConfig{}, fakeSnapshotStore{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/operator/", nil)
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if location := recorder.Header().Get("Location"); location != "" {
+		t.Fatalf("unexpected redirect location %q", location)
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Fatalf("content type = %q, want text/html", got)
+	}
+}
+
 func TestLoginRateLimit(t *testing.T) {
 	handler := New(config.ServerConfig{
 		AppEnv: "development", OperatorConsoleToken: "secret", OperatorLoginRateLimitPerMinute: 2,
