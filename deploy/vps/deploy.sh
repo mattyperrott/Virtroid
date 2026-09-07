@@ -318,7 +318,7 @@ validate_environment() {
 
   case "${OPERATOR_CONSOLE_ENABLED:-false}" in
     true)
-      require_env OPERATOR_CONSOLE_TOKEN_FILE
+      require_env OPERATOR_CONSOLE_TOKEN_FILE OPERATOR_SECRET_GID
       if [ "${OPERATOR_CONSOLE_TOKEN_FILE}" != /etc/virtroid/secrets/operator-console-token ]; then
         echo "operator console must use the fixed root-owned token path under /etc/virtroid/secrets" >&2
         exit 1
@@ -328,10 +328,15 @@ validate_environment() {
         echo "operator console token must be a root-owned regular file" >&2
         exit 1
       fi
-      case "$(stat -c '%a' "${OPERATOR_CONSOLE_TOKEN_FILE}")" in
-        400|600) ;;
-        *) echo "operator console token must have mode 0400 or 0600" >&2; exit 1 ;;
-      esac
+      if [[ ! "${OPERATOR_SECRET_GID}" =~ ^[0-9]+$ ]] || [ "${OPERATOR_SECRET_GID}" -le 0 ] || [ "${OPERATOR_SECRET_GID}" -ge 65534 ]; then
+        echo "OPERATOR_SECRET_GID must be a dedicated numeric group id" >&2
+        exit 1
+      fi
+      if [ "$(stat -c '%g' "${OPERATOR_CONSOLE_TOKEN_FILE}")" -ne "${OPERATOR_SECRET_GID}" ] ||
+         [ "$(stat -c '%a' "${OPERATOR_CONSOLE_TOKEN_FILE}")" != 440 ]; then
+        echo "operator console token must be root-owned, group-readable only by OPERATOR_SECRET_GID, and mode 0440" >&2
+        exit 1
+      fi
       if ! tr -d '\r\n' < "${OPERATOR_CONSOLE_TOKEN_FILE}" | grep -Eq '^[A-Za-z0-9_-]{43,128}$'; then
         echo "operator console token must contain one generated 256-bit base64url token" >&2
         exit 1
