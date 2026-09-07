@@ -900,7 +900,7 @@ kbd {
 }
 
 .dashboard-grid--primary {
-  align-items: start;
+  align-items: stretch;
   grid-template-columns: minmax(0, 1.54fr) minmax(310px, 0.86fr);
 }
 
@@ -1044,11 +1044,37 @@ kbd {
   display: flex;
   min-height: 322px;
   flex-direction: column;
+  overflow: hidden;
+  contain: size;
 }
 
 .incident-list {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0 20px;
+  scrollbar-color: rgba(172, 218, 188, 0.28) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.incident-list:focus-visible {
+  outline: 1px solid rgba(172, 218, 188, 0.42);
+  outline-offset: -1px;
+}
+
+.incident-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.incident-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(172, 218, 188, 0.2);
+}
+
+.incident-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(172, 218, 188, 0.32);
 }
 
 .incident-row {
@@ -1892,6 +1918,13 @@ kbd {
 
   .attention-panel {
     min-height: 0;
+    overflow: visible;
+    contain: none;
+  }
+
+  .incident-list {
+    overflow-y: visible;
+    scrollbar-gutter: auto;
   }
 }
 
