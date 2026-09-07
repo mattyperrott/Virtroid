@@ -568,6 +568,8 @@ function CommandCentre({
 }) {
   const headlineWords = overview.headline.replace(/[.!?]+$/, "").split(" ");
   const headlineAccent = headlineWords.pop() ?? "";
+  const headlineAnchor = headlineWords.pop() ?? "";
+  const headlineLead = headlineWords.join(" ");
   const overviewStatus = overview.status === "healthy" ? "good" : overview.status === "degraded" ? "warn" : "bad";
   const totalSessions = overview.activity.reduce((sum, point) => sum + point.sessions, 0);
   const totalOperations = overview.activity.reduce((sum, point) => sum + point.operations, 0);
@@ -578,7 +580,10 @@ function CommandCentre({
       <section className="system-hero reveal">
         <div className="system-hero__copy">
           <span className="hero-kicker"><Sparkles size={13} /> System pulse</span>
-          <h1>{headlineWords.join(" ")} <em>{headlineAccent}.</em></h1>
+          <h1>
+            {headlineLead ? `${headlineLead} ` : ""}
+            <span className="headline-lockup">{headlineAnchor ? `${headlineAnchor} ` : ""}<em>{headlineAccent}.</em></span>
+          </h1>
           <p>{overview.subline}</p>
           <div className="hero-meta">
             <span><StatusDot status={overviewStatus} /> {overview.fleet.ready}/{overview.fleet.total} nodes ready</span>
