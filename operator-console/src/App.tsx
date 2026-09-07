@@ -24,7 +24,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   createSession,
   deleteSession,
@@ -60,10 +60,63 @@ const systemNavigation = [
 ];
 
 function VirtroidMark() {
+  const logoId = `virtroid-${useId().replace(/:/g, "")}`;
+
   return (
     <div className="brand-mark" aria-hidden="true">
-      <span className="brand-mark__diamond" />
-      <span className="brand-mark__core" />
+      <svg viewBox="140 122 152 190" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false">
+        <defs>
+          <linearGradient id={`${logoId}-screen`} gradientUnits="userSpaceOnUse" x1="160" y1="158" x2="255" y2="260">
+            <stop stopColor="#afd135" />
+            <stop offset="1" stopColor="#92b52d" />
+          </linearGradient>
+          <linearGradient id={`${logoId}-facet`} gradientUnits="userSpaceOnUse" x1="186" y1="227" x2="247" y2="275">
+            <stop stopColor="#b4d938" />
+            <stop offset="1" stopColor="#9abf29" />
+          </linearGradient>
+          <linearGradient id={`${logoId}-white`} x1="0" y1="0" x2="1" y2="1">
+            <stop stopColor="#ffffff" />
+            <stop offset=".4" stopColor="#f0f3ee" />
+            <stop offset="1" stopColor="#ccd7cb" />
+          </linearGradient>
+          <clipPath id={`${logoId}-shape`}>
+            <path d="M156 158H270V192L156 172ZM156 178L270 198V207L156 249ZM160 255L273 211L275 258L160 265Z" />
+          </clipPath>
+          <linearGradient id={`${logoId}-shine`} x1="0" x2="1">
+            <stop offset="0" stopColor="#ffffff" stopOpacity="0" />
+            <stop offset=".5" stopColor="#ffffff" stopOpacity=".7" />
+            <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <g className="brand-mark__body">
+          <path className="brand-mark__energy" d="M148 257L284 207" />
+          <g className="brand-mark__piece brand-mark__top">
+            <path d="M156 151V145Q156 132 169 132H257Q270 132 271 146V151Z" fill={`url(#${logoId}-white)`} />
+            <path d="M158 149H269" stroke="#f0f3ee" strokeWidth="2" strokeOpacity=".8" />
+          </g>
+          <g className="brand-mark__piece brand-mark__upper">
+            <path d="M156 158H270V192L156 172Z" fill={`url(#${logoId}-screen)`} />
+            <path d="M158 159H269V191" stroke="#c8e160" strokeWidth="2" strokeOpacity=".6" />
+          </g>
+          <g className="brand-mark__piece brand-mark__middle">
+            <path d="M156 178L270 198V207L156 249Z" fill={`url(#${logoId}-screen)`} />
+            <path d="M269 199V206L159 246" stroke="#c6db68" strokeOpacity=".35" />
+          </g>
+          <g className="brand-mark__piece brand-mark__lower">
+            <path d="M160 255L273 211L275 258L160 265Z" fill={`url(#${logoId}-facet)`} />
+            <path d="M163 258L271 216L272 255L166 262" stroke="#c4df54" strokeWidth="2" strokeOpacity=".35" />
+            <path d="M161 265L275 258L274 254L163 262Z" fill="#91b528" />
+          </g>
+          <g className="brand-mark__piece brand-mark__bottom">
+            <path d="M161 274L275 268V287Q275 300 262 301H175Q162 301 161 288Z" fill={`url(#${logoId}-white)`} />
+            <path d="M164 276L272 271V286Q272 297 261 298H176Q165 298 164 287Z" fill="#f0f3ee" fillOpacity=".3" />
+            <path d="M208 282L233 280Q237 280 237 283Q237 286 233 287L208 289Q204 289 204 286Q204 283 208 282Z" fill="#18221b" />
+          </g>
+          <g clipPath={`url(#${logoId}-shape)`}>
+            <path className="brand-mark__glint" d="M145 110H170L240 325H215Z" fill={`url(#${logoId}-shine)`} />
+          </g>
+        </g>
+      </svg>
     </div>
   );
 }
@@ -206,9 +259,9 @@ function SystemTopology({ overview }: { overview: OverviewResponse }) {
       <svg viewBox="0 0 520 245" role="img" aria-hidden="true">
         <defs>
           <linearGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#4b6252" stopOpacity="0.16" />
-            <stop offset="0.5" stopColor="#acdabc" stopOpacity="0.9" />
-            <stop offset="1" stopColor="#4b6252" stopOpacity="0.16" />
+            <stop offset="0" stopColor="#78951e" stopOpacity="0.16" />
+            <stop offset="0.5" stopColor="#afd135" stopOpacity="0.9" />
+            <stop offset="1" stopColor="#78951e" stopOpacity="0.16" />
           </linearGradient>
           <filter id="softGlow">
             <feGaussianBlur stdDeviation="4" result="blur" />
@@ -218,8 +271,8 @@ function SystemTopology({ overview }: { overview: OverviewResponse }) {
         <path className="topology__line topology__line--one" d="M152 122 C202 122, 210 74, 260 74" />
         <path className="topology__line topology__line--two" d="M260 74 C310 74, 318 122, 368 122" />
         <path className="topology__line topology__line--three" d="M260 74 C260 124, 260 142, 260 182" />
-        <circle className="topology__pulse topology__pulse--one" r="3" fill="#acdabc" filter="url(#softGlow)" />
-        <circle className="topology__pulse topology__pulse--two" r="3" fill="#acdabc" filter="url(#softGlow)" />
+        <circle className="topology__pulse topology__pulse--one" r="3" fill="#afd135" filter="url(#softGlow)" />
+        <circle className="topology__pulse topology__pulse--two" r="3" fill="#afd135" filter="url(#softGlow)" />
       </svg>
 
       <div className="topology-node topology-node--control">
@@ -281,8 +334,8 @@ function ActivityChart({ points }: { points: ActivityPoint[] }) {
       <svg viewBox="0 0 610 178" preserveAspectRatio="none" aria-label="Runtime activity during the last 24 hours">
         <defs>
           <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#acdabc" stopOpacity="0.22" />
-            <stop offset="1" stopColor="#acdabc" stopOpacity="0" />
+            <stop offset="0" stopColor="#afd135" stopOpacity="0.22" />
+            <stop offset="1" stopColor="#afd135" stopOpacity="0" />
           </linearGradient>
         </defs>
         {[30, 70, 110, 150].map((y) => <line key={y} x1="0" x2="610" y1={y} y2={y} className="chart-grid" />)}
