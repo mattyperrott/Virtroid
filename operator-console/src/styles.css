@@ -1094,6 +1094,12 @@ kbd {
   border-top: 1px solid rgba(172, 218, 188, 0.075);
 }
 
+@media (min-width: 1161px) {
+  .dashboard-grid--primary .incident-row {
+    padding-block: 11px;
+  }
+}
+
 .incident-row__icon {
   display: grid;
   width: 31px;
