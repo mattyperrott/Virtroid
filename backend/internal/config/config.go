@@ -35,6 +35,13 @@ type ServerConfig struct {
 	AppCatalogSyncInterval           time.Duration
 	AppCatalogSyncMaxApps            int
 	RuntimeNotificationRateLimit     int
+	OperatorConsoleEnabled           bool
+	OperatorConsoleToken             string
+	OperatorSessionTTL               time.Duration
+	OperatorLoginRateLimitPerMinute  int
+	ReleaseSourceSHA                 string
+	ReleaseSchemaVersion             string
+	ReleaseDeploymentTreeSHA256      string
 }
 
 type NodeConfig struct {
@@ -114,6 +121,10 @@ func LoadServer() ServerConfig {
 	if err != nil {
 		appCatalogSyncMaxApps = 1500
 	}
+	operatorLoginRateLimit, err := parseEnvInt("OPERATOR_LOGIN_RATE_LIMIT_PER_MINUTE", 5)
+	if err != nil || operatorLoginRateLimit <= 0 {
+		operatorLoginRateLimit = 5
+	}
 
 	return ServerConfig{
 		AppEnv:                           appEnv,
@@ -143,6 +154,13 @@ func LoadServer() ServerConfig {
 		AppCatalogSyncInterval:           appCatalogSyncInterval,
 		AppCatalogSyncMaxApps:            appCatalogSyncMaxApps,
 		RuntimeNotificationRateLimit:     runtimeNotificationRateLimit,
+		OperatorConsoleEnabled:           parseEnvBool("OPERATOR_CONSOLE_ENABLED", false),
+		OperatorConsoleToken:             secretFileOrEnv("OPERATOR_CONSOLE_TOKEN_FILE", "OPERATOR_CONSOLE_TOKEN"),
+		OperatorSessionTTL:               parseEnvDuration("OPERATOR_SESSION_TTL", 8*time.Hour),
+		OperatorLoginRateLimitPerMinute:  operatorLoginRateLimit,
+		ReleaseSourceSHA:                 strings.TrimSpace(os.Getenv("VIRTROID_SOURCE_SHA")),
+		ReleaseSchemaVersion:             strings.TrimSpace(os.Getenv("VIRTROID_SCHEMA_VERSION")),
+		ReleaseDeploymentTreeSHA256:      strings.TrimSpace(os.Getenv("VIRTROID_DEPLOYMENT_TREE_SHA256")),
 	}
 }
 

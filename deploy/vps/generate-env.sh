@@ -105,6 +105,7 @@ write_env_var() {
   write_env_var COMPOSE_PROJECT_NAME virtroid
   write_env_var POSTGRES_IMAGE "${POSTGRES_IMAGE:-postgres:18@sha256:REPLACE_WITH_64_HEX}"
   write_env_var GO_BUILD_IMAGE "${GO_BUILD_IMAGE:-golang:1.26.6-bookworm@sha256:REPLACE_WITH_64_HEX}"
+  write_env_var NODE_BUILD_IMAGE "${NODE_BUILD_IMAGE:-node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf}"
   write_env_var BACKEND_RUNTIME_IMAGE "${BACKEND_RUNTIME_IMAGE:-alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40}"
   write_env_var NODE_RUNTIME_IMAGE "${NODE_RUNTIME_IMAGE:-redroid/redroid:14.0.0_64only-latest@sha256:REPLACE_WITH_64_HEX}"
   write_env_var HAPROXY_IMAGE "${HAPROXY_IMAGE:-haproxy:lts@sha256:REPLACE_WITH_64_HEX}"
@@ -129,6 +130,10 @@ write_env_var() {
   write_env_var PUBLIC_BASE_URL "${public_url}"
   write_env_var PUBLIC_RELAY_URL "${public_url}"
   write_env_var RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE 120
+  write_env_var OPERATOR_CONSOLE_ENABLED false
+  write_env_var OPERATOR_CONSOLE_TOKEN_FILE ""
+  write_env_var OPERATOR_SESSION_TTL 8h
+  write_env_var OPERATOR_LOGIN_RATE_LIMIT_PER_MINUTE 5
   write_env_var NODE_ADVERTISE_ADDR virtnoded
   write_env_var NODE_ALLOWED_ADVERTISE_ADDRS virtnoded
   write_env_var HOST_API_BIND 127.0.0.1

@@ -123,7 +123,7 @@ docker "${docker_build_args[@]}" \
   --build-arg "DEPLOYMENT_TREE_DIGEST=${deployment_tree_digest}" \
   --tag "${image_tag}" \
   --file "${repository_root}/backend/Dockerfile" \
-  "${repository_root}/backend"
+  "${repository_root}"
 
 local_engine_image_id="$(docker image inspect --format '{{.Id}}' "${image_tag}")"
 architecture="$(docker image inspect --format '{{.Architecture}}' "${image_tag}")"

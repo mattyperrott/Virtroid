@@ -1,18 +1,28 @@
 ARG GO_BUILD_IMAGE=golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36
+ARG NODE_BUILD_IMAGE=node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
 ARG BACKEND_RUNTIME_IMAGE=alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG SCHEMA_VERSION=unknown
 ARG DEPLOYMENT_TREE_DIGEST=unknown
 
+FROM ${NODE_BUILD_IMAGE} AS operator-ui
+
+WORKDIR /src/operator-console
+COPY operator-console/package.json operator-console/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY operator-console/ ./
+RUN npm run build
+
 FROM ${GO_BUILD_IMAGE} AS build
 
-WORKDIR /src
+WORKDIR /src/backend
 RUN go env GOVERSION | awk '{ version = substr($0, 3); split(version, parts, "."); if (parts[1] > 1 || (parts[1] == 1 && (parts[2] > 26 || (parts[2] == 26 && parts[3] >= 5)))) exit 0; exit 1 }'
-COPY go.mod go.sum* ./
+COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
 
-COPY . .
+COPY backend/ ./
+COPY --from=operator-ui /src/operator-console/dist/ ./internal/operatorapi/web/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroidd ./cmd/virtroidd
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtnoded ./cmd/virtnoded
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroid-viewercrypt ./cmd/viewercrypt
