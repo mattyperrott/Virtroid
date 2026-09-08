@@ -34,6 +34,7 @@ import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.showConfirmation
 import io.virtroid.client.push.NotificationRelayManager
+import io.virtroid.client.ui.VirtroidMotion
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -341,6 +342,7 @@ class MainActivity : AppCompatActivity() {
                 else -> R.drawable.bg_dot_muted
             },
         )
+        VirtroidMotion.setStatusPulse(cardBinding.runtimeStatusDot, isLive || isBusy || isLocallyStopping)
         cardBinding.runtimeIcon.setColorFilter(
             getColor(if (isLive) R.color.v_accent else R.color.v_text_muted),
         )

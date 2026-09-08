@@ -6,8 +6,6 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.View
-import android.view.animation.AlphaAnimation
-import android.view.animation.Animation
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -27,6 +25,7 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.databinding.ScreenSystemLogsBinding
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.VirtroidMotion
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -200,12 +199,7 @@ class SystemLogsActivity : AppCompatActivity() {
     }
 
     private fun startLivePulse() {
-        val animation = AlphaAnimation(0.35f, 1f).apply {
-            duration = 650L
-            repeatMode = Animation.REVERSE
-            repeatCount = Animation.INFINITE
-        }
-        binding.liveCaptureDot.startAnimation(animation)
+        VirtroidMotion.setStatusPulse(binding.liveCaptureDot, active = true)
     }
 
     private fun toast(message: String) {

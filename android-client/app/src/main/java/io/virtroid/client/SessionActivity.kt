@@ -40,6 +40,7 @@ import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.SnapshotRollbackException
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
+import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.viewer.ScrcpySessionHost
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -788,6 +789,7 @@ class SessionActivity : AppCompatActivity() {
 
     private fun markHeartbeatPending() {
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_amber)
+        VirtroidMotion.setStatusPulse(binding.connectionDot, active = true)
         binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_pending)
     }
 
@@ -795,6 +797,7 @@ class SessionActivity : AppCompatActivity() {
         heartbeatFailureCount = 0
         val heartbeatAt = LocalTime.now().format(HEARTBEAT_TIME_FORMAT)
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_accent)
+        VirtroidMotion.setStatusPulse(binding.connectionDot, active = true)
         binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_ok, heartbeatAt)
         if (!endingSession && !sessionUnavailable && sessionHost == null && viewerSurface != null) {
             retryViewerConnection(viewerReconnectDelayMs)
@@ -803,12 +806,14 @@ class SessionActivity : AppCompatActivity() {
 
     private fun markHeartbeatRetrying() {
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_amber)
+        VirtroidMotion.setStatusPulse(binding.connectionDot, active = true)
         binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_retrying)
     }
 
     private fun markSessionUnavailable() {
         sessionUnavailable = true
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_muted)
+        VirtroidMotion.setStatusPulse(binding.connectionDot, active = false)
         binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_stale)
         binding.sessionSubtitleText.text = getString(R.string.session_heartbeat_stale)
         binding.sessionStreamStatusText.text = getString(R.string.session_heartbeat_stale)

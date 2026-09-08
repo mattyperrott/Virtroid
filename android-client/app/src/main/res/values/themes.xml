@@ -24,6 +24,10 @@
         <item name="materialButtonOutlinedStyle">@style/VirtroidButton.Secondary</item>
         <item name="textInputStyle">@style/Widget.Virtroid.TextInputLayout</item>
         <item name="materialAlertDialogTheme">@style/ThemeOverlay.Virtroid.MaterialAlertDialog</item>
+        <item name="android:windowAnimationStyle">@style/Animation.Virtroid.Window</item>
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.Virtroid.Square</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Virtroid.Square</item>
+        <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.Virtroid.Square</item>
     </style>
 
     <style name="ThemeOverlay.Virtroid.MaterialAlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
@@ -31,6 +35,8 @@
         <item name="colorOnSurface">@color/virtroid_on_surface</item>
         <item name="colorOnSurfaceVariant">@color/virtroid_on_surface_variant</item>
         <item name="colorSurfaceContainerHigh">@color/virtroid_card_surface</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Virtroid.Square</item>
+        <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.Virtroid.Square</item>
     </style>
 
     <style name="Theme.Virtroid.Modal" parent="Theme.Virtroid">
@@ -58,7 +64,7 @@
         <item name="android:textColor">@color/virtroid_on_primary</item>
         <item name="backgroundTint">@color/virtroid_primary</item>
         <item name="elevation">0dp</item>
-        <item name="shapeAppearance">@style/ShapeAppearance.Virtroid.Pill</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Virtroid.Square</item>
     </style>
 
     <style name="Widget.Virtroid.PlatformButton" parent="@android:style/Widget.Material.Button">
@@ -74,16 +80,22 @@
         <item name="boxStrokeWidthFocused">0dp</item>
         <item name="android:textColorHint">@color/virtroid_on_surface_muted</item>
         <item name="hintTextColor">@color/virtroid_on_surface_muted</item>
-        <item name="shapeAppearance">@style/ShapeAppearance.Virtroid.Input</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Virtroid.Square</item>
     </style>
 
-    <style name="ShapeAppearance.Virtroid.Pill" parent="ShapeAppearance.Material3.MediumComponent">
+    <style name="ShapeAppearance.Virtroid.Square" parent="ShapeAppearance.Material3.MediumComponent">
         <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">999dp</item>
+        <item name="cornerSize">0dp</item>
     </style>
 
-    <style name="ShapeAppearance.Virtroid.Input" parent="ShapeAppearance.Material3.LargeComponent">
-        <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">28dp</item>
+    <style name="ShapeAppearance.Virtroid.Pill" parent="ShapeAppearance.Virtroid.Square" />
+
+    <style name="ShapeAppearance.Virtroid.Input" parent="ShapeAppearance.Virtroid.Square" />
+
+    <style name="Animation.Virtroid.Window" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/v_screen_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/v_screen_hold</item>
+        <item name="android:activityCloseEnterAnimation">@anim/v_screen_hold</item>
+        <item name="android:activityCloseExitAnimation">@anim/v_screen_exit</item>
     </style>
 </resources>

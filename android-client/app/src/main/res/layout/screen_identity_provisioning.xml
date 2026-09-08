@@ -36,15 +36,12 @@
                 android:paddingEnd="24dp"
                 android:paddingBottom="186dp">
 
-                <ImageView
+                <io.virtroid.client.ui.AnimatedVirtroidMarkView
                     android:id="@+id/icon_identity_shield"
                     android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginBottom="24dp"
-                    android:background="@drawable/bg_accent_soft_12"
-                    android:padding="12dp"
-                    android:src="@drawable/ic_shield"
-                    app:tint="@color/v_accent" />
+                    android:layout_height="58dp"
+                    android:layout_marginBottom="20dp"
+                    android:importantForAccessibility="no" />
 
                 <TextView
                     android:id="@+id/text_title"

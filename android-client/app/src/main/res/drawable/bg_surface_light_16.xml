@@ -5,5 +5,5 @@
     <solid
         android:color="@color/v_surface_light" />
     <corners
-        android:radius="16dp" />
+        android:radius="0dp" />
 </shape>
