@@ -333,6 +333,9 @@ func buildOverview(cfg config.ServerConfig, snapshot store.OperatorSnapshot, now
 		Status:      status,
 		Headline:    map[string]string{"healthy": "Everything is in orbit", "degraded": "A few signals need attention", "critical": "Control plane needs attention"}[status],
 		Subline:     "Live, sanitized telemetry from the control plane. Privileged actions remain locked.",
+		Runtimes:    []runtimeResponse{},
+		Incidents:   []incidentResponse{},
+		Activity:    []activityResponse{},
 		Metrics: []metricResponse{
 			{Label: "Active runtimes", Value: strconv.Itoa(snapshot.RunningRuntimes), Detail: fmt.Sprintf("%d total", snapshot.TotalRuntimes), Tone: "mint"},
 			{Label: "Live sessions", Value: strconv.Itoa(snapshot.LiveSessions), Detail: "authenticated viewers", Tone: "neutral"},
