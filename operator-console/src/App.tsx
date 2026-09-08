@@ -822,7 +822,7 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: () => Promise<void>
       <section className="login-card">
         <div className="login-card__brand"><VirtroidMark /><span><strong>Virtroid</strong><small>Operator control plane</small></span></div>
         <span className="hero-kicker"><ShieldCheck size={13} /> Restricted operations</span>
-        <h1>Enter the <em>control room.</em></h1>
+        <h1>Observatory</h1>
         <p>Authenticate with the bootstrap operator token. The first release is read-only and exposes sanitized operational telemetry only.</p>
         <form onSubmit={submit}>
           <label htmlFor="operator-token">Operator access token</label>
