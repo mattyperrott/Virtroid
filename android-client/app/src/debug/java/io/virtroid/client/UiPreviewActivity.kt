@@ -27,6 +27,11 @@ class UiPreviewActivity : AppCompatActivity() {
 
         val screen = intent.getStringExtra(EXTRA_SCREEN)
         when (screen) {
+            "welcome_live" -> {
+                startActivity(android.content.Intent(this, WelcomeActivity::class.java))
+                finish()
+                return
+            }
             "permissions_live" -> {
                 startActivity(PermissionsActivity.createIntent(this))
                 finish()
@@ -71,6 +76,7 @@ class UiPreviewActivity : AppCompatActivity() {
             }
         }
         val layout = when (screen) {
+            "welcome" -> R.layout.screen_welcome
             "identity_provisioning" -> R.layout.screen_identity_provisioning
             "permissions" -> R.layout.screen_permissions
             "pin_authentication" -> R.layout.screen_pin_authentication

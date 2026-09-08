@@ -278,10 +278,10 @@ class SessionActivity : AppCompatActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.sessionRoot) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             binding.sessionTopBar.updatePadding(
-                left = 14 + systemBars.left,
-                top = 10 + systemBars.top,
-                right = 14 + systemBars.right,
-                bottom = 10,
+                left = resources.getDimensionPixelSize(R.dimen.space_24) + systemBars.left,
+                top = resources.getDimensionPixelSize(R.dimen.space_10) + systemBars.top,
+                right = resources.getDimensionPixelSize(R.dimen.space_24) + systemBars.right,
+                bottom = resources.getDimensionPixelSize(R.dimen.space_10),
             )
             insets
         }

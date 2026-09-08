@@ -399,6 +399,13 @@
     <string name="viewer_service_notification_body">Keeping the relay connection active in background.</string>
     <string name="viewer_service_notification_microphone_active">Phone microphone is active for the connected runtime.</string>
     <string name="onboarding_title">Generate Identity</string>
+    <string name="welcome_brand">VIRTROID</string>
+    <string name="welcome_brand_descriptor">PRIVATE ANDROID</string>
+    <string name="welcome_eyebrow">YOUR PRIVATE ANDROID CLOUD</string>
+    <string name="welcome_title">A private Android.\nReady anywhere.</string>
+    <string name="welcome_body">Create a secure identity, then launch and control isolated Android runtimes from this phone.</string>
+    <string name="welcome_get_started">Get Started</string>
+    <string name="welcome_recover_account">Recover Account</string>
     <string name="onboarding_subtitle">This device creates a local signing key. The control plane issues and consumes a device-bound one-time enrollment credential during registration.</string>
     <string name="onboarding_invite_required">Automatic identity provisioning is unavailable</string>
     <string name="onboarding_invite_invalid">Automatic identity provisioning could not be completed</string>
