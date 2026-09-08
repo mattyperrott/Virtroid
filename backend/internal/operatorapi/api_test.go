@@ -134,6 +134,24 @@ func TestProductionSessionCookieSecurity(t *testing.T) {
 	}
 }
 
+func TestEmptyOverviewUsesJSONArrays(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	overview := buildOverview(config.ServerConfig{AppEnv: "production"}, store.OperatorSnapshot{
+		GeneratedAt: now,
+		Readiness:   store.NodeReadiness{Ready: true, ObservedNodes: 1, ReadyNodes: 1},
+	}, now)
+
+	payload, err := json.Marshal(overview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"runtimes":[]`, `"incidents":[`, `"activity":[]`} {
+		if !strings.Contains(string(payload), field) {
+			t.Fatalf("overview JSON missing %s: %s", field, payload)
+		}
+	}
+}
+
 func TestEmbeddedAppIndexDoesNotRedirect(t *testing.T) {
 	handler := New(config.ServerConfig{}, fakeSnapshotStore{})
 	recorder := httptest.NewRecorder()
