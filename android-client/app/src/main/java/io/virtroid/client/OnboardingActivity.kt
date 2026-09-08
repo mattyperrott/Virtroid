@@ -1,5 +1,6 @@
 package io.virtroid.client
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
@@ -90,13 +91,14 @@ class OnboardingActivity : AppCompatActivity() {
                 }
             }
         }
-        binding.recoverIdentityButton.setOnClickListener {
-            lifecycleScope.launch {
-                recoverExistingIdentity()
+        refreshIdentityState()
+        if (intent.getBooleanExtra(EXTRA_RECOVER_EXISTING_IDENTITY, false) && !sessionStore.hasAccess()) {
+            binding.root.post {
+                lifecycleScope.launch {
+                    recoverExistingIdentity(returnToWelcomeOnExit = true)
+                }
             }
         }
-
-        refreshIdentityState()
     }
 
     override fun onDestroy() {
@@ -243,10 +245,13 @@ class OnboardingActivity : AppCompatActivity() {
         renderPasswordRequirement()
     }
 
-    private suspend fun recoverExistingIdentity() {
-        val input = promptIdentityRecovery() ?: return
+    private suspend fun recoverExistingIdentity(returnToWelcomeOnExit: Boolean) {
+        val input = promptIdentityRecovery()
+        if (input == null) {
+            if (returnToWelcomeOnExit) finish()
+            return
+        }
         binding.continueSetupButton.isEnabled = false
-        binding.recoverIdentityButton.isEnabled = false
         showProvisioningLog()
 
         runCatching {
@@ -320,7 +325,7 @@ class OnboardingActivity : AppCompatActivity() {
             )
             toast(message)
             binding.continueSetupButton.isEnabled = true
-            binding.recoverIdentityButton.isEnabled = true
+            if (returnToWelcomeOnExit) finish()
         }
     }
 
@@ -362,8 +367,6 @@ class OnboardingActivity : AppCompatActivity() {
         }
         renderPasswordRequirement()
         binding.continueSetupButton.isEnabled = true
-        binding.recoverIdentityButton.isVisible = !sessionStore.hasAccess()
-        binding.recoverIdentityButton.isEnabled = true
         binding.continueSetupButton.setText(
             if (sessionStore.hasAccess()) R.string.onboarding_continue else R.string.onboarding_create_identity,
         )
@@ -553,12 +556,18 @@ class OnboardingActivity : AppCompatActivity() {
         val deviceId: String,
     )
 
-    private companion object {
-        const val SCRAMBLE_CHARS = "0123456789abcdef"
-        val UUID_PATTERN = intArrayOf(8, 4, 4, 4, 12)
-        const val SCRAMBLE_FRAME_MS = 90L
-        const val PREVIEW_ACCOUNT_DELAY_MS = 2_000L
-        const val PREVIEW_DEVICE_DELAY_MS = 1_500L
-        const val FINAL_VISUAL_DELAY_MS = 680L
+    companion object {
+        private const val EXTRA_RECOVER_EXISTING_IDENTITY = "recover_existing_identity"
+        private const val SCRAMBLE_CHARS = "0123456789abcdef"
+        private val UUID_PATTERN = intArrayOf(8, 4, 4, 4, 12)
+        private const val SCRAMBLE_FRAME_MS = 90L
+        private const val PREVIEW_ACCOUNT_DELAY_MS = 2_000L
+        private const val PREVIEW_DEVICE_DELAY_MS = 1_500L
+        private const val FINAL_VISUAL_DELAY_MS = 680L
+
+        fun createIntent(context: Context, recoverExistingIdentity: Boolean = false): Intent =
+            Intent(context, OnboardingActivity::class.java).apply {
+                putExtra(EXTRA_RECOVER_EXISTING_IDENTITY, recoverExistingIdentity)
+            }
     }
 }

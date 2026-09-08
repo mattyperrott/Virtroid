@@ -148,7 +148,7 @@
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="0.9">
+            android:layout_weight="1">
 
             <ImageButton
                 android:id="@+id/runtimesNavButton"
@@ -165,7 +165,7 @@
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="0.9">
+            android:layout_weight="1">
 
             <ImageButton
                 android:id="@+id/securityNavButton"
@@ -182,7 +182,7 @@
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="2.0">
+            android:layout_weight="1">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/createRuntimeButton"
@@ -204,7 +204,7 @@
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="0.9">
+            android:layout_weight="1">
 
             <ImageButton
                 android:id="@+id/logsNavButton"
@@ -221,7 +221,7 @@
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="0.9">
+            android:layout_weight="1">
 
             <ImageButton
                 android:id="@+id/settingsNavButton"

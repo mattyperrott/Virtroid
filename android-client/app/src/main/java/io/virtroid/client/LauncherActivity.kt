@@ -30,9 +30,9 @@ class LauncherActivity : AppCompatActivity() {
         val identityPasswordStore = IdentityPasswordStore(this)
         val appSettings = AppSettingsStore(this)
         val destination = when {
-            !sessionStore.hasAccess() -> Intent(this, OnboardingActivity::class.java)
+            !sessionStore.hasAccess() -> Intent(this, WelcomeActivity::class.java)
             !identityPasswordStore.isConfigured(sessionStore.accountId, sessionStore.deviceId) ->
-                Intent(this, OnboardingActivity::class.java)
+                OnboardingActivity.createIntent(this)
             !appSettings.permissionsSetupCompleted -> PermissionsActivity.createIntent(this)
             appLockStore.shouldRequireUnlockOnLaunch() -> Intent(this, UnlockActivity::class.java)
             else -> Intent(this, MainActivity::class.java)

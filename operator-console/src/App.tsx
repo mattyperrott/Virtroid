@@ -12,6 +12,7 @@ import {
   FileClock,
   Fingerprint,
   HardDrive,
+  KeyRound,
   LayoutDashboard,
   ListTree,
   Menu,
@@ -740,6 +741,61 @@ function LoadingState() {
   );
 }
 
+function LoginGatewayIllustration() {
+  return (
+    <div className="login-gateway" aria-hidden="true">
+      <div className="login-gateway__beam" />
+      <div className="login-gateway__scanner" />
+      <svg viewBox="0 0 760 560" preserveAspectRatio="none" focusable="false">
+        <defs>
+          <linearGradient id="login-gateway-line" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#78951e" stopOpacity="0.14" />
+            <stop offset="0.5" stopColor="#afd135" stopOpacity="0.88" />
+            <stop offset="1" stopColor="#78951e" stopOpacity="0.14" />
+          </linearGradient>
+          <filter id="login-gateway-glow">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        <path className="login-gateway__line" d="M90 280 C232 280 252 72 380 72" />
+        <path className="login-gateway__line login-gateway__line--reverse" d="M380 72 C508 72 528 280 670 280" />
+        <path className="login-gateway__line" d="M380 72 C380 220 380 364 380 510" />
+        <circle className="login-gateway__pulse" r="4" fill="#d0ec62" filter="url(#login-gateway-glow)">
+          <animateMotion dur="5.6s" repeatCount="indefinite" path="M90 280 C232 280 252 72 380 72" />
+        </circle>
+        <circle className="login-gateway__pulse" r="4" fill="#d0ec62" filter="url(#login-gateway-glow)">
+          <animateMotion begin="1.7s" dur="5.6s" repeatCount="indefinite" path="M380 72 C508 72 528 280 670 280" />
+        </circle>
+        <circle className="login-gateway__pulse" r="4" fill="#d0ec62" filter="url(#login-gateway-glow)">
+          <animateMotion begin="3.1s" dur="5.6s" repeatCount="indefinite" path="M380 72 C380 220 380 364 380 510" />
+        </circle>
+      </svg>
+
+      <div className="login-gateway__node login-gateway__node--operator">
+        <span><Fingerprint size={22} /></span>
+        <strong>Operator identity</strong>
+        <small>Challenge ready</small>
+      </div>
+      <div className="login-gateway__node login-gateway__node--gate">
+        <span><ShieldCheck size={25} /></span>
+        <strong>Secure gateway</strong>
+        <small>Verifying access</small>
+      </div>
+      <div className="login-gateway__node login-gateway__node--plane">
+        <span><Server size={22} /></span>
+        <strong>Control plane</strong>
+        <small>Protected</small>
+      </div>
+      <div className="login-gateway__node login-gateway__node--session">
+        <span><KeyRound size={22} /></span>
+        <strong>Session scope</strong>
+        <small>Read only</small>
+      </div>
+    </div>
+  );
+}
+
 function LoginScreen({ onAuthenticated }: { onAuthenticated: () => Promise<void> }) {
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -762,6 +818,7 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: () => Promise<void>
 
   return (
     <main className="login-page">
+      <LoginGatewayIllustration />
       <section className="login-card">
         <div className="login-card__brand"><VirtroidMark /><span><strong>Virtroid</strong><small>Operator control plane</small></span></div>
         <span className="hero-kicker"><ShieldCheck size={13} /> Restricted operations</span>
