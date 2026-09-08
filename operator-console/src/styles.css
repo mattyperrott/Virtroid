@@ -155,8 +155,9 @@ input:focus-visible {
 .login-card h1 {
   max-width: 390px;
   margin: 18px 0 15px;
-  font-size: clamp(32px, 4.8vw, 48px);
-  font-weight: 380;
+  color: var(--text);
+  font-size: clamp(42px, 5.8vw, 60px);
+  font-weight: 520;
   letter-spacing: -0.055em;
   line-height: 0.98;
 }
@@ -2391,7 +2392,7 @@ kbd {
   }
 
   .login-card h1 {
-    font-size: clamp(31px, 10vw, 40px);
+    font-size: clamp(40px, 12vw, 52px);
   }
 
   .login-gateway {
