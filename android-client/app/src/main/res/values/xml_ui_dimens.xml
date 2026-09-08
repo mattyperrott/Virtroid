@@ -20,18 +20,9 @@
     <dimen name="space_36">36dp</dimen>
     <dimen name="space_40">40dp</dimen>
     <dimen name="space_48">48dp</dimen>
-    <dimen
-        name="card_radius">
-        24dp
-    </dimen>
-    <dimen
-        name="card_radius_large">
-        32dp
-    </dimen>
-    <dimen
-        name="touch_round">
-        44dp
-    </dimen>
+    <dimen name="card_radius">0dp</dimen>
+    <dimen name="card_radius_large">0dp</dimen>
+    <dimen name="touch_round">0dp</dimen>
     <dimen name="button_height">56dp</dimen>
     <dimen name="button_height_large">60dp</dimen>
     <dimen name="icon_button_size">44dp</dimen>

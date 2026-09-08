@@ -111,7 +111,7 @@
         <item name="android:textSize">14sp</item>
         <item name="android:textStyle">bold</item>
         <item name="backgroundTint">@color/v_accent</item>
-        <item name="cornerRadius">999dp</item>
+        <item name="cornerRadius">0dp</item>
         <item name="elevation">0dp</item>
         <item name="rippleColor">@color/v_accent_soft</item>
     </style>
@@ -129,7 +129,7 @@
         <item name="android:textSize">14sp</item>
         <item name="android:textStyle">bold</item>
         <item name="backgroundTint">@color/v_surface_2</item>
-        <item name="cornerRadius">999dp</item>
+        <item name="cornerRadius">0dp</item>
         <item name="elevation">0dp</item>
         <item name="rippleColor">@color/v_border_soft</item>
         <item name="strokeColor">@color/v_border</item>

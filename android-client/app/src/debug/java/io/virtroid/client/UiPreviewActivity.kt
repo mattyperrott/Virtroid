@@ -57,6 +57,18 @@ class UiPreviewActivity : AppCompatActivity() {
                 }
                 return
             }
+            "identity_password_dialog" -> {
+                showPreviewDialog(R.layout.dialog_identity_password_setup)
+                return
+            }
+            "identity_recovery_dialog" -> {
+                showPreviewDialog(R.layout.dialog_identity_recovery)
+                return
+            }
+            "secure_text_entry_dialog" -> {
+                showPreviewDialog(R.layout.dialog_secure_text_entry)
+                return
+            }
         }
         val layout = when (screen) {
             "identity_provisioning" -> R.layout.screen_identity_provisioning
@@ -65,6 +77,8 @@ class UiPreviewActivity : AppCompatActivity() {
             "my_runtimes" -> R.layout.screen_my_runtimes
             "create_session" -> R.layout.screen_create_session
             "account_identity" -> R.layout.screen_account_identity
+            "app_install" -> R.layout.screen_app_install
+            "camera_capture" -> R.layout.screen_camera_capture
             "session_controls" -> R.layout.screen_session_controls
             "session_viewer" -> R.layout.screen_session_viewer
             "privacy_security" -> R.layout.screen_privacy_security
@@ -81,6 +95,15 @@ class UiPreviewActivity : AppCompatActivity() {
             "pin_authentication" -> {
                 findViewById<View>(R.id.button_fingerprint)?.isInvisible = true
             }
+        }
+    }
+
+    private fun showPreviewDialog(layoutRes: Int) {
+        setContentView(R.layout.screen_identity_provisioning)
+        window.decorView.post {
+            MaterialAlertDialogBuilder(this)
+                .setView(layoutInflater.inflate(layoutRes, null, false))
+                .show()
         }
     }
 
