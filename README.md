@@ -23,7 +23,6 @@
   <a href="#capabilities">Capabilities</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#security-boundary">Security</a> ·
-  <a href="#development">Development</a> ·
   <a href="https://virtroid.network/operator/">Operator console</a>
 </p>
 
@@ -190,61 +189,6 @@ can inspect or alter a live Android runtime.
 | [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
 | [`docs/android-client-ui-elements.md`](docs/android-client-ui-elements.md) | Screen-by-screen Android UI inventory |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices |
-
-## Development
-
-### Requirements
-
-- Go 1.26.6
-- Node.js 24 and npm
-- JDK 17
-- Android SDK 36
-- Docker for backend images and integration environments
-
-### Backend
-
-```bash
-cd backend
-go test ./...
-go vet ./...
-go build ./cmd/...
-```
-
-### Operator console
-
-```bash
-npm --prefix operator-console ci
-npm --prefix operator-console run typecheck
-npm --prefix operator-console run build
-```
-
-Run the local UI preview with:
-
-```bash
-npm --prefix operator-console run dev
-```
-
-### Android client
-
-```bash
-cd android-client
-./gradlew --no-daemon \
-  :app:testDebugUnitTest \
-  :app:lintDebug \
-  :app:assembleDebug \
-  :runtime-agent:testDebugUnitTest
-```
-
-Release signing is fail-closed and requires the approved local signing
-configuration. Generated APKs, keys, production secrets, database exports, and
-VPS release bundles must not be committed.
-
-### Production deployment
-
-Production releases are built and applied from a root-owned, offline source
-ledger on the VPS. GitHub is not a release runner and has no production
-credentials. See [`deploy/vps/README.md`](deploy/vps/README.md) for the guarded
-release process and operational checks.
 
 ## Roadmap
 
