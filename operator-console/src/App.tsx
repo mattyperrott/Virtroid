@@ -4,23 +4,30 @@ import {
   ArrowRight,
   Bell,
   Boxes,
+  CalendarClock,
   Check,
   ChevronRight,
   Clock3,
   Command,
   Database,
+  Download,
   FileClock,
+  FileText,
+  Filter,
   Fingerprint,
   HardDrive,
+  History,
   KeyRound,
   LayoutDashboard,
   ListTree,
   Menu,
+  MonitorCheck,
   PackageCheck,
   Search,
   Server,
   ShieldCheck,
   Sparkles,
+  UserRound,
   Users,
   Wrench,
   X,
@@ -37,10 +44,12 @@ import {
 } from "./api";
 import type {
   ActivityPoint,
+  HygieneCheck,
   Incident,
   Metric,
   OverviewResponse,
   RuntimeSummary,
+  Severity,
 } from "./types";
 
 const primaryNavigation = [
@@ -52,9 +61,9 @@ const primaryNavigation = [
 ];
 
 const systemNavigation = [
-  { label: "Security", icon: ShieldCheck, badge: "2" },
+  { label: "Security", icon: ShieldCheck },
   { label: "Logs", icon: ListTree },
-  { label: "Data hygiene", icon: Wrench, badge: "1" },
+  { label: "Data hygiene", icon: Wrench },
   { label: "Storage", icon: HardDrive },
   { label: "Releases", icon: PackageCheck },
   { label: "Reports", icon: FileClock },
@@ -133,6 +142,7 @@ function Sidebar({
   compact,
   onClose,
   onLogout,
+  overview,
 }: {
   active: string;
   onNavigate: (label: string) => void;
@@ -140,7 +150,14 @@ function Sidebar({
   compact: boolean;
   onClose: () => void;
   onLogout: () => void;
+  overview: OverviewResponse;
 }) {
+  const securityBadgeCount = overview.incidents.filter((incident) => incident.severity !== "info").length;
+  const hygieneBadgeCount = overview.hygiene.filter((check) => check.status === "attention").length;
+  const badges: Record<string, string | undefined> = {
+    Security: securityBadgeCount ? String(securityBadgeCount) : undefined,
+    "Data hygiene": hygieneBadgeCount ? String(hygieneBadgeCount) : undefined,
+  };
   const renderItems = (
     items: Array<{
       label: string;
@@ -148,7 +165,9 @@ function Sidebar({
       badge?: string;
     }>,
   ) =>
-    items.map(({ label, icon: Icon, badge }) => (
+    items.map(({ label, icon: Icon, badge }) => {
+      const displayBadge = badges[label] ?? badge;
+      return (
       <button
         className={`nav-item ${active === label ? "nav-item--active" : ""}`}
         type="button"
@@ -160,9 +179,10 @@ function Sidebar({
       >
         <Icon size={17} strokeWidth={1.7} />
         <span>{label}</span>
-        {badge ? <span className="nav-badge">{badge}</span> : null}
+        {displayBadge ? <span className="nav-badge">{displayBadge}</span> : null}
       </button>
-    ));
+      );
+    });
 
   return (
     <>
@@ -203,8 +223,8 @@ function Sidebar({
         <div className="sidebar__footer">
           <div className="environment-card">
             <div className="environment-card__topline">
-              <span><StatusDot status="good" /> Production</span>
-              <span>RC</span>
+              <span><StatusDot status={overview.status === "healthy" ? "good" : overview.status === "degraded" ? "warn" : "bad"} /> {overview.environment}</span>
+              <span>{overview.deployment.version === "Release candidate" ? "RC" : overview.deployment.version.slice(0, 8)}</span>
             </div>
             <p>Read-only operations</p>
           </div>
@@ -225,9 +245,11 @@ function Sidebar({
 function Topbar({
   onOpenSearch,
   onOpenNav,
+  onOpenNotifications,
 }: {
   onOpenSearch: () => void;
   onOpenNav: () => void;
+  onOpenNotifications: () => void;
 }) {
   return (
     <header className="topbar">
@@ -242,7 +264,7 @@ function Topbar({
       </button>
       <div className="topbar__actions">
         <span className="sync-state"><StatusDot status="good" /> Live</span>
-        <button className="icon-button notification-button" type="button" aria-label="Notifications">
+        <button className="icon-button notification-button" type="button" aria-label="Notifications" onClick={onOpenNotifications}>
           <Bell size={18} />
           <span className="notification-button__dot" />
         </button>
@@ -355,10 +377,12 @@ function PanelHeader({
   eyebrow,
   title,
   action,
+  onAction,
 }: {
   eyebrow?: string;
   title: string;
   action?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className="panel-header">
@@ -367,7 +391,7 @@ function PanelHeader({
         <h2>{title}</h2>
       </div>
       {action ? (
-        <button className="text-button" type="button">
+        <button className="text-button" type="button" onClick={onAction}>
           {action}<ArrowRight size={14} />
         </button>
       ) : null}
@@ -615,10 +639,12 @@ function CommandCentre({
   overview,
   source,
   onSelectRuntime,
+  onNavigate,
 }: {
   overview: OverviewResponse;
   source: OperatorApiResult["source"];
   onSelectRuntime: (runtime: RuntimeSummary) => void;
+  onNavigate: (section: string) => void;
 }) {
   const headlineWords = overview.headline.replace(/[.!?]+$/, "").split(" ");
   const headlineAccent = headlineWords.pop() ?? "";
@@ -655,7 +681,7 @@ function CommandCentre({
 
       <div className="dashboard-grid dashboard-grid--primary">
         <section className="panel activity-panel reveal" style={{ "--delay": "280ms" } as React.CSSProperties}>
-          <PanelHeader eyebrow="Last 24 hours" title="Runtime activity" action="Open analytics" />
+          <PanelHeader eyebrow="Last 24 hours" title="Runtime activity" action="Open analytics" onAction={() => onNavigate("Reports")} />
           <div className="activity-summary">
             <div><strong>{totalSessions}</strong><span>Sessions started</span></div>
             <div><strong>{totalOperations}</strong><span>Runtime starts</span></div>
@@ -665,7 +691,7 @@ function CommandCentre({
         </section>
 
         <section className="panel attention-panel reveal" style={{ "--delay": "340ms" } as React.CSSProperties}>
-          <PanelHeader eyebrow="Triage queue" title="Needs attention" action="View all" />
+          <PanelHeader eyebrow="Triage queue" title="Needs attention" action="View all" onAction={() => onNavigate("Security")} />
           <div
             className={`incident-list${hasScrollableIncidents ? " incident-list--scrollable" : ""}`}
             role="region"
@@ -683,13 +709,13 @@ function CommandCentre({
       </div>
 
       <section className="panel runtimes-panel reveal" style={{ "--delay": "390ms" } as React.CSSProperties}>
-        <PanelHeader eyebrow="Observed resources" title="Recent runtimes" action="View all runtimes" />
+        <PanelHeader eyebrow="Observed resources" title="Recent runtimes" action="View all runtimes" onAction={() => onNavigate("Runtimes")} />
         <RuntimeTable runtimes={overview.runtimes} onSelect={onSelectRuntime} />
       </section>
 
       <div className="dashboard-grid dashboard-grid--secondary">
         <section className="panel hygiene-panel reveal" style={{ "--delay": "450ms" } as React.CSSProperties}>
-          <PanelHeader eyebrow="Last scan · 18 min ago" title="Data hygiene" action="Open checks" />
+          <PanelHeader eyebrow="Last scan · 18 min ago" title="Data hygiene" action="Open checks" onAction={() => onNavigate("Data hygiene")} />
           <div className="hygiene-list">
             {overview.hygiene.map((item) => (
               <div className="hygiene-row" key={item.label}>
@@ -704,7 +730,7 @@ function CommandCentre({
         </section>
 
         <section className="panel deployment-panel reveal" style={{ "--delay": "510ms" } as React.CSSProperties}>
-          <PanelHeader eyebrow="Deployment identity" title="Current release" action="Release details" />
+          <PanelHeader eyebrow="Deployment identity" title="Current release" action="Release details" onAction={() => onNavigate("Releases")} />
           <div className="deployment-state">
             <span className="release-orbit"><PackageCheck size={22} /></span>
             <div><strong>{overview.deployment.version}</strong><small>Verified {overview.deployment.deployed}</small></div>
@@ -721,15 +747,405 @@ function CommandCentre({
   );
 }
 
-function SectionPlaceholder({ section, onReturn }: { section: string; onReturn: () => void }) {
+type WorkspaceTone = "good" | "warn" | "bad" | "muted";
+
+function WorkspaceHeader({
+  eyebrow,
+  title,
+  description,
+  overview,
+  icon: Icon,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  overview: OverviewResponse;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  children?: React.ReactNode;
+}) {
   return (
-    <section className="placeholder-page reveal">
-      <span className="hero-kicker"><Sparkles size={13} /> Planned workspace</span>
-      <h1>{section}</h1>
-      <p>The navigation destination is established. Its live read models and controlled workflows arrive in the next implementation slice.</p>
-      <button className="primary-button" type="button" onClick={onReturn}>Return to Command centre <ArrowRight size={15} /></button>
+    <header className="workspace-header reveal">
+      <div className="workspace-header__icon"><Icon size={23} strokeWidth={1.6} /></div>
+      <div className="workspace-header__copy">
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        <p>{description}</p>
+      </div>
+      <div className="workspace-header__meta">
+        {children}
+        <span><StatusDot status={overview.status === "healthy" ? "good" : overview.status === "degraded" ? "warn" : "bad"} /> {overview.environment}</span>
+        <span><Clock3 size={13} /> Snapshot {new Date(overview.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      </div>
+    </header>
+  );
+}
+
+function SummaryCards({ items }: { items: Array<{ label: string; value: string | number; detail: string; tone?: WorkspaceTone }> }) {
+  return (
+    <section className="workspace-summary" aria-label="Workspace summary">
+      {items.map((item, index) => (
+        <article className="workspace-summary__card reveal" style={{ "--delay": `${70 + index * 45}ms` } as React.CSSProperties} key={item.label}>
+          <div><span>{item.label}</span><StatusDot status={item.tone ?? "muted"} /></div>
+          <strong>{item.value}</strong>
+          <small>{item.detail}</small>
+        </article>
+      ))}
     </section>
   );
+}
+
+function WorkspaceToolbar({
+  query,
+  onQuery,
+  placeholder,
+  filters,
+  activeFilter,
+  onFilter,
+}: {
+  query: string;
+  onQuery: (value: string) => void;
+  placeholder: string;
+  filters?: Array<{ value: string; label: string }>;
+  activeFilter?: string;
+  onFilter?: (value: string) => void;
+}) {
+  return (
+    <div className="workspace-toolbar">
+      <label className="workspace-search">
+        <Search size={15} />
+        <span className="sr-only">Search this workspace</span>
+        <input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={placeholder} />
+      </label>
+      {filters && onFilter ? (
+        <div className="filter-tabs" aria-label="Filter results"><Filter size={14} />
+          {filters.map((filter) => (
+            <button className={activeFilter === filter.value ? "filter-tab filter-tab--active" : "filter-tab"} type="button" key={filter.value} onClick={() => onFilter(filter.value)}>
+              {filter.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyWorkspace({ title, detail }: { title: string; detail: string }) {
+  return <div className="workspace-empty"><Search size={20} /><strong>{title}</strong><p>{detail}</p></div>;
+}
+
+function RuntimesWorkspace({ overview, onSelectRuntime }: { overview: OverviewResponse; onSelectRuntime: (runtime: RuntimeSummary) => void }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return overview.runtimes.filter((runtime) =>
+      (filter === "all" || runtime.status === filter)
+      && `${runtime.name} ${runtime.id} ${runtime.accountId} ${runtime.host} ${runtime.deviceProfile}`.toLowerCase().includes(normalized),
+    );
+  }, [filter, overview.runtimes, query]);
+  const running = overview.runtimes.filter((runtime) => runtime.status === "running").length;
+  const attention = overview.runtimes.filter((runtime) => runtime.status === "attention").length;
+
+  return <>
+    <WorkspaceHeader eyebrow="Runtime inventory" title="Runtimes" description="Inspect desired state, node assignment, viewer attachment and the latest sanitized runtime observation." overview={overview} icon={Boxes} />
+    <SummaryCards items={[
+      { label: "Observed", value: overview.runtimes.length, detail: "latest runtime records", tone: "muted" },
+      { label: "Running", value: running, detail: "currently executing", tone: "good" },
+      { label: "Needs attention", value: attention, detail: "reconciliation or cleanup", tone: attention ? "warn" : "good" },
+      { label: "Snapshot coverage", value: `${overview.runtimes.filter((runtime) => runtime.snapshot !== "not available").length}/${overview.runtimes.length}`, detail: "latest snapshot observed", tone: "muted" },
+    ]} />
+    <section className="panel workspace-panel reveal">
+      <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search runtime, account, host or profile…" filters={[
+        { value: "all", label: "All" }, { value: "running", label: "Running" }, { value: "stopped", label: "Stopped" }, { value: "attention", label: "Attention" },
+      ]} activeFilter={filter} onFilter={setFilter} />
+      {filtered.length ? <RuntimeTable runtimes={filtered} onSelect={onSelectRuntime} /> : <EmptyWorkspace title="No runtimes match" detail="Clear the search or choose another status filter." />}
+    </section>
+  </>;
+}
+
+function SessionsWorkspace({ overview, onSelectRuntime }: { overview: OverviewResponse; onSelectRuntime: (runtime: RuntimeSummary) => void }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const sessionRows = overview.runtimes.filter((runtime) => runtime.activeSession || filter === "all").filter((runtime) => {
+    const normalized = query.trim().toLowerCase();
+    return `${runtime.name} ${runtime.shortId} ${runtime.accountShortId} ${runtime.host}`.toLowerCase().includes(normalized);
+  });
+  const active = overview.runtimes.filter((runtime) => runtime.activeSession).length;
+  const unattached = overview.runtimes.filter((runtime) => runtime.status === "running" && !runtime.activeSession).length;
+
+  return <>
+    <WorkspaceHeader eyebrow="Viewer activity" title="Sessions" description="Track authenticated viewer attachment without exposing relay credentials, device keys or network endpoints." overview={overview} icon={Activity} />
+    <SummaryCards items={[
+      { label: "Live sessions", value: active, detail: "authenticated viewers", tone: active ? "good" : "muted" },
+      { label: "Running unattached", value: unattached, detail: "runtime online without viewer", tone: unattached ? "warn" : "good" },
+      { label: "Session coverage", value: `${overview.runtimes.length ? Math.round(active / overview.runtimes.length * 100) : 0}%`, detail: "of observed runtimes", tone: "muted" },
+      { label: "Credential scope", value: "Hidden", detail: "relay secrets excluded", tone: "good" },
+    ]} />
+    <section className="panel workspace-panel reveal">
+      <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search runtime, account or host…" filters={[{ value: "all", label: "All runtimes" }, { value: "active", label: "Live only" }]} activeFilter={filter} onFilter={setFilter} />
+      {sessionRows.length ? <div className="data-list">
+        {sessionRows.map((runtime) => <button className="data-row" type="button" key={runtime.id} onClick={() => onSelectRuntime(runtime)}>
+          <span className="data-row__icon"><MonitorCheck size={17} /></span>
+          <span className="data-row__identity"><strong>{runtime.name}</strong><small>{runtime.shortId} · account {runtime.accountShortId}</small></span>
+          <span className="data-row__cell"><small>Viewer</small><strong className={runtime.activeSession ? "tone-good" : "tone-muted"}>{runtime.activeSession ? "Attached" : "No session"}</strong></span>
+          <span className="data-row__cell"><small>Age</small><strong>{runtime.sessionAge ?? "—"}</strong></span>
+          <span className="data-row__cell"><small>Host</small><strong>{runtime.host}</strong></span>
+          <ChevronRight size={16} />
+        </button>)}
+      </div> : <EmptyWorkspace title="No sessions match" detail="No current viewer attachment matches this search." />}
+    </section>
+  </>;
+}
+
+interface AccountObservation {
+  id: string;
+  shortId: string;
+  runtimes: RuntimeSummary[];
+}
+
+function AccountsWorkspace({ overview, onSelectRuntime }: { overview: OverviewResponse; onSelectRuntime: (runtime: RuntimeSummary) => void }) {
+  const [query, setQuery] = useState("");
+  const accounts = useMemo(() => {
+    const grouped = new Map<string, AccountObservation>();
+    overview.runtimes.forEach((runtime) => {
+      const account = grouped.get(runtime.accountId) ?? { id: runtime.accountId, shortId: runtime.accountShortId, runtimes: [] };
+      account.runtimes.push(runtime);
+      grouped.set(runtime.accountId, account);
+    });
+    const normalized = query.trim().toLowerCase();
+    return [...grouped.values()].filter((account) => `${account.id} ${account.runtimes.map((runtime) => runtime.name).join(" ")}`.toLowerCase().includes(normalized));
+  }, [overview.runtimes, query]);
+  const activeAccounts = overview.metrics.find((metric) => metric.label === "Active accounts")?.value ?? String(accounts.length);
+
+  return <>
+    <WorkspaceHeader eyebrow="Identity inventory" title="Accounts" description="Correlate opaque account identifiers with their observed runtimes and viewer activity. Personal profile data is intentionally absent." overview={overview} icon={Users} />
+    <SummaryCards items={[
+      { label: "Active accounts", value: activeAccounts, detail: "reported by control plane", tone: "good" },
+      { label: "In current snapshot", value: accounts.length, detail: "with observed runtimes", tone: "muted" },
+      { label: "Multi-runtime", value: accounts.filter((account) => account.runtimes.length > 1).length, detail: "accounts with multiple profiles", tone: "muted" },
+      { label: "Identity model", value: "Opaque", detail: "no personal details exposed", tone: "good" },
+    ]} />
+    <section className="panel workspace-panel reveal">
+      <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search account ID or runtime…" />
+      {accounts.length ? <div className="account-grid">
+        {accounts.map((account) => {
+          const live = account.runtimes.filter((runtime) => runtime.activeSession).length;
+          const needsAttention = account.runtimes.some((runtime) => runtime.status === "attention");
+          return <article className="account-card" key={account.id}>
+            <div className="account-card__top"><span><UserRound size={17} /></span><div><strong>Account {account.shortId}</strong><small title={account.id}>{account.id}</small></div><StatusDot status={needsAttention ? "warn" : "good"} /></div>
+            <div className="account-card__metrics"><span><strong>{account.runtimes.length}</strong> runtimes</span><span><strong>{live}</strong> live viewers</span></div>
+            <div className="account-card__runtimes">{account.runtimes.map((runtime) => <button type="button" key={runtime.id} onClick={() => onSelectRuntime(runtime)}><RuntimeStatus runtime={runtime} /><span>{runtime.name}</span><ChevronRight size={14} /></button>)}</div>
+          </article>;
+        })}
+      </div> : <EmptyWorkspace title="No accounts match" detail="The account identifier or runtime name was not found in this snapshot." />}
+    </section>
+  </>;
+}
+
+function FleetWorkspace({ overview }: { overview: OverviewResponse }) {
+  const assigned = overview.runtimes.filter((runtime) => runtime.host === overview.fleet.name || overview.fleet.total === 1).length;
+  const online = overview.runtimes.filter((runtime) => runtime.connection === "online").length;
+  return <>
+    <WorkspaceHeader eyebrow="Node fabric" title="Fleet" description="Monitor approved-node readiness, recent heartbeats and the workloads currently assigned to the runtime fabric." overview={overview} icon={Server} />
+    <SummaryCards items={[
+      { label: "Ready nodes", value: `${overview.fleet.ready}/${overview.fleet.total}`, detail: "approved and observed", tone: overview.fleet.ready === overview.fleet.total ? "good" : "warn" },
+      { label: "Assigned runtimes", value: assigned, detail: "in the latest inventory", tone: "muted" },
+      { label: "Online runtimes", value: online, detail: "reporting connected", tone: online ? "good" : "muted" },
+      { label: "Latest heartbeat", value: overview.fleet.heartbeat, detail: overview.fleet.name, tone: overview.fleet.ready ? "good" : "bad" },
+    ]} />
+    <div className="workspace-columns">
+      <section className="panel workspace-panel reveal">
+        <PanelHeader eyebrow="Approved node" title={overview.fleet.name} />
+        <div className="node-card">
+          <div className="node-card__visual"><Server size={30} /><span className={overview.fleet.ready ? "pulse-ring" : ""} /></div>
+          <div className="node-card__state"><strong>{overview.fleet.ready ? "Ready for placement" : "Placement unavailable"}</strong><span><StatusDot status={overview.fleet.ready ? "good" : "bad"} /> heartbeat {overview.fleet.heartbeat}</span></div>
+          <dl className="node-facts"><div><dt>Observed capacity</dt><dd>{overview.fleet.capacity}</dd></div><div><dt>Runtime assignments</dt><dd>{assigned}</dd></div><div><dt>Connected</dt><dd>{online}</dd></div><div><dt>Trust boundary</dt><dd>Approved node</dd></div></dl>
+        </div>
+      </section>
+      <section className="panel workspace-panel reveal">
+        <PanelHeader eyebrow="Workload distribution" title="Runtime state" />
+        <div className="distribution-list">
+          {["running", "stopped", "attention"].map((status) => {
+            const count = overview.runtimes.filter((runtime) => runtime.status === status).length;
+            const percent = overview.runtimes.length ? count / overview.runtimes.length * 100 : 0;
+            return <div key={status}><span><strong>{status}</strong><small>{count}</small></span><i><b style={{ width: `${percent}%` }} /></i></div>;
+          })}
+        </div>
+      </section>
+    </div>
+  </>;
+}
+
+function SeverityPill({ severity }: { severity: Severity }) {
+  return <span className={`severity-pill severity-pill--${severity}`}>{severity}</span>;
+}
+
+function SecurityWorkspace({ overview }: { overview: OverviewResponse }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const incidents = overview.incidents.filter((incident) => {
+    const normalized = query.trim().toLowerCase();
+    return (filter === "all" || incident.severity === filter) && `${incident.id} ${incident.title} ${incident.detail} ${incident.source}`.toLowerCase().includes(normalized);
+  });
+  const important = overview.incidents.filter((incident) => incident.severity !== "info").length;
+  return <>
+    <WorkspaceHeader eyebrow="Security posture" title="Security" description="Review sanitized control-plane signals. Raw event payloads and sensitive infrastructure details remain in protected backend logs." overview={overview} icon={ShieldCheck} />
+    <SummaryCards items={[
+      { label: "Recent signals", value: overview.incidents.length, detail: "within the retained snapshot", tone: overview.incidents.length ? "muted" : "good" },
+      { label: "Needs triage", value: important, detail: "warning or critical", tone: important ? "warn" : "good" },
+      { label: "Critical", value: overview.incidents.filter((incident) => incident.severity === "critical").length, detail: "highest severity", tone: overview.incidents.some((incident) => incident.severity === "critical") ? "bad" : "good" },
+      { label: "Console access", value: "Read only", detail: "privileged actions locked", tone: "good" },
+    ]} />
+    <section className="panel workspace-panel reveal">
+      <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search signal, source or ID…" filters={[{ value: "all", label: "All" }, { value: "critical", label: "Critical" }, { value: "warning", label: "Warning" }, { value: "info", label: "Info" }]} activeFilter={filter} onFilter={setFilter} />
+      {incidents.length ? <div className="event-table">{incidents.map((incident) => <article className="event-row" key={incident.id}>
+        <span className={`event-row__marker event-row__marker--${incident.severity}`}><ShieldCheck size={16} /></span>
+        <div><span><strong>{incident.title}</strong><SeverityPill severity={incident.severity} /></span><p>{incident.detail}</p><small>{incident.id} · {incident.source}</small></div>
+        <time>{incident.age}</time>
+      </article>)}</div> : <EmptyWorkspace title="No security signals match" detail="Try a different severity or search term." />}
+    </section>
+  </>;
+}
+
+function LogsWorkspace({ overview, onSelectRuntime }: { overview: OverviewResponse; onSelectRuntime: (runtime: RuntimeSummary) => void }) {
+  const [query, setQuery] = useState("");
+  const entries = useMemo(() => {
+    const signals = overview.incidents.map((incident) => ({ id: incident.id, title: incident.title, detail: incident.detail, source: incident.source, age: incident.age, tone: incident.severity as WorkspaceTone | Severity, runtime: undefined as RuntimeSummary | undefined }));
+    const observations = overview.runtimes.map((runtime) => ({ id: `OBS-${runtime.shortId}`, title: `${runtime.name} observation`, detail: `${runtime.status} · desired ${runtime.desiredState} · ${runtime.connection}`, source: runtime.host, age: runtime.updated, tone: runtime.status === "attention" ? "warning" : "info", runtime }));
+    const normalized = query.trim().toLowerCase();
+    return [...signals, ...observations].filter((entry) => `${entry.id} ${entry.title} ${entry.detail} ${entry.source}`.toLowerCase().includes(normalized));
+  }, [overview.incidents, overview.runtimes, query]);
+  return <>
+    <WorkspaceHeader eyebrow="Sanitized event stream" title="Logs" description="A correlated read model of recent security signals and runtime observations. Raw application and guest logs are not exposed here." overview={overview} icon={ListTree} />
+    <SummaryCards items={[
+      { label: "Visible entries", value: entries.length, detail: "after local filtering", tone: "muted" },
+      { label: "Runtime observations", value: overview.runtimes.length, detail: "latest per runtime", tone: "good" },
+      { label: "Security signals", value: overview.incidents.length, detail: "sanitized records", tone: overview.incidents.some((incident) => incident.severity !== "info") ? "warn" : "good" },
+      { label: "Sensitive fields", value: "Redacted", detail: "secrets and endpoints excluded", tone: "good" },
+    ]} />
+    <section className="panel workspace-panel reveal">
+      <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search events, runtime, source or ID…" />
+      {entries.length ? <div className="log-stream">{entries.map((entry) => <button type="button" key={entry.id} onClick={() => entry.runtime && onSelectRuntime(entry.runtime)} disabled={!entry.runtime}>
+        <span className={`log-level log-level--${entry.tone}`}>{entry.tone === "critical" ? "CRT" : entry.tone === "warning" ? "WRN" : "INF"}</span>
+        <time>{entry.age}</time><div><strong>{entry.title}</strong><small>{entry.detail}</small></div><code>{entry.source}</code>{entry.runtime ? <ChevronRight size={15} /> : <span />}
+      </button>)}</div> : <EmptyWorkspace title="No log entries match" detail="Clear the search to restore the sanitized event stream." />}
+    </section>
+  </>;
+}
+
+function HygieneWorkspace({ overview }: { overview: OverviewResponse }) {
+  const attention = overview.hygiene.filter((check) => check.status === "attention").length;
+  const affected = overview.runtimes.filter((runtime) => runtime.cleanupPending || runtime.status === "attention");
+  const iconFor = (item: HygieneCheck) => item.status === "passed" ? <Check size={17} /> : item.status === "attention" ? <AlertTriangle size={17} /> : <CalendarClock size={17} />;
+  return <>
+    <WorkspaceHeader eyebrow="Integrity controls" title="Data hygiene" description="Review referential integrity, session reaping and runtime sanitation checks from the latest control-plane scan." overview={overview} icon={Wrench} />
+    <SummaryCards items={[
+      { label: "Checks", value: overview.hygiene.length, detail: "reported controls", tone: "muted" },
+      { label: "Passed", value: overview.hygiene.filter((check) => check.status === "passed").length, detail: "no issue observed", tone: "good" },
+      { label: "Attention", value: attention, detail: "operator review suggested", tone: attention ? "warn" : "good" },
+      { label: "Affected runtimes", value: affected.length, detail: "cleanup or reconciliation", tone: affected.length ? "warn" : "good" },
+    ]} />
+    <div className="workspace-columns">
+      <section className="panel workspace-panel reveal"><PanelHeader eyebrow="Latest scan" title="Control checks" /><div className="check-list">{overview.hygiene.map((item) => <article key={item.label} className={`check-card check-card--${item.status}`}><span>{iconFor(item)}</span><div><strong>{item.label}</strong><p>{item.detail}</p></div><small>{item.status}</small></article>)}</div></section>
+      <section className="panel workspace-panel reveal"><PanelHeader eyebrow="Reconciliation scope" title="Affected resources" />{affected.length ? <div className="compact-runtime-list">{affected.map((runtime) => <div key={runtime.id}><span><Boxes size={15} /></span><div><strong>{runtime.name}</strong><small>{runtime.lastError ?? "Cleanup remains pending"}</small></div><RuntimeStatus runtime={runtime} /></div>)}</div> : <div className="success-state"><Check size={22} /><strong>No affected runtimes</strong><p>The latest snapshot has no pending cleanup or runtime reconciliation.</p></div>}</section>
+    </div>
+  </>;
+}
+
+function StorageWorkspace({ overview }: { overview: OverviewResponse }) {
+  const providers = useMemo(() => {
+    const grouped = new Map<string, number>();
+    overview.runtimes.forEach((runtime) => grouped.set(runtime.storage, (grouped.get(runtime.storage) ?? 0) + 1));
+    return [...grouped.entries()];
+  }, [overview.runtimes]);
+  const snapshotted = overview.runtimes.filter((runtime) => runtime.snapshot !== "not available");
+  const missing = overview.runtimes.filter((runtime) => runtime.snapshot === "not available");
+  return <>
+    <WorkspaceHeader eyebrow="Persistence inventory" title="Storage" description="Monitor storage provider assignment and snapshot recency without exposing encrypted manifests, wallet details or blob keys." overview={overview} icon={HardDrive} />
+    <SummaryCards items={[
+      { label: "Snapshot coverage", value: `${snapshotted.length}/${overview.runtimes.length}`, detail: "runtimes with observed snapshot", tone: missing.length ? "warn" : "good" },
+      { label: "Providers", value: providers.length, detail: "storage kinds in use", tone: "muted" },
+      { label: "Missing snapshot", value: missing.length, detail: "no timestamp reported", tone: missing.length ? "warn" : "good" },
+      { label: "Key material", value: "Protected", detail: "never returned to console", tone: "good" },
+    ]} />
+    <div className="workspace-columns">
+      <section className="panel workspace-panel reveal"><PanelHeader eyebrow="Provider mix" title="Storage assignment" /><div className="provider-list">{providers.map(([provider, count]) => <div key={provider}><span><Database size={17} /></span><div><strong>{provider}</strong><small>{count} {count === 1 ? "runtime" : "runtimes"}</small></div><b>{overview.runtimes.length ? Math.round(count / overview.runtimes.length * 100) : 0}%</b></div>)}</div></section>
+      <section className="panel workspace-panel reveal"><PanelHeader eyebrow="Latest per runtime" title="Snapshot ledger" /><div className="snapshot-list">{overview.runtimes.map((runtime) => <div key={runtime.id}><span className={runtime.snapshot === "not available" ? "tone-warn" : "tone-good"}><History size={15} /></span><div><strong>{runtime.name}</strong><small>{runtime.storage}</small></div><time>{runtime.snapshot}</time></div>)}</div></section>
+    </div>
+  </>;
+}
+
+function ReleasesWorkspace({ overview }: { overview: OverviewResponse }) {
+  const checks = [
+    { label: "Release source", detail: overview.deployment.commit, good: overview.deployment.commit !== "unavailable" },
+    { label: "Schema identity", detail: overview.deployment.schema, good: overview.deployment.schema !== "unavailable" },
+    { label: "Runtime configuration", detail: "Read model responding", good: true },
+    { label: "Node compatibility", detail: `${overview.fleet.ready}/${overview.fleet.total} ready`, good: overview.fleet.ready === overview.fleet.total },
+  ];
+  return <>
+    <WorkspaceHeader eyebrow="Deployment identity" title="Releases" description="Verify the control-plane source, database schema and node readiness attached to the currently served operator build." overview={overview} icon={PackageCheck} />
+    <SummaryCards items={[
+      { label: "Current release", value: overview.deployment.version, detail: overview.deployment.deployed, tone: "good" },
+      { label: "Commit", value: overview.deployment.commit.slice(0, 8), detail: "release source identity", tone: overview.deployment.commit === "unavailable" ? "warn" : "good" },
+      { label: "Schema", value: overview.deployment.schema, detail: "database contract", tone: overview.deployment.schema === "unavailable" ? "warn" : "good" },
+      { label: "Ready nodes", value: `${overview.fleet.ready}/${overview.fleet.total}`, detail: "compatible fleet", tone: overview.fleet.ready === overview.fleet.total ? "good" : "warn" },
+    ]} />
+    <section className="panel workspace-panel release-workspace reveal">
+      <div className="release-hero"><span><PackageCheck size={31} /></span><div><small>Serving now</small><h2>{overview.deployment.version}</h2><p>Verified against the source and schema identities reported by the running control plane.</p></div><span className="verified-chip"><Check size={12} /> Observed</span></div>
+      <div className="release-checks">{checks.map((check) => <div key={check.label}><span className={check.good ? "tone-good" : "tone-warn"}>{check.good ? <Check size={16} /> : <AlertTriangle size={16} />}</span><div><strong>{check.label}</strong><small>{check.detail}</small></div></div>)}</div>
+    </section>
+  </>;
+}
+
+function ReportsWorkspace({ overview }: { overview: OverviewResponse }) {
+  const active = overview.runtimes.filter((runtime) => runtime.status === "running").length;
+  const attention = overview.runtimes.filter((runtime) => runtime.status === "attention").length;
+  const exportCsv = () => {
+    const cells = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+    const rows = [["runtime_id", "name", "status", "desired_state", "connection", "host", "account_id", "snapshot", "updated"], ...overview.runtimes.map((runtime) => [runtime.id, runtime.name, runtime.status, runtime.desiredState, runtime.connection, runtime.host, runtime.accountId, runtime.snapshot, runtime.updated])];
+    const blob = new Blob([rows.map((row) => row.map(cells).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `virtroid-operator-${overview.generatedAt.slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  return <>
+    <WorkspaceHeader eyebrow="Operational reporting" title="Reports" description="Create a point-in-time, sanitized operating record from the same snapshot shown throughout Observatory." overview={overview} icon={FileClock}>
+      <div className="header-actions"><button type="button" onClick={exportCsv}><Download size={14} /> Export CSV</button><button type="button" onClick={() => window.print()}><FileText size={14} /> Print report</button></div>
+    </WorkspaceHeader>
+    <SummaryCards items={[
+      { label: "System status", value: overview.status, detail: overview.headline, tone: overview.status === "healthy" ? "good" : overview.status === "degraded" ? "warn" : "bad" },
+      { label: "Runtime availability", value: `${overview.runtimes.length ? Math.round(active / overview.runtimes.length * 100) : 0}%`, detail: `${active} of ${overview.runtimes.length} running`, tone: "good" },
+      { label: "Exceptions", value: attention, detail: "runtimes needing attention", tone: attention ? "warn" : "good" },
+      { label: "Fleet readiness", value: `${overview.fleet.ready}/${overview.fleet.total}`, detail: overview.fleet.name, tone: overview.fleet.ready === overview.fleet.total ? "good" : "warn" },
+    ]} />
+    <section className="panel workspace-panel report-sheet reveal">
+      <div className="report-sheet__heading"><div><VirtroidMark /><span><strong>Virtroid Observatory</strong><small>Operational snapshot</small></span></div><time>{new Date(overview.generatedAt).toLocaleString()}</time></div>
+      <div className="report-narrative"><h2>{overview.headline}</h2><p>{overview.subline}</p></div>
+      <div className="report-grid"><section><h3>Runtime posture</h3><dl><div><dt>Observed</dt><dd>{overview.runtimes.length}</dd></div><div><dt>Running</dt><dd>{active}</dd></div><div><dt>Attention</dt><dd>{attention}</dd></div><div><dt>Live viewers</dt><dd>{overview.runtimes.filter((runtime) => runtime.activeSession).length}</dd></div></dl></section><section><h3>Control posture</h3><dl><div><dt>Environment</dt><dd>{overview.environment}</dd></div><div><dt>Release</dt><dd>{overview.deployment.version}</dd></div><div><dt>Schema</dt><dd>{overview.deployment.schema}</dd></div><div><dt>Ready nodes</dt><dd>{overview.fleet.ready}/{overview.fleet.total}</dd></div></dl></section></div>
+      <section className="report-exceptions"><h3>Exceptions and checks</h3>{overview.hygiene.map((check) => <div key={check.label}><StatusDot status={check.status === "passed" ? "good" : check.status === "attention" ? "warn" : "muted"} /><span><strong>{check.label}</strong><small>{check.detail}</small></span></div>)}</section>
+      <footer>Generated from sanitized operator telemetry. This report does not contain credentials, relay tokens, network addresses or raw security payloads.</footer>
+    </section>
+  </>;
+}
+
+function OperatorWorkspace({ section, overview, onSelectRuntime }: { section: string; overview: OverviewResponse; onSelectRuntime: (runtime: RuntimeSummary) => void }) {
+  switch (section) {
+    case "Runtimes": return <RuntimesWorkspace overview={overview} onSelectRuntime={onSelectRuntime} />;
+    case "Sessions": return <SessionsWorkspace overview={overview} onSelectRuntime={onSelectRuntime} />;
+    case "Accounts": return <AccountsWorkspace overview={overview} onSelectRuntime={onSelectRuntime} />;
+    case "Fleet": return <FleetWorkspace overview={overview} />;
+    case "Security": return <SecurityWorkspace overview={overview} />;
+    case "Logs": return <LogsWorkspace overview={overview} onSelectRuntime={onSelectRuntime} />;
+    case "Data hygiene": return <HygieneWorkspace overview={overview} />;
+    case "Storage": return <StorageWorkspace overview={overview} />;
+    case "Releases": return <ReleasesWorkspace overview={overview} />;
+    case "Reports": return <ReportsWorkspace overview={overview} />;
+    default: return null;
+  }
 }
 
 function LoadingState() {
@@ -932,6 +1348,7 @@ function App() {
         mobileOpen={mobileNavOpen}
         compact={compact}
         onClose={() => setMobileNavOpen(false)}
+        overview={result.data}
         onLogout={async () => {
           await deleteSession();
           if (isLiveOperatorMode()) {
@@ -941,12 +1358,12 @@ function App() {
         }}
       />
       <div className="workspace">
-        <Topbar onOpenSearch={() => setPaletteOpen(true)} onOpenNav={() => setMobileNavOpen(true)} />
+        <Topbar onOpenSearch={() => setPaletteOpen(true)} onOpenNav={() => setMobileNavOpen(true)} onOpenNotifications={() => navigate("Security")} />
         <main className="content">
           {activeSection === "Command centre" ? (
-            <CommandCentre overview={result.data} source={result.source} onSelectRuntime={setSelectedRuntime} />
+            <CommandCentre overview={result.data} source={result.source} onSelectRuntime={setSelectedRuntime} onNavigate={navigate} />
           ) : (
-            <SectionPlaceholder section={activeSection} onReturn={() => navigate("Command centre")} />
+            <OperatorWorkspace section={activeSection} overview={result.data} onSelectRuntime={setSelectedRuntime} />
           )}
         </main>
       </div>

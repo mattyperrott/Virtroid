@@ -18,7 +18,8 @@ export interface OperatorSession {
 }
 
 const configuredApiBase = import.meta.env.VITE_OPERATOR_API_BASE?.replace(/\/$/, "") ?? "";
-const liveOperatorMode = Boolean(configuredApiBase) || window.location.pathname.startsWith("/operator");
+const liveOperatorMode = Boolean(configuredApiBase)
+  || (!import.meta.env.DEV && window.location.pathname.startsWith("/operator"));
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`${configuredApiBase}${path}`, {

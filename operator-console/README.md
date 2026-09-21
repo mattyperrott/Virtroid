@@ -1,9 +1,14 @@
 # Virtroid Operator Console
 
-Read-only first vertical slice of Virtroid's operator control plane. It includes
-the navigation shell, Command Centre, searchable resources, and runtime
-inspector. The local development server deliberately uses visibly labelled
-fixture data; it does not connect directly to PostgreSQL, Docker, or a node.
+Read-only Observatory interface for Virtroid's operator control plane. It
+includes the Command Centre plus dedicated runtime, session, account, fleet,
+security, log, data-hygiene, storage, release, and reporting workspaces. The
+console supports resource filtering, runtime inspection, global search,
+responsive navigation, printable reports, and sanitized CSV export.
+
+The local development server deliberately uses visibly labelled fixture data;
+it does not connect directly to PostgreSQL, Docker, or a node. Production uses
+the same-origin operator API and fails closed if live telemetry is unavailable.
 
 ## Run locally
 
