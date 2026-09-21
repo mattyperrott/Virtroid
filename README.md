@@ -26,6 +26,10 @@
   <a href="https://virtroid.network/operator/">Operator console</a>
 </p>
 
+<p align="center">
+  <img src="media/generated/virtroid-readme/virtroid-readme-hero.gif" width="960" alt="Animated Virtroid overview showing the Android welcome screen, runtime list, live viewer, remote runtime layer, and Observatory console">
+</p>
+
 ---
 
 ## What Virtroid does
