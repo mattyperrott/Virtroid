@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c110d" />
+    <meta name="description" content="Run the real Virtroid Android client from your browser." />
+    <link rel="icon" href="assets/virtroid-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Virtroid — Live Android demo</title>
+  </head>
+  <body>
+    <div class="ambient" aria-hidden="true">
+      <div class="ambient__grid"></div>
+      <div class="ambient__wash"></div>
+      <div class="ambient__console"></div>
+      <div class="ambient__scan"></div>
+      <div class="signal signal--one"></div>
+      <div class="signal signal--two"></div>
+      <div class="signal signal--three"></div>
+    </div>
+
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Virtroid demo home">
+        <img src="assets/virtroid-icon.png" width="42" height="42" alt="" />
+        <span><b>Virtroid</b><small>PRIVATE ANDROID</small></span>
+      </a>
+      <div class="live-pill"><i></i><span>REAL APK · REMOTE ANDROID</span></div>
+    </header>
+
+    <main class="demo-shell">
+      <section class="intro" aria-labelledby="demo-title">
+        <p class="eyebrow"><span>LIVE</span> INTERACTIVE PREVIEW</p>
+        <h1 id="demo-title">Use Virtroid.<br /><em>Inside your browser.</em></h1>
+        <p class="lede">This is the signed Virtroid Android client running on a dedicated remote handset. Tap, type, scroll, and explore it like a physical phone.</p>
+
+        <ol class="journey" aria-label="Live demo path">
+          <li class="is-active"><span>01</span><div><b>Browser</b><small>Touch and keyboard input</small></div><i></i></li>
+          <li><span>02</span><div><b>Private stream</b><small>Pixels and controls only</small></div><i></i></li>
+          <li><span>03</span><div><b>Demo handset</b><small>Real Virtroid APK</small></div><i></i></li>
+        </ol>
+
+        <div class="session-card" id="session-card">
+          <div>
+            <small>DEVICE STATUS</small>
+            <strong id="session-status">Checking availability…</strong>
+          </div>
+          <button type="button" id="start-demo" disabled>Start interactive demo <span>→</span></button>
+          <button type="button" id="end-demo" hidden>End session</button>
+          <p id="session-detail">One visitor at a time · eight-minute sessions</p>
+        </div>
+      </section>
+
+      <section class="device-composition" aria-label="Live Virtroid Android handset">
+        <div class="orbit orbit--outer" aria-hidden="true"></div>
+        <div class="orbit orbit--inner" aria-hidden="true"></div>
+        <div class="device-layer device-layer--viewer" aria-hidden="true">
+          <img src="assets/session-viewer.png" alt="" />
+        </div>
+        <div class="device-layer device-layer--runtimes" aria-hidden="true">
+          <img src="assets/my-runtimes.png" alt="" />
+        </div>
+
+        <div class="device" id="android-device">
+          <div class="device__metal" aria-hidden="true"></div>
+          <div class="device__screen">
+            <div class="device-placeholder" id="device-placeholder">
+              <img src="assets/virtroid-icon.png" alt="" />
+              <small>VIRTROID DEMO HANDSET</small>
+              <strong id="device-message">Ready when you are.</strong>
+              <span>Start a session to wake the remote Android device.</span>
+            </div>
+            <iframe id="android-stream" title="Interactive Virtroid Android client" allow="clipboard-read; clipboard-write" hidden></iframe>
+            <div class="stream-glass" aria-hidden="true"></div>
+          </div>
+          <span class="device__speaker" aria-hidden="true"></span>
+          <span class="device__camera" aria-hidden="true"></span>
+        </div>
+
+        <div class="interaction-label" aria-live="polite">
+          <span class="interaction-label__pulse"></span>
+          <div><small id="interaction-kicker">REMOTE DEVICE</small><strong id="interaction-title">Standing by</strong></div>
+          <time id="session-clock">08:00</time>
+        </div>
+      </section>
+
+      <aside class="system-map" aria-label="Virtroid live demo architecture">
+        <p class="eyebrow"><span>LIVE</span> PIXEL PATH</p>
+        <div class="system-map__flow">
+          <article class="node node--browser is-live"><i class="node__icon">⌖</i><div><small>YOUR BROWSER</small><b>Input ready</b></div></article>
+          <span class="path"><i></i></span>
+          <article class="node node--gateway"><i class="node__icon">⌁</i><div><small>STREAM GATEWAY</small><b>Waiting</b></div></article>
+          <span class="path"><i></i></span>
+          <article class="node node--handset"><i class="node__icon">▯</i><div><small>ANDROID HANDSET</small><b>Available</b></div></article>
+          <span class="path"><i></i></span>
+          <article class="node node--cloud"><i class="node__icon">▦</i><div><small>VIRTROID CLOUD</small><b>Isolated</b></div></article>
+        </div>
+        <dl class="telemetry">
+          <div><dt>APK</dt><dd>0.3.4</dd></div>
+          <div><dt>ANDROID</dt><dd>14</dd></div>
+          <div><dt>SESSION</dt><dd>DEDICATED</dd></div>
+        </dl>
+        <p class="demo-disclosure">This streams a real Android device—not a recording or clickable mockup. The public gateway exposes only pixels and input controls; ADB and administration remain private.</p>
+      </aside>
+    </main>
+
+    <footer class="footer-bar">
+      <span>VIRTROID NETWORK / LIVE DEMO</span>
+      <span id="demo-clock">00:00:00 UTC</span>
+      <span>SELF-HOSTED INTERACTIVE PREVIEW</span>
+    </footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
