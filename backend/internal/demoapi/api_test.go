@@ -54,6 +54,9 @@ func TestDemoRoutesAndAssets(t *testing.T) {
 	if !strings.Contains(string(body), "Interactive Virtroid Android client") {
 		t.Fatal("demo page is missing the live handset frame")
 	}
+	if strings.Contains(string(body), `class="system-map"`) || strings.Contains(string(body), "PIXEL PATH") {
+		t.Fatal("demo page still includes the removed architecture panel")
+	}
 
 	response, err = client.Get(server.URL + "/demo/app.js")
 	if err != nil {
