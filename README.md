@@ -16,6 +16,7 @@
 
 <img width="1788" height="944" alt="ezgif-8d1cadf478e6fb6d" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2" />
 
+<br>
 
 ## What Virtroid does
 
@@ -26,6 +27,10 @@
 
 <br>
 
+Virtroid runs Android separately from the user's physical phone. The phone is an authenticated controller and encrypted viewer; applications, storage,
+network identity, and lifecycle state remain inside a remotely hosted ReDroid
+runtime.  
+
 <p align="left">
   <a href="#what-virtroid-does">Overview</a> ·
   <a href="#capabilities">Capabilities</a> ·
@@ -33,11 +38,6 @@
   <a href="#security-boundary">Security</a> ·
   <a href="https://virtroid.network/demo/">Browser Emulated App Demo</a> ·
 </p>
-
-Virtroid runs Android separately from the user's physical phone. The phone is an authenticated controller and encrypted viewer; applications, storage,
-network identity, and lifecycle state remain inside a remotely hosted ReDroid
-runtime.  
-
 
 ## Capabilities
 
