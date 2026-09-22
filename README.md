@@ -111,14 +111,12 @@ flowchart LR
 | ReDroid | Independently hosted Android runtime |
 | Runtime agent | Allowlisted notification metadata collection inside the guest | 
 
-
+<br>
 
 ## Security Boundary
 
 Virtroid protects the client-to-service path and stopped-runtime persistence, but the runtime host remains trusted. 
 A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.  
-
-### Implemented controls
 
 > [!CAUTION]
 > Virtroid must not currently be described as trustless, host-blind,
@@ -126,6 +124,8 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 > end-to-end encrypted. Transport encryption protects data in transit and
 > snapshot encryption protects stopped-runtime files; neither makes an active
 > guest confidential from its host.
+
+### Implemented controls
 
 - P-256 device, node, capability, and callback signing
 - Timestamp, nonce, body-integrity, and replay validation
