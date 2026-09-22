@@ -69,6 +69,19 @@ runtime.
 
 ## Architecture
 
+
+| Component | Responsibility |
+| :--- | :--- |
+| Android client | Identity, onboarding, runtime controls, local security, viewer, media capture, and notification display |
+| HAProxy | Public HTTPS termination and controlled viewer ingress |
+| `virtroidd` | Accounts, devices, policy, runtimes, capabilities, sessions, operator telemetry, and notification delivery |
+| `virtnoded` | ReDroid lifecycle, media paths, viewer relay, application provisioning, snapshots, and cleanup |
+| PostgreSQL | Authoritative control-plane and lifecycle state |
+| ReDroid | Independently hosted Android runtime |
+| Runtime agent | Allowlisted notification metadata collection inside the guest | 
+
+<br>
+
 ```mermaid
 flowchart LR
     subgraph Phone[Android client]
@@ -101,17 +114,7 @@ flowchart LR
     AGENT -->|Metadata only| EDGE
 ```
 
-| Component | Responsibility |
-| :--- | :--- |
-| Android client | Identity, onboarding, runtime controls, local security, viewer, media capture, and notification display |
-| HAProxy | Public HTTPS termination and controlled viewer ingress |
-| `virtroidd` | Accounts, devices, policy, runtimes, capabilities, sessions, operator telemetry, and notification delivery |
-| `virtnoded` | ReDroid lifecycle, media paths, viewer relay, application provisioning, snapshots, and cleanup |
-| PostgreSQL | Authoritative control-plane and lifecycle state |
-| ReDroid | Independently hosted Android runtime |
-| Runtime agent | Allowlisted notification metadata collection inside the guest | 
 
-<br>
 
 ## Security Boundary
 
