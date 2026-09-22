@@ -41,10 +41,10 @@ network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.  
 
 
-> [!IMPORTANT]
-> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
-> It does not yet protect an active runtime from a compromised host or
-> privileged infrastructure operator.
+&nbsp; > [!IMPORTANT]
+&nbsp; > Virtroid is currently a **trusted-operator, single-VPS release candidate**.
+&nbsp; > It does not yet protect an active runtime from a compromised host or
+&nbsp; > privileged infrastructure operator.
 
 
 ## Capabilities
