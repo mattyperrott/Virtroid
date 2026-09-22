@@ -14,7 +14,7 @@
   <img alt="ReDroid runtime" src="https://img.shields.io/badge/runtime-ReDroid-F0F3EE?style=for-the-badge&labelColor=18221B">
 </p>
 
-<img width="1788" height="944" alt="ezgif-8d1cadf478e6fb6d" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2" />
+<img width="1788" height="944" alt="ezgif-8d1cadf478e6fb6d" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2" /> 
 
 <br>
 
@@ -115,12 +115,6 @@ flowchart LR
 Virtroid protects the client-to-service path and stopped-runtime persistence, but the runtime host remains trusted. 
 A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.  
 
-> [!CAUTION]
-> Virtroid must not currently be described as trustless, host-blind,
-> operator-blind, anonymous by architecture, confidential computing, or fully
-> end-to-end encrypted. Transport encryption protects data in transit and
-> snapshot encryption protects stopped-runtime files; neither makes an active
-> guest confidential from its host.
 
 ### Implemented controls
 
@@ -136,6 +130,15 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 - Protected, offline VPS release builds with immutable image and deployment-tree verification
 
 <br>
+
+> [!CAUTION]
+> Virtroid must not currently be described as trustless, host-blind,
+> operator-blind, anonymous by architecture, confidential computing, or fully
+> end-to-end encrypted. Transport encryption protects data in transit and
+> snapshot encryption protects stopped-runtime files; neither makes an active
+> guest confidential from its host.
+
+
 
 ## Repository map
 
