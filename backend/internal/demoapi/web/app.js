@@ -1,7 +1,6 @@
 (() => {
   const startButton = document.querySelector("#start-demo");
   const endButton = document.querySelector("#end-demo");
-  const sessionStatus = document.querySelector("#session-status");
   const sessionDetail = document.querySelector("#session-detail");
   const sessionClock = document.querySelector("#session-clock");
   const device = document.querySelector("#android-device");
@@ -53,7 +52,6 @@
     startButton.disabled = false;
     startButton.hidden = false;
     endButton.hidden = true;
-    sessionStatus.textContent = "Demo handset available";
     sessionDetail.textContent = "One visitor at a time · eight-minute sessions";
     deviceMessage.textContent = "Ready when you are.";
     sessionClock.textContent = "08:00";
@@ -64,7 +62,6 @@
     startButton.disabled = true;
     startButton.hidden = false;
     endButton.hidden = true;
-    sessionStatus.textContent = "Another visitor is exploring";
     const ready = availableAt ? new Date(availableAt) : null;
     sessionDetail.textContent = ready && !Number.isNaN(ready.valueOf())
       ? `Expected back by ${ready.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
@@ -77,7 +74,6 @@
     startButton.disabled = true;
     startButton.hidden = false;
     endButton.hidden = true;
-    sessionStatus.textContent = "Demo handset is starting";
     sessionDetail.textContent = "The preview will enable automatically when Android is ready";
     deviceMessage.textContent = "Waking remote Android…";
     setFlow(1);
@@ -104,7 +100,6 @@
 
   async function beginSession() {
     startButton.disabled = true;
-    sessionStatus.textContent = "Reserving private demo handset…";
     sessionDetail.textContent = "Establishing a low-latency browser stream";
     deviceMessage.textContent = "Opening encrypted pixel stream…";
     setFlow(1);
@@ -125,7 +120,6 @@
       device.classList.add("is-streaming");
       startButton.hidden = true;
       endButton.hidden = false;
-      sessionStatus.textContent = "Live Android session reserved";
       sessionDetail.textContent = "Opening the handset pixel stream";
       setFlow(2);
       startCountdown();
@@ -173,12 +167,10 @@
           setFlow(3);
         } else if (message.startsWith("error") || message.startsWith("disconnected")) {
           clearInterval(streamTimer);
-          sessionStatus.textContent = "Android stream needs attention";
           sessionDetail.textContent = "End the session and try again";
           setFlow(1);
         } else if (Date.now() - startedAt > 20000) {
           clearInterval(streamTimer);
-          sessionStatus.textContent = "Android stream timed out";
           sessionDetail.textContent = "End the session and try again";
           setFlow(1);
         }
