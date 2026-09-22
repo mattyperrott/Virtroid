@@ -19,6 +19,13 @@
 
 ## What Virtroid does
 
+> [!IMPORTANT]
+> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
+> It does not yet protect an active runtime from a compromised host or
+> privileged infrastructure operator.
+
+<br>
+
 <p align="left">
   <a href="#what-virtroid-does">Overview</a> ·
   <a href="#capabilities">Capabilities</a> ·
@@ -31,13 +38,6 @@ Virtroid runs Android separately from the user's physical phone. The phone is an
 network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.  
 
-
-> [!IMPORTANT]
-> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
-> It does not yet protect an active runtime from a compromised host or
-> privileged infrastructure operator.
-
-<br>
 
 ## Capabilities
 
