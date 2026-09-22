@@ -28,6 +28,7 @@ import (
 
 	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
+	"virtroid/backend/internal/demoapi"
 	"virtroid/backend/internal/nodeauth"
 	"virtroid/backend/internal/observability"
 	"virtroid/backend/internal/operatorapi"
@@ -415,13 +416,15 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/runtime-notifications/{id}", api.receiveRuntimeNotification)
 
 	apiHandler := telemetry.Middleware(withRecovery(withJSON(mux)))
-	if !cfg.OperatorConsoleEnabled || strings.TrimSpace(cfg.OperatorConsoleToken) == "" {
-		return apiHandler
-	}
 	root := http.NewServeMux()
-	operatorHandler := operatorapi.New(cfg, st)
-	root.Handle("/operator", operatorHandler)
-	root.Handle("/operator/", operatorHandler)
+	demoHandler := demoapi.New()
+	root.Handle("/demo", demoHandler)
+	root.Handle("/demo/", demoHandler)
+	if cfg.OperatorConsoleEnabled && strings.TrimSpace(cfg.OperatorConsoleToken) != "" {
+		operatorHandler := operatorapi.New(cfg, st)
+		root.Handle("/operator", operatorHandler)
+		root.Handle("/operator/", operatorHandler)
+	}
 	root.Handle("/", apiHandler)
 	return withRecovery(root)
 }

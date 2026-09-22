@@ -1,0 +1,7 @@
+{
+  "webPort": 8000,
+  "installMode": null,
+  "firstRunComplete": true,
+  "allowedHosts": ["virtroid.network"],
+  "frameAncestors": []
+}

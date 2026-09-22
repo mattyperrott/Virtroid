@@ -44,7 +44,7 @@ LABEL org.opencontainers.image.revision="${VCS_REF}" \
 
 RUN apk add --no-cache \
       android-tools=35.0.2-r23 \
-      ca-certificates=20260611-r0 \
+      ca-certificates=20260909-r0 \
     && adduser -D -h /home/virtroid -s /sbin/nologin virtroid
 
 COPY --from=build /out/virtroidd /usr/local/bin/virtroidd
