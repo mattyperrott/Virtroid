@@ -27,19 +27,19 @@
 
 ---
 
+
+## What Virtroid does
+
+Virtroid runs Android separately from the user's physical phone. The phone is an authenticated controller and encrypted viewer; applications, storage,
+network identity, and lifecycle state remain inside a remotely hosted ReDroid
+runtime.  
+
 > [!IMPORTANT]
 > Virtroid is currently a **trusted-operator, single-VPS release candidate**.
 > It does not yet protect an active runtime from a compromised host or
 > privileged infrastructure operator.
 
 <br>
-
-## What Virtroid does
-
-Virtroid runs Android separately from the user's physical phone. The phone is
-an authenticated controller and encrypted viewer; applications, storage,
-network identity, and lifecycle state remain inside a remotely hosted ReDroid
-runtime.  
 
 
 ## Capabilities
