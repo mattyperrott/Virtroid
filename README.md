@@ -25,10 +25,6 @@
   <a href="https://virtroid.network/demo/">Live Emulated App Demo</a> ·
 </p>
 
-<p align="center">
-  <img width="1080" alt="virtroid-hero-observatory-welcome-1920x1080" src="https://github.com/user-attachments/assets/0bbde4a1-fdd8-4d5f-b1ba-2ac1f01c3054" />
-</p>
-
 ---
 
 
