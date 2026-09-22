@@ -8,8 +8,6 @@
   const placeholder = document.querySelector("#device-placeholder");
   const deviceMessage = document.querySelector("#device-message");
   const stream = document.querySelector("#android-stream");
-  const interactionKicker = document.querySelector("#interaction-kicker");
-  const interactionTitle = document.querySelector("#interaction-title");
   const nodes = [...document.querySelectorAll(".node")];
   const paths = [...document.querySelectorAll(".path")];
   let expiresAt = 0;
@@ -29,8 +27,6 @@
   function setFlow(step) {
     nodes.forEach((node, index) => node.classList.toggle("is-live", index <= step));
     paths.forEach((path, index) => path.classList.toggle("is-live", index < step));
-    document.querySelector(".node--gateway b").textContent = step >= 1 ? "Encrypted stream" : "Waiting";
-    document.querySelector(".node--handset b").textContent = step >= 2 ? "Virtroid running" : "Available";
   }
 
   function formatRemaining(milliseconds) {
@@ -60,8 +56,6 @@
     sessionStatus.textContent = "Demo handset available";
     sessionDetail.textContent = "One visitor at a time · eight-minute sessions";
     deviceMessage.textContent = "Ready when you are.";
-    interactionKicker.textContent = "REMOTE DEVICE";
-    interactionTitle.textContent = "Standing by";
     sessionClock.textContent = "08:00";
     setFlow(0);
   }
@@ -76,7 +70,6 @@
       ? `Expected back by ${ready.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
       : "Checking again automatically";
     deviceMessage.textContent = "One live session at a time.";
-    interactionTitle.textContent = "Session occupied";
     setFlow(1);
   }
 
@@ -87,7 +80,6 @@
     sessionStatus.textContent = "Demo handset is starting";
     sessionDetail.textContent = "The preview will enable automatically when Android is ready";
     deviceMessage.textContent = "Waking remote Android…";
-    interactionTitle.textContent = "Starting handset";
     setFlow(1);
   }
 
@@ -115,8 +107,6 @@
     sessionStatus.textContent = "Reserving private demo handset…";
     sessionDetail.textContent = "Establishing a low-latency browser stream";
     deviceMessage.textContent = "Opening encrypted pixel stream…";
-    interactionKicker.textContent = "CONNECTING";
-    interactionTitle.textContent = "Negotiating stream";
     setFlow(1);
 
     try {
@@ -137,8 +127,6 @@
       endButton.hidden = false;
       sessionStatus.textContent = "Live Android session reserved";
       sessionDetail.textContent = "Opening the handset pixel stream";
-      interactionKicker.textContent = "CONNECTING";
-      interactionTitle.textContent = "Starting Virtroid APK";
       setFlow(2);
       startCountdown();
     } catch {
@@ -182,21 +170,16 @@
         if (message.startsWith("connected") || status?.classList.contains("hidden")) {
           clearInterval(streamTimer);
           sessionDetail.textContent = "Tap inside the handset · keyboard input supported";
-          interactionKicker.textContent = "LIVE ANDROID";
-          interactionTitle.textContent = "Virtroid APK connected";
           setFlow(3);
         } else if (message.startsWith("error") || message.startsWith("disconnected")) {
           clearInterval(streamTimer);
           sessionStatus.textContent = "Android stream needs attention";
           sessionDetail.textContent = "End the session and try again";
-          interactionKicker.textContent = "STREAM ERROR";
-          interactionTitle.textContent = message;
           setFlow(1);
         } else if (Date.now() - startedAt > 20000) {
           clearInterval(streamTimer);
           sessionStatus.textContent = "Android stream timed out";
           sessionDetail.textContent = "End the session and try again";
-          interactionTitle.textContent = "Handset did not respond";
           setFlow(1);
         }
       } catch {
