@@ -1,8 +1,5 @@
 <!-- markdownlint-disable MD013 MD033 MD041 -->
 
-<img width="1788" height="944" alt="ezgif-8d1cadf478e6fb6d" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2" />
-
-
 <h1 align="center">Virtroid</h1>
 
 <p align="center">
@@ -17,22 +14,23 @@
   <img alt="ReDroid runtime" src="https://img.shields.io/badge/runtime-ReDroid-F0F3EE?style=for-the-badge&labelColor=18221B">
 </p>
 
-<p align="center">
-  <a href="#what-virtroid-does">Overview</a> ·
-  <a href="#capabilities">Capabilities</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#security-boundary">Security</a> ·
-  <a href="https://virtroid.network/demo/">Live Emulated App Demo</a> ·
-</p>
-
----
+<img width="1788" height="944" alt="ezgif-8d1cadf478e6fb6d" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2" />
 
 
 ## What Virtroid does
 
+<p align="left">
+  <a href="#what-virtroid-does">Overview</a> ·
+  <a href="#capabilities">Capabilities</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#security-boundary">Security</a> ·
+  <a href="https://virtroid.network/demo/">Browser Emulated App Demo</a> ·
+</p>
+
 Virtroid runs Android separately from the user's physical phone. The phone is an authenticated controller and encrypted viewer; applications, storage,
 network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.  
+
 
 > [!IMPORTANT]
 > Virtroid is currently a **trusted-operator, single-VPS release candidate**.
@@ -40,7 +38,6 @@ runtime.
 > privileged infrastructure operator.
 
 <br>
-
 
 ## Capabilities
 
