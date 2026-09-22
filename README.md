@@ -64,9 +64,6 @@ runtime.
 | Confidential host isolation | ⛔ Not implemented | ReDroid currently executes inside the trusted VPS boundary |
 | Hardware attestation | ⛔ Not implemented | Design and proof-of-concept work only |
 
-> [!NOTE]
-> Camera support is deliberate photo/video capture and media import. It is not
-> a live physical-camera device injected into Android's camera HAL.  
 
 <br>
 
@@ -112,9 +109,9 @@ flowchart LR
 | `virtnoded` | ReDroid lifecycle, media paths, viewer relay, application provisioning, snapshots, and cleanup |
 | PostgreSQL | Authoritative control-plane and lifecycle state |
 | ReDroid | Independently hosted Android runtime |
-| Runtime agent | Allowlisted notification metadata collection inside the guest |
+| Runtime agent | Allowlisted notification metadata collection inside the guest | 
 
-<br>
+
 
 ## Security Boundary
 
@@ -122,6 +119,13 @@ Virtroid protects the client-to-service path and stopped-runtime persistence, bu
 A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.  
 
 ### Implemented controls
+
+> [!CAUTION]
+> Virtroid must not currently be described as trustless, host-blind,
+> operator-blind, anonymous by architecture, confidential computing, or fully
+> end-to-end encrypted. Transport encryption protects data in transit and
+> snapshot encryption protects stopped-runtime files; neither makes an active
+> guest confidential from its host.
 
 - P-256 device, node, capability, and callback signing
 - Timestamp, nonce, body-integrity, and replay validation
@@ -133,14 +137,6 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 - Loopback-bound services, deny-by-default firewalling, AppArmor, Auditd, Fail2ban, and unattended security updates
 - Falco and Suricata event collection with sanitized, account-scoped client delivery
 - Protected, offline VPS release builds with immutable image and deployment-tree verification
-
-
-> [!CAUTION]
-> Virtroid must not currently be described as trustless, host-blind,
-> operator-blind, anonymous by architecture, confidential computing, or fully
-> end-to-end encrypted. Transport encryption protects data in transit and
-> snapshot encryption protects stopped-runtime files; neither makes an active
-> guest confidential from its host.
 
 <br>
 
