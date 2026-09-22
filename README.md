@@ -40,11 +40,9 @@ runtime.
 > It does not yet protect an active runtime from a compromised host or
 > privileged infrastructure operator.
 
-<br>
 
 ---
 
-<br>
 
 ## Capabilities
 
@@ -69,11 +67,8 @@ runtime.
 | Hardware attestation | ⛔ Not implemented | Design and proof-of-concept work only |
 
 
-<br>
-
 ---
 
-<br>
 
 ## Architecture
 
@@ -121,11 +116,9 @@ flowchart LR
     AGENT -->|Metadata only| EDGE
 ```
 
-<br>
 
 ---
 
-<br>
 
 ## Security Boundary
 
@@ -154,11 +147,9 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 > snapshot encryption protects stopped-runtime files; neither makes an active
 > guest confidential from its host.
 
-<br>
 
 ---
 
-<br>
 
 ## Repository map
 
@@ -171,11 +162,9 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 | [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices | 
 
-<br>
 
 ---
 
-<br>
 
 ## Current status
 
