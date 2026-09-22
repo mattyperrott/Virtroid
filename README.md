@@ -66,7 +66,7 @@ runtime.
 
 > [!NOTE]
 > Camera support is deliberate photo/video capture and media import. It is not
-> a live physical-camera device injected into Android's camera HAL.
+> a live physical-camera device injected into Android's camera HAL.  
 
 
 
