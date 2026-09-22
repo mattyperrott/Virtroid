@@ -27,30 +27,31 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/5956f7c1fe2301aa1d8534d6fb003f433c03e5ab/uploads/2026-09-22T15-34-49-354Z-5spyv0bqb.gif" width="960" alt="Animated Virtroid overview showing the Android welcome screen, runtime list, live viewer, remote runtime layer, and Observatory console">
+  <img width="1080" alt="virtroid-hero-observatory-welcome-1920x1080" src="https://github.com/user-attachments/assets/0bbde4a1-fdd8-4d5f-b1ba-2ac1f01c3054" />
 </p>
 
 ---
 
+<br>
 
 ## What Virtroid does
-
+<br>
 Virtroid runs Android separately from the user's physical phone. The phone is
 an authenticated controller and encrypted viewer; applications, storage,
 network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.
 
-
+<br>
 
 > [!IMPORTANT]
 > Virtroid is currently a **trusted-operator, single-VPS release candidate**.
 > It does not yet protect an active runtime from a compromised host or
 > privileged infrastructure operator.
 
-
+<br>
 
 ## Capabilities
-
+<br>
 
 | Area | Status | Included |
 | :--- | :---: | :--- |
@@ -71,15 +72,16 @@ runtime.
 | Confidential host isolation | ⛔ Not implemented | ReDroid currently executes inside the trusted VPS boundary |
 | Hardware attestation | ⛔ Not implemented | Design and proof-of-concept work only |
 
+<br>
 
 > [!NOTE]
 > Camera support is deliberate photo/video capture and media import. It is not
 > a live physical-camera device injected into Android's camera HAL.
 
-
+<br>
 
 ## Architecture
-
+<br>
 
 ```mermaid
 flowchart LR
@@ -112,7 +114,7 @@ flowchart LR
     ANDROID --> AGENT
     AGENT -->|Metadata only| EDGE
 ```
-
+<br>
 
 | Component | Responsibility |
 | :--- | :--- |
@@ -124,17 +126,16 @@ flowchart LR
 | ReDroid | Independently hosted Android runtime |
 | Runtime agent | Allowlisted notification metadata collection inside the guest |
 
-
+<br>
 ## Security Boundary
-
-
+<br>
 Virtroid protects the client-to-service path and stopped-runtime persistence, but the runtime host remains trusted. 
 A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.
 
-
+<br>
 ### Implemented controls
 
-
+<br>
 - P-256 device, node, capability, and callback signing
 - Timestamp, nonce, body-integrity, and replay validation
 - Runtime- and session-scoped capabilities with expiry
@@ -146,17 +147,17 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 - Falco and Suricata event collection with sanitized, account-scoped client delivery
 - Protected, offline VPS release builds with immutable image and deployment-tree verification
 
-
+<br>
 > [!CAUTION]
 > Virtroid must not currently be described as trustless, host-blind,
 > operator-blind, anonymous by architecture, confidential computing, or fully
 > end-to-end encrypted. Transport encryption protects data in transit and
 > snapshot encryption protects stopped-runtime files; neither makes an active
 > guest confidential from its host.
-
+<br>
 
 ## Repository map
-
+<br>
 | Path | Purpose |
 | :--- | :--- |
 | [`android-client/`](android-client/) | Android controller app, runtime agent, scrcpy integration, tests, and signing gates |
@@ -166,15 +167,16 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 | [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices |
 
-
+<br>
 > [!NOTE]
 > **Disclaimer**
 > Virtroid is under active development. Security properties, interfaces, schemas, and deployment procedures may change.
 > Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
 > deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
 
+<br>
 ## Current status
-
+<br>
 The Android client, Go control plane, runtime node, ReDroid guests, PostgreSQL,
 HAProxy edge, operator console, and host sensors are deployed on the active VPS.
 Physical-device acceptance has covered runtime lifecycle, encrypted viewing and
