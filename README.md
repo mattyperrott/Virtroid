@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD033 MD041 -->
 
-<p align="center">
-  <img src="android-client/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="Virtroid logo">
-</p>
+<img width="1788" height="944" alt="ezgif-8d1cadf478e6fb6d" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2" />
+
 
 <h1 align="center">Virtroid</h1>
 
@@ -41,10 +40,10 @@ network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.  
 
 
-&nbsp; > [!IMPORTANT]
-&nbsp; > Virtroid is currently a **trusted-operator, single-VPS release candidate**.
-&nbsp; > It does not yet protect an active runtime from a compromised host or
-&nbsp; > privileged infrastructure operator.
+> [!IMPORTANT]
+> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
+> It does not yet protect an active runtime from a compromised host or
+> privileged infrastructure operator.
 
 
 ## Capabilities
@@ -69,8 +68,6 @@ runtime.
 | Confidential host isolation | ⛔ Not implemented | ReDroid currently executes inside the trusted VPS boundary |
 | Hardware attestation | ⛔ Not implemented | Design and proof-of-concept work only |
 
-<br>
-
 > [!NOTE]
 > Camera support is deliberate photo/video capture and media import. It is not
 > a live physical-camera device injected into Android's camera HAL.
@@ -78,7 +75,6 @@ runtime.
 
 
 ## Architecture
-<br>
 
 ```mermaid
 flowchart LR
@@ -111,7 +107,6 @@ flowchart LR
     ANDROID --> AGENT
     AGENT -->|Metadata only| EDGE
 ```
-<br>
 
 | Component | Responsibility |
 | :--- | :--- |
@@ -143,17 +138,20 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 - Falco and Suricata event collection with sanitized, account-scoped client delivery
 - Protected, offline VPS release builds with immutable image and deployment-tree verification
 
-<br>
+
 > [!CAUTION]
 > Virtroid must not currently be described as trustless, host-blind,
 > operator-blind, anonymous by architecture, confidential computing, or fully
 > end-to-end encrypted. Transport encryption protects data in transit and
 > snapshot encryption protects stopped-runtime files; neither makes an active
 > guest confidential from its host.
+
 <br>
 
 ## Repository map
+
 <br>
+
 | Path | Purpose |
 | :--- | :--- |
 | [`android-client/`](android-client/) | Android controller app, runtime agent, scrcpy integration, tests, and signing gates |
@@ -163,12 +161,14 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 | [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices | 
 
+<br>
 
 > [!NOTE]
-> **Disclaimer**
+> **Disclaimer:**
 > Virtroid is under active development. Security properties, interfaces, schemas, and deployment procedures may change.
 > Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
-> deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations. 
+> deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
+
 <br>
 
 ## Current status
@@ -183,6 +183,10 @@ This is working release-candidate evidence—not a claim of complete production
 hardening or hostile multi-tenant isolation.
 
 ---
+
+<p align="center">
+  <img src="android-client/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="Virtroid logo">
+</p>
 
 <p align="center">
   <strong>Virtroid</strong><br>
