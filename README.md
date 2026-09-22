@@ -27,6 +27,12 @@
 
 ---
 
+> [!IMPORTANT]
+> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
+> It does not yet protect an active runtime from a compromised host or
+> privileged infrastructure operator.
+
+<br>
 
 ## What Virtroid does
 
@@ -35,13 +41,6 @@ an authenticated controller and encrypted viewer; applications, storage,
 network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.  
 
-
-> [!IMPORTANT]
-> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
-> It does not yet protect an active runtime from a compromised host or
-> privileged infrastructure operator.
-
-<br>
 
 ## Capabilities
 
@@ -176,10 +175,5 @@ hardening or hostile multi-tenant isolation.
 ---
 
 <p align="center">
-  <img src="android-client/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="Virtroid logo">
-</p>
-
-<p align="center">
-  <strong>Virtroid</strong><br>
-  Remote Android environments with explicit lifecycle control.
+  <img src="android-client/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="128" alt="Virtroid logo">
 </p>
