@@ -23,14 +23,15 @@
   <a href="#capabilities">Capabilities</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#security-boundary">Security</a> ·
-  <a href="https://virtroid.network/operator/">Operator console</a>
+  <a href="https://virtroid.network/demo/">Live App Demo</a> ·
 </p>
 
 <p align="center">
-  <img src="media/generated/virtroid-readme/virtroid-readme-hero.gif" width="960" alt="Animated Virtroid overview showing the Android welcome screen, runtime list, live viewer, remote runtime layer, and Observatory console">
+  <img src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/5956f7c1fe2301aa1d8534d6fb003f433c03e5ab/uploads/2026-09-22T15-34-49-354Z-5spyv0bqb.gif)" width="960" alt="Animated Virtroid overview showing the Android welcome screen, runtime list, live viewer, remote runtime layer, and Observatory console">
 </p>
 
 ---
+
 
 ## What Virtroid does
 
@@ -39,27 +40,6 @@ an authenticated controller and encrypted viewer; applications, storage,
 network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.
 
-<table>
-  <tr>
-    <td width="33%" valign="top">
-      <strong>Remote by design</strong><br><br>
-      Android workloads run on server infrastructure, not inside the controller phone.
-    </td>
-    <td width="33%" valign="top">
-      <strong>Explicit lifecycle</strong><br><br>
-      Create, start, stop, restore, restart, reset, or permanently delete each runtime.
-    </td>
-    <td width="33%" valign="top">
-      <strong>Security focused</strong><br><br>
-      Device-signed requests, scoped capabilities, encrypted sessions, and authenticated snapshots.
-    </td>
-  </tr>
-</table>
-
-> [!IMPORTANT]
-> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
-> It does not yet protect an active runtime from a compromised host or
-> privileged infrastructure operator.
 
 ## Current status
 
@@ -72,19 +52,12 @@ import, file delivery, idle cleanup, readiness, and security-event delivery.
 This is working release-candidate evidence—not a claim of complete production
 hardening or hostile multi-tenant isolation.
 
-### Runtime lifecycle
 
-```mermaid
-flowchart LR
-    A[Create identity] --> B[Create runtime]
-    B --> C[Start and connect]
-    C --> D[Stop and save]
-    D --> E{Next action}
-    E -->|Restore| C
-    E -->|New persona| B
-    E -->|Factory reset| B
-    E -->|Delete| F[Remove resources]
-```
+> [!IMPORTANT]
+> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
+> It does not yet protect an active runtime from a compromised host or
+> privileged infrastructure operator.
+
 
 ## Capabilities
 
@@ -107,9 +80,11 @@ flowchart LR
 | Confidential host isolation | ⛔ Not implemented | ReDroid currently executes inside the trusted VPS boundary |
 | Hardware attestation | ⛔ Not implemented | Design and proof-of-concept work only |
 
+
 > [!NOTE]
 > Camera support is deliberate photo/video capture and media import. It is not
 > a live physical-camera device injected into Android's camera HAL.
+
 
 ## Architecture
 
@@ -155,12 +130,10 @@ flowchart LR
 | ReDroid | Independently hosted Android runtime |
 | Runtime agent | Allowlisted notification metadata collection inside the guest |
 
-## Security boundary
+## Security Boundary
 
-Virtroid protects the client-to-service path and stopped-runtime persistence,
-but the runtime host remains trusted. A sufficiently privileged VPS
-administrator, compromised node agent, Docker controller, or host-level tool
-can inspect or alter a live Android runtime.
+Virtroid protects the client-to-service path and stopped-runtime persistence, but the runtime host remains trusted. 
+A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.
 
 ### Implemented controls
 
@@ -182,6 +155,7 @@ can inspect or alter a live Android runtime.
 > snapshot encryption protects stopped-runtime files; neither makes an active
 > guest confidential from its host.
 
+
 ## Repository map
 
 | Path | Purpose |
@@ -191,24 +165,15 @@ can inspect or alter a live Android runtime.
 | [`backend/cmd/`](backend/cmd/) | Control plane, node agent, administration, viewer encryption, and sensor entry points |
 | [`backend/internal/`](backend/internal/) | Identity, policy, persistence, lifecycle, security, and operator API logic |
 | [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
-| [`docs/android-client-ui-elements.md`](docs/android-client-ui-elements.md) | Screen-by-screen Android UI inventory |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices |
 
-## Roadmap
 
-- Live multi-node scheduling and acceptance
-- Searchable, durable trace storage and reporting
-- Broader lifecycle, cleanup, and storage fault injection
-- Stronger runtime isolation beyond the trusted ReDroid/VPS boundary
-- Hardware-backed attestation research
+> [!NOTE]
+> **Disclaimer**
+> Virtroid is under active development. Security properties, interfaces, schemas, and deployment procedures may change.
+> Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
+> deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
 
-## Disclaimer
-
-Virtroid is under active development. Security properties, interfaces, schemas,
-and deployment procedures may change. Do not use it for high-risk or
-production-sensitive workloads without independently reviewing the source,
-deployed configuration, threat model, recovery design, runtime-host trust, and
-storage limitations.
 
 ---
 
