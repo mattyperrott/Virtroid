@@ -20,11 +20,6 @@
 
 ## What Virtroid does
 
-> [!IMPORTANT]
-> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
-> It does not yet protect an active runtime from a compromised host or
-> privileged infrastructure operator.
-
 <br>
 
 Virtroid runs Android separately from the user's physical phone. The phone is an authenticated controller and encrypted viewer; applications, storage,
@@ -38,6 +33,13 @@ runtime.
   <a href="#security-boundary">Security</a> ·
   <a href="https://virtroid.network/demo/">Browser Emulated App Demo</a> ·
 </p>
+
+> [!IMPORTANT]
+> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
+> It does not yet protect an active runtime from a compromised host or
+> privileged infrastructure operator.
+
+<br>
 
 ## Capabilities
 
