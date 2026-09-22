@@ -60,7 +60,7 @@ func TestDemoRoutesAndAssets(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected demo asset status: %d", response.StatusCode)
 	}
-	if !strings.Contains(response.Header.Get("Cache-Control"), "immutable") {
+	if !strings.Contains(response.Header.Get("Cache-Control"), "must-revalidate") {
 		t.Fatalf("unexpected asset cache policy: %q", response.Header.Get("Cache-Control"))
 	}
 }
@@ -178,7 +178,7 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `src="../stream-bridge.js"`) {
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `src="../stream-bridge.js?v=20260922-2"`) {
 		t.Fatalf("allowed asset returned %d %q", response.StatusCode, body)
 	}
 	if cookies := response.Header.Values("Set-Cookie"); len(cookies) != 1 || !strings.Contains(cookies[0], "Path=/demo/device/") {

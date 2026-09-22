@@ -248,7 +248,7 @@ func newStreamProxy(target *url.URL, streamDevice string) http.Handler {
 		}
 		_ = response.Body.Close()
 		needle := []byte(`<script src="ws-scrcpy.umd.js"></script>`)
-		replacement := []byte(`<script src="../stream-bridge.js"></script>` + "\n    " + `<script src="ws-scrcpy.umd.js"></script>`)
+		replacement := []byte(`<script src="../stream-bridge.js?v=20260922-2"></script>` + "\n    " + `<script src="ws-scrcpy.umd.js"></script>`)
 		if !bytes.Contains(content, needle) {
 			return io.ErrUnexpectedEOF
 		}
@@ -330,7 +330,10 @@ func serveAsset(assets fs.FS, w http.ResponseWriter, r *http.Request) {
 	if path == "index.html" {
 		w.Header().Set("Cache-Control", "no-store")
 	} else {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		// Demo assets are intentionally served at stable human-readable paths.
+		// Require revalidation so a production release cannot strand visitors on
+		// an obsolete stream helper or UI bundle.
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 	}
 	http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(content))
 }
