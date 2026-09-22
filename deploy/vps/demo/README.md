@@ -9,8 +9,10 @@ Production invariants:
 - the dedicated handset runs the tested Android 12 image
   `redroid/redroid@sha256:a6c464bbedcf1dcb67dbf91f329fbb19bee5b50631f0ca6bda6ed7c41b0e64e2`;
 - the handset and gateway images are addressed by immutable SHA-256 digests;
-- ADB is bound to VPS loopback only;
-- the gateway is reachable by `virtroidd` on the private control network;
+- ADB is bound to VPS loopback only and reachable by `virtroidd` only on the
+  private demo network;
+- before exposing Start, `virtroidd` verifies Android has booted and returns the
+  signed APK to `WelcomeActivity` through fixed ADB commands;
 - `/demo/device/` allowlists the embed assets and stream WebSocket only;
 - one expiring HttpOnly Virtroid session owns the handset at a time;
 - the signed APK checksum is verified before installation.
@@ -24,3 +26,7 @@ The live host currently uses `virtroid-demo-handset`,
 `virtroid-demo-gateway`, `virtroid-demo-handset-data`, and
 `virtroid-demo-gateway-data`. The gateway reads the reviewed
 `ws-scrcpy-config.json`, which permits only the production hostname.
+
+The backend uses `DEMO_ADB_TARGET=demo-handset:5555` and joins the external
+`virtroid-demo` network. No ADB, shell, file-management, or gateway-admin route
+is forwarded through the public `/demo/` handler.

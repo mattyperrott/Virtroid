@@ -78,6 +78,7 @@ services:
       DEMO_STREAM_TARGET: ${DEMO_STREAM_TARGET:-}
       DEMO_STREAM_DEVICE: ${DEMO_STREAM_DEVICE:-}
       DEMO_SESSION_TTL: ${DEMO_SESSION_TTL:-8m}
+      DEMO_ADB_TARGET: ${DEMO_ADB_TARGET:-}
     ports:
       - "${HOST_API_BIND:-127.0.0.1}:8080:8080"
     mem_limit: "${VIRTROIDD_MEMORY_LIMIT:-512m}"
@@ -101,6 +102,7 @@ services:
       - app-egress
       - database
       - control
+      - demo
 
   virtnoded:
     image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
@@ -478,6 +480,9 @@ networks:
     internal: true
   edge-egress:
     driver: bridge
+  demo:
+    external: true
+    name: ${DEMO_NETWORK_NAME:-virtroid-demo}
 
 volumes:
   postgres-data:

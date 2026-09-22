@@ -1,11 +1,11 @@
 (() => {
   const startButton = document.querySelector("#start-demo");
   const endButton = document.querySelector("#end-demo");
+  const sessionCard = document.querySelector("#session-card");
   const sessionDetail = document.querySelector("#session-detail");
   const sessionClock = document.querySelector("#session-clock");
   const device = document.querySelector("#android-device");
   const placeholder = document.querySelector("#device-placeholder");
-  const deviceMessage = document.querySelector("#device-message");
   const stream = document.querySelector("#android-stream");
   const nodes = [...document.querySelectorAll(".node")];
   const paths = [...document.querySelectorAll(".path")];
@@ -49,34 +49,34 @@
   }
 
   function showReady() {
+    sessionCard.hidden = false;
     startButton.disabled = false;
     startButton.hidden = false;
     endButton.hidden = true;
     sessionDetail.textContent = "One visitor at a time · eight-minute sessions";
-    deviceMessage.textContent = "Ready when you are.";
     sessionClock.textContent = "08:00";
     setFlow(0);
   }
 
   function showBusy(availableAt) {
+    sessionCard.hidden = true;
     startButton.disabled = true;
-    startButton.hidden = false;
+    startButton.hidden = true;
     endButton.hidden = true;
     const ready = availableAt ? new Date(availableAt) : null;
     sessionDetail.textContent = ready && !Number.isNaN(ready.valueOf())
       ? `Expected back by ${ready.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
       : "Checking again automatically";
-    deviceMessage.textContent = "One live session at a time.";
-    setFlow(1);
+    setFlow(0);
   }
 
   function showOffline() {
+    sessionCard.hidden = true;
     startButton.disabled = true;
-    startButton.hidden = false;
+    startButton.hidden = true;
     endButton.hidden = true;
     sessionDetail.textContent = "The preview will enable automatically when Android is ready";
-    deviceMessage.textContent = "Waking remote Android…";
-    setFlow(1);
+    setFlow(0);
   }
 
   async function checkStatus() {
@@ -84,7 +84,7 @@
       const response = await request("api/status");
       if (!response.ok) throw new Error("status unavailable");
       const status = await response.json();
-      if (!status.configured) {
+      if (!status.configured || !status.ready) {
         showOffline();
       } else if (status.owned) {
         await beginSession();
@@ -99,9 +99,9 @@
   }
 
   async function beginSession() {
+    sessionCard.hidden = false;
     startButton.disabled = true;
     sessionDetail.textContent = "Establishing a low-latency browser stream";
-    deviceMessage.textContent = "Opening encrypted pixel stream…";
     setFlow(1);
 
     try {
@@ -109,6 +109,10 @@
       const payload = await response.json();
       if (response.status === 423) {
         showBusy(payload.available_at);
+        return;
+      }
+      if (response.status === 503) {
+        showOffline();
         return;
       }
       if (!response.ok || !payload.embed_url) throw new Error("stream unavailable");
@@ -128,25 +132,24 @@
     }
   }
 
-  function stopStream(message) {
+  function stopStream() {
     clearInterval(streamTimer);
     stream.removeAttribute("src");
     stream.hidden = true;
     placeholder.hidden = false;
     device.classList.remove("is-streaming");
-    deviceMessage.textContent = message;
     clearInterval(countdownTimer);
     expiresAt = 0;
   }
 
   async function endSession() {
     endButton.disabled = true;
-    stopStream("Resetting for the next visitor…");
+    stopStream();
     try {
       await request("api/session/end", { method: "POST", keepalive: true });
     } finally {
       endButton.disabled = false;
-      showReady();
+      await checkStatus();
     }
   }
 
