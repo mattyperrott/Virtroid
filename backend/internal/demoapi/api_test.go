@@ -1,11 +1,14 @@
 package demoapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +154,10 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed <- observedRequest{Path: r.URL.Path, Query: r.URL.RawQuery, Host: r.Host}
 		w.Header().Set("Set-Cookie", "ws_scrcpy_token=private; Path=/; SameSite=Strict; HttpOnly")
+		if r.URL.Path == "/ws-scrcpy.umd.js" {
+			_, _ = w.Write([]byte(`before,fitToScreen:!0,after`))
+			return
+		}
 		_, _ = w.Write([]byte(`<body><script src="ws-scrcpy.umd.js"></script><script src="embed.js"></script></body>`))
 	}))
 	defer upstream.Close()
@@ -178,7 +185,9 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `src="../stream-bridge.js?v=20260922-2"`) {
+	if response.StatusCode != http.StatusOK ||
+		!strings.Contains(string(body), `src="../stream-bridge.js?v=20260922-3"`) ||
+		!strings.Contains(string(body), `.control-buttons-list { display: none !important; }`) {
 		t.Fatalf("allowed asset returned %d %q", response.StatusCode, body)
 	}
 	if cookies := response.Header.Values("Set-Cookie"); len(cookies) != 1 || !strings.Contains(cookies[0], "Path=/demo/device/") {
@@ -194,6 +203,27 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("upstream did not receive the allowed asset request")
+	}
+
+	response, err = client.Get(server.URL + "/demo/device/ws-scrcpy.umd.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "fitToScreen:!1") || strings.Contains(string(body), "fitToScreen:!0") {
+		t.Fatalf("viewer bundle was not fixed-size patched: %d %q", response.StatusCode, body)
+	}
+	select {
+	case got := <-observed:
+		if got.Path != "/ws-scrcpy.umd.js" {
+			t.Fatalf("unexpected viewer bundle request: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upstream did not receive the viewer bundle request")
 	}
 
 	response, err = client.Get(server.URL + "/demo/device/api/settings/device?udid=demo-handset%3A5555")
@@ -240,6 +270,100 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("foreign handset settings returned %d, want %d", response.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestDemoSessionRequiresReadyWelcomeScreen(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	ready := false
+	server := httptest.NewServer(NewWithOptions(Options{
+		StreamTarget: upstream.URL,
+		StreamDevice: "demo-handset:5555",
+		SessionTTL:   time.Minute,
+		ReadyCheck: func(context.Context) (bool, string) {
+			if ready {
+				return true, "ready"
+			}
+			return false, "app_starting"
+		},
+	}))
+	defer server.Close()
+	client := clientWithCookies(t)
+
+	response, err := client.Get(server.URL + "/demo/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Ready bool `json:"ready"`
+	}
+	decodeJSON(t, response, &status)
+	if status.Ready {
+		t.Fatal("demo became startable before the welcome screen was ready")
+	}
+
+	response = postDemo(t, client, server.URL+"/demo/api/session", true)
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unready session returned %d, want %d", response.StatusCode, http.StatusServiceUnavailable)
+	}
+	response.Body.Close()
+
+	ready = true
+	response = postDemo(t, client, server.URL+"/demo/api/session", true)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("ready session returned %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	var session struct {
+		EmbedURL string `json:"embed_url"`
+	}
+	decodeJSON(t, response, &session)
+	for _, expected := range []string{"maxFps=30", "maxSize=1600", "bitrate=6000000"} {
+		if !strings.Contains(session.EmbedURL, expected) {
+			t.Fatalf("embed URL %q is missing %q", session.EmbedURL, expected)
+		}
+	}
+}
+
+func TestADBWelcomeReadinessStartsLauncher(t *testing.T) {
+	directory := t.TempDir()
+	marker := filepath.Join(directory, "welcome")
+	logPath := filepath.Join(directory, "commands")
+	script := filepath.Join(directory, "adb")
+	content := `#!/bin/sh
+printf '%s\n' "$*" >> "` + logPath + `"
+case "$*" in
+  "connect demo-handset:5555") echo "connected to demo-handset:5555" ;;
+  "-s demo-handset:5555 get-state") echo "device" ;;
+  "-s demo-handset:5555 shell getprop sys.boot_completed") echo "1" ;;
+  *"dumpsys activity activities"*)
+    if [ -f "` + marker + `" ]; then echo "mResumedActivity io.virtroid.client/.WelcomeActivity"; else echo "mResumedActivity com.android.launcher3/.QuickstepLauncher"; fi ;;
+  *"am start -W -n io.virtroid.client/.LauncherActivity"*) touch "` + marker + `" ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ready, state := adbWelcomeReadiness(
+		script,
+		"demo-handset:5555",
+		"io.virtroid.client",
+		"io.virtroid.client/.LauncherActivity",
+		"io.virtroid.client/.WelcomeActivity",
+	)(context.Background())
+	if !ready || state != "ready" {
+		t.Fatalf("readiness = %v %q, want true ready", ready, state)
+	}
+	commands, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(commands), "am force-stop io.virtroid.client") ||
+		!strings.Contains(string(commands), "am start -W -n io.virtroid.client/.LauncherActivity") {
+		t.Fatalf("welcome reset commands missing:\n%s", commands)
 	}
 }
 
