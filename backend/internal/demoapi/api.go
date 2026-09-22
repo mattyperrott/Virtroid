@@ -379,14 +379,19 @@ func newStreamProxy(target *url.URL, streamDevice string) http.Handler {
 				return err
 			}
 			_ = response.Body.Close()
-			needle := []byte("fitToScreen:!0")
-			if bytes.Count(content, needle) != 1 {
-				return io.ErrUnexpectedEOF
+			patches := [][2][]byte{
+				{[]byte("fitToScreen:!0"), []byte("fitToScreen:!1")},
+				{[]byte("m6.start(l,void 0,!0,u,t"), []byte("m6.start(l,void 0,!1,u,t")},
 			}
 			// The upstream public facade otherwise replaces the requested 720x1600
 			// stream size with the small iframe's CSS viewport. Keep the explicit
 			// maxSize/bitrate/FPS request so the browser receives the native image.
-			content = bytes.Replace(content, needle, []byte("fitToScreen:!1"), 1)
+			for _, patch := range patches {
+				if bytes.Count(content, patch[0]) != 1 {
+					return io.ErrUnexpectedEOF
+				}
+				content = bytes.Replace(content, patch[0], patch[1], 1)
+			}
 			setResponseBody(response, content)
 			return nil
 		}
