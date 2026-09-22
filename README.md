@@ -23,11 +23,11 @@
   <a href="#capabilities">Capabilities</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#security-boundary">Security</a> ·
-  <a href="https://virtroid.network/demo/">Live App Demo</a> ·
+  <a href="https://virtroid.network/demo/">Live Emulated App Demo</a> ·
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/5956f7c1fe2301aa1d8534d6fb003f433c03e5ab/uploads/2026-09-22T15-34-49-354Z-5spyv0bqb.gif)" width="960" alt="Animated Virtroid overview showing the Android welcome screen, runtime list, live viewer, remote runtime layer, and Observatory console">
+  <img src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/5956f7c1fe2301aa1d8534d6fb003f433c03e5ab/uploads/2026-09-22T15-34-49-354Z-5spyv0bqb.gif" width="960" alt="Animated Virtroid overview showing the Android welcome screen, runtime list, live viewer, remote runtime layer, and Observatory console">
 </p>
 
 ---
@@ -41,17 +41,6 @@ network identity, and lifecycle state remain inside a remotely hosted ReDroid
 runtime.
 
 
-## Current status
-
-The Android client, Go control plane, runtime node, ReDroid guests, PostgreSQL,
-HAProxy edge, operator console, and host sensors are deployed on the active VPS.
-Physical-device acceptance has covered runtime lifecycle, encrypted viewing and
-reconnection, audio, demand-activated microphone input, physical-camera photo
-import, file delivery, idle cleanup, readiness, and security-event delivery.
-
-This is working release-candidate evidence—not a claim of complete production
-hardening or hostile multi-tenant isolation.
-
 
 > [!IMPORTANT]
 > Virtroid is currently a **trusted-operator, single-VPS release candidate**.
@@ -59,7 +48,9 @@ hardening or hostile multi-tenant isolation.
 > privileged infrastructure operator.
 
 
+
 ## Capabilities
+
 
 | Area | Status | Included |
 | :--- | :---: | :--- |
@@ -86,7 +77,9 @@ hardening or hostile multi-tenant isolation.
 > a live physical-camera device injected into Android's camera HAL.
 
 
+
 ## Architecture
+
 
 ```mermaid
 flowchart LR
@@ -120,6 +113,7 @@ flowchart LR
     AGENT -->|Metadata only| EDGE
 ```
 
+
 | Component | Responsibility |
 | :--- | :--- |
 | Android client | Identity, onboarding, runtime controls, local security, viewer, media capture, and notification display |
@@ -130,12 +124,16 @@ flowchart LR
 | ReDroid | Independently hosted Android runtime |
 | Runtime agent | Allowlisted notification metadata collection inside the guest |
 
+
 ## Security Boundary
+
 
 Virtroid protects the client-to-service path and stopped-runtime persistence, but the runtime host remains trusted. 
 A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.
 
+
 ### Implemented controls
+
 
 - P-256 device, node, capability, and callback signing
 - Timestamp, nonce, body-integrity, and replay validation
@@ -147,6 +145,7 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 - Loopback-bound services, deny-by-default firewalling, AppArmor, Auditd, Fail2ban, and unattended security updates
 - Falco and Suricata event collection with sanitized, account-scoped client delivery
 - Protected, offline VPS release builds with immutable image and deployment-tree verification
+
 
 > [!CAUTION]
 > Virtroid must not currently be described as trustless, host-blind,
@@ -174,6 +173,16 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 > Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
 > deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
 
+## Current status
+
+The Android client, Go control plane, runtime node, ReDroid guests, PostgreSQL,
+HAProxy edge, operator console, and host sensors are deployed on the active VPS.
+Physical-device acceptance has covered runtime lifecycle, encrypted viewing and
+reconnection, audio, demand-activated microphone input, physical-camera photo
+import, file delivery, idle cleanup, readiness, and security-event delivery.
+
+This is working release-candidate evidence—not a claim of complete production
+hardening or hostile multi-tenant isolation.
 
 ---
 
