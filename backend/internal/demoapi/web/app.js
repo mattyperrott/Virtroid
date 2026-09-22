@@ -209,13 +209,6 @@
     if (document.visibilityState === "visible" && !expiresAt) checkStatus();
   });
 
-  const clock = document.querySelector("#demo-clock");
-  function updateClock() {
-    clock.textContent = `${new Date().toISOString().slice(11, 19)} UTC`;
-  }
-  updateClock();
-  window.setInterval(updateClock, 1000);
-
   statusTimer = window.setInterval(() => {
     if (!expiresAt) checkStatus();
   }, 15000);
