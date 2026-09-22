@@ -156,14 +156,6 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 
 <br>
 
-> [!NOTE]
-> **Disclaimer:**
-> Virtroid is under active development. Security properties, interfaces, schemas, and deployment procedures may change.
-> Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
-> deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
-
-<br>
-
 ## Current status
 
 The Android client, Go control plane, runtime node, ReDroid guests, PostgreSQL,
@@ -173,7 +165,13 @@ reconnection, audio, demand-activated microphone input, physical-camera photo
 import, file delivery, idle cleanup, readiness, and security-event delivery.
 
 This is working release-candidate evidence—not a claim of complete production
-hardening or hostile multi-tenant isolation.
+hardening or hostile multi-tenant isolation. 
+
+> [!NOTE]
+> **Disclaimer:**
+> Virtroid is under active development. Security properties, interfaces, schemas, and deployment procedures may change.
+> Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
+> deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
 
 ---
 
