@@ -15,6 +15,7 @@
   let expiresAt = 0;
   let countdownTimer;
   let statusTimer;
+  let streamTimer;
 
   function request(path, options = {}) {
     return fetch(path, {
@@ -135,10 +136,10 @@
       startButton.hidden = true;
       endButton.hidden = false;
       sessionStatus.textContent = "Live Android session reserved";
-      sessionDetail.textContent = "Tap inside the handset · keyboard input supported";
-      interactionKicker.textContent = "LIVE ANDROID";
-      interactionTitle.textContent = "Virtroid APK connected";
-      setFlow(3);
+      sessionDetail.textContent = "Opening the handset pixel stream";
+      interactionKicker.textContent = "CONNECTING";
+      interactionTitle.textContent = "Starting Virtroid APK";
+      setFlow(2);
       startCountdown();
     } catch {
       showOffline();
@@ -146,6 +147,7 @@
   }
 
   function stopStream(message) {
+    clearInterval(streamTimer);
     stream.removeAttribute("src");
     stream.hidden = true;
     placeholder.hidden = false;
@@ -170,9 +172,37 @@
   endButton.addEventListener("click", endSession);
 
   stream.addEventListener("load", () => {
-    if (!stream.hidden && stream.getAttribute("src")) {
-      interactionTitle.textContent = "Virtroid APK connected";
-    }
+    if (stream.hidden || !stream.getAttribute("src")) return;
+    clearInterval(streamTimer);
+    const startedAt = Date.now();
+    streamTimer = window.setInterval(() => {
+      try {
+        const status = stream.contentDocument?.querySelector("#status");
+        const message = status?.textContent || "";
+        if (message.startsWith("connected") || status?.classList.contains("hidden")) {
+          clearInterval(streamTimer);
+          sessionDetail.textContent = "Tap inside the handset · keyboard input supported";
+          interactionKicker.textContent = "LIVE ANDROID";
+          interactionTitle.textContent = "Virtroid APK connected";
+          setFlow(3);
+        } else if (message.startsWith("error") || message.startsWith("disconnected")) {
+          clearInterval(streamTimer);
+          sessionStatus.textContent = "Android stream needs attention";
+          sessionDetail.textContent = "End the session and try again";
+          interactionKicker.textContent = "STREAM ERROR";
+          interactionTitle.textContent = message;
+          setFlow(1);
+        } else if (Date.now() - startedAt > 20000) {
+          clearInterval(streamTimer);
+          sessionStatus.textContent = "Android stream timed out";
+          sessionDetail.textContent = "End the session and try again";
+          interactionTitle.textContent = "Handset did not respond";
+          setFlow(1);
+        }
+      } catch {
+        // The viewer is intentionally same-origin; keep waiting during load.
+      }
+    }, 250);
   });
 
   document.addEventListener("visibilitychange", () => {

@@ -144,10 +144,16 @@ h1 em { display: inline-block; color: var(--lime); font-style: normal; }
 @media (max-height: 760px) and (min-width: 761px) {
   :root { --phone-w: clamp(220px, 21vw, 290px); }
   .demo-shell { padding-top: 22px; padding-bottom: 58px; }
-  h1 { font-size: clamp(42px, 4.8vw, 64px); }
-  .lede { margin: 19px 0 22px; line-height: 1.48; }
-  .journey { margin-bottom: 18px; }
-  .journey li { min-height: 47px; }
+  h1 { font-size: clamp(40px, 4.25vw, 58px); }
+  .lede { margin: 15px 0 16px; font-size: 14px; line-height: 1.42; }
+  .journey { grid-template-columns: repeat(3, 1fr); margin-bottom: 13px; border-bottom: 1px solid var(--line); }
+  .journey li { min-height: 42px; grid-template-columns: 22px 1fr; gap: 5px; padding-right: 6px; border-bottom: 0; }
+  .journey li + li { padding-left: 7px; border-left: 1px solid var(--line); }
+  .journey small, .journey i { display: none; }
+  .journey b { font-size: 10px; }
+  .session-card { padding: 13px; }
+  .session-card > div { margin-bottom: 10px; }
+  .session-card button { min-height: 42px; }
   .device-composition { min-height: calc(100vh - 142px); }
 }
 
