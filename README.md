@@ -16,7 +16,7 @@
 
 <img width="1788" height="944" alt="ezgif-8d1cadf478e6fb6d" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2" /> 
 
-<br><br>
+---
 
 ## What VirtRoid Does 
 
