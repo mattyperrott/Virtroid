@@ -135,7 +135,7 @@ func NewWithOptions(options Options) http.Handler {
 	})
 
 	if target, parseErr := url.Parse(options.StreamTarget); parseErr == nil && target.Scheme != "" && target.Host != "" {
-		proxy := newStreamProxy(target)
+		proxy := newStreamProxy(target, options.StreamDevice)
 		mux.Handle("GET /demo/device/", sessions.requireSession(proxy))
 	}
 
@@ -215,7 +215,7 @@ func (s *sessionManager) requestOwnsLocked(r *http.Request) bool {
 	return err == nil && cookie.Value != "" && cookie.Value == s.token
 }
 
-func newStreamProxy(target *url.URL) http.Handler {
+func newStreamProxy(target *url.URL, streamDevice string) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
 	proxy.Director = func(r *http.Request) {
@@ -275,8 +275,16 @@ func newStreamProxy(target *url.URL) http.Handler {
 		if tail == "stream" {
 			if !headerContainsToken(r.Header, "Connection", "upgrade") ||
 				!strings.EqualFold(r.Header.Get("Upgrade"), "websocket") ||
-				r.URL.Query().Get("action") != "stream" {
+				r.URL.Query().Get("action") != "stream" ||
+				r.URL.Query().Get("udid") != streamDevice {
 				http.Error(w, "stream upgrade required", http.StatusBadRequest)
+				return
+			}
+		} else if tail == "api/capabilities" {
+			// Read-only capability discovery used while the embed client starts.
+		} else if tail == "api/settings/device" || tail == "api/devices/screen-state" {
+			if r.URL.Query().Get("udid") != streamDevice {
+				http.Error(w, "unknown demo handset", http.StatusForbidden)
 				return
 			}
 		} else if !allowedStatic[tail] {

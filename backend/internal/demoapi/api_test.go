@@ -196,6 +196,23 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 		t.Fatal("upstream did not receive the allowed asset request")
 	}
 
+	response, err = client.Get(server.URL + "/demo/device/api/settings/device?udid=demo-handset%3A5555")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("demo handset settings returned %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	select {
+	case got := <-observed:
+		if got.Path != "/api/settings/device" || got.Query != "udid=demo-handset%3A5555" {
+			t.Fatalf("unexpected settings request: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upstream did not receive the settings request")
+	}
+
 	for _, path := range []string{"api/config", "", "index.html", "shell"} {
 		response, err = client.Get(server.URL + "/demo/device/" + path)
 		if err != nil {
@@ -207,13 +224,22 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 		}
 	}
 
-	response, err = client.Get(server.URL + "/demo/device/stream?action=stream")
+	response, err = client.Get(server.URL + "/demo/device/stream?action=stream&udid=demo-handset%3A5555")
 	if err != nil {
 		t.Fatal(err)
 	}
 	response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("non-WebSocket stream returned %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+
+	response, err = client.Get(server.URL + "/demo/device/api/settings/device?udid=another-handset%3A5555")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("foreign handset settings returned %d, want %d", response.StatusCode, http.StatusForbidden)
 	}
 }
 
