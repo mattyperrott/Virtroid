@@ -24,7 +24,8 @@
 
   function DemoWebSocket(address, protocols) {
     const target = new URL(address, window.location.href);
-    if (target.origin === window.location.origin && target.pathname === "/" && target.searchParams.get("action") === "stream") {
+    if (target.host === window.location.host && target.pathname === "/" && target.searchParams.get("action") === "stream") {
+      target.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       target.pathname = "/demo/device/stream";
     }
     return protocols === undefined
