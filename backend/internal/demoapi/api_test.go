@@ -155,7 +155,7 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 		observed <- observedRequest{Path: r.URL.Path, Query: r.URL.RawQuery, Host: r.Host}
 		w.Header().Set("Set-Cookie", "ws_scrcpy_token=private; Path=/; SameSite=Strict; HttpOnly")
 		if r.URL.Path == "/ws-scrcpy.umd.js" {
-			_, _ = w.Write([]byte(`before,fitToScreen:!0,after`))
+			_, _ = w.Write([]byte(`before,fitToScreen:!0,m6.start(l,void 0,!0,u,t,after`))
 			return
 		}
 		_, _ = w.Write([]byte(`<body><script src="ws-scrcpy.umd.js"></script><script src="embed.js"></script></body>`))
@@ -214,7 +214,9 @@ func TestDemoProxyAllowlistAndRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "fitToScreen:!1") || strings.Contains(string(body), "fitToScreen:!0") {
+	if response.StatusCode != http.StatusOK ||
+		!strings.Contains(string(body), "fitToScreen:!1") || strings.Contains(string(body), "fitToScreen:!0") ||
+		!strings.Contains(string(body), "m6.start(l,void 0,!1,u,t") || strings.Contains(string(body), "m6.start(l,void 0,!0,u,t") {
 		t.Fatalf("viewer bundle was not fixed-size patched: %d %q", response.StatusCode, body)
 	}
 	select {
