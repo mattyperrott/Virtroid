@@ -142,19 +142,28 @@ h1 em { display: inline-block; color: var(--lime); font-style: normal; }
 }
 
 @media (max-height: 760px) and (min-width: 761px) {
-  :root { --phone-w: clamp(220px, 21vw, 290px); }
-  .demo-shell { padding-top: 22px; padding-bottom: 58px; }
-  h1 { font-size: clamp(40px, 4.25vw, 58px); }
-  .lede { margin: 15px 0 16px; font-size: 14px; line-height: 1.42; }
-  .journey { grid-template-columns: repeat(3, 1fr); margin-bottom: 13px; border-bottom: 1px solid var(--line); }
-  .journey li { min-height: 42px; grid-template-columns: 22px 1fr; gap: 5px; padding-right: 6px; border-bottom: 0; }
+  :root { --phone-w: clamp(190px, 16vw, 215px); }
+  .site-header { height: 66px; }
+  .demo-shell { min-height: calc(100vh - 108px); padding-top: 12px; padding-bottom: 50px; }
+  .eyebrow { margin-bottom: 12px; }
+  h1 { font-size: clamp(36px, 3.8vw, 50px); line-height: .91; }
+  .lede { margin: 9px 0 11px; font-size: 12px; line-height: 1.38; }
+  .journey { grid-template-columns: repeat(3, 1fr); margin-bottom: 9px; border-bottom: 1px solid var(--line); }
+  .journey li { min-height: 34px; grid-template-columns: 20px 1fr; gap: 4px; padding-right: 5px; border-bottom: 0; }
   .journey li + li { padding-left: 7px; border-left: 1px solid var(--line); }
   .journey small, .journey i { display: none; }
-  .journey b { font-size: 10px; }
-  .session-card { padding: 13px; }
-  .session-card > div { margin-bottom: 10px; }
-  .session-card button { min-height: 42px; }
-  .device-composition { min-height: calc(100vh - 142px); }
+  .journey b { font-size: 9px; }
+  .session-card { padding: 10px; }
+  .session-card > div { gap: 3px; margin-bottom: 7px; }
+  .session-card strong { font-size: 12px; }
+  .session-card button { min-height: 36px; font-size: 11px; }
+  .session-card p { margin-top: 7px; font-size: 8px; }
+  .device-composition { min-height: calc(100vh - 116px); }
+  .system-map { padding: 15px; }
+  .node { min-height: 53px; }
+  .path { height: 13px; }
+  .telemetry { margin-top: 12px; }
+  .demo-disclosure { margin-top: 11px; font-size: 9px; line-height: 1.4; }
 }
 
 @media (max-width: 760px) {
