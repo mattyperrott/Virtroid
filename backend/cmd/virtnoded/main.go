@@ -1511,6 +1511,14 @@ func (n *nodeAgent) reconcileLoop(ctx context.Context) {
 	ticker := time.NewTicker(n.cfg.ReconcileInterval)
 	defer ticker.Stop()
 
+	// Both passes run on this goroutine, so a runtime is never reconciled twice at once.
+	var transitions <-chan time.Time
+	if n.cfg.TransitionPollInterval > 0 && n.cfg.TransitionPollInterval < n.cfg.ReconcileInterval {
+		transitionTicker := time.NewTicker(n.cfg.TransitionPollInterval)
+		defer transitionTicker.Stop()
+		transitions = transitionTicker.C
+	}
+
 	runNodeBackgroundIteration("reconcile", func() { n.reconcileOnce(ctx) })
 
 	for {
@@ -1519,7 +1527,47 @@ func (n *nodeAgent) reconcileLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			runNodeBackgroundIteration("reconcile", func() { n.reconcileOnce(ctx) })
+		case <-transitions:
+			runNodeBackgroundIteration("reconcile-transitions", func() { n.reconcileTransitionsOnce(ctx) })
 		}
+	}
+}
+
+// reconcileTransitionsOnce reconciles only runtimes that are starting or
+// stopping. Without it a start request waits up to a full reconcile interval to
+// be picked up, and again to notice that Android has finished booting.
+func (n *nodeAgent) reconcileTransitionsOnce(ctx context.Context) {
+	assignments, err := n.fetchAssignments(ctx)
+	if err != nil {
+		// The full reconcile pass logs and counts fetch failures.
+		return
+	}
+	n.reconcileAssignments(ctx, transitioningAssignments(assignments))
+}
+
+func transitioningAssignments(assignments []runtimeAssignment) []runtimeAssignment {
+	var transitioning []runtimeAssignment
+	for _, runtime := range assignments {
+		if runtimeIsTransitioning(runtime) {
+			transitioning = append(transitioning, runtime)
+		}
+	}
+	return transitioning
+}
+
+func runtimeIsTransitioning(runtime runtimeAssignment) bool {
+	if runtime.WipeRequested || runtime.CleanupPending {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(runtime.Status))
+	connection := strings.ToLower(strings.TrimSpace(runtime.ConnectionStatus))
+	switch strings.ToLower(strings.TrimSpace(runtime.DesiredState)) {
+	case "running":
+		return status == "starting" || (status == "running" && connection != "online")
+	case "stopped":
+		return status == "starting" || status == "running" || status == "stopping"
+	default:
+		return false
 	}
 }
 
@@ -1583,7 +1631,11 @@ func (n *nodeAgent) reconcileOnce(ctx context.Context) {
 		log.Printf("fetch assignments: %v", err)
 		return
 	}
+	n.reconcileAssignments(ctx, assignments)
+	n.countMetric("virtroid_node_reconcile_total", "success")
+}
 
+func (n *nodeAgent) reconcileAssignments(ctx context.Context, assignments []runtimeAssignment) {
 	for _, runtime := range assignments {
 		if err := n.reconcileRuntime(ctx, runtime); err != nil {
 			n.countMetric("virtroid_node_runtime_reconcile_total", "failure")
@@ -1600,7 +1652,6 @@ func (n *nodeAgent) reconcileOnce(ctx context.Context) {
 		}
 		n.countMetric("virtroid_node_runtime_reconcile_total", "success")
 	}
-	n.countMetric("virtroid_node_reconcile_total", "success")
 }
 
 func (n *nodeAgent) countMetric(name, result string) {
@@ -2647,11 +2698,13 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 			}
 		}()
 	}
-	targetFPS := 15
+	// 15 fps put a 67 ms frame and roughly 130-200 ms of Android's render
+	// pipeline in front of every touch. At 800x1600, 30 fps measured ~3 cores
+	// while the screen animates (vs ~1.4 at 15 fps) and nothing when it is still.
+	targetFPS := 30
 	gpuMode := "guest"
 	if gpuAccelerationAvailable() {
 		gpuMode = "auto"
-		targetFPS = 30
 	}
 	cmd := []string{
 		"androidboot.use_memfd=1",

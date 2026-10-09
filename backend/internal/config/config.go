@@ -75,6 +75,7 @@ type NodeConfig struct {
 	ViewerCryptPath               string
 	HeartbeatInterval             time.Duration
 	ReconcileInterval             time.Duration
+	TransitionPollInterval        time.Duration
 	BlobPreflightInterval         time.Duration
 	RuntimeRoot                   string
 	MinFreeDiskBytes              int64
@@ -115,7 +116,7 @@ func LoadServer() ServerConfig {
 	runtimeLogRetention := parseEnvDuration("RUNTIME_LOG_RETENTION", 30*24*time.Hour)
 	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
 	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
-	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 3*time.Minute)
+	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 15*time.Minute)
 	appCatalogSyncInterval := parseEnvDuration("APP_CATALOG_SYNC_INTERVAL", 12*time.Hour)
 	appCatalogSyncMaxApps, err := parseEnvInt("APP_CATALOG_SYNC_MAX_APPS", 1500)
 	if err != nil {
@@ -181,6 +182,13 @@ func LoadNode() NodeConfig {
 	if err != nil {
 		reconcileInterval = defaultReconcile
 	}
+	// Runtimes that are starting or stopping are re-checked on this shorter
+	// interval so start requests and finished boots are noticed promptly. 0 disables.
+	defaultTransitionPoll, _ := time.ParseDuration("2s")
+	transitionPollInterval, err := time.ParseDuration(envOrDefault("NODE_TRANSITION_POLL_INTERVAL", "2s"))
+	if err != nil || transitionPollInterval < 0 {
+		transitionPollInterval = defaultTransitionPoll
+	}
 	blobPreflightInterval, err := time.ParseDuration(envOrDefault("NODE_BLOB_PREFLIGHT_INTERVAL", "5m"))
 	if err != nil {
 		blobPreflightInterval = defaultBlobPreflight
@@ -237,6 +245,7 @@ func LoadNode() NodeConfig {
 		ViewerCryptPath:               envOrDefault("NODE_VIEWER_CRYPT_PATH", "/usr/local/bin/virtroid-viewercrypt"),
 		HeartbeatInterval:             heartbeatInterval,
 		ReconcileInterval:             reconcileInterval,
+		TransitionPollInterval:        transitionPollInterval,
 		BlobPreflightInterval:         blobPreflightInterval,
 		RuntimeRoot:                   envOrDefault("NODE_RUNTIME_ROOT", "/srv/virtroid/runtimes"),
 		MinFreeDiskBytes:              minFreeDiskBytes,
