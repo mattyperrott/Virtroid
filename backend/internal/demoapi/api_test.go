@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -370,6 +371,87 @@ esac
 		!strings.Contains(string(commands), "am start -W -n io.virtroid.client/.LauncherActivity") {
 		t.Fatalf("welcome reset commands missing:\n%s", commands)
 	}
+	if !strings.Contains(string(commands), "shell input keyevent KEYCODE_WAKEUP") {
+		t.Fatalf("readiness did not wake the handset:\n%s", commands)
+	}
+}
+
+func TestDemoStatusDoesNotWakeSleepingHandset(t *testing.T) {
+	var prepares atomic.Int32
+	server := httptest.NewServer(NewWithOptions(Options{
+		StreamTarget: "http://127.0.0.1:1",
+		StreamDevice: "demo-handset:5555",
+		SessionTTL:   time.Minute,
+		ReadyCheck: func(context.Context) (bool, string) {
+			prepares.Add(1)
+			return true, "ready"
+		},
+		Reachable: func(context.Context) (bool, string) { return true, "ready" },
+	}))
+	defer server.Close()
+	client := clientWithCookies(t)
+
+	response, err := client.Get(server.URL + "/demo/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Ready bool `json:"ready"`
+	}
+	decodeJSON(t, response, &status)
+	if !status.Ready {
+		t.Fatal("reachable handset was not reported ready")
+	}
+	if prepares.Load() != 0 {
+		t.Fatalf("status poll ran the waking readiness check %d times", prepares.Load())
+	}
+
+	response = postDemo(t, client, server.URL+"/demo/api/session", true)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || prepares.Load() != 1 {
+		t.Fatalf("session start = %d with %d readiness checks, want 200 with 1", response.StatusCode, prepares.Load())
+	}
+}
+
+func TestDemoHandsetSleepsOnlyWhileIdle(t *testing.T) {
+	var sleeps atomic.Int32
+	server := httptest.NewServer(NewWithOptions(Options{
+		StreamTarget:   "http://127.0.0.1:1",
+		StreamDevice:   "demo-handset:5555",
+		SessionTTL:     time.Minute,
+		ReadyCheck:     func(context.Context) (bool, string) { return true, "ready" },
+		Sleep:          func(context.Context) error { sleeps.Add(1); return nil },
+		IdleSleepAfter: time.Second,
+	}))
+	defer server.Close()
+	client := clientWithCookies(t)
+
+	waitFor := func(want int32) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for sleeps.Load() < want && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if got := sleeps.Load(); got != want {
+			t.Fatalf("handset slept %d times, want %d", got, want)
+		}
+	}
+
+	waitFor(1)
+
+	response := postDemo(t, client, server.URL+"/demo/api/session", true)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("session start returned %d", response.StatusCode)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if got := sleeps.Load(); got != 1 {
+		t.Fatalf("handset slept %d times during an active session, want 1", got)
+	}
+
+	response = postDemo(t, client, server.URL+"/demo/api/session/end", true)
+	response.Body.Close()
+	waitFor(2)
 }
 
 func TestSecureCookieBehindHTTPSProxy(t *testing.T) {

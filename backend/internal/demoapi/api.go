@@ -24,6 +24,9 @@ const (
 	demoRequestHeader = "X-Virtroid-Demo"
 	defaultSessionTTL = 8 * time.Minute
 	defaultReadyCache = 4 * time.Second
+	// The handset sleeps this long after the last demo activity. Awake on the
+	// animated welcome screen it costs well over a core of software rendering.
+	defaultIdleSleepAfter = 20 * time.Second
 )
 
 //go:embed web
@@ -34,7 +37,16 @@ type Options struct {
 	StreamTarget string
 	StreamDevice string
 	SessionTTL   time.Duration
-	ReadyCheck   func(context.Context) (bool, string)
+	// ReadyCheck wakes the handset and brings it to the welcome screen; it runs
+	// when a visitor starts a session.
+	ReadyCheck func(context.Context) (bool, string)
+	// Reachable is the side-effect-free check behind the public status poll, so
+	// visitors who only open the page do not wake a sleeping handset. When nil,
+	// the status poll uses ReadyCheck.
+	Reachable func(context.Context) (bool, string)
+	// Sleep turns the handset's screen off while no session is active.
+	Sleep          func(context.Context) error
+	IdleSleepAfter time.Duration
 }
 
 // New returns the public Virtroid interactive demo. The browser gateway stays
@@ -59,6 +71,8 @@ func New() http.Handler {
 			"io.virtroid.client/.LauncherActivity",
 			"io.virtroid.client/.WelcomeActivity",
 		)
+		options.Reachable = adbHandsetReachable("/usr/bin/adb", adbTarget)
+		options.Sleep = adbHandsetSleep("/usr/bin/adb", adbTarget)
 	}
 	return NewWithOptions(options)
 }
@@ -73,8 +87,19 @@ func NewWithOptions(options Options) http.Handler {
 		options.SessionTTL = defaultSessionTTL
 	}
 
-	sessions := &sessionManager{ttl: options.SessionTTL}
+	if options.IdleSleepAfter <= 0 {
+		options.IdleSleepAfter = defaultIdleSleepAfter
+	}
+
+	sessions := &sessionManager{ttl: options.SessionTTL, lastActivity: time.Now()}
 	readiness := &readinessGate{check: options.ReadyCheck, ttl: defaultReadyCache}
+	statusReadiness := readiness
+	if options.Reachable != nil {
+		statusReadiness = &readinessGate{check: options.Reachable, ttl: defaultReadyCache}
+	}
+	if options.Sleep != nil {
+		go sleepWhenIdle(sessions, options.Sleep, options.IdleSleepAfter)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /demo", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/demo/", http.StatusPermanentRedirect)
@@ -93,7 +118,7 @@ func NewWithOptions(options Options) http.Handler {
 			case !available:
 				readyState = "session_busy"
 			default:
-				ready, readyState = readiness.status(r.Context(), false)
+				ready, readyState = statusReadiness.status(r.Context(), false)
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -115,6 +140,7 @@ func NewWithOptions(options Options) http.Handler {
 			return
 		}
 		if !sessions.owns(r) {
+			sessions.noteActivity()
 			ready, state := readiness.status(r.Context(), true)
 			if !ready {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -186,6 +212,53 @@ type sessionManager struct {
 	ttl       time.Duration
 	token     string
 	expiresAt time.Time
+	// lastActivity is the latest start attempt or session end; asleep records
+	// whether the handset was put to sleep since then.
+	lastActivity time.Time
+	asleep       bool
+}
+
+// noteActivity marks the handset as in use, so the idle loop does not put it to
+// sleep while a visitor's start request is waking it.
+func (s *sessionManager) noteActivity() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastActivity = time.Now()
+	s.asleep = false
+}
+
+// shouldSleep reports whether the handset has been idle for at least idleFor
+// and is not already asleep; when it returns true the caller must put it to sleep.
+func (s *sessionManager) shouldSleep(idleFor time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireLocked()
+	if s.token != "" || s.asleep || time.Since(s.lastActivity) < idleFor {
+		return false
+	}
+	s.asleep = true
+	return true
+}
+
+func sleepWhenIdle(sessions *sessionManager, sleep func(context.Context) error, idleFor time.Duration) {
+	interval := idleFor / 4
+	if interval < time.Second {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if !sessions.shouldSleep(idleFor) {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := sleep(ctx); err != nil {
+			sessions.mu.Lock()
+			sessions.asleep = false
+			sessions.mu.Unlock()
+		}
+		cancel()
+	}
 }
 
 func (s *sessionManager) owns(r *http.Request) bool {
@@ -229,6 +302,7 @@ func (s *sessionManager) release(r *http.Request) {
 	if s.requestOwnsLocked(r) {
 		s.token = ""
 		s.expiresAt = time.Time{}
+		s.lastActivity = time.Now()
 	}
 }
 
@@ -250,6 +324,7 @@ func (s *sessionManager) expireLocked() {
 	if s.token != "" && !s.expiresAt.After(time.Now().UTC()) {
 		s.token = ""
 		s.expiresAt = time.Time{}
+		s.lastActivity = time.Now()
 	}
 }
 
@@ -297,8 +372,21 @@ func adbWelcomeReadiness(adbPath, target, packageName, launcherActivity, welcome
 		if booted, err := runADB(ctx, adbPath, "-s", target, "shell", "getprop", "sys.boot_completed"); err != nil || strings.TrimSpace(booted) != "1" {
 			return false, "android_booting"
 		}
-		if foreground, err := runADB(ctx, adbPath, "-s", target, "shell", "dumpsys", "activity", "activities"); err == nil && activityIsResumed(foreground, welcomeActivity) {
-			return true, "ready"
+		// The handset sleeps between sessions; waking resumes the welcome screen.
+		_, _ = runADB(ctx, adbPath, "-s", target, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
+		_, _ = runADB(ctx, adbPath, "-s", target, "shell", "wm", "dismiss-keyguard")
+		for attempt := 0; attempt < 5; attempt++ {
+			if foreground, err := runADB(ctx, adbPath, "-s", target, "shell", "dumpsys", "activity", "activities"); err == nil && activityIsResumed(foreground, welcomeActivity) {
+				return true, "ready"
+			}
+			if attempt == 4 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return false, "app_starting"
+			case <-time.After(150 * time.Millisecond):
+			}
 		}
 
 		// The demo handset is disposable. Return it to the exported launcher;
@@ -318,6 +406,33 @@ func adbWelcomeReadiness(adbPath, target, packageName, launcherActivity, welcome
 			}
 		}
 		return false, "app_starting"
+	}
+}
+
+// adbHandsetReachable checks the handset without changing it, for the public
+// status poll.
+func adbHandsetReachable(adbPath, target string) func(context.Context) (bool, string) {
+	return func(ctx context.Context) (bool, string) {
+		if _, err := runADB(ctx, adbPath, "connect", target); err != nil {
+			return false, "handset_unreachable"
+		}
+		if state, err := runADB(ctx, adbPath, "-s", target, "get-state"); err != nil || strings.TrimSpace(state) != "device" {
+			return false, "handset_unreachable"
+		}
+		if booted, err := runADB(ctx, adbPath, "-s", target, "shell", "getprop", "sys.boot_completed"); err != nil || strings.TrimSpace(booted) != "1" {
+			return false, "android_booting"
+		}
+		return true, "ready"
+	}
+}
+
+func adbHandsetSleep(adbPath, target string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if _, err := runADB(ctx, adbPath, "connect", target); err != nil {
+			return err
+		}
+		_, err := runADB(ctx, adbPath, "-s", target, "shell", "input", "keyevent", "KEYCODE_SLEEP")
+		return err
 	}
 }
 
