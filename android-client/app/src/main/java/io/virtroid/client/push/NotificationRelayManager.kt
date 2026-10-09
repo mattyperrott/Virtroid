@@ -2,7 +2,6 @@ package io.virtroid.client.push
 
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.ContextCompat
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.SessionStore
@@ -55,6 +54,11 @@ class NotificationRelayManager(context: Context) {
         }
     }
 
+    /** Starts the relay if this device has registered for it before. */
+    fun startIfRegistered() {
+        if (identityStore.load() != null) startService()
+    }
+
     fun clearLocalRegistration() {
         identityStore.clear()
         appContext.stopService(Intent(appContext, NotificationRelayService::class.java))
@@ -66,10 +70,7 @@ class NotificationRelayManager(context: Context) {
     }
 
     private fun startService() {
-        ContextCompat.startForegroundService(
-            appContext,
-            Intent(appContext, NotificationRelayService::class.java),
-        )
+        NotificationRelayService.start(appContext)
     }
 
     private companion object {

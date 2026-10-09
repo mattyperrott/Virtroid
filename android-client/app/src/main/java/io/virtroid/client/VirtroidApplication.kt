@@ -25,6 +25,10 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
 
     override fun onActivityStarted(activity: Activity) {
         startedActivities += 1
+        if (startedActivities == 1) {
+            // Retry a relay start that Android refused while the app was in the background.
+            NotificationRelayManager(this).startIfRegistered()
+        }
     }
 
     override fun onActivityStopped(activity: Activity) {

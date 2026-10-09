@@ -426,11 +426,29 @@ class NotificationRelayService : Service() {
             .callTimeout(45, TimeUnit.SECONDS)
             .build()
 
+        /**
+         * Starts the relay as a foreground service. Android 12+ refuses that while
+         * the app is in the background, e.g. when its process starts after a reboot
+         * or an update; the relay then starts the next time the app is opened.
+         */
+        fun start(context: Context, action: String? = null): Boolean {
+            val appContext = context.applicationContext
+            val intent = Intent(appContext, NotificationRelayService::class.java)
+            if (action != null) intent.action = action
+            return try {
+                ContextCompat.startForegroundService(appContext, intent)
+                true
+            } catch (error: IllegalStateException) {
+                AppLogStore.get(appContext).warn(
+                    "Notification relay start deferred until the app is opened: ${error.message}",
+                    "notifications",
+                )
+                false
+            }
+        }
+
         fun reconnect(context: Context) {
-            ContextCompat.startForegroundService(
-                context.applicationContext,
-                Intent(context, NotificationRelayService::class.java).setAction(ACTION_RECONNECT),
-            )
+            start(context, ACTION_RECONNECT)
         }
     }
 }
