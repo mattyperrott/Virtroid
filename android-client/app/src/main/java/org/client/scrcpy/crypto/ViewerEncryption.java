@@ -271,11 +271,15 @@ public final class ViewerEncryption {
                 } catch (GeneralSecurityException e) {
                     throw new IOException("encrypt viewer frame", e);
                 }
-                output.write((ciphertext.length >>> 24) & 0xff);
-                output.write((ciphertext.length >>> 16) & 0xff);
-                output.write((ciphertext.length >>> 8) & 0xff);
-                output.write(ciphertext.length & 0xff);
-                output.write(ciphertext);
+                // One write per frame: over TLS each write becomes its own
+                // record, so writing the length byte by byte cost five records.
+                byte[] frame = new byte[4 + ciphertext.length];
+                frame[0] = (byte) (ciphertext.length >>> 24);
+                frame[1] = (byte) (ciphertext.length >>> 16);
+                frame[2] = (byte) (ciphertext.length >>> 8);
+                frame[3] = (byte) ciphertext.length;
+                System.arraycopy(ciphertext, 0, frame, 4, ciphertext.length);
+                output.write(frame);
                 written += chunk;
             }
         }

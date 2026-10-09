@@ -10,16 +10,23 @@ import android.os.Build;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class AudioDecoder {
 
     public static final String MIMETYPE_AUDIO_AAC = "audio/mp4a-latm";
+    private static final long OUTPUT_TIMEOUT_US = 10_000L;
 
     private MediaCodec mCodec;
     private volatile Worker mWorker;
     private final AtomicBoolean mIsConfigured = new AtomicBoolean(false);
     private final Object lifecycleLock = new Object();
-    private final Object resourceLock = new Object();
+    // Feeding and draining use MediaCodec from two threads at once (read lock);
+    // configure and release need it exclusively (write lock). AudioTrack.write()
+    // blocks in real time, so it runs under its own lock and never holds up the
+    // stream reader, which also carries video.
+    private final ReentrantReadWriteLock codecLock = new ReentrantReadWriteLock();
+    private final Object trackLock = new Object();
 
     private AudioTrack audioTrack;
     private final int SAMPLE_RATE = 48000;
@@ -62,9 +69,7 @@ public class AudioDecoder {
             mWorker = null;
             mIsConfigured.set(false);
             if (worker == null) {
-                synchronized (resourceLock) {
-                    releaseResourcesLocked();
-                }
+                releaseResourcesExclusive();
                 return;
             }
             worker.setRunning(false);
@@ -82,9 +87,16 @@ public class AudioDecoder {
             }
             // The worker can no longer be using either object, so releasing
             // them cannot race releaseOutputBuffer() or AudioTrack.write().
-            synchronized (resourceLock) {
-                releaseResourcesLocked();
-            }
+            releaseResourcesExclusive();
+        }
+    }
+
+    private void releaseResourcesExclusive() {
+        codecLock.writeLock().lock();
+        try {
+            releaseResourcesLocked();
+        } finally {
+            codecLock.writeLock().unlock();
         }
     }
 
@@ -100,16 +112,18 @@ public class AudioDecoder {
             }
             mCodec = null;
         }
-        if (audioTrack != null) {
-            try {
-                audioTrack.stop();
-            } catch (IllegalStateException ignored) {
+        synchronized (trackLock) {
+            if (audioTrack != null) {
+                try {
+                    audioTrack.stop();
+                } catch (IllegalStateException ignored) {
+                }
+                try {
+                    audioTrack.release();
+                } catch (IllegalStateException ignored) {
+                }
+                audioTrack = null;
             }
-            try {
-                audioTrack.release();
-            } catch (IllegalStateException ignored) {
-            }
-            audioTrack = null;
         }
     }
 
@@ -126,7 +140,8 @@ public class AudioDecoder {
         }
 
         private void configure(byte[] data) {
-            synchronized (resourceLock) {
+            codecLock.writeLock().lock();
+            try {
                 if (!mIsRunning.get() || mWorker != this) {
                     return;
                 }
@@ -145,16 +160,21 @@ public class AudioDecoder {
                 mCodec.configure(format, null, null, 0);
                 mCodec.start();
 
-                initAudioTrack();
-                audioTrack.play();
+                synchronized (trackLock) {
+                    initAudioTrack();
+                    audioTrack.play();
+                }
                 mIsConfigured.set(true);
+            } finally {
+                codecLock.writeLock().unlock();
             }
         }
 
 
         @SuppressWarnings("deprecation")
         public void decodeSample(byte[] data, int offset, int size, long presentationTimeUs, int flags) {
-            synchronized (resourceLock) {
+            codecLock.readLock().lock();
+            try {
                 MediaCodec codec = mCodec;
                 if (!mIsConfigured.get() || !mIsRunning.get() || mWorker != this || codec == null) {
                     return;
@@ -174,6 +194,10 @@ public class AudioDecoder {
                         codec.queueInputBuffer(index, 0, size, presentationTimeUs, flags);
                     }
                 }
+                // No free input buffer: drop this audio packet rather than stall the stream.
+            } catch (IllegalStateException ignored) {
+            } finally {
+                codecLock.readLock().unlock();
             }
         }
 
@@ -183,26 +207,39 @@ public class AudioDecoder {
                 MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
                 while (mIsRunning.get()) {
                     boolean waitingForConfiguration = true;
-                    synchronized (resourceLock) {
+                    boolean endOfStream = false;
+                    byte[] pcm = null;
+                    codecLock.readLock().lock();
+                    try {
                         MediaCodec codec = mCodec;
-                        AudioTrack track = audioTrack;
-                        if (mIsRunning.get() && mIsConfigured.get() && codec != null && track != null) {
+                        if (mIsRunning.get() && mIsConfigured.get() && codec != null && audioTrack != null) {
                             waitingForConfiguration = false;
-                            int index = codec.dequeueOutputBuffer(info, 0);
+                            int index = codec.dequeueOutputBuffer(info, OUTPUT_TIMEOUT_US);
                             if (index >= 0) {
                                 if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
-                                    codec.releaseOutputBuffer(index, false);
-                                    break;
-                                }
-
-                                ByteBuffer outputBuffer = codec.getOutputBuffer(index);
-                                if (outputBuffer != null) {
-                                    byte[] data = new byte[info.size];
-                                    outputBuffer.get(data);
-                                    outputBuffer.clear();
-                                    track.write(data, 0, info.size);
+                                    endOfStream = true;
+                                } else {
+                                    ByteBuffer outputBuffer = codec.getOutputBuffer(index);
+                                    if (outputBuffer != null) {
+                                        pcm = new byte[info.size];
+                                        outputBuffer.get(pcm);
+                                        outputBuffer.clear();
+                                    }
                                 }
                                 codec.releaseOutputBuffer(index, false);
+                            }
+                        }
+                    } finally {
+                        codecLock.readLock().unlock();
+                    }
+                    if (endOfStream) {
+                        break;
+                    }
+                    if (pcm != null) {
+                        synchronized (trackLock) {
+                            AudioTrack track = audioTrack;
+                            if (track != null && mIsRunning.get()) {
+                                track.write(pcm, 0, pcm.length);
                             }
                         }
                     }

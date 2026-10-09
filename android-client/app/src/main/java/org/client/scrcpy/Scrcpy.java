@@ -40,8 +40,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Arrays;
-import java.util.LinkedList;
-import java.util.Queue;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -75,8 +73,6 @@ public class Scrcpy extends Service {
     private int screenWidth;
     private int screenHeight;
 
-    private final Queue<byte[]> event = new LinkedList<byte[]>();
-    // private byte[] event = null;
     private VideoDecoder videoDecoder;
     private AudioDecoder audioDecoder;
     private final AtomicBoolean updateAvailable = new AtomicBoolean(false);
@@ -426,10 +422,7 @@ public class Scrcpy extends Service {
             array[j * 4 + 2] = (byte) ((c & 0xFF00) >> 8);
             array[j * 4 + 3] = (byte) (c & 0xFF);
         }
-        if (LetServceRunning.get()) {
-            event.offer(array);
-        }
-        // event = array;
+        enqueueControl(array);
     }
 
     public int[] get_remote_device_resolution() {
@@ -452,10 +445,7 @@ public class Scrcpy extends Service {
             array[j * 4 + 2] = (byte) ((c & 0xFF00) >> 8);
             array[j * 4 + 3] = (byte) (c & 0xFF);
         }
-        if (LetServceRunning.get()) {
-            event.offer(array);
-            // event = array;
-        }
+        enqueueControl(array);
     }
 
     private void startConnection(String ip, int port, int delay) {
@@ -569,8 +559,6 @@ public class Scrcpy extends Service {
                 socketOutputStream = null;
                 activeSocket = null;
                 stopPhysicalMicrophone();
-                // 清除事件队列
-                event.clear();
 
             }
 
@@ -585,6 +573,8 @@ public class Scrcpy extends Service {
 
         SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
         SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
+        // Touch packets are tiny; Nagle would hold them back waiting for ACKs.
+        sslSocket.setTcpNoDelay(true);
         sslSocket.connect(new InetSocketAddress(host, port), 5000);
         SSLParameters sslParameters = sslSocket.getSSLParameters();
         sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
@@ -675,30 +665,11 @@ public class Scrcpy extends Service {
         boolean waitKeyFrame = false;
 
 
+        // Control input is written by the command executor as soon as it is
+        // produced, so this loop only reads and never delays a touch.
         while (LetServceRunning.get()) {
-            boolean waitEvent = true;
             try {
-                byte[] sendevent = event.poll();
-                if (sendevent != null) {
-                    waitEvent = false;
-                    try {
-                        byte[] data = ControlPacket.toArray(MediaPacket.Type.CONTROL, sendevent);
-                        synchronized (socketWriteLock) {
-                            dataOutputStream.write(data);
-                        }
-                    } catch (IOException e) {
-                        debugLog("write control packet failed", e);
-                        if (serviceCallbacks != null) {
-                            serviceCallbacks.errorDisconnect();
-                        }
-                        LetServceRunning.set(false);
-                    } finally {
-                        // event = null;
-                    }
-                }
-
                 {
-                    waitEvent = false;
                     dataInputStream.readFully(packetSize, 0, 4);
                     int size = ByteUtils.bytesToInt(packetSize);
                     if (size < 1 || size > 4 * 1024 * 1024) {  // 如果单个数据包大于 4m ，直接断开连接
@@ -754,20 +725,30 @@ public class Scrcpy extends Service {
                             if (lastVideoOffset == 0) {
                                 lastVideoOffset = System.currentTimeMillis() - (videoPacket.presentationTimeStamp / 1000);
                             }
+                            boolean attempted = false;
+                            boolean decoded = false;
+                            boolean keyFrameLate = false;
                             if (videoPacket.flag == VideoPacket.Flag.KEY_FRAME) {
                                 if (System.currentTimeMillis() - (lastVideoOffset + (videoPacket.presentationTimeStamp / 1000)) < delay) {
-                                    waitKeyFrame = false;
-                                    videoDecoder.decodeSample(packet, videoPacket.headLength(), packet.length - videoPacket.headLength(),
+                                    attempted = true;
+                                    decoded = videoDecoder.decodeSample(packet, videoPacket.headLength(), packet.length - videoPacket.headLength(),
                                             0, videoPacket.flag.getFlag());
                                 } else {
-                                    waitKeyFrame = true;
-                                    requestNewKeyFrame();
+                                    keyFrameLate = true;
                                 }
-                            } else {
-                                if (!waitKeyFrame) {
-                                    videoDecoder.decodeSample(packet, videoPacket.headLength(), packet.length - videoPacket.headLength(),
-                                            0, videoPacket.flag.getFlag());
-                                }
+                            } else if (!waitKeyFrame) {
+                                attempted = true;
+                                decoded = videoDecoder.decodeSample(packet, videoPacket.headLength(), packet.length - videoPacket.headLength(),
+                                        0, videoPacket.flag.getFlag());
+                            }
+                            // A dropped frame would corrupt every frame after it,
+                            // so resynchronise on a fresh key frame instead.
+                            boolean frameLost = attempted && !decoded;
+                            if (decoded) {
+                                waitKeyFrame = false;
+                            } else if (keyFrameLate || frameLost) {
+                                waitKeyFrame = true;
+                                requestNewKeyFrame();
                             }
                         }
                         first_time = false;
@@ -801,10 +782,6 @@ public class Scrcpy extends Service {
                 // EOF avoids an unbounded busy loop over a dead encrypted
                 // stream and lets the activity obtain a fresh relay token.
                 throw e;
-            } finally {
-                if (waitEvent) {
-                    Thread.sleep(5);
-                }
             }
         }
     }
@@ -878,6 +855,21 @@ public class Scrcpy extends Service {
 
     private void sendMicrophoneEnd() {
         enqueueCommand(CommandPacket.CmdType.MICROPHONE_END, new byte[0], true);
+    }
+
+    private boolean enqueueControl(byte[] controlData) {
+        DataOutputStream output = socketOutputStream;
+        if (!LetServceRunning.get() || output == null || socketCommandExecutor.isShutdown()) {
+            return false;
+        }
+        byte[] packet = ControlPacket.toArray(MediaPacket.Type.CONTROL, controlData);
+        try {
+            socketCommandExecutor.execute(() -> writeCommandPacket(output, packet, true));
+            return true;
+        } catch (RejectedExecutionException rejected) {
+            debugLog("viewer control queue rejected packet", rejected);
+            return false;
+        }
     }
 
     private boolean enqueueCommand(CommandPacket.CmdType type, byte[] data, boolean flush) {
