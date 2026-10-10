@@ -130,6 +130,7 @@ class ActiveSessionStore(context: Context) {
             .put(KEY_RELAY_PORT, session.relayPort)
             .put(KEY_RELAY_TLS, session.relayTls)
             .put(KEY_RELAY_PATH, session.relayPath)
+            .put(KEY_RELAY_TLS_PIN, session.relayTlsPin)
             .put(KEY_RELAY_TOKEN, session.relayToken)
             .put(KEY_SESSION_ID, session.sessionId)
             .put(KEY_VIEWER_PUBLIC_KEY, session.viewerPublicKey)
@@ -154,6 +155,7 @@ class ActiveSessionStore(context: Context) {
                 relayPort = payload.optInt(KEY_RELAY_PORT),
                 relayTls = payload.optBoolean(KEY_RELAY_TLS),
                 relayPath = payload.optString(KEY_RELAY_PATH),
+                relayTlsPin = payload.optString(KEY_RELAY_TLS_PIN),
                 relayToken = payload.optString(KEY_RELAY_TOKEN),
                 sessionId = payload.optString(KEY_SESSION_ID),
                 viewerPublicKey = payload.optString(KEY_VIEWER_PUBLIC_KEY),
@@ -201,6 +203,7 @@ class ActiveSessionStore(context: Context) {
         val relayToken: String,
         val sessionId: String,
         val viewerPublicKey: String,
+        val relayTlsPin: String = "",
         val audioEnabled: Boolean = false,
         val cameraMode: String = "photo-import",
         val fileMode: String = "upload-only",
@@ -234,6 +237,7 @@ class ActiveSessionStore(context: Context) {
         const val KEY_RELAY_PORT = "relay_port"
         const val KEY_RELAY_TLS = "relay_tls"
         const val KEY_RELAY_PATH = "relay_path"
+        const val KEY_RELAY_TLS_PIN = "relay_tls_pin"
         const val KEY_RELAY_TOKEN = "relay_token"
         const val KEY_SESSION_ID = "session_id"
         const val KEY_VIEWER_PUBLIC_KEY = "viewer_public_key"

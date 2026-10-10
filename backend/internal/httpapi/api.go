@@ -727,6 +727,35 @@ func validateNodeAdvertiseAddr(raw string, allowed []string, appEnv string) (str
 	return "", fmt.Errorf("node advertise address %q is not in the configured allowlist", address)
 }
 
+// validateNodePublicEndpoint checks a node's direct endpoint. Both parts are
+// optional but must come together: an IP:port whose IP is on the operator's
+// node allowlist, and the base64 SHA-256 pin of the node's TLS public key.
+func validateNodePublicEndpoint(addr, pin string, allowed []string, appEnv string) (string, string, error) {
+	addr = strings.TrimSpace(addr)
+	pin = strings.TrimSpace(pin)
+	if addr == "" && pin == "" {
+		return "", "", nil
+	}
+	if addr == "" || pin == "" {
+		return "", "", errors.New("public_addr and tls_spki_sha256 must be sent together")
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(pin); err != nil || len(decoded) != sha256.Size {
+		return "", "", errors.New("tls_spki_sha256 must be a base64 SHA-256 digest")
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || net.ParseIP(host) == nil {
+		return "", "", errors.New("public_addr must be IP:port")
+	}
+	if value, err := strconv.Atoi(port); err != nil || value < 1 || value > 65535 {
+		return "", "", errors.New("public_addr port is invalid")
+	}
+	allowedHost, err := validateNodeAdvertiseAddr(host, allowed, appEnv)
+	if err != nil {
+		return "", "", errors.New("public_addr is not on the node allowlist")
+	}
+	return net.JoinHostPort(allowedHost, port), pin, nil
+}
+
 func normalizeNodeAdvertiseHost(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > 253 || strings.ContainsAny(raw, "/\\@?#[] 	\r\n") {
@@ -1781,7 +1810,17 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		bitRate = 8_000_000
 	}
 
-	viewerPublicKey, err := a.prepareViewer(r.Context(), host.AdvertiseAddr, host.RelayPort, runtime.ID, maxSize, bitRate)
+	// A runtime on a remote node streams straight from that node; the phone
+	// verifies it by the pinned key instead of the edge's web certificate.
+	relayEndpoint, relayPin, err := a.relayEndpointForHost(host)
+	if err != nil {
+		a.activeBlobKeys.clear(runtimeID)
+		abortPendingSession("node relay endpoint unavailable")
+		writeServerAPIError(w, http.StatusBadGateway, "node_relay_endpoint_unavailable", "assigned node address is unavailable", err)
+		return
+	}
+
+	viewerPublicKey, err := a.prepareViewer(r.Context(), host, runtime.ID, maxSize, bitRate)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		abortPendingSession("viewer preparation failed")
@@ -1789,7 +1828,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	response := map[string]any{
 		"session":           session,
 		"viewer_host":       relayEndpoint.Host,
 		"viewer_port":       relayEndpoint.Port,
@@ -1803,7 +1842,11 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		"audio_enabled":     runtime.AudioEnabled,
 		"camera_mode":       runtime.CameraMode,
 		"file_mode":         runtime.FileMode,
-	})
+	}
+	if relayPin != "" {
+		response["relay_tls_spki_sha256"] = relayPin
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (a *API) importMyRuntimeFile(w http.ResponseWriter, r *http.Request) {
@@ -1994,18 +2037,14 @@ func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor r
 }
 
 func (a *API) proxyRuntimeMedia(w http.ResponseWriter, r *http.Request, host store.Host, callbackPath string, body []byte, headers map[string]string) {
-	advertiseAddr, err := validateNodeAdvertiseAddr(host.AdvertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	baseURL, client, err := a.nodeCallbackTarget(host)
 	if err != nil {
 		writeServerAPIError(w, http.StatusBadGateway, "node_address_rejected", "assigned node address is unavailable", err)
 		return
 	}
-	port := host.RelayPort
-	if port <= 0 {
-		port = 8090
-	}
 	proxyCtx, cancel := context.WithTimeout(r.Context(), runtimeMediaProxyTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(proxyCtx, http.MethodPost, "http://"+net.JoinHostPort(advertiseAddr, strconv.Itoa(port))+callbackPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(proxyCtx, http.MethodPost, baseURL+callbackPath, bytes.NewReader(body))
 	if err != nil {
 		writeInternalAPIError(w, "runtime_media_proxy_request_failed", err)
 		return
@@ -2017,7 +2056,7 @@ func (a *API) proxyRuntimeMedia(w http.ResponseWriter, r *http.Request, host sto
 		writeInternalAPIError(w, "runtime_media_proxy_sign_failed", err)
 		return
 	}
-	resp, err := a.outboundClient().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		writeServerAPIError(w, http.StatusBadGateway, "runtime_media_proxy_failed", "assigned node did not accept media", err)
 		return
@@ -2226,8 +2265,7 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 	}
 	viewerPublicKey, err := a.prepareViewer(
 		r.Context(),
-		host.AdvertiseAddr,
-		host.RelayPort,
+		host,
 		state.Runtime.ID,
 		max(state.Runtime.WidthPx, state.Runtime.HeightPx),
 		viewerReconnectBitRate,
@@ -2371,10 +2409,23 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		StoragePreflightJSON   string `json:"storage_preflight_json"`
 		StoragePreflightAt     string `json:"storage_preflight_at"`
 		StorageWalletAddress   string `json:"storage_wallet_address"`
+		PublicAddr             string `json:"public_addr"`
+		TLSSPKISHA256          string `json:"tls_spki_sha256"`
+		Region                 string `json:"region"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	req.Region = strings.ToLower(strings.TrimSpace(req.Region))
+	if !store.ValidRegion(req.Region) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid region"})
+		return
+	}
+	publicAddr, tlsPin, err := validateNodePublicEndpoint(req.PublicAddr, req.TLSSPKISHA256, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	if err != nil {
+		writeAPIError(w, http.StatusForbidden, "node_public_endpoint_rejected", err.Error())
 		return
 	}
 	if strings.TrimSpace(req.ID) != "" && strings.TrimSpace(req.ID) != node.id {
@@ -2429,6 +2480,9 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		StoragePreflightJSON:   req.StoragePreflightJSON,
 		StoragePreflightAt:     storagePreflightAt,
 		StorageWalletAddress:   req.StorageWalletAddress,
+		PublicAddr:             publicAddr,
+		TLSSPKISHA256:          tlsPin,
+		Region:                 req.Region,
 	})
 	if err != nil {
 		writeInternalAPIError(w, "host_heartbeat_upsert_failed", err)
@@ -2621,13 +2675,9 @@ func (a *API) verifyActiveBlobKeyEnvelope(w http.ResponseWriter, r *http.Request
 }
 
 func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host, entry activeBlobKeyEntry) error {
-	advertiseAddr, err := validateNodeAdvertiseAddr(host.AdvertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	baseURL, client, err := a.nodeCallbackTarget(host)
 	if err != nil {
 		return err
-	}
-	relayPort := host.RelayPort
-	if relayPort <= 0 {
-		relayPort = 8090
 	}
 	body, err := json.Marshal(map[string]any{
 		"blob_key_envelope":   entry.envelope,
@@ -2642,7 +2692,7 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 	req, err := http.NewRequestWithContext(
 		verifyCtx,
 		http.MethodPost,
-		"http://"+net.JoinHostPort(advertiseAddr, strconv.Itoa(relayPort))+"/api/v1/internal/blob-key/verify",
+		baseURL+"/api/v1/internal/blob-key/verify",
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -2652,7 +2702,7 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 	if err := a.signNodeCallback(req, body); err != nil {
 		return err
 	}
-	resp, err := a.outboundClient().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -3351,14 +3401,10 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowDe
 	return nodeRequestIdentity{id: nodeID, publicKey: verifiedPublicKey}, true
 }
 
-func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort int, runtimeID string, maxSize, bitRate int) (string, error) {
-	var err error
-	advertiseAddr, err = validateNodeAdvertiseAddr(advertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID string, maxSize, bitRate int) (string, error) {
+	baseURL, client, err := a.nodeCallbackTarget(host)
 	if err != nil {
 		return "", err
-	}
-	if relayPort <= 0 {
-		relayPort = 8090
 	}
 	body, err := json.Marshal(map[string]any{
 		"runtime_id": runtimeID,
@@ -3375,7 +3421,7 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 	req, err := http.NewRequestWithContext(
 		prepareCtx,
 		http.MethodPost,
-		"http://"+net.JoinHostPort(advertiseAddr, strconv.Itoa(relayPort))+"/api/v1/internal/viewer/prepare",
+		baseURL+"/api/v1/internal/viewer/prepare",
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -3386,7 +3432,7 @@ func (a *API) prepareViewer(ctx context.Context, advertiseAddr string, relayPort
 		return "", err
 	}
 
-	resp, err := a.outboundClient().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

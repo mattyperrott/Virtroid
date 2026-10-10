@@ -61,6 +61,7 @@ class SessionActivity : AppCompatActivity() {
     private var relayPort: Int = 0
     private var relayTls: Boolean = false
     private var relayPath: String = ""
+    private var relayTlsPin: String = ""
     private var relayToken: String = ""
     private var viewerPublicKey: String = ""
     private var sessionId: String = ""
@@ -200,6 +201,7 @@ class SessionActivity : AppCompatActivity() {
         relayPort = intent.getIntExtra(EXTRA_RELAY_PORT, 0)
         relayTls = intent.getBooleanExtra(EXTRA_RELAY_TLS, false)
         relayPath = intent.getStringExtra(EXTRA_RELAY_PATH).orEmpty()
+        relayTlsPin = intent.getStringExtra(EXTRA_RELAY_TLS_PIN).orEmpty()
         relayToken = intent.getStringExtra(EXTRA_RELAY_TOKEN).orEmpty()
         viewerPublicKey = intent.getStringExtra(EXTRA_VIEWER_PUBLIC_KEY).orEmpty()
         sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty()
@@ -413,6 +415,7 @@ class SessionActivity : AppCompatActivity() {
             relayPort = relayPort,
             relayTls = relayTls,
             relayPath = relayPath,
+            relayTlsPin = relayTlsPin,
             relayToken = relayToken,
             viewerPublicKey = viewerPublicKey,
             audioEnabled = audioEnabled,
@@ -780,6 +783,7 @@ class SessionActivity : AppCompatActivity() {
                 relayToken = relayToken,
                 sessionId = sessionId,
                 viewerPublicKey = viewerPublicKey,
+                relayTlsPin = relayTlsPin,
                 audioEnabled = audioEnabled,
                 cameraMode = cameraMode,
                 fileMode = fileMode,
@@ -915,6 +919,7 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_RELAY_PORT = "relay_port"
         private const val EXTRA_RELAY_TLS = "relay_tls"
         private const val EXTRA_RELAY_PATH = "relay_path"
+        private const val EXTRA_RELAY_TLS_PIN = "relay_tls_pin"
         private const val EXTRA_RELAY_TOKEN = "relay_token"
         private const val EXTRA_VIEWER_PUBLIC_KEY = "viewer_public_key"
         private const val EXTRA_SESSION_ID = "session_id"
@@ -949,6 +954,7 @@ class SessionActivity : AppCompatActivity() {
             viewerPublicKey: String,
             sessionId: String,
             viewerAddress: String,
+            relayTlsPin: String = "",
             audioEnabled: Boolean = false,
             cameraMode: String = "photo-import",
             fileMode: String = "upload-only",
@@ -964,6 +970,7 @@ class SessionActivity : AppCompatActivity() {
                 .putExtra(EXTRA_RELAY_PORT, relayPort)
                 .putExtra(EXTRA_RELAY_TLS, relayTls)
                 .putExtra(EXTRA_RELAY_PATH, relayPath)
+                .putExtra(EXTRA_RELAY_TLS_PIN, relayTlsPin)
                 .putExtra(EXTRA_RELAY_TOKEN, relayToken)
                 .putExtra(EXTRA_VIEWER_PUBLIC_KEY, viewerPublicKey)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
@@ -991,6 +998,7 @@ class SessionActivity : AppCompatActivity() {
                 viewerPublicKey = session.viewerPublicKey,
                 sessionId = session.sessionId,
                 viewerAddress = session.viewerAddress,
+                relayTlsPin = session.relayTlsPin,
                 audioEnabled = session.audioEnabled,
                 cameraMode = session.cameraMode,
                 fileMode = session.fileMode,

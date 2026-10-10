@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026090301
-	schemaVersionLabel               = "encrypted node security notices 2026-09-03"
+	currentSchemaVersion       int64 = 2026101001
+	schemaVersionLabel               = "remote nodes and runtime regions 2026-10-10"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -444,6 +444,9 @@ type Host struct {
 	StoragePreflightJSON   *string    `json:"storage_preflight_json,omitempty"`
 	StoragePreflightAt     *time.Time `json:"storage_preflight_at,omitempty"`
 	StorageWalletAddress   *string    `json:"storage_wallet_address,omitempty"`
+	PublicAddr             string     `json:"public_addr,omitempty"`
+	TLSSPKISHA256          string     `json:"tls_spki_sha256,omitempty"`
+	Region                 string     `json:"region"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
 	LastHeartbeatAt        time.Time  `json:"last_heartbeat_at"`
@@ -467,6 +470,9 @@ type HostHeartbeat struct {
 	StoragePreflightJSON   string
 	StoragePreflightAt     *time.Time
 	StorageWalletAddress   string
+	PublicAddr             string
+	TLSSPKISHA256          string
+	Region                 string
 }
 
 type NodeReadiness struct {
@@ -4168,6 +4174,7 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 		        audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
 		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		        public_addr, tls_spki_sha256, region,
 		        created_at, updated_at, last_heartbeat_at
 		 FROM hosts ORDER BY last_heartbeat_at DESC`,
 	)
@@ -4197,6 +4204,9 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 			&host.StoragePreflightJSON,
 			&host.StoragePreflightAt,
 			&host.StorageWalletAddress,
+			&host.PublicAddr,
+			&host.TLSSPKISHA256,
+			&host.Region,
 			&host.CreatedAt,
 			&host.UpdatedAt,
 			&host.LastHeartbeatAt,
@@ -4260,6 +4270,7 @@ func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 		        audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		        blob_store_kind, storage_preflight_kind, storage_preflight_status,
 		        storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		        public_addr, tls_spki_sha256, region,
 		        created_at, updated_at, last_heartbeat_at
 		 FROM hosts WHERE id = $1`,
 		hostID,
@@ -4281,6 +4292,9 @@ func (s *Store) GetHost(ctx context.Context, hostID string) (Host, error) {
 		&host.StoragePreflightJSON,
 		&host.StoragePreflightAt,
 		&host.StorageWalletAddress,
+		&host.PublicAddr,
+		&host.TLSSPKISHA256,
+		&host.Region,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -5303,9 +5317,10 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		     id, name, advertise_addr, relay_port, docker_socket, binder,
 		     audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		     blob_store_kind, storage_preflight_kind, storage_preflight_status,
-		     storage_preflight_json, storage_preflight_at, storage_wallet_address
+		     storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		     public_addr, tls_spki_sha256, region
 		 )
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		 ON CONFLICT (id) DO UPDATE
 		 SET name = EXCLUDED.name,
 		     advertise_addr = EXCLUDED.advertise_addr,
@@ -5322,6 +5337,9 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		     storage_preflight_json = EXCLUDED.storage_preflight_json,
 		     storage_preflight_at = EXCLUDED.storage_preflight_at,
 		     storage_wallet_address = EXCLUDED.storage_wallet_address,
+		     public_addr = EXCLUDED.public_addr,
+		     tls_spki_sha256 = EXCLUDED.tls_spki_sha256,
+		     region = EXCLUDED.region,
 		     public_key = CASE
 		         WHEN COALESCE(EXCLUDED.public_key, '') <> '' THEN EXCLUDED.public_key
 		         ELSE hosts.public_key
@@ -5332,6 +5350,7 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		           audio_streaming, file_import, camera_passthrough, camera_slots, public_key,
 		           blob_store_kind, storage_preflight_kind, storage_preflight_status,
 		           storage_preflight_json, storage_preflight_at, storage_wallet_address,
+		           public_addr, tls_spki_sha256, region,
 		           created_at, updated_at, last_heartbeat_at`,
 		heartbeat.ID,
 		heartbeat.Name,
@@ -5350,6 +5369,9 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		nullStringValue(heartbeat.StoragePreflightJSON),
 		heartbeat.StoragePreflightAt,
 		nullStringValue(heartbeat.StorageWalletAddress),
+		strings.TrimSpace(heartbeat.PublicAddr),
+		strings.TrimSpace(heartbeat.TLSSPKISHA256),
+		strings.TrimSpace(heartbeat.Region),
 	).Scan(
 		&host.ID,
 		&host.Name,
@@ -5368,6 +5390,9 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		&host.StoragePreflightJSON,
 		&host.StoragePreflightAt,
 		&host.StorageWalletAddress,
+		&host.PublicAddr,
+		&host.TLSSPKISHA256,
+		&host.Region,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -7221,6 +7246,9 @@ func pickReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, preferredHostID str
 		       (k.state = 'active' AND k.key_version = n.active_key_version)
 		       OR (k.state = 'overlap' AND k.valid_until > NOW())
 		   )
+		   -- New placements stay in the account's region; '' is the default region,
+		   -- so remote nodes only receive accounts explicitly assigned to them.
+		   AND h.region = COALESCE((SELECT a.runtime_region FROM accounts a WHERE a.id::text = $5), '')
 		 ORDER BY h.last_heartbeat_at DESC
 		 LIMIT 1
 		 FOR UPDATE OF h SKIP LOCKED`,
@@ -7228,6 +7256,7 @@ func pickReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, preferredHostID str
 		requireFiles,
 		requireCamera,
 		runtime.ID,
+		runtime.AccountID,
 	).Scan(&hostID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -7349,6 +7378,7 @@ func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, err
 		        h.audio_streaming, h.file_import, h.camera_passthrough, h.camera_slots, h.public_key,
 		        h.blob_store_kind, h.storage_preflight_kind, h.storage_preflight_status,
 		        h.storage_preflight_json, h.storage_preflight_at, h.storage_wallet_address,
+		        h.public_addr, h.tls_spki_sha256, h.region,
 		        h.created_at, h.updated_at, h.last_heartbeat_at
 		 FROM hosts h
 		 JOIN approved_nodes n ON n.node_id = h.id AND n.status = 'approved'
@@ -7378,6 +7408,9 @@ func getBlobKeyHostTX(ctx context.Context, tx *sql.Tx, hostID string) (Host, err
 		&host.StoragePreflightJSON,
 		&host.StoragePreflightAt,
 		&host.StorageWalletAddress,
+		&host.PublicAddr,
+		&host.TLSSPKISHA256,
+		&host.Region,
 		&host.CreatedAt,
 		&host.UpdatedAt,
 		&host.LastHeartbeatAt,
@@ -8383,4 +8416,44 @@ func normalizeBlobKeyVerifier(blobKeyVerifier string) (string, error) {
 		return "", ErrIdentityAuthFailed
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// ValidRegion reports whether region is a valid node/account region label:
+// empty (the default region) or 1-32 lowercase letters, digits and dashes.
+func ValidRegion(region string) bool {
+	if region == "" {
+		return true
+	}
+	if len(region) > 32 || region[0] == '-' {
+		return false
+	}
+	for _, char := range region {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// SetAccountRuntimeRegion places the account's future runtimes on nodes in
+// region. Existing runtimes keep their node, since their data lives there.
+func (s *Store) SetAccountRuntimeRegion(ctx context.Context, accountID, region string) error {
+	region = strings.ToLower(strings.TrimSpace(region))
+	if !ValidRegion(region) {
+		return fmt.Errorf("invalid region %q", region)
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE accounts SET runtime_region = $2 WHERE id::text = $1 AND deleted_at IS NULL`,
+		strings.TrimSpace(accountID),
+		region,
+	)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return ErrAccountNotFound
+	}
+	return nil
 }

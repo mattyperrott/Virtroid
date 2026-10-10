@@ -45,13 +45,20 @@ type ServerConfig struct {
 }
 
 type NodeConfig struct {
-	NodeID                        string
-	NodeName                      string
-	BindAddr                      string
-	RelayPort                     int
-	ControlPlaneURL               string
-	PublicControlPlaneURL         string
-	AdvertiseAddr                 string
+	NodeID                string
+	NodeName              string
+	BindAddr              string
+	RelayPort             int
+	ControlPlaneURL       string
+	PublicControlPlaneURL string
+	AdvertiseAddr         string
+	// PublicAddr is the IP:port where phones and the control plane reach this
+	// node directly over TLS. Empty keeps the node behind the local edge.
+	PublicAddr    string
+	PublicTLSBind string
+	TLSDir        string
+	// Region limits which accounts' runtimes are placed on this node.
+	Region                        string
 	ADBPath                       string
 	ADBHost                       string
 	BlobStoreKind                 string
@@ -222,6 +229,10 @@ func LoadNode() NodeConfig {
 		ControlPlaneURL:               envOrDefault("CONTROL_PLANE_URL", "http://127.0.0.1:8080"),
 		PublicControlPlaneURL:         envOrDefault("NODE_PUBLIC_CONTROL_PLANE_URL", ""),
 		AdvertiseAddr:                 envOrDefault("NODE_ADVERTISE_ADDR", hostname),
+		PublicAddr:                    strings.TrimSpace(os.Getenv("NODE_PUBLIC_ADDR")),
+		PublicTLSBind:                 envOrDefault("NODE_PUBLIC_TLS_BIND", ":8443"),
+		TLSDir:                        envOrDefault("NODE_TLS_DIR", "/srv/virtroid/node-tls"),
+		Region:                        strings.ToLower(strings.TrimSpace(os.Getenv("NODE_REGION"))),
 		ADBPath:                       envOrDefault("NODE_ADB_PATH", "adb"),
 		ADBHost:                       envOrDefault("NODE_ADB_HOST", ""),
 		BlobStoreKind:                 envOrDefault("NODE_BLOB_STORE_KIND", "local-disk"),

@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+-- New runtimes are placed on nodes whose region matches; '' is the default region.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS runtime_region TEXT NOT NULL DEFAULT '';
 
 -- Bootstrap invitations authorize exactly one new account/device transaction.
 -- Only the SHA-256 digest is retained; the plaintext token is returned once by
@@ -65,6 +67,11 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_status TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_json TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_preflight_at TIMESTAMPTZ;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS storage_wallet_address TEXT;
+-- A node with a public TLS endpoint is reached directly by phones and by the
+-- control plane at public_addr, authenticated by its pinned public key.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS public_addr TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS tls_spki_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
 
 DO $$
 BEGIN

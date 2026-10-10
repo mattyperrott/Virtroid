@@ -724,7 +724,7 @@ func TestPrepareViewerSendsSignedReconnectParametersAndReturnsFreshKey(t *testin
 		ControlPlaneCallbackPrivateKey: base64.StdEncoding.EncodeToString(privateKeyDER),
 	}}
 
-	got, err := api.prepareViewer(context.Background(), host, port, "runtime-reconnect", 1600, viewerReconnectBitRate)
+	got, err := api.prepareViewer(context.Background(), store.Host{AdvertiseAddr: host, RelayPort: port}, "runtime-reconnect", 1600, viewerReconnectBitRate)
 	if err != nil {
 		t.Fatalf("prepareViewer: %v", err)
 	}

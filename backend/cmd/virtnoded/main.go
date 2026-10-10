@@ -340,6 +340,8 @@ type nodeAgent struct {
 	notificationAgentAt map[string]time.Time
 	nodePrivateKey      *ecdsa.PrivateKey
 	nodePublicKey       string
+	// tlsSPKIPin is set when the node serves the public TLS listener.
+	tlsSPKIPin          string
 	blobPreflightMu     sync.Mutex
 	blobPreflightReport blobPreflightReport
 	blobPreflightAt     time.Time
@@ -441,6 +443,19 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	var publicServer *http.Server
+	if cfg.PublicAddr != "" {
+		if err := validNodePublicAddr(cfg.PublicAddr); err != nil {
+			log.Fatalf("public node address: %v", err)
+		}
+		certificate, pin, err := loadOrCreateNodeTLS(cfg.TLSDir, cfg.NodeID)
+		if err != nil {
+			log.Fatalf("public node TLS: %v", err)
+		}
+		node.tlsSPKIPin = pin
+		publicServer = newPublicNodeServer(cfg.PublicTLSBind, certificate, telemetry.Middleware(recoverNodeHTTP(publicNodeHandler(mux))))
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -452,6 +467,14 @@ func main() {
 			log.Fatalf("listen: %v", err)
 		}
 	}()
+	if publicServer != nil {
+		go func() {
+			log.Printf("virtnoded public TLS listening on %s for %s (pin sha256/%s)", publicServer.Addr, cfg.PublicAddr, node.tlsSPKIPin)
+			if err := publicServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("public TLS listen: %v", err)
+			}
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -463,6 +486,11 @@ func main() {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown error: %v", err)
+	}
+	if publicServer != nil {
+		if err := publicServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("public shutdown error: %v", err)
+		}
 	}
 }
 
@@ -819,6 +847,11 @@ func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map
 		"renterd_configured":  strings.TrimSpace(n.cfg.RenterdWorkerURL) != "" && strings.TrimSpace(n.cfg.RenterdPassword) != "",
 		"renterd_bucket":      defaultBlobBucket(n.cfg.RenterdBucket),
 		"renterd_contractset": strings.TrimSpace(n.cfg.RenterdContractSet),
+		"region":              n.cfg.Region,
+	}
+	if n.tlsSPKIPin != "" {
+		capabilities["public_addr"] = n.cfg.PublicAddr
+		capabilities["tls_spki_sha256"] = n.tlsSPKIPin
 	}
 	if !includePreflight {
 		return capabilities

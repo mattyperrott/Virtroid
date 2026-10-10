@@ -67,6 +67,9 @@ data class SessionLaunch(
     val relayToken: String,
     val viewerPublicKey: String,
     val viewerAddress: String,
+    // Set when the runtime streams straight from its node: the base64 SHA-256 of
+    // the node's TLS public key, which replaces the edge's web certificate check.
+    val relayTlsPin: String = "",
 )
 
 data class SessionRelayRefresh(
@@ -788,6 +791,7 @@ class VirtroidApi(
             relayToken = payload.getJSONObject("session").getString("relay_token"),
             viewerPublicKey = viewerPublicKey,
             viewerAddress = payload.getString("viewer_address"),
+            relayTlsPin = payload.optString("relay_tls_spki_sha256").trim(),
         )
     }
 

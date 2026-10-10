@@ -22,6 +22,7 @@ import io.virtroid.client.security.TlsPins;
 
 import org.client.scrcpy.decoder.AudioDecoder;
 import org.client.scrcpy.decoder.VideoDecoder;
+import org.client.scrcpy.crypto.NodeKeyPin;
 import org.client.scrcpy.crypto.ViewerEncryption;
 import org.client.scrcpy.audio.PhysicalMicrophoneBridge;
 import org.client.scrcpy.model.AudioPacket;
@@ -39,6 +40,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.security.GeneralSecurityException;
 import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -64,6 +66,7 @@ public class Scrcpy extends Service {
     private int serverPort = DEFAULT_ADB_PORT;
     private boolean relayTls = false;
     private String relayPath = "";
+    private String relayTlsPin = "";
     private String relayToken = "";
     private String viewerPublicKey = "";
     private boolean audioEnabled = false;
@@ -160,7 +163,7 @@ public class Scrcpy extends Service {
         return decoder;
     }
 
-    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayToken, String viewerPublicKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
+    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayToken, String viewerPublicKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
         first_time = true;
@@ -172,6 +175,7 @@ public class Scrcpy extends Service {
         this.serverPort = serverPort;
         this.relayTls = relayTls;
         this.relayPath = relayPath;
+        this.relayTlsPin = relayTlsPin == null ? "" : relayTlsPin.trim();
         this.relayToken = relayToken;
         this.viewerPublicKey = viewerPublicKey;
         this.audioEnabled = audioEnabled;
@@ -571,16 +575,32 @@ public class Scrcpy extends Service {
             throw new IOException("insecure relay transport rejected");
         }
 
-        SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+        boolean directToNode = !TextUtils.isEmpty(relayTlsPin);
+        SSLSocketFactory sslSocketFactory;
+        if (directToNode) {
+            // A remote node is reached by IP with a self-signed certificate; the
+            // pin from the authenticated session API is the whole trust decision.
+            try {
+                sslSocketFactory = NodeKeyPin.socketFactory(relayTlsPin);
+            } catch (GeneralSecurityException e) {
+                throw new IOException("pinned runtime node TLS unavailable", e);
+            }
+        } else {
+            sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+        }
         SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
         // Touch packets are tiny; Nagle would hold them back waiting for ACKs.
         sslSocket.setTcpNoDelay(true);
         sslSocket.connect(new InetSocketAddress(host, port), 5000);
-        SSLParameters sslParameters = sslSocket.getSSLParameters();
-        sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-        sslSocket.setSSLParameters(sslParameters);
+        if (!directToNode) {
+            SSLParameters sslParameters = sslSocket.getSSLParameters();
+            sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+            sslSocket.setSSLParameters(sslParameters);
+        }
         sslSocket.startHandshake();
-        TlsPins.checkPeerCertificates(host, sslSocket.getSession().getPeerCertificates());
+        if (!directToNode) {
+            TlsPins.checkPeerCertificates(host, sslSocket.getSession().getPeerCertificates());
+        }
         return sslSocket;
     }
 

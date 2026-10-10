@@ -798,3 +798,98 @@ func assertReadyHost(t *testing.T, ctx context.Context, st *Store, nodeID string
 		t.Fatalf("unapproved node readiness error = %v, want %v", err, ErrNoReadyHost)
 	}
 }
+
+func TestPostgresRuntimePlacementFollowsAccountRegion(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	registerNode := func(accountID, region string) string {
+		t.Helper()
+		nodeID := "ci-region-node-" + uuid.NewString()
+		operatorID := "ci-region-operator-" + uuid.NewString()
+		t.Cleanup(func() { cleanupPostgresIntegrationFixture(t, st, accountID, nodeID, operatorID) })
+		node, err := st.ApproveNode(ctx, ApproveNodeInput{
+			NodeID:       nodeID,
+			OperatorID:   operatorID,
+			OperatorName: "CI operator",
+			PublicKey:    integrationNodePublicKey(t),
+			Actor:        "postgres-integration-test",
+			Reason:       "region placement fixture",
+		})
+		if err != nil {
+			t.Fatalf("approve %s node: %v", region, err)
+		}
+		if _, err := st.UpsertHostHeartbeat(ctx, HostHeartbeat{
+			ID:             nodeID,
+			Name:           "CI " + region + " node",
+			AdvertiseAddr:  "virtnoded",
+			RelayPort:      8090,
+			DockerSocket:   true,
+			Binder:         true,
+			AudioStreaming: true,
+			FileImport:     true,
+			PublicKey:      node.Keys[0].PublicKey,
+			BlobStoreKind:  "local-disk",
+			Region:         region,
+		}); err != nil {
+			t.Fatalf("register %s node: %v", region, err)
+		}
+		return nodeID
+	}
+	startNewRuntime := func(accountID string) (Runtime, error) {
+		t.Helper()
+		if _, err := st.BootstrapAccountWithIdentity(
+			ctx, accountID, uuid.NewString(), "CI device", integrationNodePublicKey(t), CreateRuntimeInput{},
+		); err != nil {
+			t.Fatalf("bootstrap account: %v", err)
+		}
+		runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{Name: "CI runtime", FileMode: "upload-only"})
+		if err != nil {
+			t.Fatalf("create runtime: %v", err)
+		}
+		return st.StartRuntime(ctx, accountID, runtime.ID)
+	}
+
+	defaultAccount := uuid.NewString()
+	euAccount := uuid.NewString()
+	defaultNode := registerNode(defaultAccount, "")
+	euNode := registerNode(euAccount, "eu")
+
+	runtime, err := startNewRuntime(defaultAccount)
+	if err != nil || valueOrEmpty(runtime.HostID) != defaultNode {
+		t.Fatalf("default-region runtime host = %q err=%v, want %q", valueOrEmpty(runtime.HostID), err, defaultNode)
+	}
+
+	if _, err := st.BootstrapAccountWithIdentity(
+		ctx, euAccount, uuid.NewString(), "CI device", integrationNodePublicKey(t), CreateRuntimeInput{},
+	); err != nil {
+		t.Fatalf("bootstrap eu account: %v", err)
+	}
+	if err := st.SetAccountRuntimeRegion(ctx, euAccount, "eu"); err != nil {
+		t.Fatalf("set account region: %v", err)
+	}
+	runtime, err = st.CreateRuntime(ctx, euAccount, CreateRuntimeInput{Name: "CI runtime", FileMode: "upload-only"})
+	if err != nil {
+		t.Fatalf("create eu runtime: %v", err)
+	}
+	runtime, err = st.StartRuntime(ctx, euAccount, runtime.ID)
+	if err != nil || valueOrEmpty(runtime.HostID) != euNode {
+		t.Fatalf("eu-region runtime host = %q err=%v, want %q", valueOrEmpty(runtime.HostID), err, euNode)
+	}
+
+	if err := st.SetAccountRuntimeRegion(ctx, uuid.NewString(), "eu"); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("unknown account region update error = %v, want ErrAccountNotFound", err)
+	}
+}

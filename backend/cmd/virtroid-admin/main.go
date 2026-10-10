@@ -86,9 +86,44 @@ func prepareDatabaseCommand(args []string, stderr io.Writer) (databaseCommand, e
 		return prepareRevoke(args[1:], stderr)
 	case "rotate":
 		return prepareRotate(args[1:], stderr)
+	case "set-account-region":
+		return prepareSetAccountRegion(args[1:], stderr)
 	default:
-		return nil, fmt.Errorf("unsupported command %q: use approve, bootstrap-invite, list, operator-approve, operator-revoke, public-key, revoke, or rotate", args[0])
+		return nil, fmt.Errorf("unsupported command %q: use approve, bootstrap-invite, list, operator-approve, operator-revoke, public-key, revoke, rotate, or set-account-region", args[0])
 	}
+}
+
+// prepareSetAccountRegion places an account's future runtimes on nodes in a
+// region. An empty region returns the account to the default region.
+func prepareSetAccountRegion(args []string, stderr io.Writer) (databaseCommand, error) {
+	flags := flag.NewFlagSet("set-account-region", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	accountID := flags.String("account", "", "account ID")
+	region := flags.String("region", "", "node region; empty for the default region")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	if flags.NArg() != 0 {
+		return nil, errors.New("set-account-region does not accept positional arguments")
+	}
+	if strings.TrimSpace(*accountID) == "" {
+		return nil, errors.New("set-account-region requires --account")
+	}
+	normalizedRegion := strings.ToLower(strings.TrimSpace(*region))
+	if !store.ValidRegion(normalizedRegion) {
+		return nil, fmt.Errorf("invalid --region %q", *region)
+	}
+	return func(ctx context.Context, registry *store.Store, stdout io.Writer) error {
+		if err := registry.SetAccountRuntimeRegion(ctx, *accountID, normalizedRegion); err != nil {
+			return err
+		}
+		label := normalizedRegion
+		if label == "" {
+			label = "default"
+		}
+		_, err := fmt.Fprintf(stdout, "account=%s runtime_region=%s\n", strings.TrimSpace(*accountID), label)
+		return err
+	}, nil
 }
 
 func prepareBootstrapInvite(args []string, stderr io.Writer) (databaseCommand, error) {
