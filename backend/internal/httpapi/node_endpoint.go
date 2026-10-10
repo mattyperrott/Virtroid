@@ -25,7 +25,7 @@ func nodeHasPublicEndpoint(host store.Host) bool {
 // key; a local node keeps its allowlisted private address.
 func (a *API) nodeCallbackTarget(host store.Host) (string, *http.Client, error) {
 	if nodeHasPublicEndpoint(host) {
-		addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+		addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs)
 		if err != nil {
 			return "", nil, err
 		}
@@ -87,7 +87,7 @@ func (a *API) relayEndpointForHost(host store.Host) (publicRelayEndpoint, string
 		endpoint, err := a.publicRelayEndpoint()
 		return endpoint, "", err
 	}
-	addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs)
 	if err != nil {
 		return publicRelayEndpoint{}, "", err
 	}

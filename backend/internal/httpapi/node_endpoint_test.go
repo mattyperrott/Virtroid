@@ -18,10 +18,10 @@ const testPin = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
 
 func TestValidateNodePublicEndpoint(t *testing.T) {
 	allowed := []string{"203.0.113.10"}
-	if addr, pin, err := validateNodePublicEndpoint("203.0.113.10:8443", testPin, allowed, "production"); err != nil || addr != "203.0.113.10:8443" || pin != testPin {
+	if addr, pin, err := validateNodePublicEndpoint("203.0.113.10:8443", testPin, allowed); err != nil || addr != "203.0.113.10:8443" || pin != testPin {
 		t.Fatalf("valid endpoint = %q %q %v", addr, pin, err)
 	}
-	if addr, pin, err := validateNodePublicEndpoint("", "", allowed, "production"); err != nil || addr != "" || pin != "" {
+	if addr, pin, err := validateNodePublicEndpoint("", "", allowed); err != nil || addr != "" || pin != "" {
 		t.Fatalf("absent endpoint = %q %q %v, want empty and no error", addr, pin, err)
 	}
 	for name, input := range map[string][2]string{
@@ -35,8 +35,22 @@ func TestValidateNodePublicEndpoint(t *testing.T) {
 		"port out of range":      {"203.0.113.10:70000", testPin},
 		"internal docker target": {"127.0.0.1:5432", testPin},
 	} {
-		if _, _, err := validateNodePublicEndpoint(input[0], input[1], allowed, "production"); err == nil {
+		if _, _, err := validateNodePublicEndpoint(input[0], input[1], allowed); err == nil {
 			t.Errorf("%s: accepted %q %q", name, input[0], input[1])
+		}
+	}
+	if _, _, err := validateNodePublicEndpoint("203.0.113.10:8443", testPin, nil); err == nil {
+		t.Error("accepted a remote node with no remote allowlist configured")
+	}
+}
+
+func TestRemoteNodeAdvertiseAddrMustMatchItsPublicAddress(t *testing.T) {
+	if addr, err := remoteNodeAdvertiseAddr("203.0.113.10", "203.0.113.10:8443"); err != nil || addr != "203.0.113.10" {
+		t.Fatalf("matching advertise address = %q %v", addr, err)
+	}
+	for _, advertise := range []string{"virtnoded", "10.0.0.5", "127.0.0.1"} {
+		if _, err := remoteNodeAdvertiseAddr(advertise, "203.0.113.10:8443"); err == nil {
+			t.Errorf("remote node advertise %q accepted for public 203.0.113.10", advertise)
 		}
 	}
 }
@@ -64,7 +78,8 @@ func TestPinnedNodeClientChecksTheNodeKey(t *testing.T) {
 func TestNodeTargetsUseDirectEndpointOnlyForPublicNodes(t *testing.T) {
 	api := &API{cfg: config.ServerConfig{
 		AppEnv:                    "production",
-		NodeAllowedAdvertiseAddrs: []string{"virtnoded", "203.0.113.10"},
+		NodeAllowedAdvertiseAddrs: []string{"virtnoded"},
+		NodeAllowedRemoteAddrs:    []string{"203.0.113.10"},
 		PublicBaseURL:             "https://virtroid.network",
 	}}
 

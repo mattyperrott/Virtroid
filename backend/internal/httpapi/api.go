@@ -729,8 +729,8 @@ func validateNodeAdvertiseAddr(raw string, allowed []string, appEnv string) (str
 
 // validateNodePublicEndpoint checks a node's direct endpoint. Both parts are
 // optional but must come together: an IP:port whose IP is on the operator's
-// node allowlist, and the base64 SHA-256 pin of the node's TLS public key.
-func validateNodePublicEndpoint(addr, pin string, allowed []string, appEnv string) (string, string, error) {
+// remote node allowlist, and the base64 SHA-256 pin of the node's TLS key.
+func validateNodePublicEndpoint(addr, pin string, allowedRemote []string) (string, string, error) {
 	addr = strings.TrimSpace(addr)
 	pin = strings.TrimSpace(pin)
 	if addr == "" && pin == "" {
@@ -749,11 +749,27 @@ func validateNodePublicEndpoint(addr, pin string, allowed []string, appEnv strin
 	if value, err := strconv.Atoi(port); err != nil || value < 1 || value > 65535 {
 		return "", "", errors.New("public_addr port is invalid")
 	}
-	allowedHost, err := validateNodeAdvertiseAddr(host, allowed, appEnv)
-	if err != nil {
-		return "", "", errors.New("public_addr is not on the node allowlist")
+	ip := net.ParseIP(host).String()
+	for _, candidate := range allowedRemote {
+		if allowedIP := net.ParseIP(strings.TrimSpace(candidate)); allowedIP != nil && allowedIP.String() == ip {
+			return net.JoinHostPort(ip, port), pin, nil
+		}
 	}
-	return net.JoinHostPort(allowedHost, port), pin, nil
+	return "", "", errors.New("public_addr is not on the remote node allowlist")
+}
+
+// remoteNodeAdvertiseAddr requires a remote node to advertise the same IP as
+// its allowlisted public endpoint, so it needs no entry in the local allowlist.
+func remoteNodeAdvertiseAddr(raw, publicAddr string) (string, error) {
+	address, err := normalizeNodeAdvertiseHost(raw)
+	if err != nil {
+		return "", err
+	}
+	publicHost, _, err := net.SplitHostPort(publicAddr)
+	if err != nil || address != publicHost {
+		return "", errors.New("remote node advertise address must match its public address")
+	}
+	return address, nil
 }
 
 func normalizeNodeAdvertiseHost(raw string) (string, error) {
@@ -2423,7 +2439,7 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid region"})
 		return
 	}
-	publicAddr, tlsPin, err := validateNodePublicEndpoint(req.PublicAddr, req.TLSSPKISHA256, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	publicAddr, tlsPin, err := validateNodePublicEndpoint(req.PublicAddr, req.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs)
 	if err != nil {
 		writeAPIError(w, http.StatusForbidden, "node_public_endpoint_rejected", err.Error())
 		return
@@ -2437,7 +2453,12 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "id, name, and advertise_addr are required"})
 		return
 	}
-	advertiseAddr, err := validateNodeAdvertiseAddr(req.AdvertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	var advertiseAddr string
+	if publicAddr != "" {
+		advertiseAddr, err = remoteNodeAdvertiseAddr(req.AdvertiseAddr, publicAddr)
+	} else {
+		advertiseAddr, err = validateNodeAdvertiseAddr(req.AdvertiseAddr, a.cfg.NodeAllowedAdvertiseAddrs, a.cfg.AppEnv)
+	}
 	if err != nil {
 		if errors.Is(err, errNodeAdvertiseAllowlistUnavailable) {
 			writeServerAPIError(w, http.StatusServiceUnavailable, "node_advertise_allowlist_unavailable", "node registration unavailable", err)

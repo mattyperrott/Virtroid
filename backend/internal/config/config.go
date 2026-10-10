@@ -17,31 +17,34 @@ type ServerConfig struct {
 	NodeRegistrationSecret           string
 	NodeDevelopmentEnrollmentEnabled bool
 	NodeAllowedAdvertiseAddrs        []string
-	BootstrapEnabled                 bool
-	BootstrapRequireInvite           bool
-	BootstrapAutoIssueInvite         bool
-	BootstrapRateLimitPerMinute      int
-	BootstrapMaxBodyBytes            int64
-	TrustProxyHeaders                bool
-	SecurityEventRateLimitPerMinute  int
-	SecurityEventRetention           time.Duration
-	RuntimeLogRetention              time.Duration
-	SessionReaperInterval            time.Duration
-	ActiveSessionTimeout             time.Duration
-	RuntimeIdleTimeout               time.Duration
-	AppCatalogSyncEnabled            bool
-	AppCatalogSyncURL                string
-	AppCatalogSyncSHA256             string
-	AppCatalogSyncInterval           time.Duration
-	AppCatalogSyncMaxApps            int
-	RuntimeNotificationRateLimit     int
-	OperatorConsoleEnabled           bool
-	OperatorConsoleToken             string
-	OperatorSessionTTL               time.Duration
-	OperatorLoginRateLimitPerMinute  int
-	ReleaseSourceSHA                 string
-	ReleaseSchemaVersion             string
-	ReleaseDeploymentTreeSHA256      string
+	// NodeAllowedRemoteAddrs lists the IPs of remote nodes that serve their own
+	// public TLS endpoint. Empty means no remote nodes are accepted.
+	NodeAllowedRemoteAddrs          []string
+	BootstrapEnabled                bool
+	BootstrapRequireInvite          bool
+	BootstrapAutoIssueInvite        bool
+	BootstrapRateLimitPerMinute     int
+	BootstrapMaxBodyBytes           int64
+	TrustProxyHeaders               bool
+	SecurityEventRateLimitPerMinute int
+	SecurityEventRetention          time.Duration
+	RuntimeLogRetention             time.Duration
+	SessionReaperInterval           time.Duration
+	ActiveSessionTimeout            time.Duration
+	RuntimeIdleTimeout              time.Duration
+	AppCatalogSyncEnabled           bool
+	AppCatalogSyncURL               string
+	AppCatalogSyncSHA256            string
+	AppCatalogSyncInterval          time.Duration
+	AppCatalogSyncMaxApps           int
+	RuntimeNotificationRateLimit    int
+	OperatorConsoleEnabled          bool
+	OperatorConsoleToken            string
+	OperatorSessionTTL              time.Duration
+	OperatorLoginRateLimitPerMinute int
+	ReleaseSourceSHA                string
+	ReleaseSchemaVersion            string
+	ReleaseDeploymentTreeSHA256     string
 }
 
 type NodeConfig struct {
@@ -144,6 +147,7 @@ func LoadServer() ServerConfig {
 		NodeRegistrationSecret:           strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
 		NodeDevelopmentEnrollmentEnabled: developmentEnrollmentEnabled,
 		NodeAllowedAdvertiseAddrs:        parseEnvCSV("NODE_ALLOWED_ADVERTISE_ADDRS", ""),
+		NodeAllowedRemoteAddrs:           parseEnvCSV("NODE_ALLOWED_REMOTE_ADDRS", ""),
 		BootstrapEnabled:                 parseEnvBool("BOOTSTRAP_ENABLED", true),
 		BootstrapRequireInvite:           bootstrapRequireInvite,
 		BootstrapAutoIssueInvite:         parseEnvBool("BOOTSTRAP_AUTO_ISSUE_INVITE", true),
