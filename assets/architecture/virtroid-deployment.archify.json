@@ -1,0 +1,421 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Virtroid Deployment Today: VPS + Aleph Node",
+    "output": ".archify/architecture-virtroid-current-deployment-20261010-211351/virtroid-current-deployment.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/mattyperrott/Virtroid.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "06fbd46557830573f0ebac79d4717f40bd023d07"
+    }
+  },
+  "components": [
+    {
+      "id": "phone",
+      "type": "frontend",
+      "label": "Android client",
+      "sublabel": "device key \u00b7 viewer",
+      "pos": [
+        16,
+        300
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "android-client/app/src/main/java/org/client/scrcpy/Scrcpy.java",
+          "line": 588,
+          "end_line": 622,
+          "label": "relay socket, pinned to node key"
+        },
+        {
+          "path": "android-client/app/src/main/java/org/client/scrcpy/crypto/NodeKeyPin.java",
+          "line": 29,
+          "end_line": 55,
+          "label": "node key pin check"
+        }
+      ]
+    },
+    {
+      "id": "edge",
+      "type": "security",
+      "label": "HAProxy edge",
+      "sublabel": "public HTTPS :443",
+      "pos": [
+        250,
+        300
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "deploy/vps/haproxy.cfg",
+          "line": 39,
+          "end_line": 44,
+          "label": "relay path vs API routing"
+        }
+      ]
+    },
+    {
+      "id": "virtroidd",
+      "type": "backend",
+      "label": "virtroidd",
+      "sublabel": "control plane \u00b7 placement",
+      "pos": [
+        470,
+        300
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/httpapi/api.go",
+          "line": 1709,
+          "end_line": 1876,
+          "label": "session: node address and pin"
+        },
+        {
+          "path": "backend/internal/httpapi/node_endpoint.go",
+          "line": 26,
+          "end_line": 103,
+          "label": "pinned node calls, relay endpoint"
+        },
+        {
+          "path": "backend/internal/store/store.go",
+          "line": 7209,
+          "end_line": 7266,
+          "label": "region-aware placement"
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "accounts \u00b7 hosts \u00b7 sessions",
+      "pos": [
+        470,
+        110
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "deploy/vps/docker-compose.yml",
+          "line": 2,
+          "end_line": 29,
+          "label": "postgres service"
+        },
+        {
+          "path": "backend/internal/store/schema.sql",
+          "line": 35,
+          "end_line": 75,
+          "label": "hosts: address, pin, region"
+        }
+      ]
+    },
+    {
+      "id": "localnode",
+      "type": "backend",
+      "label": "virtnoded",
+      "sublabel": "VPS node \u00b7 default region",
+      "pos": [
+        470,
+        480
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/cmd/virtnoded/main.go",
+          "line": 1420,
+          "end_line": 1447,
+          "label": "relay, forwards remote sessions"
+        },
+        {
+          "path": "backend/cmd/virtnoded/relay_forward.go",
+          "line": 62,
+          "end_line": 150,
+          "label": "pinned forward to remote node"
+        },
+        {
+          "path": "deploy/vps/docker-compose.yml",
+          "line": 109,
+          "end_line": 175,
+          "label": "node service on the VPS"
+        }
+      ]
+    },
+    {
+      "id": "localredroid",
+      "type": "backend",
+      "label": "ReDroid",
+      "sublabel": "runtimes on the VPS",
+      "pos": [
+        470,
+        620
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/cmd/virtnoded/main.go",
+          "line": 2726,
+          "end_line": 2762,
+          "label": "runtime container, 30 fps"
+        }
+      ]
+    },
+    {
+      "id": "alephnode",
+      "type": "backend",
+      "label": "virtnoded",
+      "sublabel": "Aleph node \u00b7 region eu",
+      "pos": [
+        890,
+        300
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/cmd/virtnoded/public_tls.go",
+          "line": 32,
+          "end_line": 138,
+          "label": "public TLS listener and pin"
+        },
+        {
+          "path": "backend/cmd/virtnoded/main.go",
+          "line": 1555,
+          "end_line": 1631,
+          "label": "reconcile and heartbeat loops"
+        }
+      ]
+    },
+    {
+      "id": "alephredroid",
+      "type": "backend",
+      "label": "ReDroid",
+      "sublabel": "runtimes on Aleph",
+      "pos": [
+        1090,
+        300
+      ],
+      "size": [
+        120,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/cmd/virtnoded/main.go",
+          "line": 2726,
+          "end_line": 2762,
+          "label": "same runtime container code"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "User's phone",
+      "wraps": [
+        "phone"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "Your VPS \u00b7 Docker, IPv4 + IPv6",
+      "wraps": [
+        "edge",
+        "virtroidd",
+        "postgres",
+        "localnode",
+        "localredroid"
+      ],
+      "pad": 24
+    },
+    {
+      "kind": "security-group",
+      "label": "Control plane",
+      "wraps": [
+        "virtroidd",
+        "postgres"
+      ],
+      "pad": 12
+    },
+    {
+      "kind": "region",
+      "label": "Aleph Cloud VM \u00b7 pilot, not confidential",
+      "wraps": [
+        "alephnode",
+        "alephredroid"
+      ],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "phone-edge",
+      "from": "phone",
+      "to": "edge",
+      "label": "HTTPS :443",
+      "variant": "emphasis"
+    },
+    {
+      "id": "edge-virtroidd",
+      "from": "edge",
+      "to": "virtroidd",
+      "label": "signed API",
+      "variant": "emphasis"
+    },
+    {
+      "id": "virtroidd-postgres",
+      "from": "virtroidd",
+      "to": "postgres",
+      "label": "SQL",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "virtroidd-aleph",
+      "from": "virtroidd",
+      "to": "alephnode",
+      "label": "callbacks \u00b7 pinned TLS",
+      "variant": "security"
+    },
+    {
+      "id": "aleph-edge",
+      "from": "alephnode",
+      "to": "edge",
+      "label": "heartbeat \u00b7 assignments",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          970,
+          60
+        ],
+        [
+          330,
+          60
+        ]
+      ]
+    },
+    {
+      "id": "edge-localnode",
+      "from": "edge",
+      "to": "localnode",
+      "label": "relay",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "localnode-virtroidd",
+      "from": "localnode",
+      "to": "virtroidd",
+      "label": "pull work",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "localnode-localredroid",
+      "from": "localnode",
+      "to": "localredroid",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "aleph-redroid",
+      "from": "alephnode",
+      "to": "alephredroid"
+    },
+    {
+      "id": "phone-aleph-direct",
+      "from": "phone",
+      "to": "alephnode",
+      "label": "direct stream \u00b7 pinned TLS \u00b7 IPv6",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          86,
+          740
+        ],
+        [
+          970,
+          740
+        ]
+      ]
+    },
+    {
+      "id": "localnode-aleph-fallback",
+      "from": "localnode",
+      "to": "alephnode",
+      "label": "fallback forward",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Running today",
+      "items": [
+        "One VPS runs the edge, control plane, database, a runtime node, Falco and Suricata",
+        "A second node on an Aleph Cloud VM serves accounts assigned to region eu",
+        "New runtimes go to a node in the account's region; a runtime stays on its node"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "How the stream connects",
+      "items": [
+        "VPS runtimes: phone to edge to virtnoded, over TLS",
+        "Remote runtimes: phone straight to the node, checking its pinned TLS key",
+        "No direct route (e.g. no IPv6): the VPS node forwards the stream unchanged",
+        "Video is end-to-end encrypted between phone and runtime either way"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Trust boundary",
+      "items": [
+        "Runtime hosts are trusted: the VPS operator, and the operator of an Aleph machine, can inspect live runtimes",
+        "Nodes sign every request with an approved P-256 key",
+        "The control plane only calls remote nodes on an operator allowlist"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Next",
+      "items": [
+        "Provisioner that creates and deletes Aleph VMs per user",
+        "SEV-SNP VMs, with the phone verifying attestation first",
+        "QUIC transport, and encrypted user data on Sia"
+      ]
+    }
+  ]
+}

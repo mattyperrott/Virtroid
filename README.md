@@ -36,9 +36,10 @@ runtime.
 <br>
 
 > [!IMPORTANT]
-> Virtroid is currently a **trusted-operator, single-VPS release candidate**.
-> It does not yet protect an active runtime from a compromised host or
-> privileged infrastructure operator.
+> Virtroid is currently a **trusted-operator release candidate**: one VPS, plus
+> a pilot runtime node on Aleph Cloud. It does not yet protect an active runtime
+> from a compromised host or privileged infrastructure operator, including the
+> operator of a remote node's machine.
 
 
 ---
@@ -51,7 +52,7 @@ runtime.
 | :--- | :---: | :--- |
 | Identity and recovery | ✅ Deployed | Invite-gated bootstrap, device signing, trusted-device management, account deletion, and replacement-phone recovery with live acceptance pending |
 | Runtime lifecycle | ✅ Deployed | Create, start, stop, restore, persona restart, factory reset, idle cleanup, and permanent deletion |
-| Remote viewer | ✅ Deployed | Encrypted live control, reconnect handling, runtime audio, and demand-activated physical microphone input |
+| Remote viewer | ✅ Deployed | Encrypted live control, reconnect handling, runtime audio, demand-activated physical microphone input, and 30 fps runtimes (about 0.3 s tap-to-screen on the VPS) |
 | Camera and media | ✅ Deployed | Explicit physical-camera photo and video capture followed by guest media import |
 | Applications | ✅ Deployed | Pinned F-Droid catalog entries with hash, package, size, transport, and compatibility validation |
 | Notifications | ✅ Deployed | Encrypted forwarding of package, app label, timestamp, and title only; no message body or preview |
@@ -62,9 +63,11 @@ runtime.
 | Host monitoring | ✅ Deployed | Falco HIDS, Suricata NIDS, bounded sensor ingestion, and sanitized client security notices |
 | Reproducible deployment | ✅ Deployed | Protected VPS-local builds, immutable release identity, schema checks, hardening checks, and health gates |
 | Active-runtime file import | ✅ Backend path | Signed and bounded delivery is live-proved; the generic client upload action is intentionally absent |
-| Multi-node scheduling | 🟡 Candidate | Capability-aware control logic exists; live multi-node acceptance remains pending |
-| Confidential host isolation | ⛔ Not implemented | ReDroid currently executes inside the trusted VPS boundary |
-| Hardware attestation | ⛔ Not implemented | Design and proof-of-concept work only |
+| Multi-node scheduling | 🟡 Pilot | Region-based placement; a second node on Aleph Cloud serves explicitly assigned accounts |
+| Direct node streaming | 🟡 Pilot | Phones stream straight from a remote node over key-pinned TLS (IPv6), falling back through the VPS edge when there is no direct route |
+| Automatic node provisioning | ⛔ Not implemented | Next: create and delete Aleph VMs per user on demand |
+| Confidential host isolation | ⛔ Not implemented | ReDroid runs inside the trusted VPS or an ordinary, non-confidential Aleph VM; SEV-SNP VMs are next |
+| Hardware attestation | ⛔ Not implemented | Planned: the phone verifies a node's SEV-SNP attestation before connecting |
 
 
 ---
@@ -75,46 +78,27 @@ runtime.
 | Component | Responsibility |
 | :--- | :--- |
 | Android client | Identity, onboarding, runtime controls, local security, viewer, media capture, and notification display |
-| HAProxy | Public HTTPS termination and controlled viewer ingress |
-| `virtroidd` | Accounts, devices, policy, runtimes, capabilities, sessions, operator telemetry, and notification delivery |
-| `virtnoded` | ReDroid lifecycle, media paths, viewer relay, application provisioning, snapshots, and cleanup |
+| HAProxy | Public HTTPS termination, the API, and viewer ingress for VPS runtimes and the fallback path |
+| `virtroidd` | Accounts, devices, policy, region-based placement, runtimes, capabilities, sessions, operator telemetry, and notification delivery |
+| `virtnoded` | ReDroid lifecycle, media paths, viewer relay, application provisioning, snapshots, and cleanup, on the VPS and on remote nodes |
+| Remote node | A `virtnoded` host outside the VPS (today an Aleph Cloud VM) that serves a public TLS endpoint authenticated by its pinned key |
 | PostgreSQL | Authoritative control-plane and lifecycle state |
 | ReDroid | Independently hosted Android runtime |
 | Runtime agent | Allowlisted notification metadata collection inside the guest | 
 
 <br>
 
-```mermaid
-flowchart LR
-    subgraph Phone[Android client]
-        ID[Device identity]
-        UI[Runtime controls]
-        VIEW[Encrypted viewer]
-    end
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture/virtroid-deployment-dark.png">
+  <img alt="Virtroid deployment today: the Android client talks to the HAProxy edge and virtroidd on the VPS; runtimes run on the VPS node or on a remote node on Aleph Cloud, which phones reach directly over pinned TLS with a fallback through the VPS" src="assets/architecture/virtroid-deployment-light.png">
+</picture>
 
-    EDGE[HAProxy<br/>HTTPS and TLS relay]
-    CP[virtroidd<br/>Control plane]
-    NODE[virtnoded<br/>Runtime node]
-    DB[(PostgreSQL)]
-    SNAP[(Encrypted snapshots)]
+- **Control** always goes through the VPS: the phone's signed requests reach `virtroidd` through the edge, and nodes send heartbeats and fetch their work the same way.
+- **Placement** follows the account's region. Accounts default to the VPS; an operator assigns an account to a remote region with `virtroid-admin set-account-region`. A runtime stays on the node that holds its data.
+- **Streams** from VPS runtimes pass through the edge. Streams from a remote node go straight from the phone to the node, which proves its identity with a TLS key pinned in the session. When the phone has no direct route (for example no IPv6), the VPS node forwards the stream unchanged.
+- On every path the viewer stream is encrypted between the phone and the viewer proxy inside the runtime, so the edge and a forwarding node only relay ciphertext. The runtime's own host can still see the runtime.
 
-    subgraph Guest[ReDroid guest]
-        ANDROID[Android system and apps]
-        AGENT[Notification agent]
-    end
-
-    ID --> EDGE
-    UI --> EDGE
-    VIEW --> EDGE
-    EDGE --> CP
-    EDGE --> NODE
-    CP --> DB
-    CP --> NODE
-    NODE --> ANDROID
-    NODE --> SNAP
-    ANDROID --> AGENT
-    AGENT -->|Metadata only| EDGE
-```
+The diagram's source is [`assets/architecture/virtroid-deployment.archify.json`](assets/architecture/virtroid-deployment.archify.json).
 
 
 ---
@@ -125,12 +109,15 @@ flowchart LR
 Virtroid protects the client-to-service path and stopped-runtime persistence, but the runtime host remains trusted. 
 A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.  
 
+The same applies to a remote node: whoever operates the machine under an Aleph Cloud VM can inspect the runtimes on it, because today's pilot node is an ordinary, non-confidential VM. Only explicitly assigned accounts are placed there.
+
 ### Implemented controls
 
 - P-256 device, node, capability, and callback signing
 - Timestamp, nonce, body-integrity, and replay validation
 - Runtime- and session-scoped capabilities with expiry
 - TLS viewer transport with session-bound relay credentials
+- Remote nodes reached only at operator-allowlisted IPs, over TLS pinned to each node's reported key, for both control-plane calls and phone streams
 - Android Keystore-backed client secrets and encrypted local state
 - AES-GCM snapshot encryption with authenticated manifests and monotonic generations
 - Bounded resource quotas and explicit lifecycle cleanup obligations
@@ -160,6 +147,7 @@ A sufficiently privileged VPS administrator, compromised node agent, Docker cont
 | [`backend/cmd/`](backend/cmd/) | Control plane, node agent, administration, viewer encryption, and sensor entry points |
 | [`backend/internal/`](backend/internal/) | Identity, policy, persistence, lifecycle, security, and operator API logic |
 | [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
+| [`assets/`](assets/) | Architecture diagram images and their Archify source |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices | 
 
 
@@ -174,8 +162,19 @@ Physical-device acceptance has covered runtime lifecycle, encrypted viewing and
 reconnection, audio, demand-activated microphone input, physical-camera photo
 import, file delivery, idle cleanup, readiness, and security-event delivery.
 
+A second runtime node on an Aleph Cloud VM is live as a pilot for one assigned
+account. Phones stream from it directly over IPv6; measured tap-to-screen was
+about 0.42 s from South-East Asia to the node in Finland, against about 0.3 s
+on the VPS.
+
 This is working release-candidate evidence—not a claim of complete production
 hardening or hostile multi-tenant isolation. 
+
+### Next
+
+1. A provisioner that creates and deletes Aleph VMs per user, with spending caps and a warm spare.
+2. SEV-SNP confidential VMs, with the phone verifying attestation before it releases any key.
+3. QUIC for the stream, and encrypted user data on Sia.
 
 > [!NOTE]
 > **Disclaimer:**
