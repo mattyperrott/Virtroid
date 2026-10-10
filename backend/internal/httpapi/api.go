@@ -408,6 +408,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/internal/hosts/heartbeat", api.hostHeartbeat)
 	mux.HandleFunc("GET /api/v1/internal/hosts/{id}/assignments", api.hostAssignments)
 	mux.HandleFunc("GET /api/v1/internal/sessions/{id}/relay", api.sessionRelayTarget)
+	mux.HandleFunc("GET /api/v1/internal/sessions/{id}/relay-route", api.sessionRelayRoute)
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/blob-key", api.runtimeBlobKey)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/status", api.runtimeStatusUpdate)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
@@ -1861,6 +1862,12 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if relayPin != "" {
 		response["relay_tls_spki_sha256"] = relayPin
+		// Phones that cannot reach the node directly (e.g. no IPv6) use the
+		// edge, whose node forwards the stream to the remote node.
+		if edge, err := a.publicRelayEndpoint(); err == nil {
+			response["fallback_relay_host"] = edge.Host
+			response["fallback_relay_port"] = edge.Port
+		}
 	}
 	writeJSON(w, http.StatusCreated, response)
 }
@@ -2958,6 +2965,37 @@ func (a *API) sessionRelayTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, target)
+}
+
+// sessionRelayRoute tells a node which node hosts a session, without consuming
+// the relay token. The edge's node uses it to forward a phone that cannot reach
+// a remote node directly; the remote node then consumes the token as usual.
+func (a *API) sessionRelayRoute(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.requireNodeRequest(w, r, false); !ok {
+		return
+	}
+	relayToken := strings.TrimSpace(r.Header.Get("X-Virtroid-Relay-Token"))
+	if relayToken == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "relay token is required"})
+		return
+	}
+	hostID, err := a.store.SessionRelayHost(r.Context(), r.PathValue("id"), relayToken)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "relay route not found"})
+			return
+		}
+		writeInternalAPIError(w, "session_relay_route_failed", err)
+		return
+	}
+	route := map[string]any{"host_id": hostID}
+	if host, err := a.store.GetHost(r.Context(), hostID); err == nil && nodeHasPublicEndpoint(host) {
+		if addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs); err == nil {
+			route["public_addr"] = addr
+			route["tls_spki_sha256"] = pin
+		}
+	}
+	writeJSON(w, http.StatusOK, route)
 }
 
 func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {

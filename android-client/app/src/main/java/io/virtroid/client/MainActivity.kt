@@ -563,6 +563,8 @@ class MainActivity : AppCompatActivity() {
                         sessionId = session.sessionId,
                         viewerPublicKey = session.viewerPublicKey,
                         relayTlsPin = session.relayTlsPin,
+                        relayFallbackHost = session.relayFallbackHost,
+                        relayFallbackPort = session.relayFallbackPort,
                         audioEnabled = readyRuntime.audioEnabled,
                         cameraMode = readyRuntime.cameraMode,
                         fileMode = readyRuntime.fileMode,

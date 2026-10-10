@@ -67,6 +67,9 @@ public class Scrcpy extends Service {
     private boolean relayTls = false;
     private String relayPath = "";
     private String relayTlsPin = "";
+    // The edge, used when a remote node cannot be reached directly.
+    private String relayFallbackHost = "";
+    private int relayFallbackPort = 0;
     private String relayToken = "";
     private String viewerPublicKey = "";
     private boolean audioEnabled = false;
@@ -163,7 +166,7 @@ public class Scrcpy extends Service {
         return decoder;
     }
 
-    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayToken, String viewerPublicKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
+    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayFallbackHost, int relayFallbackPort, String relayToken, String viewerPublicKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
         first_time = true;
@@ -176,6 +179,8 @@ public class Scrcpy extends Service {
         this.relayTls = relayTls;
         this.relayPath = relayPath;
         this.relayTlsPin = relayTlsPin == null ? "" : relayTlsPin.trim();
+        this.relayFallbackHost = relayFallbackHost == null ? "" : relayFallbackHost.trim();
+        this.relayFallbackPort = relayFallbackPort;
         this.relayToken = relayToken;
         this.viewerPublicKey = viewerPublicKey;
         this.audioEnabled = audioEnabled;
@@ -520,6 +525,16 @@ public class Scrcpy extends Service {
                             serviceCallbacks.errorDisconnect();
                         }
                         return;
+                    }
+                    if (!TextUtils.isEmpty(relayTlsPin) && !TextUtils.isEmpty(relayFallbackHost) && relayFallbackPort > 0) {
+                        // The node is not reachable directly from this network (for
+                        // example no IPv6), and the token is still unused: go through
+                        // the edge, whose node forwards the stream to the remote node.
+                        debugLog("direct runtime node unreachable; using the edge relay");
+                        ip = relayFallbackHost;
+                        port = relayFallbackPort;
+                        relayTlsPin = "";
+                        continue;
                     }
                     attempts--;
                     if (attempts <= 0) {

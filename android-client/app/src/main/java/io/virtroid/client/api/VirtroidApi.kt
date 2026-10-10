@@ -70,6 +70,9 @@ data class SessionLaunch(
     // Set when the runtime streams straight from its node: the base64 SHA-256 of
     // the node's TLS public key, which replaces the edge's web certificate check.
     val relayTlsPin: String = "",
+    // The edge, for when the node cannot be reached directly.
+    val relayFallbackHost: String = "",
+    val relayFallbackPort: Int = 0,
 )
 
 data class SessionRelayRefresh(
@@ -792,6 +795,8 @@ class VirtroidApi(
             viewerPublicKey = viewerPublicKey,
             viewerAddress = payload.getString("viewer_address"),
             relayTlsPin = payload.optString("relay_tls_spki_sha256").trim(),
+            relayFallbackHost = payload.optString("fallback_relay_host").trim(),
+            relayFallbackPort = payload.optInt("fallback_relay_port"),
         )
     }
 

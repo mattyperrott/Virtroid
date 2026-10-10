@@ -1434,6 +1434,18 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// A session on a remote node is forwarded there before anything consumes the
+	// relay token. An older control plane without the route lookup errors here,
+	// which keeps the original local-only behaviour.
+	if route, err := n.fetchRelayRoute(ctx, sessionID, relayToken); err == nil && route.HostID != "" && route.HostID != n.cfg.NodeID {
+		if route.PublicAddr == "" || route.TLSSPKISHA256 == "" {
+			http.Error(w, "session is assigned to a node without a public endpoint", http.StatusNotFound)
+			return
+		}
+		n.forwardRelayToNode(w, r, sessionID, relayToken, route)
+		return
+	}
+
 	target, err := n.fetchRelayTarget(ctx, sessionID, relayToken)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)

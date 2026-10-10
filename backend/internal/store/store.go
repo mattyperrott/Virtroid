@@ -8457,3 +8457,28 @@ func (s *Store) SetAccountRuntimeRegion(ctx context.Context, accountID, region s
 	}
 	return nil
 }
+
+// SessionRelayHost returns the node hosting a session's runtime without
+// consuming the relay token, so the edge's node can forward a phone's stream to
+// a remote node that then validates and consumes the token itself.
+func (s *Store) SessionRelayHost(ctx context.Context, sessionID, relayToken string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(relayToken) == "" {
+		return "", sql.ErrNoRows
+	}
+	var hostID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT r.host_id
+		   FROM sessions s
+		   JOIN runtimes r ON r.id = s.runtime_id
+		  WHERE s.id = $1
+		    AND s.relay_token = $2
+		    AND s.relay_token_consumed_at IS NULL
+		    AND s.expires_at > NOW()
+		    AND s.status IN ('pending', 'active')
+		    AND r.deleted_at IS NULL
+		    AND r.host_id IS NOT NULL`,
+		strings.TrimSpace(sessionID),
+		hashRelayToken(strings.TrimSpace(relayToken)),
+	).Scan(&hostID)
+	return hostID, err
+}
