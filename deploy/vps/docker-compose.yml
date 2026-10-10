@@ -474,8 +474,13 @@ networks:
   guest:
     name: ${NODE_DOCKER_NETWORK:?set NODE_DOCKER_NETWORK to the dedicated guest network name}
     driver: bridge
+    # IPv6 egress (Docker NAT66 over an automatic ULA subnet) lets the node
+    # reach remote nodes that are only addressable over IPv6.
+    enable_ipv6: true
   app-egress:
     driver: bridge
+    # The control plane calls remote nodes over IPv6 when they have no IPv4 forward.
+    enable_ipv6: true
   renterd-egress:
     driver: bridge
   renterd-database:
