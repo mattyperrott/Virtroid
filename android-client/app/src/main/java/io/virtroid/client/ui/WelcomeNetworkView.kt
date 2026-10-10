@@ -138,10 +138,10 @@ class WelcomeNetworkView @JvmOverloads constructor(
         }
         drawConnections(canvas, networkPath, vaultPath)
 
-        drawNode(canvas, phone, "This phone", "Control ready", index = 1)
-        drawNode(canvas, core, "Virtroid", "Private link", index = 0, emphasized = true)
+        drawNode(canvas, phone, "Physical Device", "Viewer Controller", index = 1)
+        drawNode(canvas, core, "Virtroid", "Private Link", index = 0, emphasized = true)
         drawNode(canvas, runtime, "Runtime", "Remote Android", index = 2)
-        drawNode(canvas, vault, "Encrypted vault", "Protected", index = 3)
+        drawNode(canvas, vault, "User Data", "Encrypted Vault", index = 3)
     }
 
     private fun drawGrid(canvas: Canvas) {

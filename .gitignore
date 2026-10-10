@@ -9,7 +9,6 @@
 /operator-console/dist/
 /operator-console/node_modules/
 /docs/
-/Virtroid-source-code.html
 /android-client/dist/
 /third_party/scrcpy-server/build/
 /deploy/vps/.env
@@ -23,3 +22,4 @@
 /backend/virtroid-viewercrypt
 /backend/virtroidd
 /backend/virtroid-admin
+/.archify/
