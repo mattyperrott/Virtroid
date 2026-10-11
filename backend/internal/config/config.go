@@ -69,7 +69,13 @@ type NodeConfig struct {
 	PublicTLSBind string
 	TLSDir        string
 	// Region limits which accounts' runtimes are placed on this node.
-	Region                        string
+	Region string
+	// SNPAttestation is "auto", "required", or "off": whether the node proves
+	// its TLS key lives in an AMD SEV-SNP VM. SNPProduct overrides the EPYC
+	// generation read from the report.
+	SNPAttestation                string
+	SNPReportRoot                 string
+	SNPProduct                    string
 	ADBPath                       string
 	ADBHost                       string
 	BlobStoreKind                 string
@@ -258,6 +264,9 @@ func LoadNode() NodeConfig {
 		PublicAddr:                    strings.TrimSpace(os.Getenv("NODE_PUBLIC_ADDR")),
 		PublicTLSBind:                 envOrDefault("NODE_PUBLIC_TLS_BIND", ":8443"),
 		TLSDir:                        envOrDefault("NODE_TLS_DIR", "/srv/virtroid/node-tls"),
+		SNPAttestation:                envOrDefault("NODE_SNP_ATTESTATION", "auto"),
+		SNPReportRoot:                 strings.TrimSpace(os.Getenv("NODE_SNP_REPORT_ROOT")),
+		SNPProduct:                    strings.TrimSpace(os.Getenv("NODE_SNP_PRODUCT")),
 		Region:                        strings.ToLower(strings.TrimSpace(os.Getenv("NODE_REGION"))),
 		ADBPath:                       envOrDefault("NODE_ADB_PATH", "adb"),
 		ADBHost:                       envOrDefault("NODE_ADB_HOST", ""),

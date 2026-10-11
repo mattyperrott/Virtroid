@@ -187,6 +187,7 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 			"public_addr":     publicAddr,
 			"tls_spki_sha256": "Epb9KynBSoZcrWDgp+KJBrHkmWNfkS4OCZ+eomlsTrs=",
 			"region":          claimedRegion,
+			"snp_attestation": testAttestationBundle,
 		})
 		resp := httptest.NewRecorder()
 		handler.ServeHTTP(resp, signedTestRequest(t, nodeKey, vm.ID, http.MethodPost, "/api/v1/internal/hosts/heartbeat", body))
@@ -208,5 +209,51 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 	}
 	if got, err := st.ProvisionedVM(ctx, vm.ID); err != nil || got.State != store.ProvisionedVMReady {
 		t.Fatalf("VM after heartbeat = %+v err=%v, want ready", got, err)
+	}
+
+	// Sessions on the VM carry what the phone needs to verify it.
+	fields, err := api.viewerConfidentiality(ctx, vm.ID, preparedViewer{PublicKey: "viewer", Signature: "c2ln"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attestation, _ := fields["node_attestation"].(json.RawMessage)
+	if !strings.Contains(string(attestation), `"product":"Genoa"`) ||
+		fields["viewer_key_signature"] != "c2ln" || fields["confidential_runtime"] != true {
+		t.Fatalf("session confidentiality fields = %v", fields)
+	}
+}
+
+var testAttestationBundle = map[string]any{
+	"version": 1,
+	"product": "Genoa",
+	"report":  "cmVwb3J0",
+	"vcek":    "dmNlaw==",
+	"ask":     "YXNr",
+	"ark":     "YXJr",
+}
+
+func TestNodeAttestationJSONChecksTheBundleShape(t *testing.T) {
+	valid, _ := json.Marshal(testAttestationBundle)
+	if got, err := nodeAttestationJSON(valid, "pin"); err != nil || !strings.Contains(got, `"version":1`) {
+		t.Fatalf("valid bundle = %q err=%v", got, err)
+	}
+	if got, err := nodeAttestationJSON(nil, ""); err != nil || got != "" {
+		t.Fatalf("absent bundle = %q err=%v", got, err)
+	}
+	for name, raw := range map[string]string{
+		"no TLS endpoint": string(valid),
+		"unknown field":   `{"version":1,"product":"Genoa","report":"YQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ==","extra":1}`,
+		"bad version":     `{"version":2,"product":"Genoa","report":"YQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"bad product":     `{"version":1,"product":"Naples","report":"YQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"not base64":      `{"version":1,"product":"Genoa","report":"!!","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"too large":       `{"version":1,"product":"Genoa","report":"` + strings.Repeat("A", maxNodeAttestationBytes) + `","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+	} {
+		pin := "pin"
+		if name == "no TLS endpoint" {
+			pin = ""
+		}
+		if _, err := nodeAttestationJSON(json.RawMessage(raw), pin); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

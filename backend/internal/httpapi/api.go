@@ -1848,11 +1848,18 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	viewerPublicKey, err := a.prepareViewer(r.Context(), host, runtime.ID, maxSize, bitRate)
+	viewer, err := a.prepareViewer(r.Context(), host, runtime.ID, maxSize, bitRate)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		abortPendingSession("viewer preparation failed")
 		writeServerAPIError(w, http.StatusBadGateway, "viewer_prepare_failed", "upstream service error", err)
+		return
+	}
+	confidential, err := a.viewerConfidentiality(r.Context(), host.ID, viewer)
+	if err != nil {
+		a.activeBlobKeys.clear(runtimeID)
+		abortPendingSession("node attestation lookup failed")
+		writeInternalAPIError(w, "node_attestation_lookup_failed", err)
 		return
 	}
 
@@ -1866,10 +1873,13 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		"relay_scheme":      relayEndpoint.Scheme,
 		"relay_tls":         relayEndpoint.TLS,
 		"relay_path":        "/api/v1/relay/" + session.ID,
-		"viewer_public_key": viewerPublicKey,
+		"viewer_public_key": viewer.PublicKey,
 		"audio_enabled":     runtime.AudioEnabled,
 		"camera_mode":       runtime.CameraMode,
 		"file_mode":         runtime.FileMode,
+	}
+	for key, value := range confidential {
+		response[key] = value
 	}
 	if relayPin != "" {
 		response["relay_tls_spki_sha256"] = relayPin
@@ -2297,7 +2307,7 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 		writeInternalAPIError(w, "session_host_lookup_failed", err)
 		return
 	}
-	viewerPublicKey, err := a.prepareViewer(
+	viewer, err := a.prepareViewer(
 		r.Context(),
 		host,
 		state.Runtime.ID,
@@ -2306,6 +2316,11 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		writeServerAPIError(w, http.StatusBadGateway, "viewer_reprepare_failed", "upstream service error", err)
+		return
+	}
+	confidential, err := a.viewerConfidentiality(r.Context(), host.ID, viewer)
+	if err != nil {
+		writeInternalAPIError(w, "node_attestation_lookup_failed", err)
 		return
 	}
 
@@ -2324,10 +2339,14 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	response := map[string]any{
 		"session":           session,
-		"viewer_public_key": viewerPublicKey,
-	})
+		"viewer_public_key": viewer.PublicKey,
+	}
+	for key, value := range confidential {
+		response[key] = value
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (a *API) heartbeatMySession(w http.ResponseWriter, r *http.Request) {
@@ -2427,25 +2446,26 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ID                     string `json:"id"`
-		Name                   string `json:"name"`
-		AdvertiseAddr          string `json:"advertise_addr"`
-		RelayPort              int    `json:"relay_port"`
-		DockerSocket           bool   `json:"docker_socket"`
-		Binder                 bool   `json:"binder"`
-		AudioStreaming         bool   `json:"audio_streaming"`
-		FileImport             bool   `json:"file_import"`
-		CameraPassthrough      bool   `json:"camera_passthrough"`
-		CameraSlots            int    `json:"camera_slots"`
-		BlobStoreKind          string `json:"blob_store_kind"`
-		StoragePreflightKind   string `json:"storage_preflight_kind"`
-		StoragePreflightStatus string `json:"storage_preflight_status"`
-		StoragePreflightJSON   string `json:"storage_preflight_json"`
-		StoragePreflightAt     string `json:"storage_preflight_at"`
-		StorageWalletAddress   string `json:"storage_wallet_address"`
-		PublicAddr             string `json:"public_addr"`
-		TLSSPKISHA256          string `json:"tls_spki_sha256"`
-		Region                 string `json:"region"`
+		ID                     string          `json:"id"`
+		Name                   string          `json:"name"`
+		AdvertiseAddr          string          `json:"advertise_addr"`
+		RelayPort              int             `json:"relay_port"`
+		DockerSocket           bool            `json:"docker_socket"`
+		Binder                 bool            `json:"binder"`
+		AudioStreaming         bool            `json:"audio_streaming"`
+		FileImport             bool            `json:"file_import"`
+		CameraPassthrough      bool            `json:"camera_passthrough"`
+		CameraSlots            int             `json:"camera_slots"`
+		BlobStoreKind          string          `json:"blob_store_kind"`
+		StoragePreflightKind   string          `json:"storage_preflight_kind"`
+		StoragePreflightStatus string          `json:"storage_preflight_status"`
+		StoragePreflightJSON   string          `json:"storage_preflight_json"`
+		StoragePreflightAt     string          `json:"storage_preflight_at"`
+		StorageWalletAddress   string          `json:"storage_wallet_address"`
+		PublicAddr             string          `json:"public_addr"`
+		TLSSPKISHA256          string          `json:"tls_spki_sha256"`
+		Region                 string          `json:"region"`
+		SNPAttestation         json.RawMessage `json:"snp_attestation"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2537,6 +2557,15 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeInternalAPIError(w, "host_heartbeat_upsert_failed", err)
+		return
+	}
+	attestation, err := nodeAttestationJSON(req.SNPAttestation, tlsPin)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "node_attestation_rejected", err.Error())
+		return
+	}
+	if err := a.store.SetHostSNPAttestation(r.Context(), host.ID, attestation); err != nil {
+		writeInternalAPIError(w, "node_attestation_store_failed", err)
 		return
 	}
 	if isProvisionedVM {
@@ -3488,10 +3517,16 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowDe
 	return nodeRequestIdentity{id: nodeID, publicKey: verifiedPublicKey}, true
 }
 
-func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID string, maxSize, bitRate int) (string, error) {
+type preparedViewer struct {
+	PublicKey string
+	// Signature is the node's attested TLS key signing PublicKey.
+	Signature string
+}
+
+func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID string, maxSize, bitRate int) (preparedViewer, error) {
 	baseURL, client, err := a.nodeCallbackTarget(host)
 	if err != nil {
-		return "", err
+		return preparedViewer{}, err
 	}
 	body, err := json.Marshal(map[string]any{
 		"runtime_id": runtimeID,
@@ -3499,7 +3534,7 @@ func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID stri
 		"bit_rate":   bitRate,
 	})
 	if err != nil {
-		return "", err
+		return preparedViewer{}, err
 	}
 
 	prepareCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), viewerPrepareProxyTimeout)
@@ -3512,35 +3547,36 @@ func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID stri
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return "", err
+		return preparedViewer{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if err := a.signNodeCallback(req, body); err != nil {
-		return "", err
+		return preparedViewer{}, err
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return preparedViewer{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", fmt.Errorf("viewer prepare failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return preparedViewer{}, fmt.Errorf("viewer prepare failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
 	var payload struct {
-		ViewerPublicKey string `json:"viewer_public_key"`
+		ViewerPublicKey    string `json:"viewer_public_key"`
+		ViewerKeySignature string `json:"viewer_key_signature"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return preparedViewer{}, err
 	}
 	viewerPublicKey := strings.TrimSpace(payload.ViewerPublicKey)
 	if viewerPublicKey == "" {
-		return "", errors.New("viewer prepare did not return a public key")
+		return preparedViewer{}, errors.New("viewer prepare did not return a public key")
 	}
-	return viewerPublicKey, nil
+	return preparedViewer{PublicKey: viewerPublicKey, Signature: strings.TrimSpace(payload.ViewerKeySignature)}, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

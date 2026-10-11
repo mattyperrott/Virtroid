@@ -706,7 +706,7 @@ func TestPrepareViewerSendsSignedReconnectParametersAndReturnsFreshKey(t *testin
 		if request.RuntimeID != "runtime-reconnect" || request.MaxSize != 1600 || request.BitRate != viewerReconnectBitRate {
 			t.Fatalf("prepare request = %#v", request)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"viewer_public_key": "fresh-viewer-key"})
+		writeJSON(w, http.StatusOK, map[string]any{"viewer_public_key": "fresh-viewer-key", "viewer_key_signature": "c2ln"})
 	}))
 	defer node.Close()
 
@@ -728,8 +728,8 @@ func TestPrepareViewerSendsSignedReconnectParametersAndReturnsFreshKey(t *testin
 	if err != nil {
 		t.Fatalf("prepareViewer: %v", err)
 	}
-	if got != "fresh-viewer-key" {
-		t.Fatalf("viewer public key = %q, want fresh-viewer-key", got)
+	if got.PublicKey != "fresh-viewer-key" || got.Signature != "c2ln" {
+		t.Fatalf("prepared viewer = %+v, want the key and its signature", got)
 	}
 }
 

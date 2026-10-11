@@ -591,3 +591,27 @@ func provisionedHostServesAccount(hostColumn, accountParam string) string {
 		               OR dedicated.desired <> 'present')
 		   )`
 }
+
+// SetHostSNPAttestation records the attestation bundle a node sent with its
+// heartbeat ("" when it has none).
+func (s *Store) SetHostSNPAttestation(ctx context.Context, hostID, attestation string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE hosts SET snp_attestation = $2 WHERE id = $1 AND snp_attestation IS DISTINCT FROM $2`,
+		strings.TrimSpace(hostID),
+		attestation,
+	)
+	return err
+}
+
+// HostSNPAttestation returns a node's attestation bundle, or "" when it has none.
+func (s *Store) HostSNPAttestation(ctx context.Context, hostID string) (string, error) {
+	var attestation string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT snp_attestation FROM hosts WHERE id = $1`,
+		strings.TrimSpace(hostID),
+	).Scan(&attestation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return attestation, err
+}

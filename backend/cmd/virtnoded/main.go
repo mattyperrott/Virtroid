@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
@@ -341,7 +342,11 @@ type nodeAgent struct {
 	nodePrivateKey      *ecdsa.PrivateKey
 	nodePublicKey       string
 	// tlsSPKIPin is set when the node serves the public TLS listener.
-	tlsSPKIPin          string
+	tlsSPKIPin string
+	// tlsSigner is the public TLS key; it signs viewer keys for phones.
+	tlsSigner crypto.Signer
+	// snpAttestation proves tlsSigner lives in an SEV-SNP VM, when it does.
+	snpAttestation      *snpAttestation
 	blobPreflightMu     sync.Mutex
 	blobPreflightReport blobPreflightReport
 	blobPreflightAt     time.Time
@@ -444,6 +449,7 @@ func main() {
 	}
 
 	var publicServer *http.Server
+	var publicSPKI []byte
 	if cfg.PublicAddr != "" {
 		if err := validNodePublicAddr(cfg.PublicAddr); err != nil {
 			log.Fatalf("public node address: %v", err)
@@ -453,12 +459,21 @@ func main() {
 			log.Fatalf("public node TLS: %v", err)
 		}
 		node.tlsSPKIPin = pin
+		if signer, ok := certificate.PrivateKey.(crypto.Signer); ok {
+			node.tlsSigner = signer
+		}
+		publicSPKI = certificate.Leaf.RawSubjectPublicKeyInfo
 		publicServer = newPublicNodeServer(cfg.PublicTLSBind, certificate, telemetry.Middleware(recoverNodeHTTP(publicNodeHandler(mux))))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if publicSPKI != nil {
+		// Before the first heartbeat, so the control plane never sees this
+		// node without its attestation.
+		node.attestNode(ctx, publicSPKI)
+	}
 	go node.heartbeatLoop(ctx)
 	go node.reconcileLoop(ctx)
 	go func() {
@@ -853,6 +868,9 @@ func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map
 		capabilities["public_addr"] = n.cfg.PublicAddr
 		capabilities["tls_spki_sha256"] = n.tlsSPKIPin
 	}
+	if n.snpAttestation != nil {
+		capabilities["snp_attestation"] = n.snpAttestation
+	}
 	if !includePreflight {
 		return capabilities
 	}
@@ -1069,11 +1087,20 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusAccepted, map[string]any{
+	response := map[string]any{
 		"ok":                true,
 		"viewer_port":       runtime.ViewerPort,
 		"viewer_public_key": viewerPublicKey,
-	})
+	}
+	if n.snpAttestation != nil && n.tlsSigner != nil {
+		signature, err := signViewerKey(n.tlsSigner, runtime.ID, viewerPublicKey)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "sign viewer key"})
+			return
+		}
+		response["viewer_key_signature"] = signature
+	}
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 func (n *nodeAgent) handleRuntimeFileImport(w http.ResponseWriter, r *http.Request) {
