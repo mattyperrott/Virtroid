@@ -44,6 +44,7 @@ type provisionerConfig struct {
 	VCPUs             int
 	MemoryMiB         int
 	DiskMiB           int
+	DataMiB           int
 	PassphraseFile    string
 	RegionCRNs        map[string][]crnTarget
 }
@@ -142,6 +143,7 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			VCPUs:      r.cfg.VCPUs,
 			MemoryMiB:  r.cfg.MemoryMiB,
 			DiskMiB:    r.cfg.DiskMiB,
+			DataMiB:    r.cfg.DataMiB,
 			AMDProduct: target.AMDProduct,
 		})
 		if err != nil {
@@ -170,6 +172,10 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 		if err != nil {
 			return err
 		}
+		dataKey, err := r.dataKey(vm.ID)
+		if err != nil {
+			return err
+		}
 		err = r.aleph.Unlock(ctx, unlockSpec{
 			ItemHash:       vm.ItemHash,
 			CRNHash:        vm.CRNHash,
@@ -178,6 +184,7 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			Secrets: map[string]string{
 				"virtroid_node_id":       vm.ID,
 				"virtroid_node_key":      privateKey,
+				"virtroid_data_key":      dataKey,
 				"virtroid_region":        vm.Region,
 				"virtroid_control_plane": r.cfg.VMControlPlaneURL,
 			},
@@ -208,8 +215,10 @@ func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alep
 	}
 	delete(r.lastUnlock, vm.ID)
 	delete(r.created, vm.ID)
-	if err := os.Remove(r.nodeKeyPath(vm.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	for _, path := range []string{r.nodeKeyPath(vm.ID), r.dataKeyPath(vm.ID)} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	log.Printf("provisioner: vm=%s deleted", vm.ID)
 	return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateDeleted})
@@ -280,4 +289,36 @@ func (r *reconciler) nodeKey(vmID string) (string, string, error) {
 		return "", "", err
 	}
 	return encoded, publicKey, nil
+}
+
+func (r *reconciler) dataKeyPath(vmID string) string {
+	return filepath.Join(r.cfg.StateDir, "node-keys", filepath.Base(vmID)+".data")
+}
+
+// dataKey returns the VM's own key for the encrypted volume that holds user
+// data, creating it on first use. Every VM boots from the same published
+// disk image, so user data must not rely on that image's shared disk key.
+func (r *reconciler) dataKey(vmID string) (string, error) {
+	path := r.dataKeyPath(vmID)
+	if data, err := os.ReadFile(path); err == nil {
+		key := strings.TrimSpace(string(data))
+		if decoded, err := base64.StdEncoding.DecodeString(key); err != nil || len(decoded) != 32 {
+			return "", fmt.Errorf("stored data key for %s is unreadable", vmID)
+		}
+		return key, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	key := base64.StdEncoding.EncodeToString(raw)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	return key, nil
 }

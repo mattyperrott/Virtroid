@@ -96,7 +96,10 @@ func load() (provisionerConfig, controlPlane, alephDriver, time.Duration, error)
 	if cfg.MemoryMiB, err = intEnv("VM_MEMORY_MIB", 4096); err != nil {
 		return cfg, nil, nil, 0, err
 	}
-	if cfg.DiskMiB, err = intEnv("VM_DISK_MIB", 20480); err != nil {
+	if cfg.DiskMiB, err = intEnv("VM_DISK_MIB", 4096); err != nil {
+		return cfg, nil, nil, 0, err
+	}
+	if cfg.DataMiB, err = intEnv("VM_DATA_MIB", 30720); err != nil {
 		return cfg, nil, nil, 0, err
 	}
 	regionCRNs, err := required("PROVISIONER_REGION_CRNS")

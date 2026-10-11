@@ -79,7 +79,8 @@ func testReconciler(t *testing.T, cp *fakeControlPlane, aleph *fakeAleph) *recon
 		Image:             strings.Repeat("2", 64),
 		VCPUs:             2,
 		MemoryMiB:         4096,
-		DiskMiB:           20480,
+		DiskMiB:           4096,
+		DataMiB:           30720,
 		PassphraseFile:    "/run/secrets/luks",
 		RegionCRNs: map[string][]crnTarget{
 			"snp-eu": {{Hash: crnA, AMDProduct: "Genoa"}, {Hash: crnB, AMDProduct: "Milan"}},
@@ -98,7 +99,7 @@ func TestRequestedVMIsCreatedOnTheLeastLoadedNode(t *testing.T) {
 		t.Fatalf("created %d instances, want 1", len(aleph.created))
 	}
 	spec := aleph.created[0]
-	if spec.Name != "virtroid-pvm-1" || spec.CRNHash != crnB || spec.Runtime != r.cfg.Runtime || spec.Image != r.cfg.Image {
+	if spec.Name != "virtroid-pvm-1" || spec.CRNHash != crnB || spec.Runtime != r.cfg.Runtime || spec.Image != r.cfg.Image || spec.DataMiB != 30720 {
 		t.Fatalf("create spec = %+v", spec)
 	}
 	if got := cp.last(t); got.State != vmStateCreating || got.ItemHash != strings.Repeat("e", 64) || got.CRNHash != crnB {
@@ -191,6 +192,13 @@ func TestUnlockingVMReceivesItsSecretsOnlyThroughTheCLI(t *testing.T) {
 		spec.Secrets["virtroid_region"] != "snp-eu" || spec.Secrets["virtroid_control_plane"] != "https://virtroid.example" {
 		t.Fatalf("unlock spec = %+v", spec)
 	}
+	dataKey, _ := r.dataKey("pvm-1")
+	if spec.Secrets["virtroid_data_key"] != dataKey || len(dataKey) != 44 {
+		t.Fatalf("data key secret = %q, want the VM's 32-byte key", spec.Secrets["virtroid_data_key"])
+	}
+	if otherKey, _ := r.dataKey("pvm-2"); otherKey == dataKey {
+		t.Fatal("two VMs got the same data key")
+	}
 
 	// Retries are spaced out.
 	if err := r.runOnce(context.Background()); err != nil {
@@ -228,6 +236,9 @@ func TestRetiredVMIsDeletedAndItsKeyRemoved(t *testing.T) {
 	if _, _, err := r.nodeKey("pvm-1"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.dataKey("pvm-1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := r.runOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -239,6 +250,9 @@ func TestRetiredVMIsDeletedAndItsKeyRemoved(t *testing.T) {
 	}
 	if _, err := os.Stat(r.nodeKeyPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("node key still on disk: %v", err)
+	}
+	if _, err := os.Stat(r.dataKeyPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("data key still on disk: %v", err)
 	}
 }
 
@@ -279,7 +293,7 @@ esac
 	if err != nil || len(instances) != 1 || instances[0].IPv6 != "2001:db8:3100:1781::10" || instances[0].NodeHash != crnA {
 		t.Fatalf("list = %+v err=%v", instances, err)
 	}
-	itemHash, err := driver.Create(ctx, createSpec{Name: "virtroid-pvm-1", CRNHash: crnA, Runtime: "r", Image: "i", VCPUs: 2, MemoryMiB: 4096, DiskMiB: 20480})
+	itemHash, err := driver.Create(ctx, createSpec{Name: "virtroid-pvm-1", CRNHash: crnA, Runtime: "r", Image: "i", VCPUs: 2, MemoryMiB: 4096, DiskMiB: 4096, DataMiB: 30720})
 	if err != nil || itemHash != hash {
 		t.Fatalf("create = %q err=%v", itemHash, err)
 	}
@@ -295,7 +309,7 @@ esac
 	lines := strings.Split(strings.TrimSpace(string(recorded)), "\n")
 	want := []string{
 		"--json instance list --address provisioner",
-		"--json instance create virtroid-pvm-1 --confidential --tee sev-snp --runtime r --image i --vcpus 2 --memory 4096MiB --disk-size 20480MiB --crn " + crnA + " --account provisioner",
+		"--json instance create virtroid-pvm-1 --confidential --tee sev-snp --runtime r --image i --vcpus 2 --memory 4096MiB --disk-size 4096MiB --persistent-volume name=virtroid-data,mount=/srv/virtroid,size=30720MiB,persistence=host --crn " + crnA + " --account provisioner",
 		"--json instance unlock " + hash + " --crn " + crnA + " --amd-product Genoa --passphrase-file /p --secret a=1 --secret b=2 --account provisioner",
 		"--json instance delete " + hash + " --yes --reason Virtroid runtime VM retired --account provisioner",
 	}

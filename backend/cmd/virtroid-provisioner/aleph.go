@@ -24,13 +24,16 @@ type alephInstance struct {
 }
 
 type createSpec struct {
-	Name       string
-	CRNHash    string
-	Runtime    string
-	Image      string
-	VCPUs      int
-	MemoryMiB  int
-	DiskMiB    int
+	Name      string
+	CRNHash   string
+	Runtime   string
+	Image     string
+	VCPUs     int
+	MemoryMiB int
+	DiskMiB   int
+	// DataMiB sizes the VM's own data disk, which the VM encrypts with its
+	// per-VM key; the root disk is the shared published image.
+	DataMiB    int
 	AMDProduct string
 }
 
@@ -101,6 +104,7 @@ func (d cliDriver) Create(ctx context.Context, spec createSpec) (string, error) 
 		"--vcpus", strconv.Itoa(spec.VCPUs),
 		"--memory", strconv.Itoa(spec.MemoryMiB)+"MiB",
 		"--disk-size", strconv.Itoa(spec.DiskMiB)+"MiB",
+		"--persistent-volume", "name=virtroid-data,mount=/srv/virtroid,size="+strconv.Itoa(spec.DataMiB)+"MiB,persistence=host",
 		"--crn", spec.CRNHash,
 	)
 	if err != nil {

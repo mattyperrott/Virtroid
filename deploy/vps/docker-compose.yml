@@ -218,7 +218,8 @@ services:
       PROVISIONER_STATE_DIR: /var/lib/virtroid-provisioner
       VM_VCPUS: ${VM_VCPUS:-2}
       VM_MEMORY_MIB: ${VM_MEMORY_MIB:-4096}
-      VM_DISK_MIB: ${VM_DISK_MIB:-20480}
+      VM_DISK_MIB: ${VM_DISK_MIB:-4096}
+      VM_DATA_MIB: ${VM_DATA_MIB:-30720}
     volumes:
       - provisioner-state:/var/lib/virtroid-provisioner
       - /etc/virtroid/secrets/provisioner-key:/run/secrets/provisioner-key:ro
