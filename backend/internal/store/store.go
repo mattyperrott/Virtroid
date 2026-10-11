@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101001
-	schemaVersionLabel               = "remote nodes and runtime regions 2026-10-10"
+	currentSchemaVersion       int64 = 2026101101
+	schemaVersionLabel               = "provisioned runtime VMs 2026-10-11"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -7176,6 +7176,7 @@ func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (s
 		 WHERE h.docker_socket = TRUE
 		   AND h.binder = TRUE
 		   AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
+		   AND NOT EXISTS (SELECT 1 FROM provisioned_vms p WHERE p.id = h.id)
 		   AND (
 		       (k.state = 'active' AND k.key_version = n.active_key_version)
 		       OR (k.state = 'overlap' AND k.valid_until > NOW())
@@ -7249,6 +7250,7 @@ func pickReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, preferredHostID str
 		   -- New placements stay in the account's region; '' is the default region,
 		   -- so remote nodes only receive accounts explicitly assigned to them.
 		   AND h.region = COALESCE((SELECT a.runtime_region FROM accounts a WHERE a.id::text = $5), '')
+		   AND `+provisionedHostServesAccount("h.id", "$5")+`
 		 ORDER BY h.last_heartbeat_at DESC
 		 LIMIT 1
 		 FOR UPDATE OF h SKIP LOCKED`,
@@ -7287,6 +7289,7 @@ func requireReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, hostID string, r
 		   AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
 		   AND (NOT $2 OR h.audio_streaming = TRUE)
 		   AND (NOT $3 OR h.file_import = TRUE)
+		   AND `+provisionedHostServesAccount("h.id", "$6")+`
 		   AND (NOT $4 OR (
 		       h.camera_passthrough = TRUE
 		       AND h.camera_slots > (
@@ -7308,6 +7311,7 @@ func requireReadyRuntimeHostTX(ctx context.Context, tx *sql.Tx, hostID string, r
 		requireFiles,
 		requireCamera,
 		runtime.ID,
+		runtime.AccountID,
 	).Scan(&found)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

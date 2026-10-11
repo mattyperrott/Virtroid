@@ -660,3 +660,37 @@ CREATE INDEX IF NOT EXISTS idx_security_events_node_created_at ON security_event
 CREATE INDEX IF NOT EXISTS idx_security_events_priority_created_at ON security_events (priority, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_security_event_ingest_limits_bucket_start ON security_event_ingest_limits (bucket_start);
 CREATE INDEX IF NOT EXISTS idx_runtime_start_events_account_created_at ON runtime_start_events (account_id, created_at DESC);
+
+-- Runtime VMs the provisioner creates on Aleph Cloud. Each runs one dedicated
+-- runtime node whose node id is the VM id. account_id is NULL for a warm spare
+-- that nobody has claimed yet; desired = 'absent' asks the provisioner to
+-- delete the VM, and state = 'deleted' records that it is gone. account_id has
+-- no foreign key on purpose: a VM must never become a spare again because its
+-- account row went away, so cleanup retires it instead.
+CREATE TABLE IF NOT EXISTS provisioned_vms (
+    id TEXT PRIMARY KEY,
+    account_id UUID,
+    region TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'requested',
+    desired TEXT NOT NULL DEFAULT 'present',
+    item_hash TEXT NOT NULL DEFAULT '',
+    crn_hash TEXT NOT NULL DEFAULT '',
+    public_ip TEXT NOT NULL DEFAULT '',
+    node_public_key TEXT NOT NULL DEFAULT '',
+    failure TEXT NOT NULL DEFAULT '',
+    retire_reason TEXT NOT NULL DEFAULT '',
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    state_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ready_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    CONSTRAINT provisioned_vms_state CHECK (state IN ('requested', 'creating', 'unlocking', 'booting', 'ready', 'deleted')),
+    CONSTRAINT provisioned_vms_desired CHECK (desired IN ('present', 'absent'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provisioned_vms_one_per_account
+    ON provisioned_vms (account_id)
+    WHERE account_id IS NOT NULL AND desired = 'present';
+CREATE INDEX IF NOT EXISTS idx_provisioned_vms_live
+    ON provisioned_vms (region, state)
+    WHERE state <> 'deleted';

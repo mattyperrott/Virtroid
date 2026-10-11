@@ -45,6 +45,14 @@ type ServerConfig struct {
 	ReleaseSourceSHA                string
 	ReleaseSchemaVersion            string
 	ReleaseDeploymentTreeSHA256     string
+	// Provisioning of dedicated runtime VMs on Aleph Cloud. ProvisionerMaxVMs
+	// of 0 turns it off; the provisioner authenticates with ProvisionerPublicKey.
+	ProvisionerPublicKey    string
+	ProvisionedRegions      []string
+	ProvisionerMaxVMs       int
+	ProvisionerWarmSpares   int
+	ProvisionerSetupTimeout time.Duration
+	ProvisionerRetireAfter  time.Duration
 }
 
 type NodeConfig struct {
@@ -136,6 +144,14 @@ func LoadServer() ServerConfig {
 	if err != nil || operatorLoginRateLimit <= 0 {
 		operatorLoginRateLimit = 5
 	}
+	provisionerMaxVMs, err := parseEnvInt("PROVISIONER_MAX_VMS", 0)
+	if err != nil || provisionerMaxVMs < 0 {
+		provisionerMaxVMs = 0
+	}
+	provisionerWarmSpares, err := parseEnvInt("PROVISIONER_WARM_SPARES", 0)
+	if err != nil || provisionerWarmSpares < 0 {
+		provisionerWarmSpares = 0
+	}
 
 	return ServerConfig{
 		AppEnv:                           appEnv,
@@ -173,6 +189,12 @@ func LoadServer() ServerConfig {
 		ReleaseSourceSHA:                 strings.TrimSpace(os.Getenv("VIRTROID_SOURCE_SHA")),
 		ReleaseSchemaVersion:             strings.TrimSpace(os.Getenv("VIRTROID_SCHEMA_VERSION")),
 		ReleaseDeploymentTreeSHA256:      strings.TrimSpace(os.Getenv("VIRTROID_DEPLOYMENT_TREE_SHA256")),
+		ProvisionerPublicKey:             strings.TrimSpace(os.Getenv("PROVISIONER_PUBLIC_KEY")),
+		ProvisionedRegions:               parseEnvCSV("PROVISIONED_REGIONS", ""),
+		ProvisionerMaxVMs:                provisionerMaxVMs,
+		ProvisionerWarmSpares:            provisionerWarmSpares,
+		ProvisionerSetupTimeout:          parseEnvDuration("PROVISIONER_SETUP_TIMEOUT", 30*time.Minute),
+		ProvisionerRetireAfter:           parseEnvDuration("PROVISIONER_RETIRE_AFTER", 2*time.Hour),
 	}
 }
 

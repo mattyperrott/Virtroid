@@ -32,6 +32,7 @@ func main() {
 
 	go sessionReaperLoop(ctx, pg, cfg)
 	go appCatalogSyncLoop(ctx, pg, cfg)
+	go provisioningLoop(ctx, pg, cfg)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
@@ -143,6 +144,48 @@ func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerCo
 			return
 		case <-ticker.C:
 			runReaper()
+		}
+	}
+}
+
+// provisioningLoop applies the runtime VM policy: it gives up on VMs that
+// never came up, retires unused ones, and keeps warm spares topped up. The
+// provisioner service does the actual creating and deleting.
+func provisioningLoop(ctx context.Context, pg *store.Store, cfg config.ServerConfig) {
+	if cfg.ProvisionerMaxVMs <= 0 || len(cfg.ProvisionedRegions) == 0 {
+		log.Printf("runtime VM provisioning disabled")
+		return
+	}
+	policy := store.ProvisioningPolicy{
+		Regions:      cfg.ProvisionedRegions,
+		MaxVMs:       cfg.ProvisionerMaxVMs,
+		WarmSpares:   cfg.ProvisionerWarmSpares,
+		SetupTimeout: cfg.ProvisionerSetupTimeout,
+		RetireAfter:  cfg.ProvisionerRetireAfter,
+	}
+	log.Printf("runtime VM provisioning: regions=%v max_vms=%d warm_spares=%d", policy.Regions, policy.MaxVMs, policy.WarmSpares)
+	reconcile := func() {
+		runBackgroundIteration("provisioning", func() {
+			summary, err := pg.ReconcileProvisionedVMs(ctx, policy)
+			if err != nil {
+				log.Printf("provisioning reconcile failed: %v", err)
+				return
+			}
+			if summary != (store.ProvisioningSummary{}) {
+				log.Printf("provisioning: timed_out=%d accounts_gone=%d retired=%d spares_created=%d",
+					summary.TimedOut, summary.AccountsGone, summary.Retired, summary.SparesCreated)
+			}
+		})
+	}
+	reconcile()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reconcile()
 		}
 	}
 }

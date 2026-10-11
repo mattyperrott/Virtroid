@@ -88,9 +88,81 @@ func prepareDatabaseCommand(args []string, stderr io.Writer) (databaseCommand, e
 		return prepareRotate(args[1:], stderr)
 	case "set-account-region":
 		return prepareSetAccountRegion(args[1:], stderr)
+	case "vms":
+		return prepareListVMs(args[1:], stderr)
+	case "retire-vm":
+		return prepareRetireVM(args[1:], stderr)
 	default:
-		return nil, fmt.Errorf("unsupported command %q: use approve, bootstrap-invite, list, operator-approve, operator-revoke, public-key, revoke, rotate, or set-account-region", args[0])
+		return nil, fmt.Errorf("unsupported command %q: use approve, bootstrap-invite, list, operator-approve, operator-revoke, public-key, retire-vm, revoke, rotate, set-account-region, or vms", args[0])
 	}
+}
+
+// prepareListVMs lists the runtime VMs the provisioner manages.
+func prepareListVMs(args []string, stderr io.Writer) (databaseCommand, error) {
+	flags := flag.NewFlagSet("vms", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	all := flags.Bool("all", false, "include deleted VMs")
+	jsonOutput := flags.Bool("json", false, "emit JSON")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	if flags.NArg() != 0 {
+		return nil, errors.New("vms does not accept positional arguments")
+	}
+	return func(ctx context.Context, registry *store.Store, stdout io.Writer) error {
+		vms, err := registry.ListProvisionedVMs(ctx, *all)
+		if err != nil {
+			return err
+		}
+		if *jsonOutput {
+			encoder := json.NewEncoder(stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(vms)
+		}
+		for _, vm := range vms {
+			account := "spare"
+			if vm.AccountID != nil {
+				account = *vm.AccountID
+			}
+			line := fmt.Sprintf("%s region=%s state=%s desired=%s account=%s ip=%s",
+				vm.ID, vm.Region, vm.State, vm.Desired, account, vm.PublicIP)
+			if vm.ItemHash != "" {
+				line += " item=" + vm.ItemHash
+			}
+			if vm.RetireReason != "" {
+				line += " retire=" + vm.RetireReason
+			}
+			if vm.Failure != "" {
+				line += fmt.Sprintf(" failure=%q", vm.Failure)
+			}
+			if _, err := fmt.Fprintln(stdout, line); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, nil
+}
+
+// prepareRetireVM asks the provisioner to delete a runtime VM.
+func prepareRetireVM(args []string, stderr io.Writer) (databaseCommand, error) {
+	flags := flag.NewFlagSet("retire-vm", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	id := flags.String("id", "", "provisioned VM ID")
+	reason := flags.String("reason", "operator", "why the VM is retired")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*id) == "" {
+		return nil, errors.New("retire-vm requires --id and no positional arguments")
+	}
+	return func(ctx context.Context, registry *store.Store, stdout io.Writer) error {
+		vm, err := registry.RetireProvisionedVM(ctx, *id, *reason)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "vm=%s desired=%s state=%s\n", vm.ID, vm.Desired, vm.State)
+		return err
+	}, nil
 }
 
 // prepareSetAccountRegion places an account's future runtimes on nodes in a

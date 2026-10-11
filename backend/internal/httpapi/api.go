@@ -409,6 +409,8 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/internal/hosts/{id}/assignments", api.hostAssignments)
 	mux.HandleFunc("GET /api/v1/internal/sessions/{id}/relay", api.sessionRelayTarget)
 	mux.HandleFunc("GET /api/v1/internal/sessions/{id}/relay-route", api.sessionRelayRoute)
+	mux.HandleFunc("GET /api/v1/internal/provisioner/vms", api.provisionerWork)
+	mux.HandleFunc("POST /api/v1/internal/provisioner/vms/{id}/report", api.provisionerReport)
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/blob-key", api.runtimeBlobKey)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/status", api.runtimeStatusUpdate)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
@@ -1509,6 +1511,10 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 	}
 
 	runtime, host, err := a.store.RuntimeBlobKeyTarget(r.Context(), actor.accountID, runtimeID, operation)
+	if errors.Is(err, store.ErrNoReadyHost) && operation == "start" {
+		a.writeNoReadyHost(w, r, actor.accountID, err)
+		return
+	}
 	if err != nil {
 		writeRuntimeMutationError(w, err)
 		return
@@ -1588,6 +1594,11 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtime, err := a.store.StartRuntimeOnHost(r.Context(), actor.accountID, runtimeID, lease.hostID)
+	if errors.Is(err, store.ErrNoReadyHost) {
+		a.activeBlobKeys.clear(runtimeID)
+		a.writeNoReadyHost(w, r, actor.accountID, err)
+		return
+	}
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		writeRuntimeMutationError(w, err)
@@ -2446,7 +2457,19 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid region"})
 		return
 	}
-	publicAddr, tlsPin, err := validateNodePublicEndpoint(req.PublicAddr, req.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs)
+	allowedRemote := a.cfg.NodeAllowedRemoteAddrs
+	provisionedVM, isProvisionedVM, err := a.store.LiveProvisionedVM(r.Context(), node.id)
+	if err != nil {
+		writeInternalAPIError(w, "provisioned_vm_lookup_failed", err)
+		return
+	}
+	if isProvisionedVM {
+		// A provisioned VM's address and region come from the provisioner's
+		// record, not from the node's own claims.
+		allowedRemote = []string{provisionedVM.PublicIP}
+		req.Region = provisionedVM.Region
+	}
+	publicAddr, tlsPin, err := validateNodePublicEndpoint(req.PublicAddr, req.TLSSPKISHA256, allowedRemote)
 	if err != nil {
 		writeAPIError(w, http.StatusForbidden, "node_public_endpoint_rejected", err.Error())
 		return
@@ -2516,7 +2539,12 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeInternalAPIError(w, "host_heartbeat_upsert_failed", err)
 		return
 	}
-	if _, err := a.store.AssignPendingRemoteRuntimeCleanup(r.Context(), host.ID, host.BlobStoreKind); err != nil {
+	if isProvisionedVM {
+		if err := a.store.MarkProvisionedVMReady(r.Context(), host.ID); err != nil {
+			writeInternalAPIError(w, "provisioned_vm_ready_failed", err)
+			return
+		}
+	} else if _, err := a.store.AssignPendingRemoteRuntimeCleanup(r.Context(), host.ID, host.BlobStoreKind); err != nil {
 		writeInternalAPIError(w, "remote_cleanup_assignment_failed", err)
 		return
 	}
