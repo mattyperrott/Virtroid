@@ -65,9 +65,9 @@ runtime.
 | Active-runtime file import | ✅ Backend path | Signed and bounded delivery is live-proved; the generic client upload action is intentionally absent |
 | Multi-node scheduling | 🟡 Pilot | Region-based placement; a second node on Aleph Cloud serves explicitly assigned accounts |
 | Direct node streaming | 🟡 Pilot | Phones stream straight from a remote node over key-pinned TLS (IPv6), falling back through the VPS edge when there is no direct route |
-| Automatic node provisioning | ⛔ Not implemented | Next: create and delete Aleph VMs per user on demand |
-| Confidential host isolation | ⛔ Not implemented | ReDroid runs inside the trusted VPS or an ordinary, non-confidential Aleph VM; SEV-SNP VMs are next |
-| Hardware attestation | ⛔ Not implemented | Planned: the phone verifies a node's SEV-SNP attestation before connecting |
+| Automatic node provisioning | 🟡 Built, not deployed | A provisioner creates and deletes a dedicated Aleph VM per account, within a spending cap and with warm spares |
+| Confidential host isolation | 🟡 Built, not deployed | Runtime VMs are AMD SEV-SNP guests with LUKS-encrypted disks unlocked only after attestation; today's runtimes still run on the VPS or an ordinary Aleph VM |
+| Hardware attestation | 🟡 Built, not deployed | The phone verifies the VM's SEV-SNP report against AMD's root before streaming, and refuses unapproved images |
 
 
 ---
@@ -132,7 +132,7 @@ The diagram's source is [`assets/architecture/virtroid-target.archify.json`](ass
 - **Streams** from VPS runtimes pass through the edge. Streams from a remote node go straight from the phone to the node, which proves its identity with a TLS key pinned in the session. When the phone has no direct route (for example no IPv6), the VPS node forwards the stream unchanged.
 - On every path the viewer stream is encrypted between the phone and the viewer proxy inside the runtime, so the edge and a forwarding node only relay ciphertext. The runtime's own host can still see the runtime.
 
-Not built yet: the provisioner, SEV-SNP VMs and attestation, QUIC, Sia storage, and payments.
+Built but not yet deployed: the provisioner, SEV-SNP runtime VMs, and phone-side attestation ([`deploy/aleph/`](deploy/aleph/README.md)). Not built yet: QUIC, Sia storage, and payments.
 
 <details>
 <summary>Diagram of today's deployment</summary>
@@ -192,6 +192,8 @@ The same applies to a remote node: whoever operates the machine under an Aleph C
 | [`backend/cmd/`](backend/cmd/) | Control plane, node agent, administration, viewer encryption, and sensor entry points |
 | [`backend/internal/`](backend/internal/) | Identity, policy, persistence, lifecycle, security, and operator API logic |
 | [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
+| [`deploy/aleph/`](deploy/aleph/) | The confidential runtime VM image, its kernel, and the operator guide for provisioning |
+| [`deploy/provisioner/`](deploy/provisioner/) | The provisioner image: `virtroid-provisioner` plus Aleph's `aleph` CLI |
 | [`assets/`](assets/) | Architecture diagram images and their Archify source |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices | 
 
@@ -217,8 +219,8 @@ hardening or hostile multi-tenant isolation.
 
 ### Next
 
-1. A provisioner that creates and deletes Aleph VMs per user, with spending caps and a warm spare.
-2. SEV-SNP confidential VMs, with the phone verifying attestation before it releases any key.
+1. Run the confidential VM path end to end on Aleph: build and publish the runtime and image, then approve their measurements in the app ([`deploy/aleph/`](deploy/aleph/README.md)).
+2. Measure the root disk too, so a compromised VPS cannot hand a VM a modified disk.
 3. QUIC for the stream, and encrypted user data on Sia.
 
 > [!NOTE]
