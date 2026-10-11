@@ -37,6 +37,7 @@ compose_args=(
   --profile renterd
   --profile falco
   --profile nids
+  --profile provisioner
 )
 
 docker "${compose_args[@]}" config --quiet
@@ -56,6 +57,8 @@ docker compose \
   config --quiet
 
 grep -q 'BOOTSTRAP_ENABLED: "true"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'PROVISIONER_MAX_VMS: "0"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'container_name: virtroid-provisioner' "${tmp_dir}/rendered-compose.yml"
 grep -q 'BOOTSTRAP_REQUIRE_INVITE: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'BOOTSTRAP_AUTO_ISSUE_INVITE: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'RUNTIME_LOG_RETENTION: 720h' "${tmp_dir}/rendered-compose.yml"

@@ -163,6 +163,8 @@
     <string name="entitlement_storage_quota_reached">Encrypted storage limit reached. Wipe or delete stored runtime data before stopping with a new snapshot.</string>
     <string name="entitlement_profile_not_allowed">This runtime profile is not available yet.</string>
     <string name="entitlement_no_ready_host">No runtime node is ready right now.</string>
+    <string name="runtime_host_provisioning">Preparing your private server. The first start takes a few minutes.</string>
+    <string name="runtime_host_capacity">No private server is available right now. Try again later.</string>
 
     <string name="bottom_runtimes">Runtimes</string>
     <string name="bottom_security">Security</string>

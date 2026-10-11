@@ -335,7 +335,13 @@ class ControlsActivity : AppCompatActivity() {
                     val latestEntitlement = api.getEntitlement(sessionStore.baseUrl, accountId, deviceId)
                     entitlement = latestEntitlement
                     latestEntitlement.startRuntimeBlockedMessage(this@ControlsActivity)?.let { throw IOException(it) }
-                    api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                    retryWhileRuntimeHostProvisioning(onWaiting = { attempt ->
+                        if (attempt == 1) {
+                            toast(getString(R.string.runtime_host_provisioning))
+                        }
+                    }) {
+                        api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                    }
                     identityPasswordStore.saveConfigured(accountId, deviceId)
                     val ready = waitForRuntimeReady(accountId, deviceId, current.id)
                     if (ready.personaVersion <= current.personaVersion) {

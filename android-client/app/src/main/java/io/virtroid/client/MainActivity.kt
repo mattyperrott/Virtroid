@@ -623,7 +623,14 @@ class MainActivity : AppCompatActivity() {
 
         setBusy(true, getString(R.string.status_starting_runtime_for_session))
         val profiledRuntime = updateRuntimeForViewerAspect(baseUrl, accountId, deviceId, currentRuntime)
-        api.startRuntime(baseUrl, accountId, deviceId, profiledRuntime.id, blobAccessKey)
+        retryWhileRuntimeHostProvisioning(onWaiting = { attempt ->
+            appLogs.info("Waiting for the private runtime server to be prepared (check $attempt)", "runtime")
+            if (attempt == 1) {
+                toast(getString(R.string.runtime_host_provisioning))
+            }
+        }) {
+            api.startRuntime(baseUrl, accountId, deviceId, profiledRuntime.id, blobAccessKey)
+        }
         return waitForRuntimeReady(baseUrl, accountId, deviceId, profiledRuntime.id)
     }
 

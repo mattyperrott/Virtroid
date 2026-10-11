@@ -407,6 +407,9 @@ validate_environment() {
       exit 1
     fi
   fi
+  if profile_enabled provisioner; then
+    validate_provisioner_environment
+  fi
   if [ "${invalid_image}" -ne 0 ]; then
     exit 1
   fi
@@ -561,6 +564,70 @@ validate_environment() {
   fi
 }
 
+# The provisioner holds the Aleph account key and the runtime disk passphrase,
+# so its secrets live at fixed root-owned paths readable only by its group.
+validate_provisioner_environment() {
+  local secret item_hash_pattern='^[0-9a-f]{64}$'
+  require_env \
+    PROVISIONER_IMAGE \
+    PROVISIONER_IMAGE_ID \
+    PROVISIONER_PUBLIC_KEY \
+    PROVISIONED_REGIONS \
+    PROVISIONER_MAX_VMS \
+    PROVISIONER_REGION_CRNS \
+    PROVISIONER_SECRET_GID \
+    ALEPH_RUNTIME \
+    ALEPH_IMAGE
+  if [[ ! "${PROVISIONER_IMAGE}" =~ ^virtroid-provisioner:release-[0-9a-f]{40}$ ]]; then
+    echo "PROVISIONER_IMAGE must be a local tag in the form virtroid-provisioner:release-<40 lowercase hex>" >&2
+    exit 1
+  fi
+  if [[ ! "${PROVISIONER_IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "PROVISIONER_IMAGE_ID must be an exact local Docker image ID" >&2
+    exit 1
+  fi
+  if [[ ! "${PROVISIONER_MAX_VMS}" =~ ^[1-9][0-9]{0,3}$ ]]; then
+    echo "PROVISIONER_MAX_VMS must be a positive spending cap when the provisioner profile is enabled" >&2
+    exit 1
+  fi
+  if [[ ! "${ALEPH_RUNTIME}" =~ ${item_hash_pattern} ]] || [[ ! "${ALEPH_IMAGE}" =~ ${item_hash_pattern} ]]; then
+    echo "ALEPH_RUNTIME and ALEPH_IMAGE must be 64-character lowercase hex item hashes" >&2
+    exit 1
+  fi
+  if [[ ! "${PROVISIONER_SECRET_GID}" =~ ^[0-9]+$ ]] || [ "${PROVISIONER_SECRET_GID}" -le 0 ] || [ "${PROVISIONER_SECRET_GID}" -ge 65534 ]; then
+    echo "PROVISIONER_SECRET_GID must be a dedicated numeric group id" >&2
+    exit 1
+  fi
+  for secret in provisioner-key aleph-password luks-passphrase; do
+    secret="/etc/virtroid/secrets/${secret}"
+    if [ ! -f "${secret}" ] || [ -L "${secret}" ] ||
+       [ "$(stat -c '%u' "${secret}")" -ne 0 ] ||
+       [ "$(stat -c '%g' "${secret}")" -ne "${PROVISIONER_SECRET_GID}" ] ||
+       [ "$(stat -c '%a' "${secret}")" != 440 ]; then
+      echo "${secret} must exist, be root-owned, group PROVISIONER_SECRET_GID, and mode 0440" >&2
+      exit 1
+    fi
+  done
+}
+
+validate_local_provisioner_image() {
+  local actual_id architecture operating_system
+  actual_id="$(docker image inspect --format '{{.Id}}' "${PROVISIONER_IMAGE}" 2>/dev/null)" || {
+    echo "local provisioner image is not loaded: ${PROVISIONER_IMAGE}" >&2
+    return 1
+  }
+  if [ "${actual_id}" != "${PROVISIONER_IMAGE_ID}" ]; then
+    echo "local provisioner tag resolves to unapproved engine identity ${actual_id}" >&2
+    return 1
+  fi
+  architecture="$(docker image inspect --format '{{.Architecture}}' "${actual_id}")"
+  operating_system="$(docker image inspect --format '{{.Os}}' "${actual_id}")"
+  if [ "${operating_system}/${architecture}" != linux/amd64 ]; then
+    echo "local provisioner image must target linux/amd64, got ${operating_system}/${architecture}" >&2
+    return 1
+  fi
+}
+
 validate_local_backend_image() {
   local actual_id architecture operating_system revision schema tree
   actual_id="$(docker image inspect --format '{{.Id}}' "${VIRTROID_BACKEND_IMAGE}" 2>/dev/null)" || {
@@ -634,6 +701,9 @@ validate_host() {
     exit 1
   fi
   validate_local_backend_image
+  if profile_enabled provisioner; then
+    validate_local_provisioner_image
+  fi
   if [ ! -e /dev/binderfs/binder ] || [ ! -e /dev/binderfs/hwbinder ] || [ ! -e /dev/binderfs/vndbinder ]; then
     echo "binderfs is not ready. Run sudo ./prepare-redroid-host.sh first." >&2
     exit 1
@@ -773,6 +843,9 @@ if profile_enabled nids; then
   core_services+=(suricata)
   pull_services+=(suricata)
 fi
+if profile_enabled provisioner; then
+  core_services+=(provisioner)
+fi
 
 case "${command_name}" in
   validate)
@@ -810,6 +883,9 @@ case "${command_name}" in
     fi
     if profile_enabled nids; then
       restart_services+=(suricata)
+    fi
+    if profile_enabled provisioner; then
+      restart_services+=(provisioner)
     fi
     compose up -d --no-build --pull never --force-recreate "${restart_services[@]}"
     health

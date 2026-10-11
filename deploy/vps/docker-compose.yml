@@ -56,6 +56,13 @@ services:
       NODE_ALLOWED_ADVERTISE_ADDRS: ${NODE_ALLOWED_ADVERTISE_ADDRS:?set NODE_ALLOWED_ADVERTISE_ADDRS}
       # Comma-separated IPs of remote nodes that serve their own TLS endpoint.
       NODE_ALLOWED_REMOTE_ADDRS: ${NODE_ALLOWED_REMOTE_ADDRS:-}
+      # Dedicated runtime VMs on Aleph Cloud; PROVISIONER_MAX_VMS=0 turns them off.
+      PROVISIONER_PUBLIC_KEY: ${PROVISIONER_PUBLIC_KEY:-}
+      PROVISIONED_REGIONS: ${PROVISIONED_REGIONS:-}
+      PROVISIONER_MAX_VMS: ${PROVISIONER_MAX_VMS:-0}
+      PROVISIONER_WARM_SPARES: ${PROVISIONER_WARM_SPARES:-0}
+      PROVISIONER_SETUP_TIMEOUT: ${PROVISIONER_SETUP_TIMEOUT:-30m}
+      PROVISIONER_RETIRE_AFTER: ${PROVISIONER_RETIRE_AFTER:-2h}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       SECURITY_EVENT_RATE_LIMIT_PER_MINUTE: ${SECURITY_EVENT_RATE_LIMIT_PER_MINUTE:-120}
       SECURITY_EVENT_RETENTION: ${SECURITY_EVENT_RETENTION:-168h}
@@ -183,6 +190,58 @@ services:
       - guest
       - control
       - blob
+
+  provisioner:
+    # Creates and deletes the dedicated SEV-SNP runtime VMs virtroidd asks for.
+    # It alone holds the Aleph account key, the runtime disk passphrase, and
+    # each VM's node key.
+    image: ${PROVISIONER_IMAGE:-virtroid-provisioner-profile-disabled}
+    container_name: virtroid-provisioner
+    profiles:
+      - provisioner
+    restart: unless-stopped
+    depends_on:
+      - virtroidd
+    group_add:
+      - "${PROVISIONER_SECRET_GID:-65534}"
+    environment:
+      CONTROL_PLANE_URL: http://virtroidd:8080
+      PROVISIONER_PRIVATE_KEY_FILE: /run/secrets/provisioner-key
+      VM_CONTROL_PLANE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL}
+      ALEPH_ACCOUNT: ${ALEPH_ACCOUNT:-virtroid-provisioner}
+      ALEPH_PASSWORD_FILE: /run/secrets/aleph-password
+      ALEPH_CONFIG_HOME: /var/lib/virtroid-provisioner/aleph
+      ALEPH_RUNTIME: ${ALEPH_RUNTIME:-}
+      ALEPH_IMAGE: ${ALEPH_IMAGE:-}
+      LUKS_PASSPHRASE_FILE: /run/secrets/luks-passphrase
+      PROVISIONER_REGION_CRNS: ${PROVISIONER_REGION_CRNS:-}
+      PROVISIONER_STATE_DIR: /var/lib/virtroid-provisioner
+      VM_VCPUS: ${VM_VCPUS:-2}
+      VM_MEMORY_MIB: ${VM_MEMORY_MIB:-4096}
+      VM_DISK_MIB: ${VM_DISK_MIB:-20480}
+    volumes:
+      - provisioner-state:/var/lib/virtroid-provisioner
+      - /etc/virtroid/secrets/provisioner-key:/run/secrets/provisioner-key:ro
+      - /etc/virtroid/secrets/aleph-password:/run/secrets/aleph-password:ro
+      - /etc/virtroid/secrets/luks-passphrase:/run/secrets/luks-passphrase:ro
+    mem_limit: "${PROVISIONER_MEMORY_LIMIT:-512m}"
+    cpus: "${PROVISIONER_CPU_LIMIT:-1.0}"
+    pids_limit: ${PROVISIONER_PIDS_LIMIT:-128}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - control
+      - app-egress
 
   virtroid-admin:
     image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
@@ -493,6 +552,7 @@ networks:
 
 volumes:
   postgres-data:
+  provisioner-state:
   renterd-data:
   renterd-mysql-data:
   suricata-logs:
