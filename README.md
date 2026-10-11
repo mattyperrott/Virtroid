@@ -75,6 +75,47 @@ runtime.
 
 ## Architecture
 
+The diagram shows the planned system. Parts of it run today; the rest is being built.
+[What runs today](#what-runs-today) covers the current deployment.
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture/virtroid-target-dark.png">
+  <img alt="Virtroid planned architecture: the phone sends a signed start through the edge on the VPS; virtroidd checks credits and has Aleph start the user's SEV-SNP VM, releasing its disk key after the measurement checks out; the phone verifies the VM's attestation, then streams from it directly; user data is restored from and saved to Sia; payments arrive as USDT on Tron" src="assets/architecture/virtroid-target-light.png">
+</picture>
+
+### Starting a session
+
+1. **Start.** The phone sends a request signed with its Android Keystore key to the edge, the only public entry point.
+2. **Verify.** The edge passes it to `virtroidd`, which checks the signature, the account, and its credits.
+3. **Provision.** The provisioner reuses the user's VM, takes a warm spare, or has Aleph create a new SEV-SNP VM. It releases the VM's disk key only after the AMD measurement matches the published image.
+4. **Boot.** The VM boots that measured image. Each session starts a fresh ReDroid container.
+5. **Attest, then stream.** The phone checks the VM's SNP attestation report: AMD's signature, the image measurement, and the VM's TLS key bound into the report. Only then does it stream straight from the VM over QUIC. Without a direct route, the stream goes through the edge, still end-to-end encrypted.
+6. **Restore and save.** `/data` is restored from Sia before Android boots. On stop, changed chunks are encrypted inside the VM and saved back.
+
+### The runtime VM image
+
+The encrypted image is a full Linux VM disk, not an Android build. It holds a
+minimal Debian with a kernel that has Android's binder driver, the boot loader,
+Docker, `virtnoded`, the attestation agent, and the viewer encryption proxy.
+Android runs as a ReDroid container inside it. The disk is encrypted and
+SEV-SNP encrypts the VM's memory, so the host sees neither in the clear. AMD's
+measurement of the boot chain is what the phone checks before trusting the VM. User data is not baked into the image;
+it lives on Sia.
+
+### Around the session
+
+- **Placement.** Each account has a region, and a user's VM is never shared. South-East Asia and Australia are served from an SEV-SNP server in the region (for example Singapore); Europe and the US use Aleph's SNP nodes, paid per hour.
+- **Lifecycle.** A connected runtime is hot. A disconnected one is kept warm for 15 minutes for instant reconnects, then saved to Sia and removed. The VM itself is destroyed after long inactivity, on image updates, or if compromise is suspected. The provisioner's Aleph account holds a capped credit balance.
+- **The VPS.** The edge, control plane, payments, and storage are isolated from each other. Nodes and runtime agents come in through the edge like phones do. Falco, Suricata, and auditd ship logs off-host to an append-only bucket.
+- **User data.** The durable copy is on Sia only, encrypted before it leaves the VM. `indexd` sees only opaque metadata and pays Sia hosts in SC.
+- **Money.** Users deposit USDT (TRC20) to their own deposit address. Deposits become credits, spent per runtime minute and per GB stored.
+
+The diagram's source is [`assets/architecture/virtroid-target.archify.json`](assets/architecture/virtroid-target.archify.json).
+
+### What runs today
+
 | Component | Responsibility |
 | :--- | :--- |
 | Android client | Identity, onboarding, runtime controls, local security, viewer, media capture, and notification display |
@@ -84,21 +125,25 @@ runtime.
 | Remote node | A `virtnoded` host outside the VPS (today an Aleph Cloud VM) that serves a public TLS endpoint authenticated by its pinned key |
 | PostgreSQL | Authoritative control-plane and lifecycle state |
 | ReDroid | Independently hosted Android runtime |
-| Runtime agent | Allowlisted notification metadata collection inside the guest | 
-
-<br>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture/virtroid-deployment-dark.png">
-  <img alt="Virtroid deployment today: the Android client talks to the HAProxy edge and virtroidd on the VPS; runtimes run on the VPS node or on a remote node on Aleph Cloud, which phones reach directly over pinned TLS with a fallback through the VPS" src="assets/architecture/virtroid-deployment-light.png">
-</picture>
+| Runtime agent | Allowlisted notification metadata collection inside the guest |
 
 - **Control** always goes through the VPS: the phone's signed requests reach `virtroidd` through the edge, and nodes send heartbeats and fetch their work the same way.
 - **Placement** follows the account's region. Accounts default to the VPS; an operator assigns an account to a remote region with `virtroid-admin set-account-region`. A runtime stays on the node that holds its data.
 - **Streams** from VPS runtimes pass through the edge. Streams from a remote node go straight from the phone to the node, which proves its identity with a TLS key pinned in the session. When the phone has no direct route (for example no IPv6), the VPS node forwards the stream unchanged.
 - On every path the viewer stream is encrypted between the phone and the viewer proxy inside the runtime, so the edge and a forwarding node only relay ciphertext. The runtime's own host can still see the runtime.
 
-The diagram's source is [`assets/architecture/virtroid-deployment.archify.json`](assets/architecture/virtroid-deployment.archify.json).
+Not built yet: the provisioner, SEV-SNP VMs and attestation, QUIC, Sia storage, and payments.
+
+<details>
+<summary>Diagram of today's deployment</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture/virtroid-deployment-dark.png">
+  <img alt="Virtroid deployment today: the Android client talks to the HAProxy edge and virtroidd on the VPS; runtimes run on the VPS node or on a remote node on Aleph Cloud, which phones reach directly over pinned TLS with a fallback through the VPS" src="assets/architecture/virtroid-deployment-light.png">
+</picture>
+
+Source: [`assets/architecture/virtroid-deployment.archify.json`](assets/architecture/virtroid-deployment.archify.json).
+</details>
 
 
 ---

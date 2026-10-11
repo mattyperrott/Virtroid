@@ -1,0 +1,409 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Virtroid Target Architecture",
+    "output": ".archify/architecture-virtroid-target-architecture-20261011-184238/virtroid-target-architecture.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "tron",
+      "type": "external",
+      "label": "Tron network",
+      "sublabel": "USDT TRC20 deposits",
+      "pos": [
+        960,
+        40
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "indexd",
+      "type": "database",
+      "label": "indexd",
+      "sublabel": "Sia indexer \u00b7 pays in SC",
+      "pos": [
+        360,
+        200
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "accounts \u00b7 credit ledger",
+      "pos": [
+        660,
+        200
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "phone",
+      "type": "frontend",
+      "label": "Android client",
+      "sublabel": "Keystore key \u00b7 verifier",
+      "pos": [
+        24,
+        360
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "edge",
+      "type": "security",
+      "label": "User Auth Edge",
+      "sublabel": "only public entry",
+      "pos": [
+        360,
+        360
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "virtroidd",
+      "type": "backend",
+      "label": "virtroidd",
+      "sublabel": "credits \u00b7 provisioner \u00b7 keys",
+      "pos": [
+        660,
+        360
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "payments",
+      "type": "backend",
+      "label": "Payments",
+      "sublabel": "deposit watcher",
+      "pos": [
+        960,
+        360
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "sensors",
+      "type": "security",
+      "label": "Host sensors",
+      "sublabel": "Falco \u00b7 Suricata \u00b7 auditd",
+      "pos": [
+        960,
+        520
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "cvm",
+      "type": "backend",
+      "label": "User's runtime VM",
+      "sublabel": "SEV-SNP \u00b7 fresh ReDroid",
+      "pos": [
+        360,
+        700
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "alephapi",
+      "type": "cloud",
+      "label": "Aleph API",
+      "sublabel": "SNP VMs \u00b7 per-hour credits",
+      "pos": [
+        660,
+        700
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "sia",
+      "type": "external",
+      "label": "Sia network",
+      "sublabel": "encrypted shards",
+      "pos": [
+        360,
+        860
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "logs",
+      "type": "external",
+      "label": "Log bucket",
+      "sublabel": "Object Lock \u00b7 off-host",
+      "pos": [
+        960,
+        860
+      ],
+      "size": [
+        170,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "User-owned phone",
+      "wraps": [
+        "phone"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "Your VPS \u00b7 isolated services",
+      "wraps": [
+        "indexd",
+        "postgres",
+        "edge",
+        "virtroidd",
+        "payments",
+        "sensors"
+      ],
+      "pad": 36
+    },
+    {
+      "kind": "region",
+      "label": "Aleph Cloud",
+      "wraps": [
+        "cvm",
+        "alephapi"
+      ],
+      "pad": 36
+    },
+    {
+      "kind": "security-group",
+      "label": "Public edge",
+      "wraps": [
+        "edge"
+      ],
+      "pad": 12
+    },
+    {
+      "kind": "security-group",
+      "label": "Control",
+      "wraps": [
+        "virtroidd",
+        "postgres"
+      ],
+      "pad": 12
+    },
+    {
+      "kind": "security-group",
+      "label": "Payments",
+      "wraps": [
+        "payments"
+      ],
+      "pad": 12
+    },
+    {
+      "kind": "security-group",
+      "label": "Storage",
+      "wraps": [
+        "indexd"
+      ],
+      "pad": 12
+    },
+    {
+      "kind": "security-group",
+      "label": "SNP VM",
+      "wraps": [
+        "cvm"
+      ],
+      "pad": 12
+    }
+  ],
+  "connections": [
+    {
+      "id": "step1-start",
+      "from": "phone",
+      "to": "edge",
+      "label": "1 \u00b7 start",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step2-verified",
+      "from": "edge",
+      "to": "virtroidd",
+      "label": "2 \u00b7 verified",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step3-instance",
+      "from": "virtroidd",
+      "to": "alephapi",
+      "label": "3 \u00b7 VM + disk key",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step4-boot",
+      "from": "alephapi",
+      "to": "cvm",
+      "label": "4 \u00b7 measured boot",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step5-attest",
+      "from": "phone",
+      "to": "cvm",
+      "label": "5 \u00b7 attest, then QUIC",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          109,
+          732
+        ]
+      ]
+    },
+    {
+      "id": "step6-restore",
+      "from": "cvm",
+      "to": "sia",
+      "label": "6 \u00b7 restore / save",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agent-to-edge",
+      "from": "cvm",
+      "to": "edge",
+      "label": "agent \u00b7 SDK API",
+      "variant": "security"
+    },
+    {
+      "id": "edge-to-indexd",
+      "from": "edge",
+      "to": "indexd",
+      "label": "SDK API"
+    },
+    {
+      "id": "virtroidd-to-postgres",
+      "from": "virtroidd",
+      "to": "postgres",
+      "label": "SQL"
+    },
+    {
+      "id": "payments-credits",
+      "from": "payments",
+      "to": "virtroidd",
+      "label": "credits"
+    },
+    {
+      "id": "payments-tron",
+      "from": "payments",
+      "to": "tron",
+      "label": "watches USDT"
+    },
+    {
+      "id": "sensors-logs",
+      "from": "sensors",
+      "to": "logs",
+      "label": "write-only",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Starting a session",
+      "items": [
+        "1\u20132: the phone sends a signed start; the edge forwards it and virtroidd checks credits",
+        "3: the provisioner reuses the user's VM, takes a warm spare, or creates an SNP VM, and hands over the disk key only once the AMD measurement checks out",
+        "4: the VM boots the published, measured image; each session starts a fresh ReDroid container",
+        "5: the phone verifies the SNP report, then streams straight from the VM over QUIC, or through the edge if it has no direct route",
+        "6: /data is restored from Sia before Android boots; on stop, changed chunks go back"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Placement",
+      "items": [
+        "Each account has a region; a user's VM is never shared",
+        "Near you: your own SEV-SNP server, for example in Singapore",
+        "Europe and the US: Aleph SNP nodes, paid per hour from credits"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Runtime lifecycle",
+      "items": [
+        "Hot: connected. Warm: kept for 15 minutes, instant reconnect. Cold: saved to Sia, container removed",
+        "The VM is destroyed after long inactivity, on image updates, or if compromise is suspected",
+        "The provisioner's Aleph account holds a capped credit balance"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Your VPS",
+      "items": [
+        "Edge, control, payments and storage are isolated from each other",
+        "Only the edge is public; nodes and runtime agents also come in through it",
+        "Sensors ship logs off-host to an append-only bucket"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "User data",
+      "items": [
+        "Durable copy on Sia only, encrypted inside the VM before upload",
+        "indexd sees only opaque metadata and pays Sia hosts in SC",
+        "Optional: an encrypted local copy on the user's VM disk for faster restores"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Money",
+      "items": [
+        "Users deposit USDT TRC20 to their own deposit address",
+        "Deposits become credits, spent per runtime minute and per GB stored",
+        "Offline, you convert some USDT to SC for indexd and top up Aleph credits"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Built so far",
+      "items": [
+        "Live: the VPS node plus a pilot Aleph node, region placement, direct IPv6 streaming with an edge fallback",
+        "Next: provisioner, SEV-SNP with phone-side attestation, QUIC, Sia, then payments"
+      ]
+    }
+  ]
+}
