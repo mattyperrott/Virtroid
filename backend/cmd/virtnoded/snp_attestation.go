@@ -51,6 +51,9 @@ type snpAttestation struct {
 	Version int    `json:"version"`
 	Product string `json:"product"`
 	Report  string `json:"report"`
+	// TLSSPKI is the DER public key the report binds; phones match its
+	// SHA-256 against the node's TLS pin.
+	TLSSPKI string `json:"tls_spki"`
 	VCEK    string `json:"vcek"`
 	ASK     string `json:"ask"`
 	ARK     string `json:"ark"`
@@ -240,6 +243,7 @@ func buildSNPAttestation(ctx context.Context, source attestationSource, spkiDER 
 		Version: 1,
 		Product: product,
 		Report:  encode(report),
+		TLSSPKI: encode(spkiDER),
 		VCEK:    encode(vcek),
 		ASK:     encode(chain[0]),
 		ARK:     encode(chain[1]),

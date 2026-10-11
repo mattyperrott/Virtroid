@@ -73,11 +73,29 @@ data class SessionLaunch(
     // The edge, for when the node cannot be reached directly.
     val relayFallbackHost: String = "",
     val relayFallbackPort: Int = 0,
+    val attestation: SessionAttestation = SessionAttestation(),
 )
 
 data class SessionRelayRefresh(
     val relayToken: String,
     val viewerPublicKey: String,
+    val attestation: SessionAttestation = SessionAttestation(),
+)
+
+/**
+ * What the phone needs to verify a runtime's confidential VM before trusting
+ * its node and viewer keys. The control plane relays it; it is not trusted.
+ */
+data class SessionAttestation(
+    val nodeAttestationJson: String = "",
+    val viewerKeySignature: String = "",
+    val confidentialRuntime: Boolean = false,
+)
+
+private fun JSONObject.toSessionAttestation(): SessionAttestation = SessionAttestation(
+    nodeAttestationJson = optJSONObject("node_attestation")?.toString().orEmpty(),
+    viewerKeySignature = optString("viewer_key_signature").trim(),
+    confidentialRuntime = optBoolean("confidential_runtime", false),
 )
 
 data class RuntimeFileImport(
@@ -797,6 +815,7 @@ class VirtroidApi(
             relayTlsPin = payload.optString("relay_tls_spki_sha256").trim(),
             relayFallbackHost = payload.optString("fallback_relay_host").trim(),
             relayFallbackPort = payload.optInt("fallback_relay_port"),
+            attestation = payload.toSessionAttestation(),
         )
     }
 
@@ -1049,6 +1068,7 @@ class VirtroidApi(
             viewerPublicKey = payload.optString("viewer_public_key").ifBlank {
                 throw IOException("viewer identity key is required")
             },
+            attestation = payload.toSessionAttestation(),
         )
     }
 

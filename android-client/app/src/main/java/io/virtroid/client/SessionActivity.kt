@@ -36,6 +36,7 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionViewerBinding
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.SnapshotRollbackException
 import io.virtroid.client.security.enableSecureWindow
@@ -80,6 +81,7 @@ class SessionActivity : AppCompatActivity() {
     private lateinit var identityPasswordStore: IdentityPasswordStore
     private lateinit var identityKeyManager: IdentityKeyManager
     private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
+    private val confidentialRuntimeGuard by lazy { ConfidentialRuntimeGuard(this) }
     private lateinit var activeSessionStore: ActiveSessionStore
     private lateinit var sessionStore: SessionStore
     private lateinit var appSettings: AppSettingsStore
@@ -520,7 +522,9 @@ class SessionActivity : AppCompatActivity() {
                 delay(delayMs)
             }
             runCatching {
-                api.issueSessionRelayToken(baseUrl, accountId, deviceId, runtimeId, sessionId)
+                api.issueSessionRelayToken(baseUrl, accountId, deviceId, runtimeId, sessionId).also { refresh ->
+                    confidentialRuntimeGuard.check(runtimeId, relayTlsPin, refresh.viewerPublicKey, refresh.attestation)
+                }
             }.onSuccess { refresh ->
                 relayToken = refresh.relayToken
                 viewerPublicKey = refresh.viewerPublicKey

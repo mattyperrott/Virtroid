@@ -29,6 +29,7 @@ import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
@@ -56,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var identityPasswordStore: IdentityPasswordStore
     private lateinit var identityKeyManager: IdentityKeyManager
     private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
+    private val confidentialRuntimeGuard by lazy { ConfidentialRuntimeGuard(this) }
     private lateinit var appLogs: AppLogStore
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.US)
     private var runtimePollJob: Job? = null
@@ -487,6 +489,9 @@ class MainActivity : AppCompatActivity() {
                     val state = api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)
                     val relayRefresh = if (state.canResumeRuntime(runtime.id)) {
                         api.issueSessionRelayToken(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)
+                            .also { refresh ->
+                                confidentialRuntimeGuard.check(session.runtimeId, session.relayTlsPin, refresh.viewerPublicKey, refresh.attestation)
+                            }
                     } else {
                         null
                     }
@@ -544,6 +549,7 @@ class MainActivity : AppCompatActivity() {
                         bitRate = DEFAULT_SESSION_BIT_RATE,
                         blobAccessKey = blobAccessKey,
                     )
+                    confidentialRuntimeGuard.check(readyRuntime.id, session.relayTlsPin, session.viewerPublicKey, session.attestation)
                     identityPasswordStore.saveConfigured(accountId, deviceId)
                     Pair(session, readyRuntime)
                 }.onSuccess { (session, readyRuntime) ->

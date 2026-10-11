@@ -120,6 +120,9 @@ func TestBuildSNPAttestationBindsTheTLSKeyAndCachesAMDCertificates(t *testing.T)
 	if vcek, _ := base64.StdEncoding.DecodeString(attestation.VCEK); string(vcek) != string(kds.vcek) {
 		t.Fatal("VCEK is not the one AMD returned")
 	}
+	if attestation.TLSSPKI != base64.StdEncoding.EncodeToString(spki) {
+		t.Fatal("bundle does not carry the bound TLS key")
+	}
 	if attestation.ASK == "" || attestation.ARK == "" {
 		t.Fatal("chain certificates missing")
 	}

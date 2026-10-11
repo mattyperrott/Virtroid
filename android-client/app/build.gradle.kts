@@ -197,4 +197,6 @@ dependencies {
     implementation("com.google.android.material:material:1.13.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
+    // Android's org.json is only a stub in JVM unit tests.
+    testImplementation("org.json:json:20260522")
 }

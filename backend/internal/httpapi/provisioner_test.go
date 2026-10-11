@@ -6,6 +6,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -185,7 +187,7 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 			"docker_socket":   true,
 			"binder":          true,
 			"public_addr":     publicAddr,
-			"tls_spki_sha256": "Epb9KynBSoZcrWDgp+KJBrHkmWNfkS4OCZ+eomlsTrs=",
+			"tls_spki_sha256": testAttestationPin,
 			"region":          claimedRegion,
 			"snp_attestation": testAttestationBundle,
 		})
@@ -223,18 +225,25 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 	}
 }
 
+// testAttestationBundle's tls_spki hashes to testAttestationPin.
 var testAttestationBundle = map[string]any{
-	"version": 1,
-	"product": "Genoa",
-	"report":  "cmVwb3J0",
-	"vcek":    "dmNlaw==",
-	"ask":     "YXNr",
-	"ark":     "YXJr",
+	"version":  1,
+	"product":  "Genoa",
+	"report":   "cmVwb3J0",
+	"tls_spki": "c3BraQ==",
+	"vcek":     "dmNlaw==",
+	"ask":      "YXNr",
+	"ark":      "YXJr",
 }
+
+var testAttestationPin = func() string {
+	digest := sha256.Sum256([]byte("spki"))
+	return base64.StdEncoding.EncodeToString(digest[:])
+}()
 
 func TestNodeAttestationJSONChecksTheBundleShape(t *testing.T) {
 	valid, _ := json.Marshal(testAttestationBundle)
-	if got, err := nodeAttestationJSON(valid, "pin"); err != nil || !strings.Contains(got, `"version":1`) {
+	if got, err := nodeAttestationJSON(valid, testAttestationPin); err != nil || !strings.Contains(got, `"version":1`) {
 		t.Fatalf("valid bundle = %q err=%v", got, err)
 	}
 	if got, err := nodeAttestationJSON(nil, ""); err != nil || got != "" {
@@ -242,13 +251,14 @@ func TestNodeAttestationJSONChecksTheBundleShape(t *testing.T) {
 	}
 	for name, raw := range map[string]string{
 		"no TLS endpoint": string(valid),
-		"unknown field":   `{"version":1,"product":"Genoa","report":"YQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ==","extra":1}`,
-		"bad version":     `{"version":2,"product":"Genoa","report":"YQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
-		"bad product":     `{"version":1,"product":"Naples","report":"YQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
-		"not base64":      `{"version":1,"product":"Genoa","report":"!!","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
-		"too large":       `{"version":1,"product":"Genoa","report":"` + strings.Repeat("A", maxNodeAttestationBytes) + `","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"unknown field":   `{"version":1,"product":"Genoa","report":"YQ==","tls_spki":"c3BraQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ==","extra":1}`,
+		"bad version":     `{"version":2,"product":"Genoa","report":"YQ==","tls_spki":"c3BraQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"bad product":     `{"version":1,"product":"Naples","report":"YQ==","tls_spki":"c3BraQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"not base64":      `{"version":1,"product":"Genoa","report":"!!","tls_spki":"c3BraQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"other TLS key":   `{"version":1,"product":"Genoa","report":"YQ==","tls_spki":"b3RoZXI=","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
+		"too large":       `{"version":1,"product":"Genoa","report":"` + strings.Repeat("A", maxNodeAttestationBytes) + `","tls_spki":"c3BraQ==","vcek":"YQ==","ask":"YQ==","ark":"YQ=="}`,
 	} {
-		pin := "pin"
+		pin := testAttestationPin
 		if name == "no TLS endpoint" {
 			pin = ""
 		}

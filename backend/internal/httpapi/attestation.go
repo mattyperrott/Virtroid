@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ func nodeAttestationJSON(raw json.RawMessage, tlsPin string) (string, error) {
 		Version int    `json:"version"`
 		Product string `json:"product"`
 		Report  string `json:"report"`
+		TLSSPKI string `json:"tls_spki"`
 		VCEK    string `json:"vcek"`
 		ASK     string `json:"ask"`
 		ARK     string `json:"ark"`
@@ -46,10 +48,15 @@ func nodeAttestationJSON(raw json.RawMessage, tlsPin string) (string, error) {
 	default:
 		return "", errors.New("unknown snp_attestation product")
 	}
-	for _, field := range []string{bundle.Report, bundle.VCEK, bundle.ASK, bundle.ARK} {
+	for _, field := range []string{bundle.Report, bundle.TLSSPKI, bundle.VCEK, bundle.ASK, bundle.ARK} {
 		if decoded, err := base64.StdEncoding.DecodeString(field); err != nil || len(decoded) == 0 {
 			return "", errors.New("snp_attestation fields must be base64")
 		}
+	}
+	spki, _ := base64.StdEncoding.DecodeString(bundle.TLSSPKI)
+	digest := sha256.Sum256(spki)
+	if base64.StdEncoding.EncodeToString(digest[:]) != tlsPin {
+		return "", errors.New("snp_attestation is for a different TLS key than the node's pin")
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err != nil {

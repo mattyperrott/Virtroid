@@ -165,6 +165,7 @@
     <string name="entitlement_no_ready_host">No runtime node is ready right now.</string>
     <string name="runtime_host_provisioning">Preparing your private server. The first start takes a few minutes.</string>
     <string name="runtime_host_capacity">No private server is available right now. Try again later.</string>
+    <string name="confidential_runtime_unverified">Your private server could not prove it is secure, so Virtroid did not connect. (%1$s)</string>
 
     <string name="bottom_runtimes">Runtimes</string>
     <string name="bottom_security">Security</string>
