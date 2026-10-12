@@ -197,6 +197,16 @@ if [ -z "\$listening" ]; then
   fail "the viewer never listened on 7007/7017"
 fi
 echo "boot-test: viewer listening: \$(echo \$listening | \$B tr -s ' ')"
+# Pull video as a viewer would, straight from the streaming server (the
+# encryption proxy dials it the same way for each client), for 12 seconds:
+# a working stream does not end on its own. The screen size alone is 8
+# bytes; a working encoder sends at least a key frame.
+streamed=\$(\$B timeout 40 C /bin/docker exec smoke /system/bin/sh -c "(sleep 20) | timeout 12 toybox nc ::1 7007 | wc -c" 2>/dev/null | \$B tr -dc '0-9')
+echo "boot-test: streamed \${streamed:-0} bytes in 12s"
+if [ "\${streamed:-0}" -lt 10000 ]; then
+  \$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "tail -20 /data/local/tmp/virtroid-viewer.log; logcat -d -b main,system,crash 2>/dev/null | grep -iE 'scrcpy|codec|C2|MediaCodec|dma_heap|AndroidRuntime|FATAL' | tail -40" 2>&1 | \$B sed 's/^/boot-test:   /'
+  fail "the viewer did not stream video"
+fi
 echo "boot-test: cpu.max \$(C /bin/bash -c 'cat /sys/fs/cgroup/docker/*/cpu.max' 2>&1 | \$B head -1)"
 echo "boot-test: lmkd \$(C /bin/adb -s 127.0.0.1:15555 shell getprop init.svc.lmkd | \$B tr -d '\r'), docker exec: \$(C /bin/docker exec smoke /system/bin/getprop sys.boot_completed)"
 echo "boot-test: --- virtnoded log ---"

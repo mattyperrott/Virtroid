@@ -159,6 +159,14 @@ CONFIG_CROSS_MEMORY_ATTACH=y
 # Graphics fences between SurfaceFlinger and the composer.
 CONFIG_SYNC_FILE=y
 
+# Android's codecs and graphics allocate buffers from DMA-BUF heaps
+# (/dev/dma_heap/system); without them the screen encoder fails as soon as a
+# viewer starts streaming. udmabuf as on the VPS kernel the same image runs on.
+CONFIG_DMA_SHARED_BUFFER=y
+CONFIG_DMABUF_HEAPS=y
+CONFIG_DMABUF_HEAPS_SYSTEM=y
+CONFIG_UDMABUF=y
+
 # Alarm timers (AlarmManager's CLOCK_*_ALARM) need an RTC.
 CONFIG_RTC_CLASS=y
 CONFIG_RTC_DRV_CMOS=y
