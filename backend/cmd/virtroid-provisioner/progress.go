@@ -1,0 +1,131 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+)
+
+// progressReader describes what a VM that is coming up is doing, from the
+// compute node's own view. It is only shown to the waiting user, so a failure
+// to read it is never an error.
+type progressReader interface {
+	Progress(ctx context.Context, itemHash string) string
+}
+
+type alephProgress struct {
+	schedulerURL string
+	client       *http.Client
+	mu           sync.Mutex
+	nodeURLs     map[string]string
+}
+
+func newAlephProgress(schedulerURL string) *alephProgress {
+	return &alephProgress{
+		schedulerURL: strings.TrimRight(schedulerURL, "/"),
+		client:       &http.Client{Timeout: 10 * time.Second},
+		nodeURLs:     map[string]string{},
+	}
+}
+
+func (p *alephProgress) getJSON(ctx context.Context, target string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
+}
+
+func (p *alephProgress) nodeURL(ctx context.Context, itemHash string) string {
+	p.mu.Lock()
+	cached := p.nodeURLs[itemHash]
+	p.mu.Unlock()
+	if cached != "" {
+		return cached
+	}
+	var allocation struct {
+		Node struct {
+			URL string `json:"url"`
+		} `json:"node"`
+	}
+	if err := p.getJSON(ctx, p.schedulerURL+"/api/v0/allocation/"+url.PathEscape(itemHash), &allocation); err != nil {
+		return ""
+	}
+	nodeURL := strings.TrimRight(allocation.Node.URL, "/")
+	if parsed, err := url.Parse(nodeURL); err != nil || parsed.Scheme != "https" {
+		return ""
+	}
+	p.mu.Lock()
+	p.nodeURLs[itemHash] = nodeURL
+	p.mu.Unlock()
+	return nodeURL
+}
+
+func (p *alephProgress) Progress(ctx context.Context, itemHash string) string {
+	nodeURL := p.nodeURL(ctx, itemHash)
+	if nodeURL == "" {
+		return "Waiting for Aleph to pick a compute node"
+	}
+	var executions map[string]crnExecution
+	if err := p.getJSON(ctx, nodeURL+"/v2/about/executions/list", &executions); err != nil {
+		return ""
+	}
+	execution, ok := executions[itemHash]
+	if !ok {
+		return "Waiting for the compute node to pick up the VM"
+	}
+	return execution.describe()
+}
+
+type crnExecution struct {
+	Running    bool `json:"running"`
+	Allocation struct {
+		State    string  `json:"state"`
+		Attempts int     `json:"attempts"`
+		Error    *string `json:"error"`
+	} `json:"allocation"`
+	Status struct {
+		PreparingAt *string `json:"preparing_at"`
+		PreparedAt  *string `json:"prepared_at"`
+		StartingAt  *string `json:"starting_at"`
+		StartedAt   *string `json:"started_at"`
+	} `json:"status"`
+}
+
+func (e crnExecution) describe() string {
+	switch {
+	case e.Allocation.Error != nil && *e.Allocation.Error != "":
+		message := *e.Allocation.Error
+		if len(message) > 120 {
+			message = message[:120]
+		}
+		return fmt.Sprintf("The compute node hit a problem and is retrying (attempt %d): %s", e.Allocation.Attempts+1, message)
+	case e.Running || e.Status.StartedAt != nil:
+		return "VM booted; waiting for its network address"
+	case e.Status.StartingAt != nil:
+		return "Booting the VM and checking its root disk"
+	case e.Status.PreparedAt != nil:
+		return "VM prepared; starting it"
+	case e.Status.PreparingAt != nil:
+		return "Preparing the VM's disks"
+	case strings.EqualFold(e.Allocation.State, "downloading"):
+		return "The compute node is downloading the VM image"
+	case e.Allocation.State != "":
+		return "The compute node is " + strings.ToLower(e.Allocation.State) + " the VM"
+	}
+	return "Waiting for the compute node"
+}

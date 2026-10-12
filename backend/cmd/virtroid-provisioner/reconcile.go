@@ -58,6 +58,10 @@ type reconciler struct {
 	// created remembers instances this process submitted, in case the
 	// network's listing lags behind a create whose report did not land.
 	created map[string]alephInstance
+	// progress, when set, reads what a VM coming up is doing so the waiting
+	// user can see it; lastProgress avoids repeating unchanged notes.
+	progress     progressReader
+	lastProgress map[string]string
 }
 
 func newReconciler(cfg provisionerConfig, cp controlPlane, aleph alephDriver) *reconciler {
@@ -68,6 +72,17 @@ func newReconciler(cfg provisionerConfig, cp controlPlane, aleph alephDriver) *r
 		now:          time.Now,
 		lastUnlock:   map[string]time.Time{},
 		created:      map[string]alephInstance{},
+		lastProgress: map[string]string{},
+	}
+}
+
+// noteProgress reports a progress note for a VM when it changed.
+func (r *reconciler) noteProgress(ctx context.Context, vmID, note string) {
+	if note == "" || r.lastProgress[vmID] == note {
+		return
+	}
+	if err := r.controlPlane.Report(ctx, vmID, vmReport{Progress: note}); err == nil {
+		r.lastProgress[vmID] = note
 	}
 }
 
@@ -155,7 +170,11 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 
 	case vmStateCreating:
 		if !found || instance.IPv6 == "" {
-			return nil // still being scheduled or booting
+			// Still being scheduled, downloaded or booted.
+			if r.progress != nil && vm.ItemHash != "" {
+				r.noteProgress(ctx, vm.ID, r.progress.Progress(ctx, vm.ItemHash))
+			}
+			return nil
 		}
 		_, publicKey, err := r.nodeKey(vm.ID)
 		if err != nil {
@@ -194,11 +213,13 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			return r.controlPlane.Report(ctx, vm.ID, vmReport{Failure: err.Error()})
 		}
 		if err != nil {
+			r.noteProgress(ctx, vm.ID, "Waiting for the VM's attestation agent to answer")
 			return fmt.Errorf("unlock (will retry): %w", err)
 		}
 		delete(r.lastUnlock, vm.ID)
 		log.Printf("provisioner: vm=%s attested and unlocked", vm.ID)
-		return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateBooting})
+		r.lastProgress[vm.ID] = "Attested and unlocked; starting Docker and the Android image"
+		return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateBooting, Progress: r.lastProgress[vm.ID]})
 	}
 	return nil
 }
@@ -215,6 +236,7 @@ func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alep
 	}
 	delete(r.lastUnlock, vm.ID)
 	delete(r.created, vm.ID)
+	delete(r.lastProgress, vm.ID)
 	for _, path := range []string{r.nodeKeyPath(vm.ID), r.dataKeyPath(vm.ID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

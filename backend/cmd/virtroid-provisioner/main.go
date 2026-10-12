@@ -30,6 +30,7 @@ func main() {
 		log.Fatalf("virtroid-provisioner: %v", err)
 	}
 	r := newReconciler(cfg, cp, driver)
+	r.progress = newAlephProgress(envOr("ALEPH_SCHEDULER_URL", "https://scheduler.api.aleph.cloud"))
 	log.Printf("virtroid-provisioner: regions=%d runtime=%s image=%s", len(cfg.RegionCRNs), cfg.Runtime, cfg.Image)
 	for {
 		if err := r.runOnce(ctx); err != nil {

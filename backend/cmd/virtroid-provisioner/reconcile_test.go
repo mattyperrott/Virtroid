@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -182,8 +183,8 @@ func TestUnlockingVMReceivesItsSecretsOnlyThroughTheCLI(t *testing.T) {
 	if err := r.runOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(aleph.unlocked) != 1 || len(cp.reports) != 0 {
-		t.Fatalf("transient failure: unlocks=%d reports=%+v", len(aleph.unlocked), cp.reports)
+	if len(aleph.unlocked) != 1 || len(cp.reports) != 1 || cp.reports[0].report.State != "" || cp.reports[0].report.Progress == "" {
+		t.Fatalf("transient failure: unlocks=%d reports=%+v, want only a progress note", len(aleph.unlocked), cp.reports)
 	}
 	spec := aleph.unlocked[0]
 	privateKey, _, _ := r.nodeKey("pvm-1")
@@ -397,5 +398,53 @@ esac
 	}
 	if isEVMAddress("0x123") || !isEVMAddress(owner) {
 		t.Fatal("isEVMAddress")
+	}
+}
+
+type fakeProgress struct{ note string }
+
+func (f *fakeProgress) Progress(context.Context, string) string { return f.note }
+
+func TestCreatingVMReportsProgressOnlyWhenItChanges(t *testing.T) {
+	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: vmStateCreating, Desired: "present", ItemHash: hash, CRNHash: crnA}}}
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
+	r := testReconciler(t, cp, aleph)
+	progress := &fakeProgress{note: "The compute node is downloading the VM image"}
+	r.progress = progress
+	for i := 0; i < 3; i++ {
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	progress.note = "Booting the VM and checking its root disk"
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(cp.reports) != 2 || cp.reports[0].report.Progress != "The compute node is downloading the VM image" ||
+		cp.reports[1].report.Progress != "Booting the VM and checking its root disk" || cp.reports[1].report.State != "" {
+		t.Fatalf("reports = %+v, want two progress notes", cp.reports)
+	}
+}
+
+func TestComputeNodeStatusDescriptions(t *testing.T) {
+	text := func(raw string) string {
+		var execution crnExecution
+		if err := json.Unmarshal([]byte(raw), &execution); err != nil {
+			t.Fatal(err)
+		}
+		return execution.describe()
+	}
+	for raw, want := range map[string]string{
+		`{"allocation":{"state":"downloading"},"status":{}}`:                                  "The compute node is downloading the VM image",
+		`{"allocation":{"state":"started"},"status":{"preparing_at":"x"}}`:                    "Preparing the VM's disks",
+		`{"allocation":{},"status":{"preparing_at":"x","prepared_at":"x","starting_at":"x"}}`: "Booting the VM and checking its root disk",
+		`{"running":true,"allocation":{},"status":{"started_at":"x"}}`:                        "VM booted; waiting for its network address",
+	} {
+		if got := text(raw); got != want {
+			t.Errorf("describe(%s) = %q, want %q", raw, got, want)
+		}
+	}
+	if got := text(`{"allocation":{"state":"downloading","attempts":1,"error":"disk full"},"status":{}}`); !strings.Contains(got, "attempt 2") || !strings.Contains(got, "disk full") {
+		t.Errorf("error description = %q", got)
 	}
 }

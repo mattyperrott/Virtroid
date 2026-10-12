@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101101
-	schemaVersionLabel               = "provisioned runtime VMs 2026-10-11"
+	currentSchemaVersion       int64 = 2026101201
+	schemaVersionLabel               = "provisioned VM progress 2026-10-12"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32

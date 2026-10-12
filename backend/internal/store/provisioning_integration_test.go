@@ -112,6 +112,10 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 	if vm, err := st.ApplyProvisionerReport(ctx, aliceVM.ID, ProvisionerReport{State: ProvisionedVMCreating, ItemHash: itemHash}); err != nil || vm.ItemHash != itemHash {
 		t.Fatalf("creating report = %+v err=%v", vm, err)
 	}
+	if vm, err := st.ApplyProvisionerReport(ctx, aliceVM.ID, ProvisionerReport{Progress: "downloading the VM image"}); err != nil ||
+		vm.Progress != "downloading the VM image" || vm.State != ProvisionedVMCreating {
+		t.Fatalf("progress report = %+v err=%v", vm, err)
+	}
 	nodeKey := integrationNodePublicKey(t)
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -137,8 +141,8 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 		PublicIP:      "2001:db8:3100:1781::10",
 		NodePublicKey: nodeKey,
 	})
-	if err != nil || vm.State != ProvisionedVMUnlocking || vm.PublicIP != "2001:db8:3100:1781::10" {
-		t.Fatalf("unlocking report = %+v err=%v", vm, err)
+	if err != nil || vm.State != ProvisionedVMUnlocking || vm.PublicIP != "2001:db8:3100:1781::10" || vm.Progress != "" {
+		t.Fatalf("unlocking report = %+v err=%v (a state change clears the old progress note)", vm, err)
 	}
 	if keys, err := st.AuthorizedNodeKeys(ctx, aliceVM.ID); err != nil || len(keys) != 1 {
 		t.Fatalf("approved keys = %v err=%v, want the VM's node key", keys, err)

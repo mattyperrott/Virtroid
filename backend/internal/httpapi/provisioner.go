@@ -20,7 +20,7 @@ import (
 const provisionerRequestID = "virtroid-provisioner"
 
 // How long the app should wait before asking again while its VM is prepared.
-const provisioningRetryAfter = 15 * time.Second
+const provisioningRetryAfter = 5 * time.Second
 
 func (a *API) provisioningPolicy() store.ProvisioningPolicy {
 	return store.ProvisioningPolicy{
@@ -62,7 +62,31 @@ func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID
 		"code":                store.RuntimeHostProvisioningCode,
 		"retry_after_seconds": retryAfter,
 		"vm_state":            vm.State,
+		"vm_stage":            provisioningStage(vm),
+		"vm_progress":         vm.Progress,
+		"vm_region":           vm.Region,
+		"vm_elapsed_seconds":  int(time.Since(vm.RequestedAt).Seconds()),
 	})
+}
+
+// provisioningStage describes, for the app, where a VM is on its way up.
+func provisioningStage(vm store.ProvisionedVM) string {
+	if vm.Desired != "present" {
+		return "Replacing a private server that failed to start"
+	}
+	switch vm.State {
+	case store.ProvisionedVMRequested:
+		return "Requesting your private server"
+	case store.ProvisionedVMCreating:
+		return "Creating your private server"
+	case store.ProvisionedVMUnlocking:
+		return "Verifying the server's hardware attestation"
+	case store.ProvisionedVMBooting:
+		return "Starting the secure node"
+	case store.ProvisionedVMReady:
+		return "Private server ready"
+	}
+	return "Preparing your private server"
 }
 
 func (a *API) requireProvisionerRequest(w http.ResponseWriter, r *http.Request) bool {
@@ -152,6 +176,7 @@ func (a *API) provisionerReport(w http.ResponseWriter, r *http.Request) {
 		PublicIP      string `json:"public_ip"`
 		NodePublicKey string `json:"node_public_key"`
 		Failure       string `json:"failure"`
+		Progress      string `json:"progress"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -164,6 +189,7 @@ func (a *API) provisionerReport(w http.ResponseWriter, r *http.Request) {
 		PublicIP:      req.PublicIP,
 		NodePublicKey: req.NodePublicKey,
 		Failure:       req.Failure,
+		Progress:      req.Progress,
 	})
 	switch {
 	case errors.Is(err, store.ErrProvisionedVMNotFound):

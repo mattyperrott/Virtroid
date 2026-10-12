@@ -15,6 +15,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStarted
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeLogEntry
@@ -335,11 +336,14 @@ class ControlsActivity : AppCompatActivity() {
                     val latestEntitlement = api.getEntitlement(sessionStore.baseUrl, accountId, deviceId)
                     entitlement = latestEntitlement
                     latestEntitlement.startRuntimeBlockedMessage(this@ControlsActivity)?.let { throw IOException(it) }
-                    retryWhileRuntimeHostProvisioning(onWaiting = { attempt ->
-                        if (attempt == 1) {
-                            toast(getString(R.string.runtime_host_provisioning))
-                        }
-                    }) {
+                    retryWhileRuntimeHostProvisioning(
+                        onWaiting = { attempt, _ ->
+                            if (attempt == 1) {
+                                toast(getString(R.string.runtime_host_provisioning))
+                            }
+                        },
+                        beforeAttempt = { withStarted { } },
+                    ) {
                         api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
                     }
                     identityPasswordStore.saveConfigured(accountId, deviceId)

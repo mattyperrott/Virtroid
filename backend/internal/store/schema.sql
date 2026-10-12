@@ -691,6 +691,10 @@ CREATE TABLE IF NOT EXISTS provisioned_vms (
     CONSTRAINT provisioned_vms_desired CHECK (desired IN ('present', 'absent'))
 );
 
+-- The provisioner's latest word on a VM that is still coming up, shown to
+-- the account's app while it waits.
+ALTER TABLE provisioned_vms ADD COLUMN IF NOT EXISTS progress TEXT NOT NULL DEFAULT '';
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_provisioned_vms_one_per_account
     ON provisioned_vms (account_id)
     WHERE account_id IS NOT NULL AND desired = 'present';

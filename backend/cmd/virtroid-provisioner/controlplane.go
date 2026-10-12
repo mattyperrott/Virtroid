@@ -41,6 +41,7 @@ type vmReport struct {
 	PublicIP      string `json:"public_ip,omitempty"`
 	NodePublicKey string `json:"node_public_key,omitempty"`
 	Failure       string `json:"failure,omitempty"`
+	Progress      string `json:"progress,omitempty"`
 }
 
 type controlPlane interface {

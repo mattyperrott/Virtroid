@@ -55,6 +55,7 @@ type ProvisionedVM struct {
 	NodePublicKey  string     `json:"node_public_key,omitempty"`
 	Failure        string     `json:"failure,omitempty"`
 	RetireReason   string     `json:"retire_reason,omitempty"`
+	Progress       string     `json:"progress,omitempty"`
 	RequestedAt    time.Time  `json:"requested_at"`
 	StateChangedAt time.Time  `json:"state_changed_at"`
 	ReadyAt        *time.Time `json:"ready_at,omitempty"`
@@ -80,6 +81,8 @@ type ProvisionerReport struct {
 	PublicIP      string
 	NodePublicKey string
 	Failure       string
+	// Progress is a short note on what the VM is doing while it comes up.
+	Progress string
 }
 
 type ProvisioningSummary struct {
@@ -90,7 +93,7 @@ type ProvisioningSummary struct {
 }
 
 const provisionedVMColumns = `id, account_id::text, region, state, desired, item_hash, crn_hash,
-	public_ip, node_public_key, failure, retire_reason, requested_at, state_changed_at,
+	public_ip, node_public_key, failure, retire_reason, progress, requested_at, state_changed_at,
 	ready_at, last_used_at, deleted_at`
 
 type rowScanner interface {
@@ -113,6 +116,7 @@ func scanProvisionedVM(row rowScanner) (ProvisionedVM, error) {
 		&vm.NodePublicKey,
 		&vm.Failure,
 		&vm.RetireReason,
+		&vm.Progress,
 		&vm.RequestedAt,
 		&vm.StateChangedAt,
 		&readyAt,
@@ -395,6 +399,7 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 	}
 
 	failure := boundedRegistryText(report.Failure, maxProvisionerFailureRunes)
+	progress := boundedRegistryText(report.Progress, 256)
 	vm, err := scanProvisionedVM(s.db.QueryRowContext(ctx,
 		`UPDATE provisioned_vms
 		    SET state = CASE WHEN $2 = '' THEN state ELSE $2 END,
@@ -406,7 +411,8 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 		        failure = CASE WHEN $7 = '' THEN failure ELSE $7 END,
 		        desired = CASE WHEN $7 = '' THEN desired ELSE 'absent' END,
 		        retire_reason = CASE WHEN $7 <> '' AND desired = 'present' THEN 'failed' ELSE retire_reason END,
-		        deleted_at = CASE WHEN $2 = 'deleted' THEN NOW() ELSE deleted_at END
+		        deleted_at = CASE WHEN $2 = 'deleted' THEN NOW() ELSE deleted_at END,
+		        progress = CASE WHEN $8 <> '' THEN $8 WHEN $2 <> '' AND $2 <> state THEN '' ELSE progress END
 		  WHERE id = $1 AND state <> 'deleted'
 		  RETURNING `+provisionedVMColumns,
 		id,
@@ -416,6 +422,7 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 		report.PublicIP,
 		nodePublicKey,
 		failure,
+		progress,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return s.ProvisionedVM(ctx, id)

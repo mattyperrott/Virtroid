@@ -3,6 +3,7 @@ package io.virtroid.client
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
 import android.view.LayoutInflater
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.Toast
@@ -15,6 +16,7 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStarted
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeState
@@ -65,6 +67,9 @@ class MainActivity : AppCompatActivity() {
     private var connectJob: Job? = null
     private val runtimeProvisioningStartedAtMs = mutableMapOf<String, Long>()
     private val runtimeProvisioningLogMessages = mutableMapOf<String, List<String>>()
+    // Runtimes waiting for their private server, and what the server last said.
+    private val runtimeHostProgress = mutableMapOf<String, RuntimeHostProgress>()
+    private val runtimeHostEvents = mutableMapOf<String, List<String>>()
     private val reportedRuntimeErrors = mutableMapOf<String, String>()
     private val locallyStoppingRuntimeIds = mutableSetOf<String>()
     private val locallyStoppingRuntimeStartedAtMs = mutableMapOf<String, Long>()
@@ -322,7 +327,8 @@ class MainActivity : AppCompatActivity() {
         }
         val isLocallyStopping = runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()
         val isLive = (backendConnectable || runtime.isReadyForSession()) && !isLocallyStopping
-        val isBusy = state?.needsRuntimePolling() ?: runtime.isTransitioning()
+        val isWaitingForHost = runtime.id in runtimeHostProgress
+        val isBusy = isWaitingForHost || (state?.needsRuntimePolling() ?: runtime.isTransitioning())
         if (isBusy || isLocallyStopping) {
             runtimeProvisioningStartedAtMs.putIfAbsent(runtime.id, System.currentTimeMillis())
         } else {
@@ -333,6 +339,8 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeTitleText.text = runtime.name
         cardBinding.runtimeSubtitleText.text = if (isLocallyStopping) {
             getString(R.string.runtime_connectivity_stopping)
+        } else if (isWaitingForHost) {
+            getString(R.string.runtime_connectivity_starting)
         } else {
             state?.connectivityLabel(isLive) ?: runtime.connectivityLabel(isLive)
         }
@@ -371,7 +379,7 @@ class MainActivity : AppCompatActivity() {
         val provisioningMilestone = if (isLocallyStopping) {
             runtime.stoppingMilestone()
         } else {
-            runtime.provisioningMilestone(effectiveState)
+            runtime.hostProvisioningMilestone() ?: runtime.provisioningMilestone(effectiveState)
         }
         if (provisioningMilestone != null) {
             showRuntimeProvisioning(cardBinding, provisioningMilestone, animate = false)
@@ -633,15 +641,27 @@ class MainActivity : AppCompatActivity() {
 
         setBusy(true, getString(R.string.status_starting_runtime_for_session))
         val profiledRuntime = updateRuntimeForViewerAspect(baseUrl, accountId, deviceId, currentRuntime)
-        retryWhileRuntimeHostProvisioning(onWaiting = { attempt ->
-            appLogs.info("Waiting for the private runtime server to be prepared (check $attempt)", "runtime")
-            if (attempt == 1) {
-                toast(getString(R.string.runtime_host_provisioning))
+        // A first start can take minutes while the private server is built.
+        // Keep the screen on meanwhile: the device keys only sign while the
+        // phone is unlocked, and the user should see the progress.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        try {
+            try {
+                retryWhileRuntimeHostProvisioning(
+                    onWaiting = { _, progress -> showRuntimeHostProgress(profiledRuntime, progress) },
+                    // If the user leaves the app anyway, wait for them to come back
+                    // instead of failing to sign while the phone is locked.
+                    beforeAttempt = { withStarted { } },
+                ) {
+                    api.startRuntime(baseUrl, accountId, deviceId, profiledRuntime.id, blobAccessKey)
+                }
+            } finally {
+                clearRuntimeHostProgress(profiledRuntime.id)
             }
-        }) {
-            api.startRuntime(baseUrl, accountId, deviceId, profiledRuntime.id, blobAccessKey)
+            return waitForRuntimeReady(baseUrl, accountId, deviceId, profiledRuntime.id)
+        } finally {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
-        return waitForRuntimeReady(baseUrl, accountId, deviceId, profiledRuntime.id)
     }
 
     private suspend fun latestRuntimeState(
@@ -694,6 +714,51 @@ class MainActivity : AppCompatActivity() {
                 blobAutoSnapshot = runtime.blobAutoSnapshot,
                 blobRetainDays = runtime.blobRetainDays,
             ),
+        )
+    }
+
+    private fun showRuntimeHostProgress(runtime: RuntimeSummary, progress: RuntimeHostProgress) {
+        val previous = runtimeHostProgress[runtime.id]
+        runtimeHostProgress[runtime.id] = progress
+        val stage = progress.stage.ifBlank { getString(R.string.runtime_host_provisioning) }
+        val line = if (progress.detail.isBlank()) stage else "$stage: ${progress.detail}"
+        val previousLine = previous?.let { old ->
+            val oldStage = old.stage.ifBlank { getString(R.string.runtime_host_provisioning) }
+            if (old.detail.isBlank()) oldStage else "$oldStage: ${old.detail}"
+        }
+        if (line != previousLine) {
+            runtimeHostEvents[runtime.id] = (runtimeHostEvents[runtime.id].orEmpty() + line).takeLast(3)
+            appLogs.info("Private server for ${runtime.name}: $line (${formatElapsed(progress.elapsedSeconds)})", "runtime")
+        }
+        if (latestRuntimes.isNotEmpty()) {
+            renderRuntimes(latestRuntimes)
+        }
+    }
+
+    private fun clearRuntimeHostProgress(runtimeId: String) {
+        if (runtimeHostProgress.remove(runtimeId) != null) {
+            runtimeHostEvents.remove(runtimeId)
+            if (latestRuntimes.isNotEmpty()) {
+                renderRuntimes(latestRuntimes)
+            }
+        }
+    }
+
+    private fun RuntimeSummary.hostProvisioningMilestone(): RuntimeProvisioningMilestone? {
+        val progress = runtimeHostProgress[id] ?: return null
+        return RuntimeProvisioningMilestone(
+            title = progress.stage.ifBlank { getString(R.string.runtime_host_provisioning_title) },
+            command = getString(
+                R.string.runtime_host_provisioning_command,
+                progress.state.ifBlank { "requested" },
+                progress.region.ifBlank { "-" },
+                formatElapsed(progress.elapsedSeconds),
+            ),
+            detail = progress.detail.takeIf { it.isNotBlank() }?.let { "... $it" }
+                ?: getString(R.string.runtime_host_provisioning_detail),
+            events = runtimeHostEvents[id].orEmpty()
+                .map { getString(R.string.runtime_host_provisioning_event, it) }
+                .ifEmpty { listOf(getString(R.string.runtime_progress_event_waiting)) },
         )
     }
 

@@ -249,6 +249,8 @@ class VirtroidApiException(
     val statusCode: Int,
     val code: String?,
     val errorMessage: String,
+    // The whole JSON error body, for codes that carry more than a message.
+    val details: JSONObject? = null,
 ) : IOException(errorMessage)
 
 private val DEFAULT_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
@@ -1374,6 +1376,7 @@ class VirtroidApi(
                     statusCode = response.code,
                     code = errorPayload.first,
                     errorMessage = errorPayload.second,
+                    details = runCatching { JSONObject(body) }.getOrNull(),
                 )
             }
             val isJson = contentType?.let {
