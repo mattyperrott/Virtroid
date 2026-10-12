@@ -137,8 +137,8 @@ class ScrcpySessionHost(
         callback.onConnected(resolution[0], resolution[1])
     }
 
-    override fun errorDisconnect() {
-        callback.onDisconnected("runtime stream disconnected")
+    override fun errorDisconnect(reason: String) {
+        callback.onDisconnected("runtime stream disconnected ($reason)")
     }
 
     override fun firstVideoFrame() {

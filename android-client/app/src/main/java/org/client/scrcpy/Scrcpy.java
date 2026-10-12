@@ -473,6 +473,8 @@ public class Scrcpy extends Service {
         int attempts = 12;
         long retryDelayMs = 250L;
         while (attempts > 0 && LetServceRunning.get()) {
+            // Which step failed goes into the disconnect reason the app logs.
+            String phase = "connecting";
             try {
                 debugLog("Connecting to relay");
                 socket = connectRelaySocket(ip, port);
@@ -482,9 +484,12 @@ public class Scrcpy extends Service {
                 }
 
                 debugLog("Connected to relay");
+                phase = "relay handshake";
                 performRelayHandshake(socket, ip, port);
                 relayTokenConsumed = true;
+                phase = "encrypted viewer handshake";
                 ViewerEncryption.Streams encryptedStreams = ViewerEncryption.open(socket, viewerPublicKey);
+                phase = "first stream header";
 
                 socket.setSoTimeout(10_000);
                 dataInputStream = new DataInputStream(encryptedStreams.input);
@@ -510,6 +515,7 @@ public class Scrcpy extends Service {
 
                 socket_status = true;
 
+                phase = "stream";
                 loop(dataInputStream, dataOutputStream, delay);
 
             } catch (Exception e) {
@@ -522,7 +528,7 @@ public class Scrcpy extends Service {
                     // relay and leave a frozen surface marked connected.
                     if (relayTokenConsumed) {
                         if (serviceCallbacks != null) {
-                            serviceCallbacks.errorDisconnect();
+                            serviceCallbacks.errorDisconnect(phase + " via " + ip + ":" + port + ": " + describe(e));
                         }
                         return;
                     }
@@ -539,7 +545,7 @@ public class Scrcpy extends Service {
                     attempts--;
                     if (attempts <= 0) {
                         if (serviceCallbacks != null) {
-                            serviceCallbacks.errorDisconnect();
+                            serviceCallbacks.errorDisconnect(phase + " via " + ip + ":" + port + ": " + describe(e));
                         }
                         return;
                     }
@@ -709,7 +715,7 @@ public class Scrcpy extends Service {
                     int size = ByteUtils.bytesToInt(packetSize);
                     if (size < 1 || size > 4 * 1024 * 1024) {  // 如果单个数据包大于 4m ，直接断开连接
                         if (serviceCallbacks != null) {
-                            serviceCallbacks.errorDisconnect();
+                            serviceCallbacks.errorDisconnect("stream: invalid packet size " + size);
                         }
                         LetServceRunning.set(false);
                         return;
@@ -952,7 +958,7 @@ public class Scrcpy extends Service {
             LetServceRunning.set(false);
             closeActiveSocketAsync();
             if (commandWriteFailureNotified.compareAndSet(false, true) && serviceCallbacks != null) {
-                serviceCallbacks.errorDisconnect();
+                serviceCallbacks.errorDisconnect("sending input: " + describe(error));
             }
         }
     }
@@ -961,6 +967,11 @@ public class Scrcpy extends Service {
         if (BuildConfig.DEBUG) {
             Log.d("Scrcpy", message);
         }
+    }
+
+    private static String describe(Throwable error) {
+        String message = error.getMessage();
+        return error.getClass().getSimpleName() + (TextUtils.isEmpty(message) ? "" : " " + message);
     }
 
     private static void debugLog(String message, Throwable throwable) {
@@ -972,7 +983,7 @@ public class Scrcpy extends Service {
     public interface ServiceCallbacks {
         void loadNewRotation();
 
-        void errorDisconnect();
+        void errorDisconnect(String reason);
 
         void firstVideoFrame();
 
