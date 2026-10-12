@@ -119,6 +119,19 @@ with Nix for builds (a small Aleph VM works).
    deploy/aleph/build-image.sh /path/to/assets out
    ```
 
+   Before publishing, boot it on the builder (it needs `/dev/kvm`):
+   ```bash
+   deploy/aleph/test/boot-test.sh out
+   deploy/aleph/test/initrd-test.sh out
+   ```
+   `boot-test.sh` runs the root's real boot script with test secrets, then
+   starts an Android runtime and its viewer with virtnoded's limits, mounts and
+   arguments, and passes once Android boots and the viewer listens.
+   `initrd-test.sh` boots the measured initrd itself, with a stand-in for the
+   attestation agent, and passes when virtnoded starts and stops for want of
+   SEV-SNP. With `BOOT_TEST_DEBUG=1`, a failed `boot-test.sh` VM stays up and
+   `test/vmsh 'command'` runs commands in it.
+
 3. **Publish.** Upload the runtime bundle, its manifest and the root image with
    the provisioner's account, following the printed steps. Add
    `--on-behalf-of <your wallet>` when paying by permission. The manifest's

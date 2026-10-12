@@ -33,6 +33,8 @@ CONFIG_IPC_NS=y
 CONFIG_PID_NS=y
 CONFIG_USER_NS=y
 CONFIG_CPUSETS=y
+# cpu.max, for each runtime's CPU limit (Docker's NanoCpus).
+CONFIG_CFS_BANDWIDTH=y
 
 # Docker networking: veth pairs on a bridge, NAT for IPv4 and IPv6. Docker
 # drives nftables through iptables-nft, so the legacy xtables filter and nat

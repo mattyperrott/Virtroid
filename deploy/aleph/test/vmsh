@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+# vmsh 'COMMAND' [TIMEOUT]: runs COMMAND in the debug shell of a failed
+# boot-test.sh VM (BOOT_TEST_DEBUG=1). `C cmd ...` runs cmd in the VM's root.
+import os, socket, sys, uuid
+
+work = os.environ.get("BOOT_TEST_DIR", "/var/tmp/virtroid-boot-test")
+marker = "__END_%s__" % uuid.uuid4().hex[:8]
+s = socket.socket(socket.AF_UNIX)
+s.connect(os.path.join(work, "debug.sock"))
+s.settimeout(float(sys.argv[2]) if len(sys.argv) > 2 else 120)
+s.sendall(("{ %s ; } 2>&1; echo %s\n" % (sys.argv[1], marker)).encode())
+buf = b""
+while buf.count(marker.encode()) < 2:
+    chunk = s.recv(65536)
+    if not chunk:
+        break
+    buf += chunk
+text = buf.decode(errors="replace").replace("\r", "")
+body = text.split(marker, 1)[1] if marker in text else text
+print(body.rsplit(marker, 1)[0].lstrip("\n").rstrip(), flush=True)
