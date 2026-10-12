@@ -1841,7 +1841,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 
 	// A runtime on a remote node streams straight from that node; the phone
 	// verifies it by the pinned key instead of the edge's web certificate.
-	relayEndpoint, relayPin, err := a.relayEndpointForHost(host)
+	relayEndpoint, relayPin, err := a.relayEndpointForHost(r.Context(), host)
 	if err != nil {
 		a.activeBlobKeys.clear(runtimeID)
 		abortPendingSession("node relay endpoint unavailable")
@@ -2082,7 +2082,7 @@ func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor r
 }
 
 func (a *API) proxyRuntimeMedia(w http.ResponseWriter, r *http.Request, host store.Host, callbackPath string, body []byte, headers map[string]string) {
-	baseURL, client, err := a.nodeCallbackTarget(host)
+	baseURL, client, err := a.nodeCallbackTarget(r.Context(), host)
 	if err != nil {
 		writeServerAPIError(w, http.StatusBadGateway, "node_address_rejected", "assigned node address is unavailable", err)
 		return
@@ -2761,7 +2761,7 @@ func (a *API) verifyActiveBlobKeyEnvelope(w http.ResponseWriter, r *http.Request
 }
 
 func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host, entry activeBlobKeyEntry) error {
-	baseURL, client, err := a.nodeCallbackTarget(host)
+	baseURL, client, err := a.nodeCallbackTarget(ctx, host)
 	if err != nil {
 		return err
 	}
@@ -3048,7 +3048,7 @@ func (a *API) sessionRelayRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	route := map[string]any{"host_id": hostID}
 	if host, err := a.store.GetHost(r.Context(), hostID); err == nil && nodeHasPublicEndpoint(host) {
-		if addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs); err == nil {
+		if addr, pin, err := a.hostPublicEndpoint(r.Context(), host); err == nil {
 			route["public_addr"] = addr
 			route["tls_spki_sha256"] = pin
 		}
@@ -3525,7 +3525,7 @@ type preparedViewer struct {
 }
 
 func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID string, maxSize, bitRate int) (preparedViewer, error) {
-	baseURL, client, err := a.nodeCallbackTarget(host)
+	baseURL, client, err := a.nodeCallbackTarget(ctx, host)
 	if err != nil {
 		return preparedViewer{}, err
 	}

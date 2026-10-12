@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
@@ -23,9 +24,9 @@ func nodeHasPublicEndpoint(host store.Host) bool {
 // nodeCallbackTarget returns the base URL and client for calling a node. A node
 // with a public endpoint is called over TLS and authenticated by its pinned
 // key; a local node keeps its allowlisted private address.
-func (a *API) nodeCallbackTarget(host store.Host) (string, *http.Client, error) {
+func (a *API) nodeCallbackTarget(ctx context.Context, host store.Host) (string, *http.Client, error) {
 	if nodeHasPublicEndpoint(host) {
-		addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs)
+		addr, pin, err := a.hostPublicEndpoint(ctx, host)
 		if err != nil {
 			return "", nil, err
 		}
@@ -40,6 +41,23 @@ func (a *API) nodeCallbackTarget(host store.Host) (string, *http.Client, error) 
 		port = 8090
 	}
 	return "http://" + net.JoinHostPort(advertiseAddr, strconv.Itoa(port)), a.outboundClient(), nil
+}
+
+// hostPublicEndpoint validates a node's public endpoint by the same rule the
+// heartbeat applied: a provisioned VM serves from the address the provisioner
+// recorded for it, and any other remote node from NODE_ALLOWED_REMOTE_ADDRS.
+func (a *API) hostPublicEndpoint(ctx context.Context, host store.Host) (string, string, error) {
+	allowedRemote := a.cfg.NodeAllowedRemoteAddrs
+	if a.store != nil {
+		vm, isProvisionedVM, err := a.store.LiveProvisionedVM(ctx, host.ID)
+		if err != nil {
+			return "", "", err
+		}
+		if isProvisionedVM {
+			allowedRemote = []string{vm.PublicIP}
+		}
+	}
+	return validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, allowedRemote)
 }
 
 var pinnedNodeClients sync.Map // pin -> *http.Client
@@ -82,12 +100,12 @@ func verifySPKIPin(state tls.ConnectionState, pin string) error {
 
 // relayEndpointForHost is where a phone connects for a session on host: the
 // node itself when it has a public endpoint, otherwise the public edge.
-func (a *API) relayEndpointForHost(host store.Host) (publicRelayEndpoint, string, error) {
+func (a *API) relayEndpointForHost(ctx context.Context, host store.Host) (publicRelayEndpoint, string, error) {
 	if !nodeHasPublicEndpoint(host) {
 		endpoint, err := a.publicRelayEndpoint()
 		return endpoint, "", err
 	}
-	addr, pin, err := validateNodePublicEndpoint(host.PublicAddr, host.TLSSPKISHA256, a.cfg.NodeAllowedRemoteAddrs)
+	addr, pin, err := a.hostPublicEndpoint(ctx, host)
 	if err != nil {
 		return publicRelayEndpoint{}, "", err
 	}

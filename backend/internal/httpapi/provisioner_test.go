@@ -213,6 +213,24 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 		t.Fatalf("VM after heartbeat = %+v err=%v, want ready", got, err)
 	}
 
+	// The VM serves sessions from the address the provisioner recorded, which
+	// is on no static allowlist, and from nowhere else.
+	stored, err := st.GetHost(ctx, vm.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target, _, err := api.nodeCallbackTarget(ctx, stored); err != nil || target != "https://[2001:db8:3100:1781::77]:8443" {
+		t.Fatalf("callback target = %q err=%v", target, err)
+	}
+	if endpoint, pin, err := api.relayEndpointForHost(ctx, stored); err != nil ||
+		endpoint.Address != "[2001:db8:3100:1781::77]:8443" || pin != testAttestationPin {
+		t.Fatalf("relay endpoint = %+v pin=%q err=%v", endpoint, pin, err)
+	}
+	stored.PublicAddr = "[2001:db8:3100:1781::99]:8443"
+	if _, _, err := api.nodeCallbackTarget(ctx, stored); err == nil {
+		t.Fatal("callback target accepted an address the provisioner did not record")
+	}
+
 	// Sessions on the VM carry what the phone needs to verify it.
 	fields, err := api.viewerConfidentiality(ctx, vm.ID, preparedViewer{PublicKey: "viewer", Signature: "c2ln"})
 	if err != nil {

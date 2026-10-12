@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"net"
@@ -84,21 +85,21 @@ func TestNodeTargetsUseDirectEndpointOnlyForPublicNodes(t *testing.T) {
 	}}
 
 	local := store.Host{AdvertiseAddr: "virtnoded", RelayPort: 8090}
-	baseURL, _, err := api.nodeCallbackTarget(local)
+	baseURL, _, err := api.nodeCallbackTarget(context.Background(), local)
 	if err != nil || baseURL != "http://virtnoded:8090" {
 		t.Fatalf("local callback target = %q %v", baseURL, err)
 	}
-	endpoint, pin, err := api.relayEndpointForHost(local)
+	endpoint, pin, err := api.relayEndpointForHost(context.Background(), local)
 	if err != nil || endpoint.Host != "virtroid.network" || endpoint.Port != 443 || pin != "" {
 		t.Fatalf("local relay endpoint = %+v pin=%q err=%v, want the edge", endpoint, pin, err)
 	}
 
 	remote := store.Host{AdvertiseAddr: "203.0.113.10", PublicAddr: "203.0.113.10:41234", TLSSPKISHA256: testPin}
-	baseURL, _, err = api.nodeCallbackTarget(remote)
+	baseURL, _, err = api.nodeCallbackTarget(context.Background(), remote)
 	if err != nil || baseURL != "https://203.0.113.10:41234" {
 		t.Fatalf("remote callback target = %q %v", baseURL, err)
 	}
-	endpoint, pin, err = api.relayEndpointForHost(remote)
+	endpoint, pin, err = api.relayEndpointForHost(context.Background(), remote)
 	if err != nil || endpoint.Address != "203.0.113.10:41234" || !endpoint.TLS || pin != testPin {
 		t.Fatalf("remote relay endpoint = %+v pin=%q err=%v, want the node", endpoint, pin, err)
 	}
@@ -108,7 +109,7 @@ func TestNodeTargetsUseDirectEndpointOnlyForPublicNodes(t *testing.T) {
 	}
 
 	rejected := store.Host{AdvertiseAddr: "203.0.113.10", PublicAddr: "10.0.0.5:41234", TLSSPKISHA256: testPin}
-	if _, _, err := api.nodeCallbackTarget(rejected); err == nil {
+	if _, _, err := api.nodeCallbackTarget(context.Background(), rejected); err == nil {
 		t.Fatal("callback target accepted a public address outside the allowlist")
 	}
 }
