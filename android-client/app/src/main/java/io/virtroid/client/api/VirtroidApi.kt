@@ -554,6 +554,24 @@ class VirtroidApi(
             payload.toAppCatalogEntries()
         }
 
+    /**
+     * The signed list of approved runtime VM images, or null when the server
+     * publishes none. The caller verifies it; the server is not trusted with it.
+     */
+    suspend fun fetchSnpMeasurements(baseUrl: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                executeJson(
+                    Request.Builder()
+                        .url(normalizeBaseUrl(baseUrl) + "/api/v1/snp-measurements")
+                        .get()
+                        .build(),
+                ).toString()
+            } catch (error: VirtroidApiException) {
+                if (error.statusCode == 404) null else throw error
+            }
+        }
+
     suspend fun updateAppSelections(
         baseUrl: String,
         accountId: String,

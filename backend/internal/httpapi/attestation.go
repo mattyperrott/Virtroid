@@ -7,6 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"os"
+
+	"virtroid/backend/internal/measurements"
 )
 
 const maxNodeAttestationBytes = 32 << 10
@@ -87,4 +91,23 @@ func (a *API) viewerConfidentiality(ctx context.Context, hostID string, viewer p
 		fields["confidential_runtime"] = true
 	}
 	return fields, nil
+}
+
+// snpMeasurements serves the signed list of approved runtime VM launch
+// measurements. It is signed offline; phones verify it with a key built into
+// the app, so serving it needs no trust in this server.
+func (a *API) snpMeasurements(w http.ResponseWriter, r *http.Request) {
+	if a.cfg.SNPMeasurementsPath == "" {
+		writeAPIError(w, http.StatusNotFound, "snp_measurements_unavailable", "no measurement list is published")
+		return
+	}
+	data, err := os.ReadFile(a.cfg.SNPMeasurementsPath)
+	var signed measurements.SignedList
+	if err != nil || len(bytes.TrimSpace(data)) == 0 || json.Unmarshal(data, &signed) != nil ||
+		signed.Payload == "" || signed.Signature == "" {
+		writeAPIError(w, http.StatusNotFound, "snp_measurements_unavailable", "no measurement list is published")
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, signed)
 }

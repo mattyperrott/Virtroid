@@ -4,6 +4,7 @@ import android.content.Context
 import io.virtroid.client.R
 import io.virtroid.client.api.SessionAttestation
 import java.io.IOException
+import java.security.PublicKey
 
 class ConfidentialRuntimeException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
@@ -12,21 +13,32 @@ class ConfidentialRuntimeException(message: String, cause: Throwable? = null) : 
  * be attested when the server says it runs in a provisioned confidential VM,
  * when its node offers an attestation, or when it was attested before on this
  * phone, so a server that stops sending the attestation cannot downgrade it.
+ *
+ * Approved images come from the newest signed measurement list this phone has
+ * verified, or from the list bundled with the app until it has one.
  */
 class ConfidentialRuntimeGuard(
     private val context: Context,
-    private val allowedMeasurements: Set<String> = loadMeasurements(context),
+    private val bundledMeasurements: Set<String> = loadMeasurements(context),
+    private val signingKeys: List<PublicKey> = loadSigningKeys(context),
 ) {
-    private val attested = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val attested = context.getSharedPreferences(ATTESTED_PREFS, Context.MODE_PRIVATE)
+    private val lists = context.getSharedPreferences(LIST_PREFS, Context.MODE_PRIVATE)
 
-    fun check(runtimeId: String, relayTlsPin: String, viewerPublicKey: String, attestation: SessionAttestation) {
+    suspend fun check(
+        runtimeId: String,
+        relayTlsPin: String,
+        viewerPublicKey: String,
+        attestation: SessionAttestation,
+        fetchMeasurementList: suspend () -> String?,
+    ) {
         val required = attestation.confidentialRuntime ||
             attestation.nodeAttestationJson.isNotBlank() ||
             attested.getBoolean(runtimeId, false)
         if (!required) {
             return
         }
-        try {
+        val verify = {
             if (attestation.nodeAttestationJson.isBlank()) {
                 throw SnpAttestationException("the server sent no attestation for a confidential runtime")
             }
@@ -36,8 +48,24 @@ class ConfidentialRuntimeGuard(
                 runtimeId = runtimeId,
                 viewerPublicKey = viewerPublicKey,
                 viewerKeySignature = attestation.viewerKeySignature,
-                allowedMeasurements = allowedMeasurements,
+                allowedMeasurements = approvedMeasurements(),
             )
+        }
+        try {
+            try {
+                verify()
+            } catch (unapproved: UnapprovedMeasurementException) {
+                // The VM may run an image newer than this phone's list.
+                val document = try {
+                    fetchMeasurementList()
+                } catch (error: IOException) {
+                    null
+                }
+                if (document == null || !accept(document)) {
+                    throw unapproved
+                }
+                verify()
+            }
         } catch (error: SnpAttestationException) {
             throw ConfidentialRuntimeException(
                 context.getString(R.string.confidential_runtime_unverified, error.message.orEmpty()),
@@ -47,12 +75,48 @@ class ConfidentialRuntimeGuard(
         attested.edit().putBoolean(runtimeId, true).apply()
     }
 
+    fun approvedMeasurements(): Set<String> = storedList()?.measurements ?: bundledMeasurements
+
+    /** Stores a verified list newer than any seen before; returns whether it did. */
+    fun accept(document: String): Boolean {
+        val list = try {
+            SignedMeasurementList.verify(document, signingKeys)
+        } catch (error: SnpAttestationException) {
+            return false
+        }
+        if (list.serial <= lists.getLong(KEY_HIGHEST_SERIAL, 0)) {
+            return false
+        }
+        lists.edit()
+            .putString(KEY_DOCUMENT, document)
+            .putLong(KEY_HIGHEST_SERIAL, list.serial)
+            .apply()
+        return true
+    }
+
+    private fun storedList(): MeasurementList? {
+        val document = lists.getString(KEY_DOCUMENT, null) ?: return null
+        return try {
+            SignedMeasurementList.verify(document, signingKeys)
+        } catch (error: SnpAttestationException) {
+            null
+        }
+    }
+
     companion object {
-        private const val PREFS = "virtroid_attested_runtimes"
+        private const val ATTESTED_PREFS = "virtroid_attested_runtimes"
+        private const val LIST_PREFS = "virtroid_measurement_list"
+        private const val KEY_DOCUMENT = "document"
+        private const val KEY_HIGHEST_SERIAL = "highest_serial"
 
         fun loadMeasurements(context: Context): Set<String> =
             context.resources.openRawResource(R.raw.snp_launch_measurements).bufferedReader().useLines { lines ->
                 parseMeasurements(lines.toList())
+            }
+
+        fun loadSigningKeys(context: Context): List<PublicKey> =
+            context.resources.openRawResource(R.raw.measurement_signing_keys).bufferedReader().useLines { lines ->
+                SignedMeasurementList.parseKeys(lines.toList())
             }
 
         fun parseMeasurements(lines: List<String>): Set<String> = lines

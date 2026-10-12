@@ -110,14 +110,27 @@ You need the following:
 
    Add `provisioner` to `VIRTROID_PROFILES` and redeploy.
 
-6. **First VM and the app.** Assign a test account to the region
-   (`virtroid-admin set-account-region --account <id> --region snp-eu`) and start
-   its runtime. Watch `deploy.sh logs provisioner`. Once the VM is up, read the
-   launch measurements the CLI recorded in its INSTANCE message
+6. **First VM and the approved list.** Assign a test account to the region
+   (`virtroid-admin set-account-region --account <id> --region snp-eu`) and
+   start its runtime. Watch `deploy.sh logs provisioner`. Once the VM is up, read
+   the launch measurements the CLI recorded in its INSTANCE message
    (`aleph message get <item hash> --json`, under
-   `content.environment.trusted_execution.measurements`). Add each to
-   `android-client/app/src/main/res/raw/snp_launch_measurements` and release the
-   app. Until then the app refuses these VMs, by design.
+   `content.environment.trusted_execution.measurements`).
+
+   Phones only accept images on a list signed with your offline release key:
+   - Once, on your own machine: `virtroid-measurements keygen --out
+     measurement-signing.key`. Keep that file offline. Put the printed public
+     key in `android-client/app/src/main/res/raw/measurement_signing_keys` and
+     release the app once.
+   - For each new image: `virtroid-measurements sign --key
+     measurement-signing.key --serial <higher than last> --measurement <hex> ...
+     --out snp-measurements.json`. Copy that file to the VPS and set
+     `SNP_MEASUREMENTS_FILE` to its path.
+
+   Phones fetch the list when they meet an image they don't know yet, check
+   your signature, and never go back to a lower serial. To revoke an image,
+   sign a new list without it. Until a list is published, phones refuse these
+   VMs, by design.
 
 ## Cost
 

@@ -267,3 +267,30 @@ func TestNodeAttestationJSONChecksTheBundleShape(t *testing.T) {
 		}
 	}
 }
+
+func TestSNPMeasurementsAreServedAsSigned(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/list.json"
+	handler := New(config.ServerConfig{AppEnv: "production", SNPMeasurementsPath: path}, nil)
+	get := func() *httptest.ResponseRecorder {
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/snp-measurements", nil))
+		return resp
+	}
+	if resp := get(); resp.Code != http.StatusNotFound {
+		t.Fatalf("missing list status = %d", resp.Code)
+	}
+	if err := os.WriteFile(path, []byte("\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if resp := get(); resp.Code != http.StatusNotFound {
+		t.Fatalf("placeholder list status = %d", resp.Code)
+	}
+	if err := os.WriteFile(path, []byte(`{"payload":"cGF5bG9hZA==","signature":"c2ln"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp := get()
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"payload":"cGF5bG9hZA=="`) {
+		t.Fatalf("list response = %d %s", resp.Code, resp.Body.String())
+	}
+}

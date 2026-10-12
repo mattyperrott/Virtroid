@@ -1,0 +1,3 @@
+# Public keys (base64 SubjectPublicKeyInfo, one per line) whose signatures this
+# app accepts on the approved runtime VM measurement list. Generate the key
+# offline with `virtroid-measurements keygen` and paste only its public key here.

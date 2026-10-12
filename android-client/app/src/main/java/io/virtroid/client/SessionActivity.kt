@@ -523,7 +523,9 @@ class SessionActivity : AppCompatActivity() {
             }
             runCatching {
                 api.issueSessionRelayToken(baseUrl, accountId, deviceId, runtimeId, sessionId).also { refresh ->
-                    confidentialRuntimeGuard.check(runtimeId, relayTlsPin, refresh.viewerPublicKey, refresh.attestation)
+                    confidentialRuntimeGuard.check(runtimeId, relayTlsPin, refresh.viewerPublicKey, refresh.attestation) {
+                        api.fetchSnpMeasurements(baseUrl)
+                    }
                 }
             }.onSuccess { refresh ->
                 relayToken = refresh.relayToken

@@ -360,6 +360,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/meta", api.meta)
 	mux.HandleFunc("GET /api/v1/hosts", api.hosts)
 	mux.HandleFunc("GET /api/v1/apps/catalog", api.listAppCatalog)
+	mux.HandleFunc("GET /api/v1/snp-measurements", api.snpMeasurements)
 	mux.HandleFunc("POST /api/v1/bootstrap", api.bootstrap)
 	mux.HandleFunc("POST /api/v1/recovery/challenge", api.beginAccountRecovery)
 	mux.HandleFunc("POST /api/v1/recovery/complete", api.completeAccountRecovery)

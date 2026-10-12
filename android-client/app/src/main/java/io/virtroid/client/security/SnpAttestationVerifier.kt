@@ -19,7 +19,11 @@ import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import java.util.Date
 
-class SnpAttestationException(message: String) : GeneralSecurityException(message)
+open class SnpAttestationException(message: String) : GeneralSecurityException(message)
+
+/** The VM is genuine but runs an image this app has not (yet) approved. */
+class UnapprovedMeasurementException(val measurement: String) :
+    SnpAttestationException("the VM runs an image this app does not approve ($measurement)")
 
 /** A runtime node's SEV-SNP attestation bundle, as the node built it. */
 class NodeAttestation(
@@ -185,7 +189,7 @@ object SnpAttestationVerifier {
         }
         val measurement = report.copyOfRange(MEASUREMENT_OFFSET, MEASUREMENT_OFFSET + MEASUREMENT_SIZE).toHex()
         if (measurement !in allowedMeasurements) {
-            throw SnpAttestationException("the VM runs an image this app does not approve ($measurement)")
+            throw UnapprovedMeasurementException(measurement)
         }
     }
 

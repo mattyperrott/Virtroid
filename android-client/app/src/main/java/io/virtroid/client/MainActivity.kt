@@ -490,7 +490,9 @@ class MainActivity : AppCompatActivity() {
                     val relayRefresh = if (state.canResumeRuntime(runtime.id)) {
                         api.issueSessionRelayToken(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)
                             .also { refresh ->
-                                confidentialRuntimeGuard.check(session.runtimeId, session.relayTlsPin, refresh.viewerPublicKey, refresh.attestation)
+                                confidentialRuntimeGuard.check(session.runtimeId, session.relayTlsPin, refresh.viewerPublicKey, refresh.attestation) {
+                                    api.fetchSnpMeasurements(session.baseUrl)
+                                }
                             }
                     } else {
                         null
@@ -549,7 +551,9 @@ class MainActivity : AppCompatActivity() {
                         bitRate = DEFAULT_SESSION_BIT_RATE,
                         blobAccessKey = blobAccessKey,
                     )
-                    confidentialRuntimeGuard.check(readyRuntime.id, session.relayTlsPin, session.viewerPublicKey, session.attestation)
+                    confidentialRuntimeGuard.check(readyRuntime.id, session.relayTlsPin, session.viewerPublicKey, session.attestation) {
+                        api.fetchSnpMeasurements(baseUrl)
+                    }
                     identityPasswordStore.saveConfigured(accountId, deviceId)
                     Pair(session, readyRuntime)
                 }.onSuccess { (session, readyRuntime) ->

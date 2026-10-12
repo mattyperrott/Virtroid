@@ -63,6 +63,8 @@ services:
       PROVISIONER_WARM_SPARES: ${PROVISIONER_WARM_SPARES:-0}
       PROVISIONER_SETUP_TIMEOUT: ${PROVISIONER_SETUP_TIMEOUT:-30m}
       PROVISIONER_RETIRE_AFTER: ${PROVISIONER_RETIRE_AFTER:-2h}
+      # Signed list of approved runtime VM measurements (virtroid-measurements sign).
+      SNP_MEASUREMENTS_PATH: /run/virtroid/snp-measurements.json
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       SECURITY_EVENT_RATE_LIMIT_PER_MINUTE: ${SECURITY_EVENT_RATE_LIMIT_PER_MINUTE:-120}
       SECURITY_EVENT_RETENTION: ${SECURITY_EVENT_RETENTION:-168h}
@@ -102,6 +104,7 @@ services:
       - /tmp:rw,noexec,nosuid,nodev,size=32m
     volumes:
       - ${OPERATOR_CONSOLE_TOKEN_FILE:-./operator-console-disabled}:/run/secrets/operator-console-token:ro
+      - ${SNP_MEASUREMENTS_FILE:-./snp-measurements-disabled}:/run/virtroid/snp-measurements.json:ro
     logging:
       driver: local
       options:
