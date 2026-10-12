@@ -146,9 +146,9 @@ CONFIG_NET_ACT_POLICE=y
 CONFIG_NET_EMATCH=y
 CONFIG_NET_EMATCH_U32=y
 
-# Virtual interfaces apps and netd create (VPN apps need TUN).
+# VPN apps need TUN. No dummy or ifb drivers: built in, they create dummy0
+# and ifb0 at boot, and the initrd brings up the first interface it finds.
 CONFIG_TUN=y
-CONFIG_DUMMY=y
 
 # Process accounting (storaged, libprocessgroup) and process_vm_readv.
 CONFIG_TASKSTATS=y

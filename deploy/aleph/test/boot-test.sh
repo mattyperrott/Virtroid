@@ -174,7 +174,25 @@ for i in \$(\$B seq 1 30); do
 done
 C /bin/docker exec smoke /system/bin/sh -c "tail -5 /data/local/tmp/virtroid-viewer.log" 2>&1
 memory "viewer started"
-[ -n "\$listening" ] || fail "the viewer never listened on 7007/7017"
+if [ -z "\$listening" ]; then
+  # Where the streaming server is stuck: thread states, wait channels and
+  # kernel stacks, read without anything that waits on the process's memory.
+  echo "boot-test: --- viewer diagnostics ---"
+  \$B timeout 60 C /bin/docker exec -d smoke /system/bin/sh -c 'CLASSPATH=/opt/virtroid/scrcpy-server.jar app_process / org.server.scrcpy.Server /127.0.0.1 1280 4000000 false false >/dev/null 2>&1 </dev/null'
+  \$B sleep 20
+  for c in /proc/[0-9]*/comm; do
+    p=\${c%/comm}; p=\${p#/proc/}
+    comm=\$(\$B cat \$c 2>/dev/null)
+    state=\$(\$B grep -m1 '^State:' /proc/\$p/status 2>/dev/null | \$B cut -c8-)
+    case "\$comm:\$state" in app_process*|main:*|dex2oat*|*:D*) ;; *) continue ;; esac
+    echo "boot-test: pid \$p \$comm state=\$state \$(\$B grep -m1 '^Uid:' /proc/\$p/status)"
+    for t in /proc/\$p/task/*; do
+      echo "boot-test:   task \${t##*/} \$(\$B cat \$t/comm) \$(\$B grep -m1 '^State:' \$t/status | \$B cut -c8-) wchan=\$(\$B cat \$t/wchan)"
+      \$B timeout 5 \$B cat \$t/stack 2>/dev/null | \$B head -6 | \$B sed 's/^/boot-test:     /'
+    done | \$B head -80
+  done
+  fail "the viewer never listened on 7007/7017"
+fi
 echo "boot-test: viewer listening: \$(echo \$listening | \$B tr -s ' ')"
 echo "boot-test: cpu.max \$(C /bin/bash -c 'cat /sys/fs/cgroup/docker/*/cpu.max' 2>&1 | \$B head -1)"
 echo "boot-test: lmkd \$(C /bin/adb -s 127.0.0.1:15555 shell getprop init.svc.lmkd | \$B tr -d '\r'), docker exec: \$(C /bin/docker exec smoke /system/bin/getprop sys.boot_completed)"
