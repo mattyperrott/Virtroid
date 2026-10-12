@@ -178,5 +178,9 @@ them, and `PROVISIONER_MAX_VMS` caps how many exist at once.
 - Runtime snapshots stay on the VM's data disk until Sia storage lands, so a
   retired VM's data is gone. VMs with a runtime on them are therefore never
   retired automatically.
+- The stock ReDroid 14 image turns unprivileged BPF on: its bpfloader sets
+  `kernel.unprivileged_bpf_disabled` to 0, and Android reboots if it cannot.
+  In a runtime VM that reaches only the one account's VM; on the VPS it is
+  host-wide today. The custom AOSP image is to drop this.
 - Tetragon (intrusion detection) and the custom AOSP image are next; the first
   build uses the stock ReDroid 14 image the VPS runs today.
