@@ -88,6 +88,12 @@ cd /
 echo \$init_pid > /guest.pid
 
 C() { \$B env -i HOME=/run/root PATH=/bin TMPDIR=/run/tmp \$B chroot /proc/\$init_pid/root "\$@"; }
+# Memory of the VM and of the runtime's cgroup, read from sysfs and procfs only,
+# so it cannot block behind a stuck process.
+memory() {
+  echo "boot-test: memory (\$1): \$(C /bin/bash -c 'grep -E "^(MemTotal|MemAvailable):" /proc/meminfo | tr -s " " | tr "\n" " "')"
+  C /bin/bash -c 'for d in /sys/fs/cgroup/docker/*/; do echo "boot-test:   runtime cgroup current=\$(( \$(cat \$d/memory.current) >> 20 ))MiB max=\$(cat \$d/memory.max) \$(grep -E "^(anon|file) " \$d/memory.stat | tr "\n" " ") events: \$(tr "\n" " " < \$d/memory.events)"; done' 2>/dev/null
+}
 for i in \$(\$B seq 1 300); do
   kill -0 \$init_pid 2>/dev/null || fail "/sbin/init exited"
   C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 && C /bin/docker network inspect virtroid-guest >/dev/null 2>&1 && break
@@ -146,6 +152,7 @@ if [ "\$booted" != 1 ]; then
   \$B ls /proc/pressure 2>&1
   fail "Android did not finish booting"
 fi
+memory "Android booted"
 echo "boot-test: Android booted: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.fingerprint | \$B tr -d '\r')"
 # Android's own networking (netd's firewall and routing, its DNS resolver)
 # must work for apps: resolve a name from inside Android.
@@ -166,6 +173,7 @@ for i in \$(\$B seq 1 30); do
   \$B sleep 1
 done
 C /bin/docker exec smoke /system/bin/sh -c "tail -5 /data/local/tmp/virtroid-viewer.log" 2>&1
+memory "viewer started"
 [ -n "\$listening" ] || fail "the viewer never listened on 7007/7017"
 echo "boot-test: viewer listening: \$(echo \$listening | \$B tr -s ' ')"
 echo "boot-test: cpu.max \$(C /bin/bash -c 'cat /sys/fs/cgroup/docker/*/cpu.max' 2>&1 | \$B head -1)"
