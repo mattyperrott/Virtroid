@@ -21,8 +21,13 @@ override=(--override-input assets "path:${assets}" --no-write-lock-file)
 "${nix[@]}" build "${flake}#runtimeImage" "${override[@]}" -o "${out}/runtime"
 "${nix[@]}" build "${flake}#rootImage" "${override[@]}" -o "${out}/root"
 
-# Package the runtime with Aleph's own bundle script, at the pinned commit.
-aleph_src="$("${nix[@]}" eval --raw --impure --expr "(builtins.getFlake \"${flake}\").inputs.aleph-vm-src.outPath")"
+# Package the runtime with Aleph's own bundle script, from a git checkout of
+# the pinned commit (the script records the checkout's revision).
+aleph_rev="$("${nix[@]}" eval --raw --impure --expr "(builtins.getFlake \"${flake}\").inputs.aleph-vm-src.rev")"
+aleph_src="${out}/aleph-vm"
+[ -d "${aleph_src}/.git" ] || git init -q "${aleph_src}"
+git -C "${aleph_src}" fetch -q --depth 1 https://github.com/aleph-im/aleph-vm.git "${aleph_rev}"
+git -C "${aleph_src}" checkout -q --force FETCH_HEAD
 python="$("${nix[@]}" build --no-link --print-out-paths --impure --expr \
   "(builtins.getFlake \"${flake}\").inputs.nixpkgs.legacyPackages.x86_64-linux.python3.withPackages (p: [ p.pydantic ])")"
 rm -rf "${out}/bundle"
