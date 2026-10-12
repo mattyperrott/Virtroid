@@ -283,6 +283,7 @@ case "$*" in
   *"instance list"*) echo '[{"item_hash":"`+hash+`","name":"virtroid-pvm-1","owner":"0xabc","node_hash":"`+crnA+`","ipv6":"2001:db8:3100:1781::10","ipv4":null}]' ;;
   *"instance create"*) echo '{"item_hash":"`+hash+`","type":"INSTANCE"}'; echo '{"ready":false}' ;;
   *"instance unlock"*) echo "error: launch measurement mismatch" >&2; exit 1 ;;
+  *"instance delete"*) echo '{"item_hash":"`+strings.Repeat("f", 64)+`","type":"FORGET"}' ;;
 esac
 `), 0o755); err != nil {
 		t.Fatal(err)
@@ -365,6 +366,7 @@ printf '%s\n' "$*" >> "`+argsFile+`"
 case "$*" in
   *"instance list"*) echo '[]' ;;
   *"instance create"*) echo '{"item_hash":"`+hash+`"}' ;;
+  *"message forget"*) echo '{"item_hash":"`+strings.Repeat("f", 64)+`","type":"FORGET"}' ;;
 esac
 `), 0o755); err != nil {
 		t.Fatal(err)
@@ -386,7 +388,7 @@ esac
 	want := []string{
 		"--json instance list --address " + owner,
 		"--json instance create virtroid-pvm-1 --confidential --tee sev-snp --runtime r --image i --vcpus 2 --memory 4096MiB --disk-size 4096MiB --persistent-volume name=virtroid-data,mount=/srv/virtroid,size=30720MiB,persistence=host --crn " + crnA + " --on-behalf-of " + owner + " --account provisioner",
-		"--json message forget " + hash + " --on-behalf-of " + owner + " --reason Virtroid runtime VM retired --account provisioner",
+		"--json message forget " + hash + " --yes --on-behalf-of " + owner + " --reason Virtroid runtime VM retired --account provisioner",
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("argv lines = %q", lines)
@@ -626,5 +628,45 @@ func TestComputeNodeAgentAddress(t *testing.T) {
 	port := execution.Networking.MappedPorts["8443"]
 	if execution.Networking.HostIPv4 != "192.0.2.7" || port.Host != 40027 {
 		t.Fatalf("networking = %+v", execution.Networking)
+	}
+}
+
+func TestDeleteThatSubmitsNothingFails(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "aleph")
+	// The real CLI's answer to an unconfirmed forget: exit 0, nothing sent.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho Aborted. >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{"", "0x00000000000000000000000000000000000000aa"} {
+		driver := cliDriver{bin: script, account: "provisioner", owner: owner, timeout: 10 * time.Second}
+		if err := driver.Delete(context.Background(), hash); err == nil {
+			t.Errorf("owner=%q: a delete that submitted nothing succeeded", owner)
+		}
+	}
+}
+
+func TestDeletedOrphanIsNotForgottenAgainWhileStillListed(t *testing.T) {
+	orphan := strings.Repeat("9", 64)
+	cp := &fakeControlPlane{}
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: orphan, Name: "virtroid-pvm-gone", NodeHash: crnA}}}
+	clock := time.Unix(1_800_000_000, 0)
+	r := testReconciler(t, cp, aleph)
+	r.now = func() time.Time { return clock }
+	for i := 0; i < 3; i++ {
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		clock = clock.Add(10 * time.Second)
+	}
+	if len(aleph.deleted) != 1 {
+		t.Fatalf("deleted %d times while the listing lagged, want 1", len(aleph.deleted))
+	}
+	clock = clock.Add(forgetSettles)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.deleted) != 2 {
+		t.Fatalf("deleted %d times, want a retry once the FORGET should have settled", len(aleph.deleted))
 	}
 }

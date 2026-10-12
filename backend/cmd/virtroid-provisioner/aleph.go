@@ -131,7 +131,7 @@ func (d cliDriver) Create(ctx context.Context, spec createSpec) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return parseCreateOutput(out)
+	return parseItemHash(out, "instance create")
 }
 
 func (d cliDriver) Unlock(ctx context.Context, spec unlockSpec) error {
@@ -156,19 +156,26 @@ func (d cliDriver) Unlock(ctx context.Context, spec unlockSpec) error {
 }
 
 func (d cliDriver) Delete(ctx context.Context, itemHash string) error {
+	args := []string{"instance", "delete", itemHash, "--yes", "--reason", "Virtroid runtime VM retired"}
 	if d.owner != "" {
 		// Forgetting the INSTANCE message tears its VM down; on the owner's
 		// behalf because the owner owns the message.
-		_, err := d.run(ctx, "--account", "message", "forget", itemHash,
-			"--on-behalf-of", d.owner, "--reason", "Virtroid runtime VM retired")
+		args = []string{"message", "forget", itemHash, "--yes",
+			"--on-behalf-of", d.owner, "--reason", "Virtroid runtime VM retired"}
+	}
+	out, err := d.run(ctx, "--account", args...)
+	if err != nil {
 		return err
 	}
-	_, err := d.run(ctx, "--account", "instance", "delete", itemHash, "--yes", "--reason", "Virtroid runtime VM retired")
+	// The CLI exits 0 when it declines to act (an unanswered confirmation
+	// prints "Aborted."), so only a submitted FORGET message counts.
+	_, err = parseItemHash(out, args[0]+" "+args[1])
 	return err
 }
 
-// parseCreateOutput reads the item hash from `aleph --json instance create`.
-func parseCreateOutput(out []byte) (string, error) {
+// parseItemHash reads the item hash of the message an `aleph --json`
+// command submitted.
+func parseItemHash(out []byte, command string) (string, error) {
 	decoder := json.NewDecoder(bytes.NewReader(out))
 	for {
 		var doc struct {
@@ -176,10 +183,10 @@ func parseCreateOutput(out []byte) (string, error) {
 		}
 		err := decoder.Decode(&doc)
 		if errors.Is(err, io.EOF) {
-			return "", errors.New("aleph instance create printed no item_hash")
+			return "", fmt.Errorf("aleph %s submitted no message", command)
 		}
 		if err != nil {
-			return "", fmt.Errorf("parse aleph instance create output: %w", err)
+			return "", fmt.Errorf("parse aleph %s output: %w", command, err)
 		}
 		if doc.ItemHash != "" {
 			return strings.ToLower(doc.ItemHash), nil

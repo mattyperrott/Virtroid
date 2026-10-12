@@ -36,6 +36,9 @@ const (
 	// A VM that restarts this many times after being unlocked, before its
 	// node ever comes up, is failing to boot and is retired.
 	maxRestartsBeforeReady = 3
+	// forgetSettles is how long a deleted instance may still be listed
+	// before it is deleted again.
+	forgetSettles = 10 * time.Minute
 )
 
 type crnTarget struct {
@@ -74,6 +77,8 @@ type reconciler struct {
 	lastBootCheck map[string]time.Time
 	seenBoot      map[string]string
 	restarts      map[string]int
+	// forgotten holds instances deleted recently, by item hash.
+	forgotten map[string]time.Time
 }
 
 func newReconciler(cfg provisionerConfig, cp controlPlane, aleph alephDriver) *reconciler {
@@ -88,6 +93,7 @@ func newReconciler(cfg provisionerConfig, cp controlPlane, aleph alephDriver) *r
 		lastBootCheck: map[string]time.Time{},
 		seenBoot:      map[string]string{},
 		restarts:      map[string]int{},
+		forgotten:     map[string]time.Time{},
 	}
 }
 
@@ -142,8 +148,11 @@ func (r *reconciler) runOnce(ctx context.Context) error {
 	// An instance named like ours that no live VM claims is a leak: delete it.
 	for _, instance := range instances {
 		if strings.HasPrefix(instance.Name, instanceNamePrefix+"pvm-") && !wanted[instance.Name] {
+			if r.recentlyForgotten(instance.ItemHash) {
+				continue
+			}
 			log.Printf("provisioner: deleting orphan instance %s (%s)", instance.ItemHash, instance.Name)
-			if err := r.aleph.Delete(ctx, instance.ItemHash); err != nil {
+			if err := r.delete(ctx, instance.ItemHash); err != nil {
 				log.Printf("provisioner: delete orphan %s: %v", instance.ItemHash, err)
 			}
 		}
@@ -352,8 +361,8 @@ func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alep
 	if !found {
 		itemHash = vm.ItemHash
 	}
-	if itemHash != "" {
-		if err := r.aleph.Delete(ctx, itemHash); err != nil && found {
+	if itemHash != "" && !r.recentlyForgotten(itemHash) {
+		if err := r.delete(ctx, itemHash); err != nil && found {
 			return fmt.Errorf("delete instance %s: %w", itemHash, err)
 		}
 	}
@@ -370,6 +379,25 @@ func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alep
 	}
 	log.Printf("provisioner: vm=%s deleted", vm.ID)
 	return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateDeleted})
+}
+
+// delete removes an instance and remembers it, so the instance listing,
+// which lags behind, does not make it send the same FORGET again.
+func (r *reconciler) delete(ctx context.Context, itemHash string) error {
+	if err := r.aleph.Delete(ctx, itemHash); err != nil {
+		return err
+	}
+	r.forgotten[itemHash] = r.now()
+	return nil
+}
+
+func (r *reconciler) recentlyForgotten(itemHash string) bool {
+	at, ok := r.forgotten[itemHash]
+	if ok && r.now().Sub(at) >= forgetSettles {
+		delete(r.forgotten, itemHash)
+		return false
+	}
+	return ok
 }
 
 // pickCRN spreads VMs over the region's compute nodes.
