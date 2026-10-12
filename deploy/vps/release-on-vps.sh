@@ -122,7 +122,12 @@ if [ "${installer_digest_after}" != "${installer_digest_before}" ]; then
   # runtime integration list cannot be skipped by the prior installer.
   /usr/local/sbin/virtroid-install-reviewed-deployment-tree "${stage}/tree/vps" "${tree_digest}"
 fi
-VIRTROID_PROFILES=edge,falco,nids \
+# The runtime VM provisioner runs only when the operator set a VM spending cap.
+profiles=edge,falco,nids
+if grep -Eq '^PROVISIONER_MAX_VMS=[1-9][0-9]*$' /opt/virtroid/deploy/vps/.env 2>/dev/null; then
+  profiles="${profiles},provisioner"
+fi
+VIRTROID_PROFILES="${profiles}" \
   /usr/local/sbin/virtroid-apply-local-release "${stage}" "${expected_fingerprint}"
 trap - EXIT HUP INT TERM
 cleanup_stage
