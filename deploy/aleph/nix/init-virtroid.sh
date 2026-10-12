@@ -65,8 +65,17 @@ done
 prepare_chroot /mnt/root
 [ -x /mnt/root/sbin/init ] || fatal "no /sbin/init in the root"
 echo "init: starting /sbin/init"
-/bin/busybox chroot /mnt/root /sbin/init &
+# Move the root over / before entering it, as switch_root does. setns() into
+# a mount namespace (Docker's exec, Android's init) puts the caller at the
+# namespace's root and follows what is mounted over /; after a plain chroot
+# that would be the initramfs, and Android refuses the resulting
+# /mnt/root/... paths. This init keeps the initramfs as its own root, so the
+# attestation agent keeps running.
+cd /mnt/root || fatal "cannot enter the root"
+/bin/busybox mount --move . / || fatal "cannot move the root over /"
+/bin/busybox chroot . /sbin/init &
 guest_pid=$!
+cd /
 wait "$guest_pid"
 echo "init: /sbin/init exited; powering off"
 exec /bin/busybox poweroff -f

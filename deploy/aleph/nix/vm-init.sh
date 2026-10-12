@@ -34,8 +34,11 @@ done
 # The initrd loaded the only modules this kernel builds (dm-*); nothing may
 # load another one for the rest of this boot.
 echo 1 > /proc/sys/kernel/modules_disabled || die "cannot lock module loading"
+# unprivileged_bpf_disabled starts at 2 (off, but changeable), not 1 (off until
+# reboot): the stock ReDroid 14 image's bpfloader sets it to 0, and Android
+# reboots when it cannot. The custom AOSP image is to drop that requirement.
 sysctl -q -w net.ipv4.ip_forward=1 kernel.kptr_restrict=2 kernel.dmesg_restrict=1 \
-  kernel.unprivileged_bpf_disabled=1 kernel.yama.ptrace_scope=2 2>/dev/null || true
+  kernel.unprivileged_bpf_disabled=2 kernel.yama.ptrace_scope=2 2>/dev/null || true
 
 # --- Secrets from the provisioner, held in memory only ------------------------
 read_secret() {
