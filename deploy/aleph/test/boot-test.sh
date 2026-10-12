@@ -147,6 +147,16 @@ if [ "\$booted" != 1 ]; then
   fail "Android did not finish booting"
 fi
 echo "boot-test: Android booted: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.fingerprint | \$B tr -d '\r')"
+# Android's own networking (netd's firewall and routing, its DNS resolver)
+# must work for apps: resolve a name from inside Android.
+resolved=""
+for i in \$(\$B seq 1 30); do
+  resolved=\$(C /bin/adb -s 127.0.0.1:15555 shell 'ping -c 1 -W 2 dns.google 2>&1 | head -1' | \$B tr -d '\r')
+  echo "\$resolved" | \$B grep -q "^PING dns.google (" && break
+  \$B sleep 2
+done
+echo "boot-test: network: \$resolved"
+echo "\$resolved" | \$B grep -q "^PING dns.google (" || fail "Android cannot resolve names"
 echo "boot-test: starting the viewer as virtnoded does"
 C /bin/docker exec -d smoke /system/bin/sh -c "setprop virtroid.viewer.client_ip 127.0.0.1; setprop virtroid.viewer.max_size 1280; setprop virtroid.viewer.bit_rate 4000000; setprop virtroid.viewer.audio_enabled false; exec /system/bin/sh /vendor/bin/virtroid-viewer.sh"
 listening=""
