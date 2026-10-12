@@ -1,110 +1,128 @@
 # Confidential runtime VMs on Aleph Cloud
 
 Each account in a provisioned region gets its own AMD SEV-SNP virtual machine
-on Aleph Cloud. Its memory and disks are encrypted by the CPU, and the phone
-checks the VM's attestation before it streams. This directory builds what the
-VMs boot. The provisioner (`backend/cmd/virtroid-provisioner`) creates and
-deletes them.
+on Aleph Cloud. Its memory is encrypted by the CPU, everything it boots is
+measured, and the phone checks the VM's attestation before it streams. This
+directory builds what the VMs boot (`nix/`). The provisioner
+(`backend/cmd/virtroid-provisioner`) creates and deletes them.
 
 > [!WARNING]
-> This path is built and unit-tested, but has not yet run end to end against
-> real Aleph SNP hosts. The kernel options, the image build and the first
-> VM all need a supervised first run (step 6).
+> Built and unit-tested, but not yet booted on a real Aleph SNP host. The
+> first VM needs a supervised run (step 6).
+
+## What a VM boots
+
+Everything below is part of the SEV-SNP launch measurement, so a phone that
+accepts the measurement has checked all of it:
+
+- **Firmware and kernel.** Aleph's measured OVMF and a 6.18 LTS guest kernel
+  built from Aleph's minimal option list, plus binder, overlayfs, veth, bridge,
+  nftables NAT and configfs-tsm (`kernel-virtroid.fragment`).
+- **Initrd** (`nix/init-virtroid.sh`, adapted from Aleph's). It holds the root
+  disk's dm-verity root hash, so the measurement covers the root too. It
+  verifies the root, starts Aleph's attestation agent in owner-auth mode, and
+  waits for the provisioner's secrets.
+- **Read-only root** (`nix/rootfs.nix`), built reproducibly by Nix. It contains:
+  - Docker, cryptsetup, nftables and adb;
+  - `virtnoded` and its viewer encryption tool;
+  - the Android runtime image, loaded at boot and never pulled;
+  - the pinned apps.
+
+  There is no SSH, login shell, package manager or compiler. Anyone can
+  rebuild it from this repository and get the same root hash.
+
+Writable state lives only in memory and on the VM's own data disk, which the
+VM encrypts with a key only it and the provisioner hold. Once booted, the VM
+loads no further kernel modules.
 
 ## How a VM comes up
 
 1. A user in a provisioned region starts a runtime. `virtroidd` finds no node
    for them, so it claims a warm spare or records a VM request. The app is told
    the server is being prepared and retries.
-2. The provisioner sees the request and runs `aleph instance create` with our
-   runtime, the encrypted root image, a per-VM data disk, and a compute node
-   from the region's list.
-3. Aleph boots the VM from our measured kernel and Aleph's initrd. The initrd
-   starts Aleph's attestation agent and waits for the disk passphrase.
-4. The provisioner runs `aleph instance unlock`. The CLI verifies the VM's SEV-SNP
-   report (AMD signature chain, launch measurement, policy) over attested TLS,
-   and only then sends:
-   - the root disk passphrase;
-   - the VM's node id and node key;
-   - its region and control plane URL;
-   - its own data-disk key.
-   The node key is approved in the control plane at the same moment.
-5. `/sbin/init` (`rootfs/virtroid-vm-init`) does the rest:
-   - opens the per-VM data disk;
+2. The provisioner runs `aleph instance create` with our runtime, the root
+   image, a per-VM data disk, and a compute node from the region's list.
+3. The VM boots, verifies its root against the measured hash, and waits.
+4. The provisioner runs `aleph instance unlock`. The CLI verifies the VM's
+   SEV-SNP report (AMD signature chain, launch measurement, policy) over
+   attested TLS, and only then sends the VM's node id and key, region, control
+   plane URL and data-disk key. Only the provisioner's address, measured on the
+   kernel command line, can inject them. The node key is approved in the
+   control plane at the same moment.
+5. `/sbin/init` (`nix/vm-init.sh`) does the rest:
+   - opens the data disk;
    - allows only ports 8443 (attestation agent) and 9443 (node) inbound;
+   - loads the Android image;
    - starts Docker and `virtnoded` with `NODE_SNP_ATTESTATION=required`.
 6. `virtnoded` gets an SNP report that binds its TLS key, adds AMD's
    certificates, and heartbeats. The VM is ready.
 7. On each session the phone verifies that bundle itself: AMD root built into
-   the app, approved measurement, no debug policy, the TLS key it pins, and the
-   viewer key signed by that TLS key. It refuses to connect otherwise.
+   the app, an approved measurement, no debug policy, the TLS key it pins, and
+   the viewer key signed by that TLS key. It refuses to connect otherwise.
 
 ## What is trusted
 
-| Party | Can it read a user's runtime? |
+| Party | Can it read or change a user's runtime? |
 | :--- | :--- |
-| The Aleph host operator | No. Memory is encrypted by SEV-SNP. Both disks are LUKS-encrypted inside the VM. The passphrase and keys only enter after attestation. |
-| Aleph's network | No. It only relays signed messages and encrypted images. |
-| The Virtroid VPS (provisioner) | Yes, as long as the root disk is not measured. The provisioner holds the disk passphrase, so a compromised VPS could hand a VM a modified root disk. The phone checks the boot chain and the provisioner's address, which is measured into the kernel command line, but not the disk contents. Measuring the root disk (dm-verity, as in Aleph's V-PROGRAMs) is the next hardening step. |
+| The Aleph host operator | No. Memory is encrypted by SEV-SNP. The root is verified against the measurement, and the data disk is encrypted inside the VM with a key that only arrives after attestation. |
+| Aleph's network | No. It only relays signed messages and public images. |
+| The Virtroid VPS | It cannot change what a VM runs: the root, kernel and initrd are measured, and phones only accept measurements on a list signed with your offline key. The provisioner does hold each VM's data-disk key, so a compromised VPS that also controlled an Aleph host could read that VM's stored data. |
 
-The root image is shared by every VM and holds no secrets. User data and the
-node's TLS key live on each VM's own data disk, encrypted with a key only that
-VM and the provisioner hold. LUKS with `aes-xts-plain64` protects
-confidentiality but not integrity: a host can corrupt blocks, but cannot read
-or choose their contents.
+The data disk uses LUKS with `aes-xts-plain64`, which protects confidentiality
+but not integrity: a host can corrupt blocks, but cannot read them or choose
+their contents.
 
 ## One-time setup
 
-You need the following:
-
-- an x86_64 Linux builder with Nix, Go, debootstrap and cryptsetup (any
-  disposable Debian VM);
-- the VPS;
-- a new Aleph account with credits, used only by the provisioner.
+You need the VPS, a funded Aleph wallet, and a disposable x86_64 Linux machine
+with Nix for builds (a small Aleph VM works).
 
 1. **Provisioner account.** On the VPS, build the provisioner image and create
    its Aleph account inside the container. The key never leaves the VPS.
    ```bash
    sudo bash /opt/virtroid-source/deploy/vps/build-provisioner-image.sh
    ```
-   Put the two printed lines in `deploy/vps/.env`. Create the secret files,
+   Put the two printed lines in `deploy/vps/.env`. Create these secret files,
    root-owned, group `PROVISIONER_SECRET_GID`, mode 0440:
    - `/etc/virtroid/secrets/aleph-password`: the keystore password;
-   - `/etc/virtroid/secrets/luks-passphrase`: printable characters, no newline;
    - `/etc/virtroid/secrets/provisioner-key`: a base64 PKCS#8 P-256 key, e.g.
-     `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -outform DER | base64 -w0`.
+     `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -outform DER | base64 -w0`;
+   - `/etc/virtroid/secrets/luks-passphrase`: any printable value. The root is
+     no longer encrypted, but the Aleph CLI's unlock step still expects one.
 
-   Then create the account inside the provisioner container. Use the same
-   env files and profile as `deploy.sh`:
+   Create the account with the same env files and profile as `deploy.sh`:
    ```bash
-   docker compose --profile provisioner run --rm --entrypoint aleph provisioner account create virtroid-provisioner
+   docker compose --profile provisioner run --rm --entrypoint aleph provisioner account create virtroid-provisioner --encrypted
    ```
+   Its address is measured into every VM, so keep it for good, and back up the
+   `virtroid_provisioner-state` volume.
+
    Pay for its VMs in one of two ways:
-   - **Permission (no tools needed).** In the Aleph console's Permissions
-     page, let the provisioner's address deploy for your wallet, limited to
-     INSTANCE, STORE and FORGET messages. Set `ALEPH_OWNER_ADDRESS` to your
-     wallet. VMs bill your balance, and you can revoke this at any time. There
-     is no amount cap, so keep the balance modest; `PROVISIONER_MAX_VMS` still
+   - **Permission.** In the Aleph console's Permissions page, let the
+     provisioner's address act for your wallet with INSTANCE and STORE only
+     (deleting follows from INSTANCE). Set `ALEPH_OWNER_ADDRESS` to your wallet.
+     There is no amount cap, so keep the balance modest; `PROVISIONER_MAX_VMS`
      caps how many VMs exist.
    - **Transfer.** `aleph credit transfer --to <provisioner address> --amount
      <credits> --expiration <date>` from your wallet. Only that amount is
      exposed, and anything unspent returns after the expiry.
 
-   The provisioner's address is measured into every VM, so keep it for good.
+2. **Build.** Copy `nix/assets-example` and fill it in:
+   - `node.env`: the VPS's `CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64` and runtime
+     agent hash;
+   - `apks/`: the VPS's `/srv/virtroid/apks` without `cache/`;
+   - the Android image: `runtime-image.json` pins a registry image by digest,
+     or put our own build in `runtime-image.tar`.
 
-2. **Runtime.** On the builder:
+   Then, on the builder:
    ```bash
-   deploy/aleph/build-runtime.sh
+   deploy/aleph/build-image.sh /path/to/assets out
    ```
-   Then publish the bundle and manifest with the provisioner account, following
-   the printed steps. The manifest's item hash is `ALEPH_RUNTIME`.
 
-3. **Root image.** Copy the VPS's `/srv/virtroid/apks` to the builder, fill in
-   `rootfs/node.env.example` as `node.env`, then:
-   ```bash
-   sudo deploy/aleph/build-rootfs.sh --node-env node.env --apks apks --passphrase-file luks-passphrase --out out
-   ```
-   Upload `out/virtroid-rootfs.luks.img`; its item hash is `ALEPH_IMAGE`.
+3. **Publish.** Upload the runtime bundle, its manifest and the root image with
+   the provisioner's account, following the printed steps. Add
+   `--on-behalf-of <your wallet>` when paying by permission. The manifest's
+   item hash is `ALEPH_RUNTIME`, and the root image's is `ALEPH_IMAGE`.
 
 4. **Compute nodes.** Pick compute nodes per region from `aleph node list`.
    Each node's `/about/capability` must list `sev_snp`. Set
@@ -122,16 +140,16 @@ You need the following:
 
 6. **First VM and the approved list.** Assign a test account to the region
    (`virtroid-admin set-account-region --account <id> --region snp-eu`) and
-   start its runtime. Watch `deploy.sh logs provisioner`. Once the VM is up, read
-   the launch measurements the CLI recorded in its INSTANCE message
+   start its runtime. Watch `deploy.sh logs provisioner`. Once the VM is up,
+   read the launch measurements the CLI recorded in its INSTANCE message
    (`aleph message get <item hash> --json`, under
    `content.environment.trusted_execution.measurements`).
 
    Phones only accept images on a list signed with your offline release key:
-   - Once, on your own machine: `virtroid-measurements keygen --out
-     measurement-signing.key`. Keep that file offline. Put the printed public
-     key in `android-client/app/src/main/res/raw/measurement_signing_keys` and
-     release the app once.
+   - Once: `virtroid-measurements keygen --out measurement-signing.key` on a
+     machine you keep offline, or a key you store offline. Put the printed
+     public key in `android-client/app/src/main/res/raw/measurement_signing_keys`
+     and release the app once.
    - For each new image: `virtroid-measurements sign --key
      measurement-signing.key --serial <higher than last> --measurement <hex> ...
      --out snp-measurements.json`. Copy that file to the VPS and set
@@ -144,17 +162,18 @@ You need the following:
 
 ## Cost
 
-A 2 vCPU, 4 GiB VM is 2 Aleph compute units: about $0.057 an hour, or $41 a
-month while it exists, plus storage. VMs are deleted after
+A 2 vCPU, 4 GiB confidential VM is 2 Aleph compute units: about $0.057 an
+hour, or $41 a month while it exists, plus storage. VMs are deleted after
 `PROVISIONER_RETIRE_AFTER` (default 2 h) once their account has no runtime on
 them, and `PROVISIONER_MAX_VMS` caps how many exist at once.
 
 ## Known gaps
 
-- If an Aleph host reboots a VM, its initrd waits for the passphrase again,
-  but the provisioner does not yet notice. `virtroid-admin retire-vm` replaces
-  the VM, which loses that VM's local runtime data.
+- If an Aleph host reboots a VM, its initrd waits for the secrets again, but
+  the provisioner does not yet notice. `virtroid-admin retire-vm` replaces the
+  VM, which loses that VM's local runtime data.
 - Runtime snapshots stay on the VM's data disk until Sia storage lands, so a
   retired VM's data is gone. VMs with a runtime on them are therefore never
   retired automatically.
-- The root disk is not measured (see What is trusted).
+- Tetragon (intrusion detection) and the custom AOSP image are next; the first
+  build uses the stock ReDroid 14 image the VPS runs today.
