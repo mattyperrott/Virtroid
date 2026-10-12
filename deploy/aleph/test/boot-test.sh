@@ -164,15 +164,18 @@ for i in \$(\$B seq 1 30); do
 done
 echo "boot-test: network: \$resolved"
 echo "\$resolved" | \$B grep -q "^PING dns.google (" || fail "Android cannot resolve names"
+# As virtnoded's startViewerService does: Android's init starts the viewer
+# service, so it runs with Android's environment (app_process needs
+# ANDROID_ART_ROOT and friends, which docker exec does not pass).
 echo "boot-test: starting the viewer as virtnoded does"
-C /bin/docker exec -d smoke /system/bin/sh -c "setprop virtroid.viewer.client_ip 127.0.0.1; setprop virtroid.viewer.max_size 1280; setprop virtroid.viewer.bit_rate 4000000; setprop virtroid.viewer.audio_enabled false; exec /system/bin/sh /vendor/bin/virtroid-viewer.sh"
+\$B timeout 60 C /bin/docker exec smoke /system/bin/sh -c "setprop virtroid.viewer.client_ip 127.0.0.1; setprop virtroid.viewer.max_size 1280; setprop virtroid.viewer.bit_rate 4000000; setprop virtroid.viewer.audio_enabled false; setprop ctl.start virtroid_viewer"
 listening=""
 for i in \$(\$B seq 1 30); do
-  listening=\$(C /bin/docker exec smoke /system/bin/sh -c "ss -ltn 2>/dev/null | grep -E ':(7007|7017) '" 2>/dev/null)
+  listening=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "ss -ltn 2>/dev/null | grep -E ':(7007|7017) '" 2>/dev/null)
   [ -n "\$listening" ] && break
   \$B sleep 1
 done
-C /bin/docker exec smoke /system/bin/sh -c "tail -5 /data/local/tmp/virtroid-viewer.log" 2>&1
+\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "getprop init.svc.virtroid_viewer; tail -5 /data/local/tmp/virtroid-viewer.log" 2>&1
 memory "viewer started"
 if [ -z "\$listening" ]; then
   # Where the streaming server is stuck: thread states, wait channels and
