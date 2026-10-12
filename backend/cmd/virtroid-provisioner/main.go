@@ -130,9 +130,14 @@ func load() (provisionerConfig, controlPlane, alephDriver, time.Duration, error)
 	if err != nil {
 		return cfg, nil, nil, 0, err
 	}
+	owner := strings.TrimSpace(os.Getenv("ALEPH_OWNER_ADDRESS"))
+	if owner != "" && !isEVMAddress(owner) {
+		return cfg, nil, nil, 0, errors.New("ALEPH_OWNER_ADDRESS must be a 0x-prefixed EVM address")
+	}
 	driver := cliDriver{
 		bin:     envOr("ALEPH_BIN", "/usr/local/bin/aleph"),
 		account: account,
+		owner:   owner,
 		env:     alephEnv,
 		timeout: 10 * time.Minute,
 	}
@@ -220,4 +225,16 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func isEVMAddress(value string) bool {
+	if len(value) != 42 || !strings.HasPrefix(value, "0x") {
+		return false
+	}
+	for _, char := range strings.ToLower(value[2:]) {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }

@@ -212,6 +212,9 @@ services:
       PROVISIONER_PRIVATE_KEY_FILE: /run/secrets/provisioner-key
       VM_CONTROL_PLANE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL}
       ALEPH_ACCOUNT: ${ALEPH_ACCOUNT:-virtroid-provisioner}
+      # Optional: the address whose credits pay, after it granted the
+      # provisioner permission to deploy on its behalf in the Aleph console.
+      ALEPH_OWNER_ADDRESS: ${ALEPH_OWNER_ADDRESS:-}
       ALEPH_PASSWORD_FILE: /run/secrets/aleph-password
       ALEPH_CONFIG_HOME: /var/lib/virtroid-provisioner/aleph
       ALEPH_RUNTIME: ${ALEPH_RUNTIME:-}

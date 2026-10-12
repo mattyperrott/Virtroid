@@ -354,3 +354,48 @@ func TestParsers(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIDriverDeploysOnTheOwnersBehalf(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	script := filepath.Join(dir, "aleph")
+	if err := os.WriteFile(script, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "`+argsFile+`"
+case "$*" in
+  *"instance list"*) echo '[]' ;;
+  *"instance create"*) echo '{"item_hash":"`+hash+`"}' ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	owner := "0x00000000000000000000000000000000000000aa"
+	driver := cliDriver{bin: script, account: "provisioner", owner: owner, timeout: 10 * time.Second}
+	ctx := context.Background()
+	if _, err := driver.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := driver.Create(ctx, createSpec{Name: "virtroid-pvm-1", CRNHash: crnA, Runtime: "r", Image: "i", VCPUs: 2, MemoryMiB: 4096, DiskMiB: 4096, DataMiB: 30720}); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.Delete(ctx, hash); err != nil {
+		t.Fatal(err)
+	}
+	recorded, _ := os.ReadFile(argsFile)
+	lines := strings.Split(strings.TrimSpace(string(recorded)), "\n")
+	want := []string{
+		"--json instance list --address " + owner,
+		"--json instance create virtroid-pvm-1 --confidential --tee sev-snp --runtime r --image i --vcpus 2 --memory 4096MiB --disk-size 4096MiB --persistent-volume name=virtroid-data,mount=/srv/virtroid,size=30720MiB,persistence=host --crn " + crnA + " --on-behalf-of " + owner + " --account provisioner",
+		"--json message forget " + hash + " --on-behalf-of " + owner + " --reason Virtroid runtime VM retired --account provisioner",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("argv lines = %q", lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("call %d argv =\n  %s\nwant\n  %s", i, lines[i], want[i])
+		}
+	}
+	if isEVMAddress("0x123") || !isEVMAddress(owner) {
+		t.Fatal("isEVMAddress")
+	}
+}

@@ -63,6 +63,10 @@ var errAttestation = errors.New("attestation failed")
 type cliDriver struct {
 	bin     string
 	account string
+	// owner, when set, is the address whose credits pay for the VMs: it
+	// granted the provisioner's account permission to deploy on its behalf
+	// in the Aleph console. The provisioner still signs and unlocks.
+	owner   string
 	env     []string
 	timeout time.Duration
 }
@@ -71,10 +75,15 @@ type cliDriver struct {
 // provisioner's account on this command: signing commands take --account,
 // `instance list` takes --address.
 func (d cliDriver) run(ctx context.Context, identityFlag string, args ...string) ([]byte, error) {
+	return d.runAs(ctx, identityFlag, args...)
+}
+
+// runAs is run with an explicit identity flag; "" passes no identity.
+func (d cliDriver) runAs(ctx context.Context, identityFlag string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 	full := append([]string{"--json"}, args...)
-	if d.account != "" {
+	if d.account != "" && identityFlag != "" {
 		full = append(full, identityFlag, d.account)
 	}
 	cmd := exec.CommandContext(ctx, d.bin, full...)
@@ -89,6 +98,14 @@ func (d cliDriver) run(ctx context.Context, identityFlag string, args ...string)
 }
 
 func (d cliDriver) List(ctx context.Context) ([]alephInstance, error) {
+	if d.owner != "" {
+		// Instances deployed on the owner's behalf are listed under the owner.
+		out, err := d.runAs(ctx, "", "instance", "list", "--address", d.owner)
+		if err != nil {
+			return nil, err
+		}
+		return parseInstanceList(out)
+	}
 	out, err := d.run(ctx, "--address", "instance", "list")
 	if err != nil {
 		return nil, err
@@ -97,16 +114,20 @@ func (d cliDriver) List(ctx context.Context) ([]alephInstance, error) {
 }
 
 func (d cliDriver) Create(ctx context.Context, spec createSpec) (string, error) {
-	out, err := d.run(ctx, "--account", "instance", "create", spec.Name,
+	args := []string{"instance", "create", spec.Name,
 		"--confidential", "--tee", "sev-snp",
 		"--runtime", spec.Runtime,
 		"--image", spec.Image,
 		"--vcpus", strconv.Itoa(spec.VCPUs),
-		"--memory", strconv.Itoa(spec.MemoryMiB)+"MiB",
-		"--disk-size", strconv.Itoa(spec.DiskMiB)+"MiB",
-		"--persistent-volume", "name=virtroid-data,mount=/srv/virtroid,size="+strconv.Itoa(spec.DataMiB)+"MiB,persistence=host",
+		"--memory", strconv.Itoa(spec.MemoryMiB) + "MiB",
+		"--disk-size", strconv.Itoa(spec.DiskMiB) + "MiB",
+		"--persistent-volume", "name=virtroid-data,mount=/srv/virtroid,size=" + strconv.Itoa(spec.DataMiB) + "MiB,persistence=host",
 		"--crn", spec.CRNHash,
-	)
+	}
+	if d.owner != "" {
+		args = append(args, "--on-behalf-of", d.owner)
+	}
+	out, err := d.run(ctx, "--account", args...)
 	if err != nil {
 		return "", err
 	}
@@ -135,6 +156,13 @@ func (d cliDriver) Unlock(ctx context.Context, spec unlockSpec) error {
 }
 
 func (d cliDriver) Delete(ctx context.Context, itemHash string) error {
+	if d.owner != "" {
+		// Forgetting the INSTANCE message tears its VM down; on the owner's
+		// behalf because the owner owns the message.
+		_, err := d.run(ctx, "--account", "message", "forget", itemHash,
+			"--on-behalf-of", d.owner, "--reason", "Virtroid runtime VM retired")
+		return err
+	}
 	_, err := d.run(ctx, "--account", "instance", "delete", itemHash, "--yes", "--reason", "Virtroid runtime VM retired")
 	return err
 }

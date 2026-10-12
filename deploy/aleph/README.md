@@ -79,8 +79,18 @@ You need the following:
    ```bash
    docker compose --profile provisioner run --rm --entrypoint aleph provisioner account create virtroid-provisioner
    ```
-   Fund its address with Aleph credits. Its address is measured into every VM,
-   so keep it for good.
+   Pay for its VMs in one of two ways:
+   - **Permission (no tools needed).** In the Aleph console's Permissions
+     page, let the provisioner's address deploy for your wallet, limited to
+     INSTANCE, STORE and FORGET messages. Set `ALEPH_OWNER_ADDRESS` to your
+     wallet. VMs bill your balance, and you can revoke this at any time. There
+     is no amount cap, so keep the balance modest; `PROVISIONER_MAX_VMS` still
+     caps how many VMs exist.
+   - **Transfer.** `aleph credit transfer --to <provisioner address> --amount
+     <credits> --expiration <date>` from your wallet. Only that amount is
+     exposed, and anything unspent returns after the expiry.
+
+   The provisioner's address is measured into every VM, so keep it for good.
 
 2. **Runtime.** On the builder:
    ```bash
