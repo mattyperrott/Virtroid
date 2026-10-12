@@ -169,9 +169,12 @@ them, and `PROVISIONER_MAX_VMS` caps how many exist at once.
 
 ## Known gaps
 
-- If an Aleph host reboots a VM, its initrd waits for the secrets again, but
-  the provisioner does not yet notice. `virtroid-admin retire-vm` replaces the
-  VM, which loses that VM's local runtime data.
+- A VM keeps its secrets only in memory, so after a restart its initrd waits
+  for them again. The provisioner notices because the attestation agent
+  presents a new TLS key on every boot: it attests the VM again, injects the
+  same secrets, and the node comes back with its data disk intact. A VM that
+  restarts more than three times after being unlocked, before its node ever
+  comes up, is failing to boot and is retired.
 - Runtime snapshots stay on the VM's data disk until Sia storage lands, so a
   retired VM's data is gone. VMs with a runtime on them are therefore never
   retired automatically.

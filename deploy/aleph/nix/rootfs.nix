@@ -38,7 +38,7 @@ let
     ignoreCollisions = true;
   };
 
-  closure = pkgs.closureInfo { rootPaths = [ env pkgs.cacert ]; };
+  closure = pkgs.closureInfo { rootPaths = [ env pkgs.cacert pkgs.iana-etc ]; };
 in
 pkgs.runCommand "virtroid-rootfs.ext4" {
   nativeBuildInputs = [ pkgs.e2fsprogs pkgs.fakeroot ];
@@ -64,6 +64,9 @@ pkgs.runCommand "virtroid-rootfs.ext4" {
   ln -s /bin/adb usr/bin/adb
   ln -s /bin/viewercrypt usr/local/bin/virtroid-viewercrypt
   ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt etc/ssl/certs/ca-certificates.crt
+  # nft and iptables resolve protocol names (ipv6-icmp, tcp) through these.
+  ln -s ${pkgs.iana-etc}/etc/protocols etc/protocols
+  ln -s ${pkgs.iana-etc}/etc/services etc/services
 
   install -m 0755 ${vmInit} sbin/init
   install -m 0600 ${assets}/node.env etc/virtroid/node.env

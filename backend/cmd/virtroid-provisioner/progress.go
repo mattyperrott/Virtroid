@@ -76,19 +76,28 @@ func (p *alephProgress) nodeURL(ctx context.Context, itemHash string) string {
 }
 
 func (p *alephProgress) Progress(ctx context.Context, itemHash string) string {
-	nodeURL := p.nodeURL(ctx, itemHash)
-	if nodeURL == "" {
+	if p.nodeURL(ctx, itemHash) == "" {
 		return "Waiting for Aleph to pick a compute node"
 	}
-	var executions map[string]crnExecution
-	if err := p.getJSON(ctx, nodeURL+"/v2/about/executions/list", &executions); err != nil {
-		return ""
-	}
-	execution, ok := executions[itemHash]
+	execution, ok := p.execution(ctx, itemHash)
 	if !ok {
 		return "Waiting for the compute node to pick up the VM"
 	}
 	return execution.describe()
+}
+
+// execution is the compute node's record of the VM, if it has one.
+func (p *alephProgress) execution(ctx context.Context, itemHash string) (crnExecution, bool) {
+	nodeURL := p.nodeURL(ctx, itemHash)
+	if nodeURL == "" {
+		return crnExecution{}, false
+	}
+	var executions map[string]crnExecution
+	if err := p.getJSON(ctx, nodeURL+"/v2/about/executions/list", &executions); err != nil {
+		return crnExecution{}, false
+	}
+	execution, ok := executions[itemHash]
+	return execution, ok
 }
 
 type crnExecution struct {
@@ -104,6 +113,12 @@ type crnExecution struct {
 		StartingAt  *string `json:"starting_at"`
 		StartedAt   *string `json:"started_at"`
 	} `json:"status"`
+	Networking struct {
+		HostIPv4    string `json:"host_ipv4"`
+		MappedPorts map[string]struct {
+			Host int `json:"host"`
+		} `json:"mapped_ports"`
+	} `json:"networking"`
 }
 
 func (e crnExecution) describe() string {

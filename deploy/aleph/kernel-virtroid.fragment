@@ -6,10 +6,12 @@
 # Built in rather than modules: the encrypted rootfs carries no modules for
 # this exact kernel.
 
-# Android (ReDroid) talks over binder; binderfs creates the devices.
+# Android (ReDroid) talks over binder. Mounting binderfs creates these
+# devices; they can only be added later through an ioctl, which the root's
+# tools cannot make.
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_ANDROID_BINDERFS=y
-CONFIG_ANDROID_BINDER_DEVICES=""
+CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
 
 # virtnoded's attestation report comes through configfs-tsm.
 CONFIG_CONFIGFS_FS=y
@@ -48,5 +50,7 @@ CONFIG_NFT_COMPAT=y
 CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
 CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
+# DNAT for published ports (each runtime's ADB port on 127.0.0.1).
+CONFIG_NETFILTER_XT_NAT=y
 CONFIG_IP_NF_IPTABLES=y
 CONFIG_IP6_NF_IPTABLES=y

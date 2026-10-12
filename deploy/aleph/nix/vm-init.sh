@@ -26,8 +26,9 @@ mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm || die "mount /dev/shm"
 mount -t cgroup2 -o nsdelegate cgroup2 /sys/fs/cgroup || die "mount cgroup2"
 mount -t configfs configfs /sys/kernel/config || die "mount configfs"
 mount -t binder binder /dev/binderfs || die "binderfs is unavailable"
+# The kernel creates these on mount (CONFIG_ANDROID_BINDER_DEVICES).
 for device in binder hwbinder vndbinder; do
-  [ -e "/dev/binderfs/${device}" ] || echo "${device}" > /dev/binderfs/binder-control
+  [ -e "/dev/binderfs/${device}" ] || die "binderfs has no ${device} device"
 done
 
 # The initrd loaded the only modules this kernel builds (dm-*); nothing may

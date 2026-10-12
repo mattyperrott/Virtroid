@@ -448,3 +448,183 @@ func TestComputeNodeStatusDescriptions(t *testing.T) {
 		t.Errorf("error description = %q", got)
 	}
 }
+
+// fakeBoots reports the VM's current boot; next, when set, is what the VM
+// shows on later reads (a restart during an unlock).
+type fakeBoots struct {
+	current string
+	next    string
+	reads   int
+}
+
+func (f *fakeBoots) BootIdentity(context.Context, string, string) (string, error) {
+	f.reads++
+	identity := f.current
+	if f.next != "" {
+		f.current, f.next = f.next, ""
+	}
+	if identity == "" {
+		return "", errors.New("unreachable")
+	}
+	return identity, nil
+}
+
+func bootingVM(state string) *fakeControlPlane {
+	return &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: state, Desired: "present",
+		ItemHash: hash, CRNHash: crnA, PublicIP: "2001:db8:3100:1781::10"}}}
+}
+
+func TestRestartedVMIsUnlockedAgain(t *testing.T) {
+	cp := bootingVM(vmStateUnlocking)
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
+	boots := &fakeBoots{current: "boot-1"}
+	clock := time.Unix(1_800_000_000, 0)
+	r := testReconciler(t, cp, aleph)
+	r.boots = boots
+	r.now = func() time.Time { return clock }
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if recorded, _ := r.unlockedBoot("pvm-1"); recorded != "boot-1" || cp.last(t).State != vmStateBooting {
+		t.Fatalf("recorded boot %q after report %+v", recorded, cp.last(t))
+	}
+
+	// Same boot: nothing to do.
+	cp.vms[0].State = vmStateBooting
+	clock = clock.Add(bootCheckEvery)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.unlocked) != 1 {
+		t.Fatalf("unlocked %d times without a restart", len(aleph.unlocked))
+	}
+
+	// The VM restarted: unlock it again, with the same secrets.
+	boots.current = "boot-2"
+	clock = clock.Add(bootCheckEvery)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.unlocked) != 2 || aleph.unlocked[1].Secrets["virtroid_data_key"] != aleph.unlocked[0].Secrets["virtroid_data_key"] {
+		t.Fatalf("unlocks after a restart = %d", len(aleph.unlocked))
+	}
+	if recorded, _ := r.unlockedBoot("pvm-1"); recorded != "boot-2" {
+		t.Fatalf("recorded boot = %q, want boot-2", recorded)
+	}
+	if got := cp.last(t); got.Progress == "" || got.State != "" {
+		t.Fatalf("report after the restart = %+v", got)
+	}
+
+	// Checks are paced.
+	boots.current = "boot-3"
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.unlocked) != 2 {
+		t.Fatal("checked again before bootCheckEvery")
+	}
+}
+
+func TestUnlockThatRacesARestartIsRepeated(t *testing.T) {
+	cp := bootingVM(vmStateUnlocking)
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
+	boots := &fakeBoots{current: "boot-1", next: "boot-2"}
+	clock := time.Unix(1_800_000_000, 0)
+	r := testReconciler(t, cp, aleph)
+	r.boots = boots
+	r.now = func() time.Time { return clock }
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if recorded, _ := r.unlockedBoot("pvm-1"); recorded != "" {
+		t.Fatalf("recorded %q although the VM restarted during the unlock", recorded)
+	}
+	cp.vms[0].State = vmStateBooting
+	clock = clock.Add(bootCheckEvery)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.unlocked) != 2 {
+		t.Fatalf("unlocked %d times, want a second unlock of the new boot", len(aleph.unlocked))
+	}
+	if recorded, _ := r.unlockedBoot("pvm-1"); recorded != "boot-2" {
+		t.Fatalf("recorded boot = %q, want boot-2", recorded)
+	}
+}
+
+func TestVMThatKeepsRestartingIsRetired(t *testing.T) {
+	cp := bootingVM(vmStateBooting)
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
+	boots := &fakeBoots{}
+	clock := time.Unix(1_800_000_000, 0)
+	r := testReconciler(t, cp, aleph)
+	r.boots = boots
+	r.now = func() time.Time { return clock }
+	if err := r.saveUnlockedBoot("pvm-1", "boot-0"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= maxRestartsBeforeReady; i++ {
+		boots.current = fmt.Sprintf("boot-%d", i)
+		clock = clock.Add(bootCheckEvery)
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := cp.last(t); got.Failure != "" {
+			t.Fatalf("retired after %d restarts", i)
+		}
+	}
+	if len(aleph.unlocked) != maxRestartsBeforeReady {
+		t.Fatalf("unlocked %d times, want %d", len(aleph.unlocked), maxRestartsBeforeReady)
+	}
+	boots.current = "boot-next"
+	clock = clock.Add(bootCheckEvery)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := cp.last(t); !strings.Contains(got.Failure, "restarted") {
+		t.Fatalf("report = %+v, want a failure", got)
+	}
+	if len(aleph.unlocked) != maxRestartsBeforeReady {
+		t.Fatal("unlocked a VM it retired")
+	}
+}
+
+func TestReadyVMWithoutARecordedBootIsNotUnlockedAgain(t *testing.T) {
+	cp := bootingVM(vmStateReady)
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
+	r := testReconciler(t, cp, aleph)
+	r.boots = &fakeBoots{current: "boot-1"}
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if recorded, _ := r.unlockedBoot("pvm-1"); recorded != "boot-1" || len(aleph.unlocked) != 0 {
+		t.Fatalf("recorded %q, unlocked %d times", recorded, len(aleph.unlocked))
+	}
+}
+
+func TestUnreachableAgentIsLeftAlone(t *testing.T) {
+	cp := bootingVM(vmStateBooting)
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
+	r := testReconciler(t, cp, aleph)
+	r.boots = &fakeBoots{}
+	if err := r.saveUnlockedBoot("pvm-1", "boot-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.unlocked) != 0 || len(cp.reports) != 0 {
+		t.Fatalf("acted on an unreadable boot: unlocked=%d reports=%+v", len(aleph.unlocked), cp.reports)
+	}
+}
+
+func TestComputeNodeAgentAddress(t *testing.T) {
+	var execution crnExecution
+	if err := json.Unmarshal([]byte(`{"networking":{"host_ipv4":"192.0.2.7","mapped_ports":{"22":{"host":40026,"tcp":true},"8443":{"host":40027,"tcp":true}}}}`), &execution); err != nil {
+		t.Fatal(err)
+	}
+	port := execution.Networking.MappedPorts["8443"]
+	if execution.Networking.HostIPv4 != "192.0.2.7" || port.Host != 40027 {
+		t.Fatalf("networking = %+v", execution.Networking)
+	}
+}
