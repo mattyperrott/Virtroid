@@ -68,6 +68,11 @@ type ServerConfig struct {
 	SiaFundTargetBytes      int64
 	SiaDataShards           int
 	SiaTotalShards          int
+	// USDT (TRC20) wallets: the extended public key deposit addresses derive
+	// from, and the key the payments service signs its reports with. Empty
+	// TronDepositXPub leaves wallets off.
+	TronDepositXPub   string
+	PaymentsPublicKey string
 }
 
 type NodeConfig struct {
@@ -242,6 +247,8 @@ func LoadServer() ServerConfig {
 		SiaFundTargetBytes:               siaFundTargetBytes,
 		SiaDataShards:                    siaDataShards,
 		SiaTotalShards:                   siaTotalShards,
+		TronDepositXPub:                  strings.TrimSpace(os.Getenv("TRON_DEPOSIT_XPUB")),
+		PaymentsPublicKey:                strings.TrimSpace(os.Getenv("PAYMENTS_PUBLIC_KEY")),
 	}
 }
 

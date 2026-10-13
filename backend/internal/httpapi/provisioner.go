@@ -94,8 +94,14 @@ func (a *API) requireProvisionerRequest(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusNotFound, "provisioner_disabled", "runtime VM provisioning is not enabled")
 		return false
 	}
-	if r.Header.Get(nodeauth.HeaderNodeID) != provisionerRequestID {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "signed provisioner request headers are required"})
+	return a.requireServiceRequest(w, r, provisionerRequestID, a.cfg.ProvisionerPublicKey)
+}
+
+// requireServiceRequest checks a request an internal service signed with its
+// own key, once: the nonce cannot be replayed.
+func (a *API) requireServiceRequest(w http.ResponseWriter, r *http.Request, signerID, publicKey string) bool {
+	if r.Header.Get(nodeauth.HeaderNodeID) != signerID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "signed " + signerID + " request headers are required"})
 		return false
 	}
 	timestampRaw := strings.TrimSpace(r.Header.Get(nodeauth.HeaderTimestamp))
@@ -104,11 +110,11 @@ func (a *API) requireProvisionerRequest(w http.ResponseWriter, r *http.Request) 
 	signature := strings.TrimSpace(r.Header.Get(nodeauth.HeaderSignature))
 	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
 	if err != nil || nonce == "" || bodyHash == "" || signature == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "signed provisioner request headers are required"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "signed " + signerID + " request headers are required"})
 		return false
 	}
 	if skew := time.Since(time.Unix(timestamp, 0)); skew > 5*time.Minute || skew < -5*time.Minute {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "provisioner signature timestamp is outside the allowed window"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": signerID + " signature timestamp is outside the allowed window"})
 		return false
 	}
 	body, err := readAndRestoreBody(r)
@@ -117,32 +123,32 @@ func (a *API) requireProvisionerRequest(w http.ResponseWriter, r *http.Request) 
 		return false
 	}
 	if nodeauth.BodyHash(body) != bodyHash {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "provisioner signature body hash mismatch"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": signerID + " signature body hash mismatch"})
 		return false
 	}
 	if err := nodeauth.Verify(
-		a.cfg.ProvisionerPublicKey,
+		publicKey,
 		r.Method,
 		r.URL.RequestURI(),
-		provisionerRequestID,
+		signerID,
 		timestampRaw,
 		nonce,
 		bodyHash,
 		signature,
 	); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "provisioner signature verification failed"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": signerID + " signature verification failed"})
 		return false
 	}
 	if a.store == nil {
 		writeInternalAPIError(w, "store_unavailable", errors.New("store is not configured"))
 		return false
 	}
-	if err := a.store.RememberNodeRequestNonce(r.Context(), provisionerRequestID, nonce, time.Unix(timestamp, 0).Add(5*time.Minute)); err != nil {
+	if err := a.store.RememberNodeRequestNonce(r.Context(), signerID, nonce, time.Unix(timestamp, 0).Add(5*time.Minute)); err != nil {
 		if errors.Is(err, store.ErrNodeRequestReplay) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
 			return false
 		}
-		writeInternalAPIError(w, "provisioner_nonce_persist_failed", err)
+		writeInternalAPIError(w, "service_nonce_persist_failed", err)
 		return false
 	}
 	return true

@@ -12,6 +12,34 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS runtime_region TEXT NOT NULL DEFAU
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sia_registered_at TIMESTAMPTZ;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sia_released_at TIMESTAMPTZ;
 
+-- USDT (TRC20) wallets. Each account's deposit address is derived from the
+-- payments xpub at its deposit index; the balance is the sum of its ledger.
+CREATE SEQUENCE IF NOT EXISTS account_deposit_index_seq MINVALUE 1 START 1 MAXVALUE 2147483647;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deposit_index INTEGER UNIQUE;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS wallet_viewed_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS usdt_deposits (
+    tx_id TEXT NOT NULL CHECK (tx_id ~ '^[0-9a-f]{64}$'),
+    address TEXT NOT NULL,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    amount_micro BIGINT NOT NULL CHECK (amount_micro > 0),
+    block_time TIMESTAMPTZ NOT NULL,
+    credited_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tx_id, address)
+);
+CREATE INDEX IF NOT EXISTS idx_usdt_deposits_account ON usdt_deposits (account_id, block_time DESC);
+
+-- Amounts are in millionths of a USDT: credits positive, charges negative.
+CREATE TABLE IF NOT EXISTS account_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('deposit', 'runtime', 'storage', 'adjustment')),
+    amount_micro BIGINT NOT NULL CHECK (amount_micro <> 0),
+    reference TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_account_ledger_account ON account_ledger (account_id, id DESC);
+
 -- Bootstrap invitations authorize exactly one new account/device transaction.
 -- Only the SHA-256 digest is retained; the plaintext token is returned once by
 -- the operator CLI and is never stored by the control plane.
