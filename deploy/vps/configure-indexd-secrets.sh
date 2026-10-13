@@ -32,7 +32,7 @@ gid="$3"
 [[ "${gid}" =~ ^[0-9]+$ ]] && [ "${gid}" -gt 0 ] && [ "${gid}" -lt 65534 ] || die "the secret gid must be a dedicated group id"
 
 dir=/etc/virtroid/secrets
-install -d -o root -g root -m 0750 "${dir}"
+[ -d "${dir}" ] || install -d -o root -g root -m 0700 "${dir}"
 umask 077
 
 random_hex() {
