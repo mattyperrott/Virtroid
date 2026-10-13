@@ -186,6 +186,8 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 			"relay_port":      8090,
 			"docker_socket":   true,
 			"binder":          true,
+			"audio_streaming": true,
+			"file_import":     true,
 			"public_addr":     publicAddr,
 			"tls_spki_sha256": testAttestationPin,
 			"region":          claimedRegion,
@@ -240,6 +242,60 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 	if !strings.Contains(string(attestation), `"product":"Genoa"`) ||
 		fields["viewer_key_signature"] != "c2ln" || fields["confidential_runtime"] != true {
 		t.Fatalf("session confidentiality fields = %v", fields)
+	}
+
+	// The VM gets Sia credentials for its account's runtime, and only that.
+	runtime, err := st.CreateRuntime(ctx, accountID, store.CreateRuntimeInput{Name: "CI sia", FileMode: "upload-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started, err := st.StartRuntime(ctx, accountID, runtime.ID); err != nil || started.HostID == nil || *started.HostID != vm.ID {
+		t.Fatalf("start on the VM = %+v err=%v", started, err)
+	}
+	credentials := func(handler http.Handler, runtimeID string) *httptest.ResponseRecorder {
+		t.Helper()
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, signedTestRequest(t, nodeKey, vm.ID, http.MethodGet, "/api/v1/internal/runtimes/"+runtimeID+"/sia-credentials", nil))
+		return resp
+	}
+	if resp := credentials(handler, runtime.ID); resp.Code != http.StatusNotFound || !strings.Contains(resp.Body.String(), "sia_not_configured") {
+		t.Fatalf("credentials without sia = %d %s", resp.Code, resp.Body.String())
+	}
+	var registered []string
+	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registered = append(registered, r.Method+" "+r.URL.Path)
+	}))
+	defer indexer.Close()
+	siaCfg := cfg
+	siaCfg.SiaIndexerAppURL = "https://indexer.example:9982"
+	siaCfg.SiaIndexerAdminURL = indexer.URL + "/api"
+	siaCfg.SiaIndexerAdminPassword = "admin-secret"
+	siaCfg.SiaKeySecret = strings.Repeat("k", 32)
+	siaCfg.SiaQuota = "virtroid"
+	siaCfg.SiaMaxPinnedBytes = 64 << 30
+	siaCfg.SiaFundTargetBytes = 1 << 30
+	siaCfg.SiaDataShards, siaCfg.SiaTotalShards = 10, 30
+	siaHandler := New(siaCfg, st)
+	resp = credentials(siaHandler, runtime.ID)
+	var issued struct {
+		IndexerURL  string `json:"indexer_url"`
+		AppKeySeed  []byte `json:"app_key_seed"`
+		DataShards  int    `json:"data_shards"`
+		TotalShards int    `json:"total_shards"`
+	}
+	if resp.Code != http.StatusOK || json.Unmarshal(resp.Body.Bytes(), &issued) != nil ||
+		issued.IndexerURL != "https://indexer.example:9982" || len(issued.AppKeySeed) != 32 || issued.TotalShards != 30 {
+		t.Fatalf("credentials = %d %s", resp.Code, resp.Body.String())
+	}
+	if len(registered) != 3 || registered[2] != "POST /api/apps/register" {
+		t.Fatalf("indexer calls = %v, want the quota, connect key and registration", registered)
+	}
+	other, err := st.CreateRuntime(ctx, accountID, store.CreateRuntimeInput{Name: "CI sia other", FileMode: "upload-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := credentials(siaHandler, other.ID); resp.Code != http.StatusNotFound || strings.Contains(resp.Body.String(), "sia_not_configured") {
+		t.Fatalf("credentials for a runtime the VM does not hold = %d %s", resp.Code, resp.Body.String())
 	}
 }
 

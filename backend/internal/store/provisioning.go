@@ -533,26 +533,42 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 	// lived there would otherwise wait for it forever: forget the lost data,
 	// say so in the runtime's log, and let it start fresh on the account's
 	// next VM. Deletions waiting on that VM have nothing left to clean.
+	// A snapshot in a remote store such as Sia is not lost: the runtime keeps
+	// it and starts from it on the next VM, and a deletion waits for the next
+	// node of the account to remove it.
 	rows, err := tx.QueryContext(ctx,
-		`UPDATE runtimes r
+		`WITH affected AS (
+		     SELECT id,
+		            NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL
+		            AND COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk') <> 'local-disk' AS remote
+		       FROM runtimes
+		      WHERE deleted_at IS NULL
+		        AND (host_id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted')
+		             OR blob_host_id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted'))
+		 )
+		 UPDATE runtimes r
 		    SET host_id = NULL,
 		        blob_host_id = NULL,
-		        blob_manifest_json = NULL,
-		        blob_last_snapshot_at = NULL,
+		        blob_manifest_json = CASE WHEN affected.remote THEN r.blob_manifest_json ELSE NULL END,
+		        blob_last_snapshot_at = CASE WHEN affected.remote THEN r.blob_last_snapshot_at ELSE NULL END,
 		        cleanup_pending = FALSE,
 		        container_name = NULL,
 		        adb_port = NULL,
+		        viewer_port = CASE WHEN r.desired_state = 'deleted' AND NOT affected.remote THEN NULL ELSE r.viewer_port END,
 		        started_at = NULL,
 		        connection_status = 'offline',
-		        status = CASE WHEN r.desired_state = 'deleted' THEN 'deleted' ELSE 'stopped' END,
+		        status = CASE
+		            WHEN r.desired_state = 'deleted' AND affected.remote THEN 'deleting'
+		            WHEN r.desired_state = 'deleted' THEN 'deleted'
+		            ELSE 'stopped'
+		        END,
 		        desired_state = CASE WHEN r.desired_state = 'deleted' THEN 'deleted' ELSE 'stopped' END,
-		        deleted_at = CASE WHEN r.desired_state = 'deleted' THEN NOW() ELSE NULL END,
+		        deleted_at = CASE WHEN r.desired_state = 'deleted' AND NOT affected.remote THEN NOW() ELSE NULL END,
 		        operation_generation = r.operation_generation + 1,
 		        updated_at = NOW()
-		  WHERE r.deleted_at IS NULL
-		    AND (r.host_id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted')
-		         OR r.blob_host_id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted'))
-		  RETURNING r.id, r.desired_state`,
+		   FROM affected
+		  WHERE r.id = affected.id
+		  RETURNING r.id, r.desired_state, affected.remote`,
 	)
 	if err != nil {
 		return summary, err
@@ -560,12 +576,13 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 	var lost []string
 	for rows.Next() {
 		var runtimeID, desired string
-		if err := rows.Scan(&runtimeID, &desired); err != nil {
+		var remote bool
+		if err := rows.Scan(&runtimeID, &desired, &remote); err != nil {
 			rows.Close()
 			return summary, err
 		}
 		summary.RuntimesReset++
-		if desired != "deleted" {
+		if desired != "deleted" && !remote {
 			lost = append(lost, runtimeID)
 		}
 	}

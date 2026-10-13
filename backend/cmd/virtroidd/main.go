@@ -11,6 +11,7 @@ import (
 	"virtroid/backend/internal/appcatalog"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/httpapi"
+	"virtroid/backend/internal/siaindexd"
 	"virtroid/backend/internal/store"
 )
 
@@ -30,9 +31,15 @@ func main() {
 		log.Fatalf("ensure schema: %v", err)
 	}
 
+	sia, err := httpapi.NewSiaRegistry(cfg)
+	if err != nil {
+		log.Fatalf("sia storage: %v", err)
+	}
+
 	go sessionReaperLoop(ctx, pg, cfg)
 	go appCatalogSyncLoop(ctx, pg, cfg)
 	go provisioningLoop(ctx, pg, cfg)
+	go siaReleaseLoop(ctx, pg, sia)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
@@ -186,6 +193,50 @@ func provisioningLoop(ctx context.Context, pg *store.Store, cfg config.ServerCon
 			return
 		case <-ticker.C:
 			reconcile()
+		}
+	}
+}
+
+// siaReleaseLoop removes deleted accounts from the Sia indexer, which drops
+// their snapshots there, then finishes the deletion of runtimes that only
+// waited for those snapshots.
+func siaReleaseLoop(ctx context.Context, pg *store.Store, sia *siaindexd.Registry) {
+	if sia == nil {
+		log.Printf("sia storage disabled")
+		return
+	}
+	release := func() {
+		runBackgroundIteration("sia release", func() {
+			releaseCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			accountIDs, err := pg.DeletedAccountsOnSia(releaseCtx, 50)
+			if err != nil {
+				log.Printf("sia release: list deleted accounts: %v", err)
+				return
+			}
+			for _, accountID := range accountIDs {
+				if err := sia.DeleteAccount(releaseCtx, accountID); err != nil {
+					log.Printf("sia release: account=%s: %v", accountID, err)
+					continue
+				}
+				finished, err := pg.ReleaseAccountSia(releaseCtx, accountID, siaindexd.StoreKind)
+				if err != nil {
+					log.Printf("sia release: account=%s: record: %v", accountID, err)
+					continue
+				}
+				log.Printf("sia: removed deleted account=%s runtimes_finished=%d", accountID, finished)
+			}
+		})
+	}
+	release()
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			release()
 		}
 	}
 }

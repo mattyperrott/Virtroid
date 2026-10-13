@@ -82,6 +82,7 @@ type blobManifest struct {
 	Compression       string        `json:"compression"`
 	Encryption        string        `json:"encryption"`
 	Chunks            []blobChunk   `json:"chunks"`
+	SiaObject         string        `json:"sia_object,omitempty"`
 	ManifestMAC       string        `json:"manifest_mac,omitempty"`
 	MigrationFallback *blobManifest `json:"migration_fallback,omitempty"`
 }
@@ -192,6 +193,11 @@ func (n *nodeAgent) blobStores() map[string]blobStore {
 			cleanupMu:     &n.blobCleanupMu,
 		}
 	}
+	// Only a node set up for Sia fetches account credentials, which cleanup
+	// would otherwise do for every runtime.
+	if strings.EqualFold(strings.TrimSpace(n.cfg.BlobStoreKind), blobStoreSia) {
+		stores[blobStoreSia] = n.siaStore()
+	}
 	return stores
 }
 
@@ -237,6 +243,8 @@ func (n *nodeAgent) runBlobPreflightForKind(ctx context.Context, kind string) bl
 	case *localBlobStore:
 		typed.preflight(ctx, &report)
 	case *renterdBlobStore:
+		typed.preflight(ctx, &report)
+	case *siaBlobStore:
 		typed.preflight(ctx, &report)
 	default:
 		report.addCheck("blob_store", "fail", "unsupported blob store implementation")
@@ -1170,6 +1178,16 @@ func validateBlobManifestForRuntime(manifest *blobManifest, runtimeID string) er
 	}
 	if manifest.TotalBytes != totalBytes {
 		return fmt.Errorf("blob manifest byte total mismatch")
+	}
+	if manifest.Store == blobStoreSia {
+		if manifest.Version != 3 {
+			return errors.New("sia blob manifest is not authenticated")
+		}
+		if _, err := parseSiaObjectID(manifest.SiaObject); err != nil {
+			return err
+		}
+	} else if manifest.SiaObject != "" {
+		return errors.New("only sia blob manifests name a sia object")
 	}
 	if manifest.MigrationFallback != nil {
 		if manifest.Version != 3 {

@@ -32,6 +32,7 @@ import (
 	"virtroid/backend/internal/nodeauth"
 	"virtroid/backend/internal/observability"
 	"virtroid/backend/internal/operatorapi"
+	"virtroid/backend/internal/siaindexd"
 	"virtroid/backend/internal/store"
 )
 
@@ -44,6 +45,8 @@ type API struct {
 	observability       *observability.Service
 	httpClient          *http.Client
 	notificationHub     *notificationStreamHub
+	// sia registers accounts on the Sia indexer; nil when Sia storage is off.
+	sia *siaindexd.Registry
 }
 
 type durableBlobKeyHandoffStore interface {
@@ -352,6 +355,11 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 		httpClient:          &http.Client{Transport: telemetry.Transport(http.DefaultTransport), Timeout: runtimeMediaProxyTimeout},
 		notificationHub:     newNotificationStreamHub(),
 	}
+	sia, err := NewSiaRegistry(cfg)
+	if err != nil {
+		log.Printf("sia storage is off: %v", err)
+	}
+	api.sia = sia
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.healthz)
@@ -413,6 +421,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/internal/provisioner/vms", api.provisionerWork)
 	mux.HandleFunc("POST /api/v1/internal/provisioner/vms/{id}/report", api.provisionerReport)
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/blob-key", api.runtimeBlobKey)
+	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/sia-credentials", api.runtimeSiaCredentials)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/status", api.runtimeStatusUpdate)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
 	mux.HandleFunc("PUT /api/v1/internal/runtimes/{id}/notification-agent", api.registerRuntimeNotificationAgent)

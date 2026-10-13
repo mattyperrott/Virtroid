@@ -56,6 +56,18 @@ type ServerConfig struct {
 	// SNPMeasurementsPath is the signed list of approved runtime VM launch
 	// measurements, served to phones as is.
 	SNPMeasurementsPath string
+	// Sia storage of runtime snapshots. SiaIndexerAppURL is the indexer's
+	// application API as nodes reach it; empty leaves Sia storage off. Every
+	// account's keys on the indexer derive from SiaKeySecret.
+	SiaIndexerAppURL        string
+	SiaIndexerAdminURL      string
+	SiaIndexerAdminPassword string
+	SiaKeySecret            string
+	SiaQuota                string
+	SiaMaxPinnedBytes       int64
+	SiaFundTargetBytes      int64
+	SiaDataShards           int
+	SiaTotalShards          int
 }
 
 type NodeConfig struct {
@@ -153,6 +165,22 @@ func LoadServer() ServerConfig {
 	if err != nil || operatorLoginRateLimit <= 0 {
 		operatorLoginRateLimit = 5
 	}
+	siaMaxPinnedBytes, err := parseEnvInt64("SIA_MAX_PINNED_BYTES", 64<<30)
+	if err != nil {
+		siaMaxPinnedBytes = 64 << 30
+	}
+	siaFundTargetBytes, err := parseEnvInt64("SIA_FUND_TARGET_BYTES", 1<<30)
+	if err != nil {
+		siaFundTargetBytes = 1 << 30
+	}
+	siaDataShards, err := parseEnvInt("SIA_DATA_SHARDS", 10)
+	if err != nil {
+		siaDataShards = 10
+	}
+	siaTotalShards, err := parseEnvInt("SIA_TOTAL_SHARDS", 30)
+	if err != nil {
+		siaTotalShards = 30
+	}
 	provisionerMaxVMs, err := parseEnvInt("PROVISIONER_MAX_VMS", 0)
 	if err != nil || provisionerMaxVMs < 0 {
 		provisionerMaxVMs = 0
@@ -205,6 +233,15 @@ func LoadServer() ServerConfig {
 		ProvisionerSetupTimeout:          parseEnvDuration("PROVISIONER_SETUP_TIMEOUT", 30*time.Minute),
 		ProvisionerRetireAfter:           parseEnvDuration("PROVISIONER_RETIRE_AFTER", 2*time.Hour),
 		SNPMeasurementsPath:              strings.TrimSpace(os.Getenv("SNP_MEASUREMENTS_PATH")),
+		SiaIndexerAppURL:                 strings.TrimSpace(os.Getenv("SIA_INDEXER_APP_URL")),
+		SiaIndexerAdminURL:               envOrDefault("SIA_INDEXER_ADMIN_URL", "http://indexd:9980/api"),
+		SiaIndexerAdminPassword:          secretFileOrEnv("SIA_INDEXER_ADMIN_PASSWORD_FILE", "SIA_INDEXER_ADMIN_PASSWORD"),
+		SiaKeySecret:                     secretFileOrEnv("SIA_KEY_SECRET_FILE", "SIA_KEY_SECRET"),
+		SiaQuota:                         envOrDefault("SIA_QUOTA", "virtroid"),
+		SiaMaxPinnedBytes:                siaMaxPinnedBytes,
+		SiaFundTargetBytes:               siaFundTargetBytes,
+		SiaDataShards:                    siaDataShards,
+		SiaTotalShards:                   siaTotalShards,
 	}
 }
 

@@ -260,9 +260,40 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 		deleting.ID, aliceVM.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Snapshots on Sia outlive the VM.
+	onSia, deletingOnSia := newRuntime("CI on sia"), newRuntime("CI deleting on sia")
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE runtimes SET host_id = $2, blob_store_kind = 'sia-indexd', blob_manifest_json = '{"store":"sia-indexd"}',
+		        blob_last_snapshot_at = NOW() WHERE id = $1`, onSia.ID, aliceVM.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE runtimes SET host_id = $2, desired_state = 'deleted', status = 'deleting', blob_store_kind = 'sia-indexd',
+		        blob_manifest_json = '{"store":"sia-indexd"}' WHERE id = $1`, deletingOnSia.ID, aliceVM.ID); err != nil {
+		t.Fatal(err)
+	}
 	summary, err = st.ReconcileProvisionedVMs(ctx, policy)
-	if err != nil || summary.RuntimesReset != 2 {
-		t.Fatalf("reconcile summary = %+v err=%v, want two runtimes reset", summary, err)
+	if err != nil || summary.RuntimesReset != 4 {
+		t.Fatalf("reconcile summary = %+v err=%v, want four runtimes reset", summary, err)
+	}
+	for _, check := range []struct {
+		id, status string
+	}{{onSia.ID, "stopped"}, {deletingOnSia.ID, "deleting"}} {
+		var host, manifest sql.NullString
+		var status string
+		var deletedAt sql.NullTime
+		var logs int
+		if err := st.db.QueryRowContext(ctx,
+			`SELECT host_id, blob_manifest_json, status, deleted_at,
+			        (SELECT COUNT(*) FROM runtime_logs WHERE runtime_id = runtimes.id AND message = $2)
+			   FROM runtimes WHERE id = $1`, check.id, lostRuntimeDataMessage,
+		).Scan(&host, &manifest, &status, &deletedAt, &logs); err != nil {
+			t.Fatal(err)
+		}
+		if host.Valid || !manifest.Valid || status != check.status || deletedAt.Valid || logs != 0 {
+			t.Fatalf("sia runtime host=%v manifest=%v status=%s deleted_at=%v lost-data logs=%d, want its snapshot kept and status %s",
+				host, manifest, status, deletedAt, logs, check.status)
+		}
 	}
 	var hostID, blobHostID, manifest sql.NullString
 	var status, desired string

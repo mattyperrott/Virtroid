@@ -9,6 +9,9 @@
       flake = false;
     };
     nixpkgs.follows = "aleph-vm/nixpkgs";
+    # Go 1.27 for virtnoded only (the Sia SDK needs it); the rest of the image
+    # keeps aleph-vm's nixpkgs.
+    nixpkgs-go.url = "github:NixOS/nixpkgs/7993f34ee47e28a3d607a525aadc6c94b73be728";
     # The deployment's own inputs (node.env, runtime-image.tar, apks/). Build
     # with --override-input assets path:/path/to/assets.
     assets = {
@@ -17,7 +20,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, aleph-vm, aleph-vm-src, assets, ... }:
+  outputs = { self, nixpkgs, nixpkgs-go, aleph-vm, aleph-vm-src, assets, ... }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -31,11 +34,12 @@
       };
 
       # virtnoded and viewercrypt, built from this repository's backend.
-      virtroid-node = pkgs.buildGoModule {
+      pkgsGo = nixpkgs-go.legacyPackages.${system};
+      virtroid-node = (pkgsGo.buildGoModule.override { go = pkgsGo.go_1_27; }) {
         pname = "virtroid-node";
         version = self.shortRev or "dirty";
         src = lib.cleanSource ../../../backend;
-        vendorHash = "sha256-njdSS0C/VHJJ3FsrlMA3thFksyz5i2rLlHBKkDzhDJo=";
+        vendorHash = "sha256-b8nMOP3B92/Z/6kWMl1ip+FRGlBej635cuGCPVKYxew=";
         subPackages = [ "cmd/virtnoded" "cmd/viewercrypt" ];
         env.CGO_ENABLED = 0;
         ldflags = [ "-s" "-w" ];

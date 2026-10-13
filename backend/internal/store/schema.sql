@@ -7,6 +7,10 @@ CREATE TABLE IF NOT EXISTS accounts (
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 -- New runtimes are placed on nodes whose region matches; '' is the default region.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS runtime_region TEXT NOT NULL DEFAULT '';
+-- When the account first got keys on the Sia indexer, and when they were
+-- removed there after the account was deleted.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sia_registered_at TIMESTAMPTZ;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sia_released_at TIMESTAMPTZ;
 
 -- Bootstrap invitations authorize exactly one new account/device transaction.
 -- Only the SHA-256 digest is retained; the plaintext token is returned once by

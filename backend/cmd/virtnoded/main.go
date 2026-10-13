@@ -353,6 +353,7 @@ type nodeAgent struct {
 	blobCleanupMu       sync.Mutex
 	runtimeBlobKeyMu    sync.Mutex
 	runtimeBlobKeys     map[string][]byte
+	siaAccounts         siaAccounts
 	callbackNonceMu     sync.Mutex
 	callbackNonces      map[string]time.Time
 	relaySlots          chan struct{}
@@ -375,6 +376,8 @@ type runtimeContainerResources struct {
 }
 
 func main() {
+	// Only the Sia SDK uses the default client, for small indexer requests.
+	http.DefaultClient.Timeout = siaIndexerHTTPTimeout
 	cfg := config.LoadNode()
 	nodePrivateKey, nodePublicKey, err := nodeauth.LoadPrivateKey(cfg.PrivateKey)
 	if err != nil {

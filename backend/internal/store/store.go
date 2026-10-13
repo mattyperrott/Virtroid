@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101201
-	schemaVersionLabel               = "provisioned VM progress 2026-10-12"
+	currentSchemaVersion       int64 = 2026101301
+	schemaVersionLabel               = "sia indexer accounts 2026-10-13"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -5422,7 +5422,12 @@ func (s *Store) AssignPendingRemoteRuntimeCleanup(ctx context.Context, hostID, b
 		    AND deleted_at IS NULL
 		    AND desired_state = 'deleted'
 		    AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL
-		    AND LOWER(COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk')) = $2`,
+		    AND LOWER(COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk')) = $2
+		    -- A runtime VM only ever works for its own account.
+		    AND NOT EXISTS (
+		        SELECT 1 FROM provisioned_vms v
+		         WHERE v.id = $1 AND v.account_id IS DISTINCT FROM runtimes.account_id
+		    )`,
 		hostID,
 		blobStoreKind,
 	)
@@ -6775,6 +6780,9 @@ func updateRuntimeObservationRecord(ctx context.Context, execer execContexter, r
 			     blob_manifest_json = CASE WHEN $12 THEN NULL ELSE COALESCE($14, blob_manifest_json) END,
 			     blob_host_id = CASE
 			         WHEN $12 THEN NULL
+			         -- Only a local-disk snapshot ties the runtime to this node.
+			         WHEN NULLIF(TRIM(COALESCE($14, '')), '') IS NOT NULL
+			          AND COALESCE(NULLIF(TRIM(COALESCE($13, blob_store_kind)), ''), 'local-disk') <> 'local-disk' THEN NULL
 			         WHEN NULLIF(TRIM(COALESCE($14, '')), '') IS NOT NULL THEN $2
 			         ELSE blob_host_id
 			     END,
