@@ -417,32 +417,53 @@ func (n *nodeAgent) persistSessionData(ctx context.Context, runtime runtimeAssig
 		return nil, errors.New("session persistence store is not prepared")
 	}
 
-	manifest, err := plan.store.persistFromDir(ctx, runtime.ID, plan.dataDir, plan.masterKey)
+	store := plan.store
+	manifest, err := store.persistFromDir(ctx, runtime.ID, plan.dataDir, plan.masterKey)
+	if err != nil && store.kind() == blobStoreSia && ctx.Err() == nil && !errors.Is(err, errRuntimeStorageQuotaExceeded) {
+		// Sia is unreachable or not ready: this generation stays on the node's
+		// disk, as without Sia, and the next stop tries Sia again.
+		local, localErr := n.persistLocally(ctx, runtime.ID, plan)
+		if localErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("keep snapshot on this node instead: %w", localErr))
+		}
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Sia storage was unavailable, so this snapshot stays on the runtime server; the next stop tries Sia again.")
+		store, manifest, err = local.store, local.manifest, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	previous, err := parseBlobManifest(runtime.BlobManifestJSON)
 	if err != nil {
-		_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+		_ = store.deleteManifest(context.WithoutCancel(ctx), manifest)
 		return nil, err
 	}
 	manifest.Generation = 1
 	if previous != nil {
 		if previous.Generation < 0 || previous.Generation == math.MaxInt64 {
-			_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+			_ = store.deleteManifest(context.WithoutCancel(ctx), manifest)
 			return nil, errors.New("blob manifest generation cannot be advanced")
 		}
 		manifest.Generation = previous.Generation + 1
 	}
 	if previous != nil && previous.Store != manifest.Store {
-		manifest.MigrationFallback = previous
+		fallback := *previous
+		if fallback.MigrationFallback != nil {
+			// One generation back is kept; the one before it is pruned once
+			// this generation is committed.
+			fallback.MigrationFallback = nil
+			if err := authenticateBlobManifest(&fallback, plan.masterKey, runtime.ID); err != nil {
+				_ = store.deleteManifest(context.WithoutCancel(ctx), manifest)
+				return nil, err
+			}
+		}
+		manifest.MigrationFallback = &fallback
 	}
 	if err := authenticateBlobManifest(manifest, plan.masterKey, runtime.ID); err != nil {
-		_ = plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+		_ = store.deleteManifest(context.WithoutCancel(ctx), manifest)
 		return nil, err
 	}
 	if err := enforceRuntimeStorageQuota(runtime, manifest); err != nil {
-		cleanupErr := plan.store.deleteManifest(context.WithoutCancel(ctx), manifest)
+		cleanupErr := store.deleteManifest(context.WithoutCancel(ctx), manifest)
 		if cleanupErr != nil {
 			cleanupErr = fmt.Errorf("delete over-quota blob candidate: %w", cleanupErr)
 		}
@@ -453,6 +474,28 @@ func (n *nodeAgent) persistSessionData(ctx context.Context, runtime runtimeAssig
 		Manifest:   manifest,
 		SnapshotAt: &now,
 	}, nil
+}
+
+type localPersist struct {
+	store    blobStore
+	manifest *blobManifest
+}
+
+// persistLocally writes the snapshot to this node's own blob store, after the
+// same preflight a local-disk node runs.
+func (n *nodeAgent) persistLocally(ctx context.Context, runtimeID string, plan *sessionPersistencePlan) (localPersist, error) {
+	store, err := n.blobStore(blobStoreLocal)
+	if err != nil {
+		return localPersist{}, err
+	}
+	if report := n.runBlobPreflightForKind(ctx, blobStoreLocal); !report.OK {
+		return localPersist{}, fmt.Errorf("blob store %s is not ready: %s", blobStoreLocal, summarizeBlobPreflightFailures(report))
+	}
+	manifest, err := store.persistFromDir(ctx, runtimeID, plan.dataDir, plan.masterKey)
+	if err != nil {
+		return localPersist{}, err
+	}
+	return localPersist{store: store, manifest: manifest}, nil
 }
 
 func enforceRuntimeStorageQuota(runtime runtimeAssignment, candidate *blobManifest) error {

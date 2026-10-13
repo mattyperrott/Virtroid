@@ -489,7 +489,10 @@ func TestLocalToSiaMigrationRestoresOnAnotherNode(t *testing.T) {
 // newSiaTestNode is a node set up for Sia whose account client is the fake.
 func newSiaTestNode(t *testing.T, root, runtimeID string, objects siaObjects) *nodeAgent {
 	t.Helper()
-	node := &nodeAgent{cfg: config.NodeConfig{RuntimeRoot: root, BlobStoreKind: blobStoreSia}}
+	node := &nodeAgent{
+		cfg:          config.NodeConfig{RuntimeRoot: root, BlobStoreKind: blobStoreSia},
+		controlPlane: &http.Client{Timeout: time.Second},
+	}
 	credentials := testSiaCredentials()
 	node.siaAccounts.credentials = map[string]cachedSiaCredentials{
 		runtimeID: {credentials: credentials, expiresAt: time.Now().Add(time.Hour)},
@@ -534,4 +537,70 @@ func TestSiaNodeKeepsSnapshotsLocalWithoutAnIndexer(t *testing.T) {
 	if plan.store.kind() != blobStoreSia {
 		t.Fatalf("store = %s, want %s", plan.store.kind(), blobStoreSia)
 	}
+}
+
+func TestSiaUploadFailureKeepsSnapshotsLocalUntilSiaWorks(t *testing.T) {
+	objects := newFakeSiaObjects()
+	root := t.TempDir()
+	runtimeID := "runtime-1"
+	key := testBlobKey(10)
+	node := newSiaTestNode(t, root, runtimeID, objects)
+	node.cacheRuntimeBlobKey(runtimeID, key)
+	dataDir := filepath.Join(root, runtimeID, "data")
+	runtime := runtimeAssignment{ID: runtimeID, BlobAutoSnapshot: true}
+	persist := func(content string) *blobManifest {
+		t.Helper()
+		writeFile(t, filepath.Join(dataDir, "app", "state.db"), content)
+		plan, err := node.prepareSessionPersistence(context.Background(), runtime)
+		if err != nil {
+			t.Fatalf("prepareSessionPersistence: %v", err)
+		}
+		defer clearBytes(plan.masterKey)
+		persisted, err := node.persistSessionData(context.Background(), runtime, plan)
+		if err != nil {
+			t.Fatalf("persistSessionData: %v", err)
+		}
+		if err := node.cleanupBlobStorage(runtime, persisted.Manifest); err != nil {
+			t.Fatalf("cleanupBlobStorage: %v", err)
+		}
+		runtime.BlobManifestJSON = stringPtr(marshalBlobManifest(persisted.Manifest))
+		return persisted.Manifest
+	}
+
+	first := persist("first")
+	if first.Store != blobStoreSia {
+		t.Fatalf("first store = %s, want %s", first.Store, blobStoreSia)
+	}
+	objects.putErr = errors.New("no more hosts available")
+	second := persist("second")
+	if second.Store != blobStoreLocal || second.MigrationFallback == nil || second.MigrationFallback.Store != blobStoreSia {
+		t.Fatalf("second = %s with fallback %+v, want local keeping the Sia generation", second.Store, second.MigrationFallback)
+	}
+	objects.putErr = nil
+	third := persist("third")
+	if third.Store != blobStoreSia || third.MigrationFallback == nil || third.MigrationFallback.Store != blobStoreLocal ||
+		third.MigrationFallback.MigrationFallback != nil {
+		t.Fatalf("third = %s with fallback %+v, want Sia keeping only the local generation", third.Store, third.MigrationFallback)
+	}
+	if err := validateBlobManifestForRuntime(third, runtimeID); err != nil {
+		t.Fatalf("third manifest: %v", err)
+	}
+	if ids := objects.snapshotIDs(runtimeID); len(ids) != 1 || ids[0] != third.SnapshotID {
+		t.Fatalf("Sia snapshots = %v, want only the third", ids)
+	}
+
+	// The kept fallback still authenticates on its own.
+	fallbackDir := filepath.Join(t.TempDir(), "fallback")
+	local, err := node.blobStore(blobStoreLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.restoreToDir(context.Background(), runtimeID, third.MigrationFallback, fallbackDir, key); err != nil {
+		t.Fatalf("restore the local fallback: %v", err)
+	}
+	assertFileContent(t, filepath.Join(fallbackDir, "app", "state.db"), "second")
+	if _, err := node.prepareSessionData(context.Background(), runtime); err != nil {
+		t.Fatalf("prepareSessionData: %v", err)
+	}
+	assertFileContent(t, filepath.Join(dataDir, "app", "state.db"), "third")
 }
