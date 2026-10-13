@@ -8,9 +8,13 @@ import {
   Check,
   ChevronRight,
   Clock3,
+  Cloud,
+  Coins,
   Command,
+  Cpu,
   Database,
   Download,
+  ExternalLink,
   FileClock,
   FileText,
   Filter,
@@ -29,6 +33,7 @@ import {
   Sparkles,
   UserRound,
   Users,
+  Wallet,
   Wrench,
   X,
 } from "lucide-react";
@@ -49,6 +54,7 @@ import type {
   Metric,
   OverviewResponse,
   RuntimeSummary,
+  ServiceStatus,
   Severity,
 } from "./types";
 
@@ -57,7 +63,9 @@ const primaryNavigation = [
   { label: "Runtimes", icon: Boxes },
   { label: "Sessions", icon: Activity },
   { label: "Accounts", icon: Users },
+  { label: "Payments", icon: Wallet },
   { label: "Fleet", icon: Server },
+  { label: "Runtime VMs", icon: Cloud },
 ];
 
 const systemNavigation = [
@@ -154,9 +162,13 @@ function Sidebar({
 }) {
   const securityBadgeCount = overview.incidents.filter((incident) => incident.severity !== "info").length;
   const hygieneBadgeCount = overview.hygiene.filter((check) => check.status === "attention").length;
+  const overdrawn = overview.payments?.overdrawnAccounts ?? 0;
+  const failedVMs = overview.vms?.failed ?? 0;
   const badges: Record<string, string | undefined> = {
     Security: securityBadgeCount ? String(securityBadgeCount) : undefined,
     "Data hygiene": hygieneBadgeCount ? String(hygieneBadgeCount) : undefined,
+    Payments: overdrawn ? String(overdrawn) : undefined,
+    "Runtime VMs": failedVMs ? String(failedVMs) : undefined,
   };
   const renderItems = (
     items: Array<{
@@ -316,7 +328,7 @@ function SystemTopology({ overview }: { overview: OverviewResponse }) {
       <div className="topology-node topology-node--storage">
         <div className="topology-node__icon"><Database size={19} /></div>
         <span>Persistence</span>
-        <small>Connected</small>
+        <small>{overview.sia?.enabled ? (overview.sia.synced ? "Sia online" : "Sia syncing") : "Connected"}</small>
       </div>
     </div>
   );
@@ -635,6 +647,59 @@ function CommandPalette({
   );
 }
 
+const serviceIcons: Record<ServiceStatus, { className: string; dot: "good" | "warn" | "bad" | "muted" }> = {
+  good: { className: "passed", dot: "good" },
+  warn: { className: "scheduled", dot: "warn" },
+  bad: { className: "attention", dot: "bad" },
+  off: { className: "scheduled", dot: "muted" },
+};
+
+function ServiceRow({ name, status, detail, onOpen }: { name: string; status: ServiceStatus; detail: string; onOpen?: () => void }) {
+  const icon = serviceIcons[status];
+  return (
+    <button className="hygiene-row hygiene-row--button" type="button" onClick={onOpen} disabled={!onOpen}>
+      <span className={`hygiene-row__icon hygiene-row__icon--${icon.className}`}>
+        {status === "good" ? <Check size={14} /> : status === "bad" ? <AlertTriangle size={14} /> : <Clock3 size={14} />}
+      </span>
+      <div><strong>{name}</strong><small><StatusDot status={icon.dot} /> {detail}</small></div>
+      <ChevronRight size={15} />
+    </button>
+  );
+}
+
+const serviceDestinations: Record<string, string> = {
+  Payments: "Payments",
+  "VM provisioner": "Runtime VMs",
+  "Sia indexer": "Storage",
+};
+
+function PlatformServices({ overview, onNavigate }: { overview: OverviewResponse; onNavigate: (section: string) => void }) {
+  const payments = overview.payments;
+  const vms = overview.vms;
+  return (
+    <div className="dashboard-grid dashboard-grid--secondary">
+      <section className="panel hygiene-panel reveal" style={{ "--delay": "360ms" } as React.CSSProperties}>
+        <PanelHeader eyebrow="Internal services" title="Platform services" />
+        <div className="hygiene-list">
+          {(overview.services ?? []).map((service) => (
+            <ServiceRow key={service.name} {...service} onOpen={() => onNavigate(serviceDestinations[service.name] ?? "Fleet")} />
+          ))}
+        </div>
+      </section>
+      <section className="panel deployment-panel reveal" style={{ "--delay": "380ms" } as React.CSSProperties}>
+        <PanelHeader eyebrow="Last 24 hours" title="Money flow" action="Open payments" onAction={() => onNavigate("Payments")} />
+        <dl className="deployment-details money-flow">
+          <div><dt>Deposits</dt><dd>{payments?.deposits24h ?? "—"}</dd></div>
+          <div><dt>Charged for use</dt><dd>{payments?.charges24h ?? "—"}</dd></div>
+          <div><dt>Runtime VM cost (est.)</dt><dd>{vms?.estimatedCost24h ?? "—"}</dd></div>
+          <div><dt>Balances held</dt><dd>{payments?.balancesHeld ?? "—"}</dd></div>
+          <div><dt>Live VMs</dt><dd>{vms ? `${vms.live} of ${vms.maxVms} · ${vms.hourlyBurn}` : "—"}</dd></div>
+        </dl>
+      </section>
+    </div>
+  );
+}
+
 function CommandCentre({
   overview,
   source,
@@ -707,6 +772,8 @@ function CommandCentre({
           </div>
         </section>
       </div>
+
+      {overview.services ? <PlatformServices overview={overview} onNavigate={onNavigate} /> : null}
 
       <section className="panel runtimes-panel reveal" style={{ "--delay": "390ms" } as React.CSSProperties}>
         <PanelHeader eyebrow="Observed resources" title="Recent runtimes" action="View all runtimes" onAction={() => onNavigate("Runtimes")} />
@@ -781,9 +848,9 @@ function WorkspaceHeader({
   );
 }
 
-function SummaryCards({ items }: { items: Array<{ label: string; value: string | number; detail: string; tone?: WorkspaceTone }> }) {
+function SummaryCards({ items, literal = false }: { items: Array<{ label: string; value: string | number; detail: string; tone?: WorkspaceTone }>; literal?: boolean }) {
   return (
-    <section className="workspace-summary" aria-label="Workspace summary">
+    <section className={`workspace-summary${literal ? " workspace-summary--literal" : ""}`} aria-label="Workspace summary">
       {items.map((item, index) => (
         <article className="workspace-summary__card reveal" style={{ "--delay": `${70 + index * 45}ms` } as React.CSSProperties} key={item.label}>
           <div><span>{item.label}</span><StatusDot status={item.tone ?? "muted"} /></div>
@@ -1073,7 +1140,139 @@ function StorageWorkspace({ overview }: { overview: OverviewResponse }) {
       <section className="panel workspace-panel reveal"><PanelHeader eyebrow="Provider mix" title="Storage assignment" /><div className="provider-list">{providers.map(([provider, count]) => <div key={provider}><span><Database size={17} /></span><div><strong>{provider}</strong><small>{count} {count === 1 ? "runtime" : "runtimes"}</small></div><b>{overview.runtimes.length ? Math.round(count / overview.runtimes.length * 100) : 0}%</b></div>)}</div></section>
       <section className="panel workspace-panel reveal"><PanelHeader eyebrow="Latest per runtime" title="Snapshot ledger" /><div className="snapshot-list">{overview.runtimes.map((runtime) => <div key={runtime.id}><span className={runtime.snapshot === "not available" ? "tone-warn" : "tone-good"}><History size={15} /></span><div><strong>{runtime.name}</strong><small>{runtime.storage}</small></div><time>{runtime.snapshot}</time></div>)}</div></section>
     </div>
+    <SiaPanel overview={overview} />
   </>;
+}
+
+function PaymentsWorkspace({ overview }: { overview: OverviewResponse }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const payments = overview.payments;
+  if (!payments) {
+    return <>
+      <WorkspaceHeader eyebrow="USDT wallets" title="Payments" description="Deposits, balances and usage charges." overview={overview} icon={Wallet} />
+      <EmptyWorkspace title="Payments data unavailable" detail="This control plane does not report payments yet." />
+    </>;
+  }
+  const service = overview.services?.find((item) => item.name === "Payments");
+  const normalized = query.trim().toLowerCase();
+  const accounts = payments.accounts.filter((account) =>
+    (filter === "all" || (filter === "overdrawn" && account.overdrawn))
+    && `${account.accountId} ${account.plan}`.toLowerCase().includes(normalized));
+  return <>
+    <WorkspaceHeader eyebrow="USDT wallets" title="Payments" description="Deposits on TRON (TRC20), balances held for users and what their use has been charged. Wallet seeds and deposit keys never reach the console." overview={overview} icon={Wallet}>
+      {service ? <span className="meta-literal"><StatusDot status={serviceIcons[service.status].dot} /> payments service {service.detail}</span> : null}
+    </WorkspaceHeader>
+    <SummaryCards items={[
+      { label: "Balances held", value: payments.balancesHeld, detail: `${payments.paidAccounts} paid of ${payments.walletAccounts} wallets`, tone: "muted" },
+      { label: "Deposits", value: payments.depositsTotal, detail: `${payments.depositCount} transfers · last ${payments.lastDeposit}`, tone: payments.depositCount ? "good" : "muted" },
+      { label: "Charged, 24 h", value: payments.charges24h, detail: `runtime ${payments.runtimeCharges24h} · storage ${payments.storageCharges24h}`, tone: "muted" },
+      { label: "Overdrawn", value: payments.overdrawnAccounts, detail: "accounts below zero", tone: payments.overdrawnAccounts ? "warn" : "good" },
+    ]} literal />
+    <div className="workspace-columns">
+      <section className="panel workspace-panel reveal">
+        <PanelHeader eyebrow={payments.enabled ? "Confirmed on TRON" : "Deposits are off"} title="Recent deposits" />
+        {payments.recentDeposits.length ? <div className="data-list">
+          {payments.recentDeposits.map((deposit) => <a className="data-row" key={deposit.txId} href={deposit.explorerUrl} target="_blank" rel="noreferrer noopener">
+            <span className="data-row__icon"><Coins size={17} /></span>
+            <span className="data-row__identity"><strong>{deposit.amount}</strong><small>account {deposit.accountShortId} · {deposit.shortTxId}</small></span>
+            <span className="data-row__cell"><small>Confirmed</small><strong>{deposit.age}</strong></span>
+            <ExternalLink size={15} />
+          </a>)}
+        </div> : <EmptyWorkspace title="No deposits yet" detail="Deposits show here once the payments service has confirmed them." />}
+      </section>
+      <section className="panel workspace-panel reveal">
+        <PanelHeader eyebrow="Charged to paid accounts" title="Prices" />
+        <dl className="deployment-details money-flow">
+          <div><dt>Runtime, per hour running</dt><dd>{payments.runtimePricePerHour}</dd></div>
+          <div><dt>Stored data, per GB-month</dt><dd>{payments.storagePricePerGbMonth}</dd></div>
+          <div><dt>Charged in total</dt><dd>{payments.chargesTotal}</dd></div>
+          <div><dt>Deposit network</dt><dd>TRON · USDT (TRC20)</dd></div>
+        </dl>
+      </section>
+    </div>
+    <section className="panel workspace-panel reveal">
+      <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search account or plan…" filters={[
+        { value: "all", label: "All" }, { value: "overdrawn", label: "Overdrawn" },
+      ]} activeFilter={filter} onFilter={setFilter} />
+      {accounts.length ? <div className="data-list">
+        {accounts.map((account) => <div className="data-row" key={account.accountId}>
+          <span className="data-row__icon"><UserRound size={17} /></span>
+          <span className="data-row__identity"><strong>Account {account.accountShortId}</strong><small title={account.accountId}>{account.plan} · active {account.lastActivity}</small></span>
+          <span className="data-row__cell"><small>Balance</small><strong className={account.overdrawn ? "tone-warn" : "tone-good"}>{account.balance}</strong></span>
+          <span className="data-row__cell"><small>Deposited</small><strong>{account.deposited}</strong></span>
+          <span className="data-row__cell"><small>Charged</small><strong>{account.charged}</strong></span>
+        </div>)}
+      </div> : <EmptyWorkspace title="No balances" detail={payments.accounts.length ? "No account matches this search." : "Accounts appear once they deposit."} />}
+    </section>
+  </>;
+}
+
+const vmStateTone: Record<string, "good" | "warn" | "bad" | "muted"> = {
+  ready: "good", requested: "warn", creating: "warn", unlocking: "warn", booting: "warn", deleted: "muted",
+};
+
+function RuntimeVMsWorkspace({ overview }: { overview: OverviewResponse }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("live");
+  const vms = overview.vms;
+  if (!vms) {
+    return <>
+      <WorkspaceHeader eyebrow="Aleph Cloud" title="Runtime VMs" description="Dedicated confidential VMs the provisioner runs for accounts." overview={overview} icon={Cloud} />
+      <EmptyWorkspace title="VM data unavailable" detail="This control plane does not report runtime VMs yet." />
+    </>;
+  }
+  const service = overview.services?.find((item) => item.name === "VM provisioner");
+  const normalized = query.trim().toLowerCase();
+  const rows = vms.vms.filter((vm) =>
+    (filter === "all" || (filter === "live" ? !vm.deleted : !!vm.deleted))
+    && `${vm.id} ${vm.accountShortId} ${vm.state} ${vm.image} ${vm.region}`.toLowerCase().includes(normalized));
+  return <>
+    <WorkspaceHeader eyebrow="Aleph Cloud · AMD SEV-SNP" title="Runtime VMs" description="Dedicated confidential VMs the provisioner creates per account, what they run and what they cost. Secrets and network addresses stay out of the console." overview={overview} icon={Cloud}>
+      {service ? <span className="meta-literal"><StatusDot status={serviceIcons[service.status].dot} /> provisioner {service.detail}</span> : null}
+    </WorkspaceHeader>
+    <SummaryCards items={[
+      { label: "Live VMs", value: `${vms.live}/${vms.maxVms}`, detail: `${vms.ready} ready · ${vms.starting} starting · ${vms.retiring} retiring`, tone: vms.failed ? "warn" : vms.live ? "good" : "muted" },
+      { label: "Burn now", value: vms.hourlyBurn, detail: "estimated Aleph cost", tone: "muted" },
+      { label: "Cost, 24 h", value: vms.estimatedCost24h, detail: `${vms.vmHours24h} VM-hours`, tone: "muted" },
+      { label: "Regions", value: vms.regions.join(", ") || "none", detail: vms.enabled ? `${vms.warmSpares} warm spares` : "provisioning is off", tone: vms.enabled ? "good" : "muted" },
+    ]} literal />
+    <section className="panel workspace-panel reveal">
+      <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search VM, account, state or image…" filters={[
+        { value: "live", label: "Live" }, { value: "deleted", label: "Deleted (7 days)" }, { value: "all", label: "All" },
+      ]} activeFilter={filter} onFilter={setFilter} />
+      {rows.length ? <div className="data-list">
+        {rows.map((vm) => <div className="data-row" key={vm.id}>
+          <span className="data-row__icon"><Cpu size={17} /></span>
+          <span className="data-row__identity"><strong>VM {vm.shortId}</strong><small>{vm.accountShortId === "spare" ? "warm spare" : `account ${vm.accountShortId}`} · {vm.region} · image {vm.image}</small></span>
+          <span className="data-row__cell"><small>State</small><strong className={`tone-${vm.failed ? "warn" : vmStateTone[vm.state] ?? "muted"}`}>{vm.failed ? "failing" : vm.desired === "absent" && !vm.deleted ? "retiring" : vm.state}</strong></span>
+          <span className="data-row__cell"><small>{vm.deleted ? "Deleted" : vm.progress ? "Progress" : "Last used"}</small><strong>{vm.deleted ?? (vm.progress || vm.lastUsed)}</strong></span>
+          <span className="data-row__cell"><small>Age</small><strong>{vm.age}</strong></span>
+        </div>)}
+      </div> : <EmptyWorkspace title="No VMs" detail={vms.vms.length ? "No VM matches this filter." : "VMs appear when accounts start runtimes."} />}
+    </section>
+  </>;
+}
+
+function SiaPanel({ overview }: { overview: OverviewResponse }) {
+  const sia = overview.sia;
+  if (!sia) return null;
+  const service = overview.services?.find((item) => item.name === "Sia indexer");
+  return (
+    <section className="panel workspace-panel reveal">
+      <PanelHeader eyebrow={sia.enabled ? `indexd ${sia.version ?? ""} · ${sia.network ?? "network unknown"}` : "Sia storage is off"} title="Sia indexer" />
+      <dl className="deployment-details money-flow">
+        <div><dt>Status</dt><dd><StatusDot status={service ? serviceIcons[service.status].dot : "muted"} /> {service?.detail ?? "off"}</dd></div>
+        <div><dt>Chain</dt><dd>{sia.synced ? "synced" : "syncing"} · block {sia.syncHeight.toLocaleString()}</dd></div>
+        <div><dt>Wallet</dt><dd>{sia.wallet}</dd></div>
+        <div><dt>Contracts</dt><dd>{sia.contracts} of {sia.wantedContracts} wanted · {sia.contractsEnabled ? "forming" : "off"}</dd></div>
+        <div><dt>Indexer accounts</dt><dd>{sia.indexerAccounts} · {sia.linkedAccounts} linked</dd></div>
+        <div><dt>Pinned on Sia</dt><dd>{sia.pinnedData}</dd></div>
+        {sia.storedByKind.map((item) => <div key={item.kind}><dt>Snapshots, {item.kind}</dt><dd>{item.bytes}</dd></div>)}
+        <div><dt>Checked</dt><dd>{sia.checked}</dd></div>
+      </dl>
+    </section>
+  );
 }
 
 function ReleasesWorkspace({ overview }: { overview: OverviewResponse }) {
@@ -1138,6 +1337,8 @@ function OperatorWorkspace({ section, overview, onSelectRuntime }: { section: st
     case "Sessions": return <SessionsWorkspace overview={overview} onSelectRuntime={onSelectRuntime} />;
     case "Accounts": return <AccountsWorkspace overview={overview} onSelectRuntime={onSelectRuntime} />;
     case "Fleet": return <FleetWorkspace overview={overview} />;
+    case "Payments": return <PaymentsWorkspace overview={overview} />;
+    case "Runtime VMs": return <RuntimeVMsWorkspace overview={overview} />;
     case "Security": return <SecurityWorkspace overview={overview} />;
     case "Logs": return <LogsWorkspace overview={overview} onSelectRuntime={onSelectRuntime} />;
     case "Data hygiene": return <HygieneWorkspace overview={overview} />;

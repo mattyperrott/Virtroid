@@ -16,11 +16,21 @@ import (
 
 type fakeSnapshotStore struct {
 	snapshot store.OperatorSnapshot
+	payments store.OperatorPayments
+	vms      store.OperatorVMs
 	err      error
 }
 
 func (f fakeSnapshotStore) OperatorSnapshot(context.Context) (store.OperatorSnapshot, error) {
 	return f.snapshot, f.err
+}
+
+func (f fakeSnapshotStore) OperatorPayments(context.Context) (store.OperatorPayments, error) {
+	return f.payments, f.err
+}
+
+func (f fakeSnapshotStore) OperatorVMs(context.Context) (store.OperatorVMs, error) {
+	return f.vms, f.err
 }
 
 func TestOperatorSessionAndSanitizedOverview(t *testing.T) {

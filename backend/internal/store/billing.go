@@ -136,27 +136,24 @@ func chargeRuntimeTimeTX(ctx context.Context, tx *sql.Tx, hourMicro int64) (int,
 }
 
 // chargeStorageTX charges each paid account once per UTC day for the
-// encrypted runtime data it stores at that moment.
+// encrypted runtime data it stores at that moment. A month's daily charges
+// add up in one ledger entry.
 func chargeStorageTX(ctx context.Context, tx *sql.Tx, gibMonthMicro int64) (int, error) {
 	if gibMonthMicro <= 0 {
 		return 0, nil
 	}
-	var today string
-	if err := tx.QueryRowContext(ctx, `SELECT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')`).Scan(&today); err != nil {
+	var month string
+	if err := tx.QueryRowContext(ctx, `SELECT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')`).Scan(&month); err != nil {
 		return 0, err
 	}
-	reference := "storage:" + today
 	accountIDs, err := queryStringColumnTX(ctx, tx,
-		`SELECT e.account_id::text
-		   FROM account_entitlements e
-		   JOIN accounts a ON a.id = e.account_id
+		`SELECT a.id::text
+		   FROM accounts a
+		   JOIN account_entitlements e ON e.account_id = a.id
 		  WHERE e.source = 'paid'
 		    AND a.deleted_at IS NULL
-		    AND NOT EXISTS (
-		        SELECT 1 FROM account_ledger l
-		         WHERE l.account_id = e.account_id AND l.kind = 'storage' AND l.reference = $1
-		    )`,
-		reference,
+		    AND (a.storage_billed_on IS NULL OR a.storage_billed_on < (NOW() AT TIME ZONE 'UTC')::date)
+		    FOR UPDATE OF a SKIP LOCKED`,
 	)
 	if err != nil {
 		return 0, err
@@ -168,14 +165,18 @@ func chargeStorageTX(ctx context.Context, tx *sql.Tx, gibMonthMicro int64) (int,
 			return charges, err
 		}
 		// A month is taken as 30 days.
-		amount := mulDivRound(used, gibMonthMicro, (1<<30)*30)
-		if amount <= 0 {
-			continue
+		if amount := mulDivRound(used, gibMonthMicro, (1<<30)*30); amount > 0 {
+			if err := addUsageChargeTX(ctx, tx, accountID, "storage", "storage:"+month, amount); err != nil {
+				return charges, err
+			}
+			charges++
 		}
-		if err := addUsageChargeTX(ctx, tx, accountID, "storage", reference, amount); err != nil {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE accounts SET storage_billed_on = (NOW() AT TIME ZONE 'UTC')::date WHERE id = $1`,
+			accountID,
+		); err != nil {
 			return charges, err
 		}
-		charges++
 	}
 	return charges, nil
 }

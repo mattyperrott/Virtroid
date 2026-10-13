@@ -17,6 +17,15 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sia_released_at TIMESTAMPTZ;
 CREATE SEQUENCE IF NOT EXISTS account_deposit_index_seq MINVALUE 1 START 1 MAXVALUE 2147483647;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deposit_index INTEGER UNIQUE;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS wallet_viewed_at TIMESTAMPTZ;
+-- The last UTC day a paid account's storage was charged for.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS storage_billed_on DATE;
+
+-- When each internal service (payments, provisioner) last reached the control
+-- plane, for the operator console.
+CREATE TABLE IF NOT EXISTS service_heartbeats (
+    service TEXT PRIMARY KEY,
+    seen_at TIMESTAMPTZ NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS usdt_deposits (
     tx_id TEXT NOT NULL CHECK (tx_id ~ '^[0-9a-f]{64}$'),
@@ -31,8 +40,8 @@ CREATE INDEX IF NOT EXISTS idx_usdt_deposits_account ON usdt_deposits (account_i
 
 -- Amounts are in millionths of a USDT: credits positive, charges negative.
 -- Deposits are never changed. Usage charges accumulate into one entry per
--- runtime and UTC hour ('runtime:<id>:<hour>') and one per account and UTC day
--- for storage ('storage:<date>').
+-- runtime and UTC hour ('runtime:<id>:<hour>') and, charged daily, one per
+-- account and UTC month for storage ('storage:<month>').
 CREATE TABLE IF NOT EXISTS account_ledger (
     id BIGSERIAL PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

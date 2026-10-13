@@ -82,6 +82,9 @@ services:
       # What paid accounts are charged, in millionths of a USDT.
       RUNTIME_PRICE_PER_HOUR_MICRO: ${RUNTIME_PRICE_PER_HOUR_MICRO:-100000}
       STORAGE_PRICE_PER_GIB_MONTH_MICRO: ${STORAGE_PRICE_PER_GIB_MONTH_MICRO:-50000}
+      # One runtime VM's hourly Aleph cost in millionths of a US dollar, for
+      # the operator console's spending estimate.
+      RUNTIME_VM_COST_PER_HOUR_MICRO: ${RUNTIME_VM_COST_PER_HOUR_MICRO:-57000}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       SECURITY_EVENT_RATE_LIMIT_PER_MINUTE: ${SECURITY_EVENT_RATE_LIMIT_PER_MINUTE:-120}
       SECURITY_EVENT_RETENTION: ${SECURITY_EVENT_RETENTION:-168h}

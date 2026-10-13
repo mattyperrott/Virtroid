@@ -32,6 +32,8 @@ var webAssets embed.FS
 
 type snapshotStore interface {
 	OperatorSnapshot(context.Context) (store.OperatorSnapshot, error)
+	OperatorPayments(context.Context) (store.OperatorPayments, error)
+	OperatorVMs(context.Context) (store.OperatorVMs, error)
 }
 
 type API struct {
@@ -39,6 +41,7 @@ type API struct {
 	store   snapshotStore
 	assets  fs.FS
 	limiter *loginLimiter
+	sia     *siaMonitor
 	now     func() time.Time
 }
 
@@ -52,6 +55,7 @@ func New(cfg config.ServerConfig, st snapshotStore) http.Handler {
 		store:   st,
 		assets:  assets,
 		limiter: newLoginLimiter(cfg.OperatorLoginRateLimitPerMinute),
+		sia:     newSiaMonitor(cfg),
 		now:     time.Now,
 	}
 	mux := http.NewServeMux()
@@ -147,7 +151,59 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "operator data unavailable"})
 		return
 	}
-	writeJSON(w, http.StatusOK, buildOverview(a.cfg, snapshot, a.now().UTC()))
+	payments, err := a.store.OperatorPayments(ctx)
+	if err != nil {
+		log.Printf("operator payments query failed")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "operator data unavailable"})
+		return
+	}
+	fleet, err := a.store.OperatorVMs(ctx)
+	if err != nil {
+		log.Printf("operator VM query failed")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "operator data unavailable"})
+		return
+	}
+	now := a.now().UTC()
+	result := buildOverview(a.cfg, snapshot, now)
+	attachServices(&result, a.cfg, payments, fleet, a.sia.current(now), now)
+	writeJSON(w, http.StatusOK, result)
+}
+
+// attachServices adds payments, runtime VMs and Sia storage to the overview,
+// and lets a silent or unreachable service degrade the overall status.
+func attachServices(result *overviewResponse, cfg config.ServerConfig, payments store.OperatorPayments, fleet store.OperatorVMs, sia siaStatus, now time.Time) {
+	result.Payments = buildPayments(cfg, payments, now)
+	result.VMs = buildVMs(cfg, fleet, now)
+	result.Sia = buildSia(cfg, fleet, sia, now)
+	siaService := serviceResponse{Name: "Sia indexer", Status: "off", Detail: "Sia storage is off"}
+	switch {
+	case !result.Sia.Enabled:
+	case sia.CheckedAt.IsZero():
+		siaService = serviceResponse{Name: "Sia indexer", Status: "warn", Detail: "checking"}
+	case !sia.Reachable:
+		siaService = serviceResponse{Name: "Sia indexer", Status: "bad", Detail: "admin API unreachable"}
+	case !sia.Synced:
+		siaService = serviceResponse{Name: "Sia indexer", Status: "warn", Detail: fmt.Sprintf("syncing, block %d", sia.SyncHeight)}
+	case !sia.ContractsEnabled:
+		siaService = serviceResponse{Name: "Sia indexer", Status: "warn", Detail: "synced; contracts are off"}
+	default:
+		siaService = serviceResponse{Name: "Sia indexer", Status: "good", Detail: fmt.Sprintf("%d contracts", sia.Contracts)}
+	}
+	result.Services = []serviceResponse{
+		serviceHealth("Payments", result.Payments.Enabled, payments.PaymentsSeenAt, now, "USDT deposits are off"),
+		serviceHealth("VM provisioner", result.VMs.Enabled, fleet.ProvisionerSeen, now, "runtime VMs are off"),
+		siaService,
+	}
+	for _, service := range result.Services {
+		if service.Status == "bad" && result.Status == "healthy" {
+			result.Status = "degraded"
+			result.Headline = "A few signals need attention"
+		}
+	}
+	if result.VMs.Failed > 0 && result.Status == "healthy" {
+		result.Status = "degraded"
+		result.Headline = "A few signals need attention"
+	}
 }
 
 func (a *API) requireSession(next http.HandlerFunc) http.HandlerFunc {
@@ -242,6 +298,10 @@ type overviewResponse struct {
 	Activity    []activityResponse `json:"activity"`
 	Fleet       fleetResponse      `json:"fleet"`
 	Deployment  deploymentResponse `json:"deployment"`
+	Services    []serviceResponse  `json:"services"`
+	Payments    paymentsResponse   `json:"payments"`
+	VMs         vmsResponse        `json:"vms"`
+	Sia         siaResponse        `json:"sia"`
 }
 
 type metricResponse struct {

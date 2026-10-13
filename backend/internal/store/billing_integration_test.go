@@ -137,7 +137,7 @@ func TestPostgresUsageCharges(t *testing.T) {
 		t.Fatalf("storage charged %d, want 64000", got)
 	}
 	// Charging again moves on from where the last pass stopped and charges
-	// storage once a day.
+	// storage once a day, into one entry per month.
 	before = charged(paidAccount, "runtime")
 	charge()
 	if got := charged(paidAccount, "runtime") - before; got > 5_000 {
@@ -145,6 +145,18 @@ func TestPostgresUsageCharges(t *testing.T) {
 	}
 	if got := charged(paidAccount, "storage"); got != 64_000 {
 		t.Fatalf("storage charged twice: %d", got)
+	}
+	var storageEntries int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM account_ledger WHERE account_id = $1 AND kind = 'storage' AND reference = 'storage:' || to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')`, paidAccount,
+	).Scan(&storageEntries); err != nil || storageEntries != 1 {
+		t.Fatalf("storage ledger entries this month = %d err=%v, want 1", storageEntries, err)
+	}
+	// The next day's charge adds to the same entry.
+	exec(`UPDATE accounts SET storage_billed_on = storage_billed_on - 1 WHERE id = $1`, paidAccount)
+	charge()
+	if got := charged(paidAccount, "storage"); got != 128_000 {
+		t.Fatalf("storage after a second day = %d, want 128000", got)
 	}
 	var hourEntries int
 	if err := st.db.QueryRowContext(ctx,
@@ -190,5 +202,34 @@ func TestPostgresUsageCharges(t *testing.T) {
 	}
 	if !summary.CanStartRuntime || *summary.BalanceMicro != 1_000_000 {
 		t.Fatalf("summary after topping up = %+v", summary)
+	}
+
+	// The operator console sees the account, its deposits and the services.
+	if err := st.TouchServiceHeartbeat(ctx, "payments"); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	payments, err := st.OperatorPayments(ctx)
+	if err != nil {
+		t.Fatalf("operator payments: %v", err)
+	}
+	if payments.PaidAccounts < 1 || payments.DepositCount < 2 || payments.PaymentsSeenAt == nil || payments.ChargesTotalMicro <= 0 {
+		t.Fatalf("operator payments = %+v", payments)
+	}
+	var seen bool
+	for _, balance := range payments.Accounts {
+		if balance.AccountID == paidAccount {
+			seen = balance.BalanceMicro == 1_000_000 && balance.Source == "paid" &&
+				balance.DepositedMicro-balance.ChargedMicro == balance.BalanceMicro
+		}
+	}
+	if !seen {
+		t.Fatalf("paid account missing or wrong in %+v", payments.Accounts)
+	}
+	fleet, err := st.OperatorVMs(ctx)
+	if err != nil {
+		t.Fatalf("operator VMs: %v", err)
+	}
+	if fleet.StoredBytesByKind["local-disk"] < 2*67108864 {
+		t.Fatalf("stored bytes = %+v", fleet.StoredBytesByKind)
 	}
 }

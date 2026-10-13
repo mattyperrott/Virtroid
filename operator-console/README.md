@@ -1,8 +1,9 @@
 # Virtroid Operator Console
 
 Read-only Observatory interface for Virtroid's operator control plane. It
-includes the Command Centre plus dedicated runtime, session, account, fleet,
-security, log, data-hygiene, storage, release, and reporting workspaces. The
+includes the Command Centre plus dedicated runtime, session, account, payments,
+fleet, runtime VM, security, log, data-hygiene, storage, release, and reporting
+workspaces. The
 console supports resource filtering, runtime inspection, global search,
 responsive navigation, printable reports, and sanitized CSV export.
 
@@ -35,6 +36,13 @@ GET    /operator/v1/overview
 The response shape is defined in `src/types.ts`. Authentication is held in a
 short-lived HttpOnly, Secure, SameSite=Strict cookie. An unavailable live API
 fails closed and never silently falls back to fixture data.
+
+The Command Centre also shows the platform services: whether the payments
+service and the VM provisioner have checked in during the last two minutes,
+and the Sia indexer's sync, wallet and contracts, which virtroidd reads from
+indexd's admin API in the background. Payments shows deposits (linked to
+Tronscan), balances and usage charges; Runtime VMs shows the Aleph VMs with an
+estimated cost from `RUNTIME_VM_COST_PER_HOUR_MICRO`.
 
 The first deployed slice is intentionally read-only. It excludes relay
 credentials, blob manifests, network addresses, raw security-event output, and

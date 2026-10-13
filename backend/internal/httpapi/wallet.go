@@ -87,6 +87,7 @@ func (a *API) requirePaymentsRequest(w http.ResponseWriter, r *http.Request) (*t
 	if !a.requireServiceRequest(w, r, paymentsRequestID, a.cfg.PaymentsPublicKey) {
 		return nil, false
 	}
+	a.touchServiceHeartbeat(r, "payments")
 	return deposits, true
 }
 

@@ -77,6 +77,9 @@ type ServerConfig struct {
 	// runtime runs, and per GiB of stored runtime data per 30 days.
 	RuntimePriceHourMicro     int64
 	StoragePriceGiBMonthMicro int64
+	// What one runtime VM costs per hour on Aleph, in millionths of a US
+	// dollar; the operator console estimates VM spending with it.
+	RuntimeVMCostHourMicro int64
 }
 
 const (
@@ -84,7 +87,9 @@ const (
 	// operator sets prices.
 	defaultRuntimePriceHourMicro     int64 = 100_000
 	defaultStoragePriceGiBMonthMicro int64 = 50_000
-	maxPriceMicro                    int64 = 1_000_000_000
+	// A 2 vCPU, 4 GiB confidential VM: 2 Aleph compute units, about $0.057.
+	defaultRuntimeVMCostHourMicro int64 = 57_000
+	maxPriceMicro                 int64 = 1_000_000_000
 )
 
 type NodeConfig struct {
@@ -206,6 +211,10 @@ func LoadServer() ServerConfig {
 	if err != nil || storagePriceGiBMonthMicro < 0 || storagePriceGiBMonthMicro > maxPriceMicro {
 		storagePriceGiBMonthMicro = defaultStoragePriceGiBMonthMicro
 	}
+	runtimeVMCostHourMicro, err := parseEnvInt64("RUNTIME_VM_COST_PER_HOUR_MICRO", defaultRuntimeVMCostHourMicro)
+	if err != nil || runtimeVMCostHourMicro < 0 || runtimeVMCostHourMicro > maxPriceMicro {
+		runtimeVMCostHourMicro = defaultRuntimeVMCostHourMicro
+	}
 	provisionerMaxVMs, err := parseEnvInt("PROVISIONER_MAX_VMS", 0)
 	if err != nil || provisionerMaxVMs < 0 {
 		provisionerMaxVMs = 0
@@ -271,6 +280,7 @@ func LoadServer() ServerConfig {
 		PaymentsPublicKey:                strings.TrimSpace(os.Getenv("PAYMENTS_PUBLIC_KEY")),
 		RuntimePriceHourMicro:            runtimePriceHourMicro,
 		StoragePriceGiBMonthMicro:        storagePriceGiBMonthMicro,
+		RuntimeVMCostHourMicro:           runtimeVMCostHourMicro,
 	}
 }
 

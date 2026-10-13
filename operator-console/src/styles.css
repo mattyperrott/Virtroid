@@ -3086,3 +3086,69 @@ kbd {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Platform services */
+.hygiene-row--button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hygiene-row--button:disabled {
+  cursor: default;
+}
+
+.hygiene-row--button small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deployment-details.money-flow {
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin: 10px 20px 16px;
+}
+
+.deployment-details.money-flow div,
+.deployment-details.money-flow div:first-child {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-left: 0;
+  border-bottom: 1px solid rgba(175, 209, 53, 0.08);
+}
+
+.deployment-details.money-flow div:last-child {
+  border-bottom: 0;
+}
+
+.deployment-details.money-flow dt {
+  font-size: 11px;
+}
+
+.deployment-details.money-flow dd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #d6dcd6;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+a.data-row {
+  color: inherit;
+  text-decoration: none;
+}
+
+.workspace-summary--literal .workspace-summary__card > strong,
+.workspace-header__meta > span.meta-literal {
+  text-transform: none;
+}

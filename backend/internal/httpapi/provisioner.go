@@ -94,7 +94,19 @@ func (a *API) requireProvisionerRequest(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusNotFound, "provisioner_disabled", "runtime VM provisioning is not enabled")
 		return false
 	}
-	return a.requireServiceRequest(w, r, provisionerRequestID, a.cfg.ProvisionerPublicKey)
+	if !a.requireServiceRequest(w, r, provisionerRequestID, a.cfg.ProvisionerPublicKey) {
+		return false
+	}
+	a.touchServiceHeartbeat(r, "provisioner")
+	return true
+}
+
+// touchServiceHeartbeat records that an internal service reached the control
+// plane, for the operator console. It never fails the request.
+func (a *API) touchServiceHeartbeat(r *http.Request, service string) {
+	if err := a.store.TouchServiceHeartbeat(r.Context(), service); err != nil {
+		log.Printf("record %s heartbeat failed: %v", service, err)
+	}
 }
 
 // requireServiceRequest checks a request an internal service signed with its
