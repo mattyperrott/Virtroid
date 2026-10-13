@@ -96,7 +96,7 @@ class SystemLogsActivity : AppCompatActivity() {
         )
         binding.filterSecurityButton.setTextColor(blue)
         binding.filterErrorsButton.backgroundTintList = ColorStateList.valueOf(
-            getColor(if (activeFilter == AppLogFilter.ERRORS) R.color.v_danger_card else R.color.v_danger_soft),
+            getColor(if (activeFilter == AppLogFilter.ERRORS) R.color.v_danger_card else R.color.v_surface),
         )
         binding.filterErrorsButton.setTextColor(danger)
         binding.filterWarnButton.backgroundTintList = ColorStateList.valueOf(
@@ -185,8 +185,9 @@ class SystemLogsActivity : AppCompatActivity() {
             .joinToString("\n") { entry ->
                 "${Instant.ofEpochMilli(entry.timestampMs)} ${entry.level.name}/${entry.source}: ${entry.message}"
             }
-        copySensitiveToClipboard("Virtroid logs", text, clearAfterMs = 15_000L)
-        toast(getString(R.string.system_logs_copied))
+        if (!copySensitiveToClipboard("Virtroid logs", text, clearAfterMs = 15_000L)) {
+            toast(getString(R.string.system_logs_copied))
+        }
     }
 
     private fun clearLogs() {

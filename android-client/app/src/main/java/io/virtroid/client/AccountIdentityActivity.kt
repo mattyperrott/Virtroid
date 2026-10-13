@@ -524,8 +524,9 @@ class AccountIdentityActivity : AppCompatActivity() {
         if (value.isBlank()) {
             return
         }
-        copySensitiveToClipboard(label, value)
-        toast(message)
+        if (!copySensitiveToClipboard(label, value)) {
+            toast(message)
+        }
     }
 
     private fun shortId(value: String): String {

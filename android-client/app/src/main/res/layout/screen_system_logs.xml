@@ -179,7 +179,8 @@
                 android:layout_height="36dp"
                 android:background="@drawable/bg_transparent"
                 android:contentDescription="@string/system_logs_copy"
-                android:padding="11dp"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
                 android:src="@drawable/ic_copy"
                 app:tint="@color/v_text_muted" />
         </LinearLayout>
