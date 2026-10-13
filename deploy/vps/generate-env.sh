@@ -110,7 +110,7 @@ write_env_var() {
   write_env_var NODE_RUNTIME_IMAGE "${NODE_RUNTIME_IMAGE:-redroid/redroid:14.0.0_64only-latest@sha256:REPLACE_WITH_64_HEX}"
   write_env_var HAPROXY_IMAGE "${HAPROXY_IMAGE:-haproxy:lts@sha256:REPLACE_WITH_64_HEX}"
   write_env_var RENTERD_IMAGE "${RENTERD_IMAGE:-ghcr.io/siafoundation/renterd:2.9.3@sha256:72c589044aa47a09ab8349aad8b639a9cde2dd44bf27df73255d0f7bb29a2316}"
-  write_env_var INDEXD_IMAGE "${INDEXD_IMAGE:-ghcr.io/siafoundation/indexd:0.6.1@sha256:cf04dfc8248288fcc6bea80e09452f11f57cdd72a538cb1367d868cca855ef04}"
+  write_env_var INDEXD_IMAGE "${INDEXD_IMAGE:-ghcr.io/siafoundation/indexd:f6ae138@sha256:8b9ea260909b96d3b6bce4a789d079c9339aa3107292e0d0e5fc7e3ec24c7a97}"
   write_env_var INDEXD_POSTGRES_IMAGE "${INDEXD_POSTGRES_IMAGE:-postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c}"
   write_env_var RENTERD_MYSQL_IMAGE "${RENTERD_MYSQL_IMAGE:-mysql:8.4@sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d}"
   write_env_var FALCO_IMAGE "${FALCO_IMAGE:-falcosecurity/falco:0.43.0@sha256:88c01fa17bcc03c990a2691d08e7d43d746e32b07dbe9c6eb77bfdb3646cec41}"

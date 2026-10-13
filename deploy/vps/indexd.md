@@ -15,7 +15,8 @@ runtime survives its VM and an idle VM can be retired. The pieces:
   9982.
 
 Sia is off until `SIA_INDEXER_APP_URL` is set; the release then also starts the
-`indexd` Compose profile.
+`indexd` Compose profile. The pinned image is upstream commit `f6ae138`: 0.6.1
+plus the fix for running with the explorer off, which 0.6.1 crashes on.
 
 ## What each party sees
 

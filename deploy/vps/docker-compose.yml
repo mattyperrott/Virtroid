@@ -438,7 +438,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     stop_grace_period: 2m
-    mem_limit: "${INDEXD_MEMORY_LIMIT:-4g}"
+    # The first chain sync alone takes more than 4 GiB.
+    mem_limit: "${INDEXD_MEMORY_LIMIT:-12g}"
     cpus: "${INDEXD_CPU_LIMIT:-2.0}"
     pids_limit: ${INDEXD_PIDS_LIMIT:-1024}
     logging:
