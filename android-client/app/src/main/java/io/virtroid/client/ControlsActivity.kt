@@ -129,7 +129,7 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private fun bindRuntime(runtime: RuntimeSummary, state: RuntimeState? = runtimeState) {
-        binding.controlsRuntimeNameText.text = runtime.name
+        binding.controlsRuntimeNameText.text = runtimeDisplayName(runtime.name)
         binding.controlsRuntimeSubtitleText.text = getString(R.string.controls_runtime_subtitle, runtime.id)
         binding.controlsStateValue.text = runtime.lifecycleLabel()
         binding.controlsTunnelValue.text = getString(R.string.controls_tunnel_encrypted)

@@ -102,6 +102,16 @@ class ScrcpySessionHost(
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
+    /** Where the stream is connected, once it is. */
+    internal fun streamEndpoint(): StreamEndpoint? {
+        val service = scrcpy ?: return null
+        val host = service.activeEndpointHost()
+        if (host.isBlank() || service.activeEndpointPort() <= 0) {
+            return null
+        }
+        return StreamEndpoint(host, service.activeEndpointPort(), service.activeEndpointPin())
+    }
+
     fun pauseRendering() {
         scrcpy?.pause()
     }

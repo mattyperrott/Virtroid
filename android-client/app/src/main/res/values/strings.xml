@@ -346,6 +346,7 @@
     <string name="session_connecting">Connecting to runtime stream…</string>
     <string name="session_connecting_endpoint">Connecting to %1$s…</string>
     <string name="session_connected">Connected</string>
+    <string name="session_latency">· %1$d ms</string>
     <string name="session_connected_details">Connected: %1$dx%2$d</string>
     <string name="session_failed">Session disconnected</string>
     <string name="session_failed_message">Disconnected: %1$s</string>
@@ -365,7 +366,6 @@
     <string name="session_logs_heading">Runtime Logs</string>
     <string name="session_drawer_info">Endpoint: %1$s</string>
     <string name="session_drawer_status">Status: %1$s</string>
-    <string name="session_secure_online_with_resolution">Connected • %1$dx%2$d</string>
     <string name="session_secure_saving">Saving state…</string>
     <string name="session_shutdown_status">Stopping runtime and saving state…</string>
     <string name="session_back">Back</string>
@@ -397,9 +397,6 @@
     <string name="session_stream_reconnecting">Reconnecting live Android display...</string>
     <string name="session_stream_resuming">Resuming live Android display...</string>
     <string name="session_stream_receiving">Receiving live Android display...</string>
-    <string name="session_heartbeat_pending">Relay heartbeat pending</string>
-    <string name="session_heartbeat_ok">Relay OK • %1$s</string>
-    <string name="session_heartbeat_retrying">Relay sync delayed</string>
     <string name="session_heartbeat_stale">Session no longer active</string>
     <string name="viewer_service_channel_name">Viewer sessions</string>
     <string name="viewer_service_notification_title">Virtroid viewer active</string>

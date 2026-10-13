@@ -47,7 +47,7 @@ data class DeviceRuntimeProfile(
             val widthPx = if (portrait) bucket.widthPx else bucket.heightPx
             val heightPx = if (portrait) bucket.heightPx else bucket.widthPx
 
-            val runtimeName = "Runtime " + UUID.randomUUID().toString().substring(0, 8)
+            val runtimeName = UUID.randomUUID().toString().substring(0, 8)
 
             return DeviceRuntimeProfile(
                 runtimeName = runtimeName,

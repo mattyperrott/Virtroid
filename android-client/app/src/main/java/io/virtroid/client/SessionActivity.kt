@@ -25,7 +25,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
@@ -42,15 +44,15 @@ import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.viewer.ScrcpySessionHost
+import io.virtroid.client.viewer.RelayLatencyProbe
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import io.virtroid.client.ui.Notice
 
 class SessionActivity : AppCompatActivity() {
@@ -90,6 +92,7 @@ class SessionActivity : AppCompatActivity() {
     private var inactivityJob: Job? = null
     private var heartbeatJob: Job? = null
     private var viewerReconnectJob: Job? = null
+    private var latencyJob: Job? = null
     private var viewerSurfaceResumeJob: Job? = null
     private var viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
     private var sessionUnavailable = false
@@ -117,11 +120,8 @@ class SessionActivity : AppCompatActivity() {
             runOnUiThread {
                 appLogs.info("Session stream connected for $runtimeName", "session")
                 viewerReconnectDelayMs = VIEWER_RECONNECT_INITIAL_DELAY_MS
-                binding.sessionSubtitleText.text = getString(
-                    R.string.session_secure_online_with_resolution,
-                    remoteWidth,
-                    remoteHeight,
-                )
+                binding.sessionSubtitleText.text = getString(R.string.session_connected)
+                startLatencyProbe()
                 binding.sessionStreamStatusText.text = getString(R.string.session_stream_receiving)
                 binding.sessionRetryButton.isVisible = false
                 applyRemoteSurfaceBounds(remoteWidth, remoteHeight)
@@ -164,6 +164,7 @@ class SessionActivity : AppCompatActivity() {
 
         override fun onDisconnected(message: String) {
             runOnUiThread {
+                stopLatencyProbe()
                 binding.sessionSubtitleText.text = if (endingSession) {
                     getString(R.string.session_secure_saving)
                 } else if (sessionUnavailable) {
@@ -248,7 +249,7 @@ class SessionActivity : AppCompatActivity() {
         }
         liveSessionId = sessionId
 
-        val title = runtimeName.ifBlank { getString(R.string.session_title_fallback) }
+        val title = runtimeDisplayName(runtimeName).ifBlank { getString(R.string.session_title_fallback) }
         binding.sessionTitleText.text = title
         binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
         binding.sessionBackToAppButton.setOnClickListener { navigateBackToApp() }
@@ -276,7 +277,6 @@ class SessionActivity : AppCompatActivity() {
         }
         binding.sessionRetryButton.isVisible = false
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
-        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_pending)
         binding.sessionStreamProgress.isVisible = true
         binding.sessionStreamStatusOverlay.isVisible = true
         binding.sessionSurfaceView.isOpaque = true
@@ -289,10 +289,10 @@ class SessionActivity : AppCompatActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.sessionRoot) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             binding.sessionTopBar.updatePadding(
-                left = resources.getDimensionPixelSize(R.dimen.space_24) + systemBars.left,
-                top = resources.getDimensionPixelSize(R.dimen.space_10) + systemBars.top,
-                right = resources.getDimensionPixelSize(R.dimen.space_24) + systemBars.right,
-                bottom = resources.getDimensionPixelSize(R.dimen.space_10),
+                left = resources.getDimensionPixelSize(R.dimen.space_16) + systemBars.left,
+                top = resources.getDimensionPixelSize(R.dimen.space_6) + systemBars.top,
+                right = resources.getDimensionPixelSize(R.dimen.space_16) + systemBars.right,
+                bottom = resources.getDimensionPixelSize(R.dimen.space_6),
             )
             insets
         }
@@ -362,6 +362,7 @@ class SessionActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        stopLatencyProbe()
         if (liveSessionId == sessionId) {
             liveSessionId = null
         }
@@ -741,7 +742,7 @@ class SessionActivity : AppCompatActivity() {
         val params = FrameLayout.LayoutParams(
             targetWidth.coerceAtLeast(1),
             targetHeight.coerceAtLeast(1),
-            Gravity.CENTER,
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL,
         )
         binding.sessionSurfaceView.layoutParams = params
         updateViewerGestureExclusion()
@@ -810,18 +811,59 @@ class SessionActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * Shows the round trip to wherever the stream is connected, refreshed while
+     * the viewer is on screen.
+     */
+    private fun startLatencyProbe() {
+        if (latencyJob?.isActive == true) {
+            return
+        }
+        latencyJob = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    val endpoint = sessionHost?.streamEndpoint()
+                    val roundTripMs = endpoint?.let { withContext(Dispatchers.IO) { RelayLatencyProbe.measure(it) } }
+                    showLatency(roundTripMs)
+                    delay(LATENCY_PROBE_INTERVAL_MS)
+                }
+            }
+        }
+    }
+
+    private fun stopLatencyProbe() {
+        latencyJob?.cancel()
+        latencyJob = null
+        binding.sessionLatencyText.isVisible = false
+    }
+
+    private fun showLatency(roundTripMs: Long?) {
+        if (roundTripMs == null) {
+            binding.sessionLatencyText.isVisible = false
+            return
+        }
+        binding.sessionLatencyText.text = getString(R.string.session_latency, roundTripMs)
+        binding.sessionLatencyText.setTextColor(
+            getColor(
+                when {
+                    roundTripMs <= LATENCY_FINE_MS -> R.color.v_text_muted
+                    roundTripMs <= LATENCY_HIGH_MS -> R.color.v_amber
+                    else -> R.color.v_danger
+                },
+            ),
+        )
+        binding.sessionLatencyText.isVisible = true
+    }
+
     private fun markHeartbeatPending() {
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_amber)
         VirtroidMotion.setStatusPulse(binding.connectionDot, active = true)
-        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_pending)
     }
 
     private fun markHeartbeatHealthy() {
         heartbeatFailureCount = 0
-        val heartbeatAt = LocalTime.now().format(HEARTBEAT_TIME_FORMAT)
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_accent)
         VirtroidMotion.setStatusPulse(binding.connectionDot, active = true)
-        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_ok, heartbeatAt)
         if (!endingSession && !sessionUnavailable && sessionHost == null && viewerSurface != null) {
             retryViewerConnection(viewerReconnectDelayMs)
         }
@@ -830,14 +872,12 @@ class SessionActivity : AppCompatActivity() {
     private fun markHeartbeatRetrying() {
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_amber)
         VirtroidMotion.setStatusPulse(binding.connectionDot, active = true)
-        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_retrying)
     }
 
     private fun markSessionUnavailable() {
         sessionUnavailable = true
         binding.connectionDot.setBackgroundResource(R.drawable.bg_dot_muted)
         VirtroidMotion.setStatusPulse(binding.connectionDot, active = false)
-        binding.sessionHeartbeatText.text = getString(R.string.session_heartbeat_stale)
         binding.sessionSubtitleText.text = getString(R.string.session_heartbeat_stale)
         binding.sessionStreamStatusText.text = getString(R.string.session_heartbeat_stale)
         binding.sessionStreamProgress.isVisible = false
@@ -966,7 +1006,11 @@ class SessionActivity : AppCompatActivity() {
         private const val VIEWER_SURFACE_RESUME_TIMEOUT_MS = 5_000L
         private const val MAX_RUNTIME_PHOTO_IMPORT_BYTES = 16 * 1024 * 1024
         private const val MAX_RUNTIME_VIDEO_IMPORT_BYTES = 32 * 1024 * 1024
-        private val HEARTBEAT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
+        private const val LATENCY_PROBE_INTERVAL_MS = 3_000L
+        // Round trips up to these read as fine (grey), then high (amber),
+        // then very high (red) for an interactive stream.
+        private const val LATENCY_FINE_MS = 120L
+        private const val LATENCY_HIGH_MS = 250L
 
         fun createIntent(
             context: Context,

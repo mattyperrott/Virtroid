@@ -438,6 +438,24 @@ public class Scrcpy extends Service {
         return remote_dev_resolution;
     }
 
+    private volatile String activeEndpointHost = "";
+    private volatile int activeEndpointPort;
+    private volatile String activeEndpointPin = "";
+
+    /** The host the stream is connected to, or "" before it connects. */
+    public String activeEndpointHost() {
+        return activeEndpointHost;
+    }
+
+    public int activeEndpointPort() {
+        return activeEndpointPort;
+    }
+
+    /** The node key pin the stream verified, or "" when it went through the edge. */
+    public String activeEndpointPin() {
+        return activeEndpointPin;
+    }
+
     public boolean check_socket_connection() {
         return socket_status;
     }
@@ -484,6 +502,11 @@ public class Scrcpy extends Service {
                 }
 
                 debugLog("Connected to relay");
+                // The fallback clears relayTlsPin, so this records whether the
+                // stream reached the node itself or the edge.
+                activeEndpointHost = ip;
+                activeEndpointPort = port;
+                activeEndpointPin = relayTlsPin == null ? "" : relayTlsPin;
                 phase = "relay handshake";
                 performRelayHandshake(socket, ip, port);
                 relayTokenConsumed = true;

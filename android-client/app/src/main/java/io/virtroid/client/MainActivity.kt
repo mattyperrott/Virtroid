@@ -336,7 +336,7 @@ class MainActivity : AppCompatActivity() {
             runtimeProvisioningLogMessages.remove(runtime.id)
         }
 
-        cardBinding.runtimeTitleText.text = runtime.name
+        cardBinding.runtimeTitleText.text = runtimeDisplayName(runtime.name)
         cardBinding.runtimeSubtitleText.text = if (isLocallyStopping) {
             getString(R.string.runtime_connectivity_stopping)
         } else if (isWaitingForHost) {
