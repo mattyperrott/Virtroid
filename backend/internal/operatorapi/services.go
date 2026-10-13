@@ -345,7 +345,7 @@ func (m *siaMonitor) refresh() {
 			status.ContractsEnabled, status.WantedContracts = settings.Enabled, settings.WantedContracts
 		}
 		var contracts []json.RawMessage
-		if m.get(ctx, "/contracts?good=true&revisable=true&limit=1000", &contracts) == nil {
+		if m.get(ctx, "/contracts?good=true&revisable=true&limit=500", &contracts) == nil {
 			status.Contracts = len(contracts)
 		}
 		var stats struct {
