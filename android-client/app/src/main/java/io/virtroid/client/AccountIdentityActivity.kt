@@ -86,6 +86,9 @@ class AccountIdentityActivity : AppCompatActivity() {
         binding.itemInstallApps.setOnClickListener {
             openAppInstaller()
         }
+        binding.itemWallet.setOnClickListener {
+            startActivity(WalletActivity.createIntent(this))
+        }
         binding.itemWipeUserData.setOnClickListener {
             confirmLocalDataWipe()
         }
@@ -101,6 +104,20 @@ class AccountIdentityActivity : AppCompatActivity() {
         super.onResume()
         if (::binding.isInitialized) {
             refreshAppSelections()
+            refreshWallet()
+        }
+    }
+
+    /** Shows the trial's time left or the balance on the Wallet line. */
+    private fun refreshWallet() {
+        val accountId = sessionStore.accountId.orEmpty()
+        val deviceId = sessionStore.deviceId.orEmpty()
+        if (accountId.isBlank() || deviceId.isBlank()) {
+            return
+        }
+        lifecycleScope.launch {
+            runCatching { api.getEntitlement(sessionStore.baseUrl, accountId, deviceId) }
+                .onSuccess { binding.itemWalletSubtitle.text = it.walletSubtitle(this@AccountIdentityActivity) }
         }
     }
 

@@ -113,16 +113,13 @@ class MainActivity : AppCompatActivity() {
             openNewRuntime()
         }
         binding.runtimesNavButton.setOnClickListener { refreshRuntimes() }
-        binding.securityNavButton.setOnClickListener {
+        binding.accountNavButton.setOnClickListener {
             startActivity(AccountIdentityActivity.createIntent(this))
         }
         binding.logsNavButton.setOnClickListener {
             startActivity(SystemLogsActivity.createIntent(this))
         }
         binding.trialBannerText.setOnClickListener { startActivity(WalletActivity.createIntent(this)) }
-        binding.walletButton.setOnClickListener {
-            startActivity(WalletActivity.createIntent(this))
-        }
         binding.settingsNavButton.setOnClickListener {
             startActivity(PrivacySecurityActivity.createIntent(this))
         }

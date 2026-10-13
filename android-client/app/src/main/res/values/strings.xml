@@ -177,6 +177,7 @@
 
     <string name="bottom_runtimes">Runtimes</string>
     <string name="bottom_security">Security</string>
+    <string name="bottom_account">Account</string>
     <string name="bottom_logs">Logs</string>
     <string name="bottom_settings">Settings</string>
     <string name="bottom_add">Add Runtime</string>
@@ -555,6 +556,12 @@
     <!-- Wallet -->
     <string name="wallet_title">Wallet</string>
     <string name="wallet_open">Open wallet</string>
+    <string name="account_wallet_label">WALLET</string>
+    <string name="account_wallet_title">Deposit USDT</string>
+    <string name="account_wallet_subtitle">Add USDT (TRC20) and see your balance and activity</string>
+    <string name="account_wallet_balance">Balance %1$s USDT</string>
+    <string name="account_wallet_trial">Free trial: %1$s of running time left</string>
+    <string name="account_wallet_trial_used_up">Free trial used up. Deposit to keep going</string>
     <string name="wallet_balance_label">Balance</string>
     <string name="wallet_amount">%1$s USDT</string>
     <string name="wallet_deposit_title">Deposit USDT</string>

@@ -55,6 +55,18 @@ internal fun EntitlementSummary.trialBanner(context: Context): String? {
     return context.getString(R.string.trial_banner_time_left, trialMinutes(context, trialRuntimeSecondsRemaining))
 }
 
+/** The account screen's Wallet line: the trial's time left or the balance. */
+internal fun EntitlementSummary.walletSubtitle(context: Context): String {
+    val balance = balanceMicro
+    return when {
+        isTrial() && trialRuntimeSecondsRemaining > 0 ->
+            context.getString(R.string.account_wallet_trial, trialMinutes(context, trialRuntimeSecondsRemaining))
+        isTrial() -> context.getString(R.string.account_wallet_trial_used_up)
+        balance != null -> context.getString(R.string.account_wallet_balance, WalletActivity.formatUsdt(balance))
+        else -> context.getString(R.string.account_wallet_subtitle)
+    }
+}
+
 /** Running time left, in whole minutes rounded up so a started minute still shows. */
 internal fun trialMinutes(context: Context, seconds: Long): String {
     val minutes = ((seconds + 59) / 60).toInt()
