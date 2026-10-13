@@ -150,7 +150,7 @@ Not built yet: QUIC streaming, a signed list of approved VM measurements, automa
 <br>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/architecture/virtroid-deployment-dark.png">
-  <img alt="Virtroid deployment today: the Android client talks to the HAProxy edge and virtroidd on the VPS; runtimes run on the VPS node or on a remote node on Aleph Cloud, which phones reach directly over pinned TLS with a fallback through the VPS" src="assets/architecture/virtroid-deployment-light.png">
+  <img alt="Virtroid deployment today: the Android client talks to the HAProxy edge and virtroidd on the VPS, which also runs a runtime node, the provisioner, the payments service watching TRON, the Sia indexer, and Falco and Suricata; on Aleph Cloud, the provisioner creates per-account SEV-SNP VMs after attestation, and an ordinary Aleph node serves one region; phones stream directly from both over pinned TLS; the confidential VMs store encrypted snapshots on Sia hosts" src="assets/architecture/virtroid-deployment-light.png">
 </picture>
 
 Source: [`assets/architecture/virtroid-deployment.archify.json`](assets/architecture/virtroid-deployment.archify.json).

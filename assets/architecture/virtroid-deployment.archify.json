@@ -2,15 +2,15 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Virtroid Deployment Today: VPS + Aleph Node",
-    "output": ".archify/architecture-virtroid-current-deployment-20261010-211351/virtroid-current-deployment.html",
+    "title": "Virtroid Deployment Today: VPS + Aleph Cloud",
+    "output": ".archify/architecture-virtroid-deployment-20261014-023740/virtroid-deployment.html",
     "locale": "en",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/mattyperrott/Virtroid.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "06fbd46557830573f0ebac79d4717f40bd023d07"
+      "revision": "abd30fac0d025d95f25c5a85efae8dc541752c63"
     }
   },
   "components": [
@@ -18,27 +18,33 @@
       "id": "phone",
       "type": "frontend",
       "label": "Android client",
-      "sublabel": "device key \u00b7 viewer",
+      "sublabel": "device key · viewer · attestation",
       "pos": [
         16,
-        300
+        470
       ],
       "size": [
-        140,
+        190,
         64
       ],
       "sources": [
         {
-          "path": "android-client/app/src/main/java/org/client/scrcpy/Scrcpy.java",
-          "line": 588,
-          "end_line": 622,
-          "label": "relay socket, pinned to node key"
-        },
-        {
           "path": "android-client/app/src/main/java/org/client/scrcpy/crypto/NodeKeyPin.java",
           "line": 29,
-          "end_line": 55,
-          "label": "node key pin check"
+          "end_line": 58,
+          "label": "stream TLS pinned to the node key"
+        },
+        {
+          "path": "android-client/app/src/main/java/io/virtroid/client/security/ConfidentialRuntimeGuard.kt",
+          "line": 29,
+          "end_line": 88,
+          "label": "SEV-SNP check before streaming"
+        },
+        {
+          "path": "android-client/app/src/main/java/io/virtroid/client/WalletActivity.kt",
+          "line": 40,
+          "end_line": 75,
+          "label": "wallet: balance and deposit address"
         }
       ]
     },
@@ -46,21 +52,27 @@
       "id": "edge",
       "type": "security",
       "label": "HAProxy edge",
-      "sublabel": "public HTTPS :443",
+      "sublabel": "HTTPS :443 · Sia app API :9982",
       "pos": [
-        250,
-        300
+        296,
+        470
       ],
       "size": [
-        160,
+        170,
         64
       ],
       "sources": [
         {
           "path": "deploy/vps/haproxy.cfg",
-          "line": 39,
-          "end_line": 44,
-          "label": "relay path vs API routing"
+          "line": 28,
+          "end_line": 58,
+          "label": "API and relay routing"
+        },
+        {
+          "path": "deploy/vps/haproxy.cfg",
+          "line": 59,
+          "end_line": 73,
+          "label": "allowlisted indexd app API"
         }
       ]
     },
@@ -68,33 +80,33 @@
       "id": "virtroidd",
       "type": "backend",
       "label": "virtroidd",
-      "sublabel": "control plane \u00b7 placement",
+      "sublabel": "control plane · billing · Observatory",
       "pos": [
-        470,
-        300
+        552,
+        460
       ],
       "size": [
-        170,
-        64
+        210,
+        84
       ],
       "sources": [
         {
           "path": "backend/internal/httpapi/api.go",
-          "line": 1709,
-          "end_line": 1876,
-          "label": "session: node address and pin"
+          "line": 1955,
+          "end_line": 1974,
+          "label": "session: node endpoint, pin, edge fallback"
         },
         {
-          "path": "backend/internal/httpapi/node_endpoint.go",
-          "line": 26,
-          "end_line": 103,
-          "label": "pinned node calls, relay endpoint"
+          "path": "backend/internal/store/billing.go",
+          "line": 59,
+          "end_line": 110,
+          "label": "trial time and charges every minute"
         },
         {
-          "path": "backend/internal/store/store.go",
-          "line": 7209,
-          "end_line": 7266,
-          "label": "region-aware placement"
+          "path": "backend/internal/operatorapi/api.go",
+          "line": 48,
+          "end_line": 75,
+          "label": "Observatory API"
         }
       ]
     },
@@ -102,13 +114,13 @@
       "id": "postgres",
       "type": "database",
       "label": "PostgreSQL",
-      "sublabel": "accounts \u00b7 hosts \u00b7 sessions",
+      "sublabel": "accounts · runtimes · ledger",
       "pos": [
-        470,
-        110
+        552,
+        300
       ],
       "size": [
-        170,
+        210,
         64
       ],
       "sources": [
@@ -120,20 +132,20 @@
         },
         {
           "path": "backend/internal/store/schema.sql",
-          "line": 35,
-          "end_line": 75,
-          "label": "hosts: address, pin, region"
+          "line": 45,
+          "end_line": 55,
+          "label": "USDT ledger"
         }
       ]
     },
     {
-      "id": "localnode",
+      "id": "vpsnode",
       "type": "backend",
-      "label": "virtnoded",
-      "sublabel": "VPS node \u00b7 default region",
+      "label": "virtnoded + ReDroid",
+      "sublabel": "VPS node · default region",
       "pos": [
-        470,
-        480
+        296,
+        660
       ],
       "size": [
         170,
@@ -141,94 +153,246 @@
       ],
       "sources": [
         {
-          "path": "backend/cmd/virtnoded/main.go",
-          "line": 1420,
-          "end_line": 1447,
-          "label": "relay, forwards remote sessions"
+          "path": "deploy/vps/docker-compose.yml",
+          "line": 142,
+          "end_line": 219,
+          "label": "node service on the VPS"
         },
         {
           "path": "backend/cmd/virtnoded/relay_forward.go",
           "line": 62,
           "end_line": 150,
-          "label": "pinned forward to remote node"
-        },
-        {
-          "path": "deploy/vps/docker-compose.yml",
-          "line": 109,
-          "end_line": 175,
-          "label": "node service on the VPS"
+          "label": "forwards streams to remote nodes"
         }
       ]
     },
     {
-      "id": "localredroid",
-      "type": "backend",
-      "label": "ReDroid",
-      "sublabel": "runtimes on the VPS",
+      "id": "sensors",
+      "type": "security",
+      "label": "Falco · Suricata",
+      "sublabel": "host and network sensors",
       "pos": [
-        470,
-        620
+        552,
+        660
       ],
       "size": [
-        170,
+        210,
         64
       ],
       "sources": [
         {
-          "path": "backend/cmd/virtnoded/main.go",
-          "line": 2726,
-          "end_line": 2762,
-          "label": "runtime container, 30 fps"
+          "path": "deploy/vps/docker-compose.yml",
+          "line": 546,
+          "end_line": 683,
+          "label": "Falco, forwarder and Suricata"
+        },
+        {
+          "path": "backend/cmd/falco-forwarder/main.go",
+          "line": 25,
+          "end_line": 35,
+          "label": "events posted to virtroidd"
+        }
+      ]
+    },
+    {
+      "id": "payments",
+      "type": "backend",
+      "label": "payments service",
+      "sublabel": "deposit wallet seed · TRC20",
+      "pos": [
+        860,
+        300
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "deploy/vps/docker-compose.yml",
+          "line": 276,
+          "end_line": 323,
+          "label": "payments service"
+        },
+        {
+          "path": "backend/cmd/virtroid-payments/watch.go",
+          "line": 90,
+          "end_line": 150,
+          "label": "find, verify, report deposits"
+        },
+        {
+          "path": "backend/internal/httpapi/wallet.go",
+          "line": 98,
+          "end_line": 173,
+          "label": "signed watch list and reports"
+        }
+      ]
+    },
+    {
+      "id": "tron",
+      "type": "external",
+      "label": "TRON network",
+      "sublabel": "TronGrid · PublicNode",
+      "pos": [
+        860,
+        100
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/cmd/virtroid-payments/tronapi.go",
+          "line": 43,
+          "end_line": 60,
+          "label": "TronGrid transfer listing"
+        },
+        {
+          "path": "backend/cmd/virtroid-payments/tronapi.go",
+          "line": 119,
+          "end_line": 140,
+          "label": "second-node check"
+        }
+      ]
+    },
+    {
+      "id": "provisioner",
+      "type": "backend",
+      "label": "provisioner",
+      "sublabel": "aleph CLI · capped at 2 VMs",
+      "pos": [
+        860,
+        470
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "deploy/vps/docker-compose.yml",
+          "line": 220,
+          "end_line": 275,
+          "label": "provisioner service"
+        },
+        {
+          "path": "backend/cmd/virtroid-provisioner/aleph.go",
+          "line": 116,
+          "end_line": 160,
+          "label": "instance create and attested unlock"
+        },
+        {
+          "path": "backend/internal/store/provisioning.go",
+          "line": 170,
+          "end_line": 186,
+          "label": "accounts in provisioned regions"
+        }
+      ]
+    },
+    {
+      "id": "indexd",
+      "type": "backend",
+      "label": "indexd",
+      "sublabel": "Sia indexer · own PostgreSQL",
+      "pos": [
+        860,
+        660
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "deploy/vps/docker-compose.yml",
+          "line": 435,
+          "end_line": 511,
+          "label": "indexd and its database"
+        },
+        {
+          "path": "backend/internal/siaindexd/siaindexd.go",
+          "line": 113,
+          "end_line": 140,
+          "label": "per-account keys from virtroidd"
         }
       ]
     },
     {
       "id": "alephnode",
       "type": "backend",
-      "label": "virtnoded",
-      "sublabel": "Aleph node \u00b7 region eu",
+      "label": "virtnoded + ReDroid",
+      "sublabel": "Aleph node · not confidential",
       "pos": [
-        890,
+        1180,
         300
       ],
       "size": [
-        160,
+        190,
         64
       ],
       "sources": [
         {
           "path": "backend/cmd/virtnoded/public_tls.go",
-          "line": 32,
-          "end_line": 138,
-          "label": "public TLS listener and pin"
-        },
-        {
-          "path": "backend/cmd/virtnoded/main.go",
-          "line": 1555,
-          "end_line": 1631,
-          "label": "reconcile and heartbeat loops"
+          "line": 118,
+          "end_line": 148,
+          "label": "public TLS listener"
         }
       ]
     },
     {
-      "id": "alephredroid",
+      "id": "snpvm",
       "type": "backend",
-      "label": "ReDroid",
-      "sublabel": "runtimes on Aleph",
+      "label": "virtnoded + ReDroid",
+      "sublabel": "SEV-SNP VM · one per account",
       "pos": [
-        1090,
-        300
+        1180,
+        470
       ],
       "size": [
-        120,
+        190,
         64
       ],
       "sources": [
         {
-          "path": "backend/cmd/virtnoded/main.go",
-          "line": 2726,
-          "end_line": 2762,
-          "label": "same runtime container code"
+          "path": "deploy/aleph/nix/vm-init.sh",
+          "line": 55,
+          "end_line": 70,
+          "label": "encrypted data disk"
+        },
+        {
+          "path": "deploy/aleph/nix/vm-init.sh",
+          "line": 130,
+          "end_line": 143,
+          "label": "node requires SNP attestation"
+        },
+        {
+          "path": "backend/cmd/virtnoded/blobstore_sia.go",
+          "line": 620,
+          "end_line": 640,
+          "label": "snapshot upload to Sia"
+        }
+      ]
+    },
+    {
+      "id": "sia",
+      "type": "external",
+      "label": "Sia hosts",
+      "sublabel": "mainnet · paid in SC",
+      "pos": [
+        1180,
+        660
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/cmd/virtnoded/blobstore_sia.go",
+          "line": 630,
+          "end_line": 640,
+          "label": "shards uploaded to hosts"
         }
       ]
     }
@@ -244,13 +408,16 @@
     },
     {
       "kind": "region",
-      "label": "Your VPS \u00b7 Docker, IPv4 + IPv6",
+      "label": "Your VPS · Docker",
       "wraps": [
         "edge",
         "virtroidd",
         "postgres",
-        "localnode",
-        "localredroid"
+        "vpsnode",
+        "sensors",
+        "payments",
+        "provisioner",
+        "indexd"
       ],
       "pad": 24
     },
@@ -265,12 +432,20 @@
     },
     {
       "kind": "region",
-      "label": "Aleph Cloud VM \u00b7 pilot, not confidential",
+      "label": "Aleph Cloud",
       "wraps": [
         "alephnode",
-        "alephredroid"
+        "snpvm"
       ],
       "pad": 24
+    },
+    {
+      "kind": "security-group",
+      "label": "AMD SEV-SNP",
+      "wraps": [
+        "snpvm"
+      ],
+      "pad": 10
     }
   ],
   "connections": [
@@ -292,91 +467,109 @@
       "id": "virtroidd-postgres",
       "from": "virtroidd",
       "to": "postgres",
-      "label": "SQL",
-      "fromSide": "top",
-      "toSide": "bottom"
+      "label": "SQL"
     },
     {
-      "id": "virtroidd-aleph",
-      "from": "virtroidd",
-      "to": "alephnode",
-      "label": "callbacks \u00b7 pinned TLS",
+      "id": "edge-vpsnode",
+      "from": "edge",
+      "to": "vpsnode",
+      "label": "viewer relay"
+    },
+    {
+      "id": "vpsnode-virtroidd",
+      "from": "vpsnode",
+      "to": "virtroidd",
+      "label": "pull work"
+    },
+    {
+      "id": "sensors-virtroidd",
+      "from": "sensors",
+      "to": "virtroidd",
+      "label": "sanitized events"
+    },
+    {
+      "id": "provisioner-virtroidd",
+      "from": "provisioner",
+      "to": "virtroidd",
+      "label": "VM requests"
+    },
+    {
+      "id": "provisioner-snpvm",
+      "from": "provisioner",
+      "to": "snpvm",
+      "label": "attested unlock",
       "variant": "security"
     },
     {
-      "id": "aleph-edge",
-      "from": "alephnode",
-      "to": "edge",
-      "label": "heartbeat \u00b7 assignments",
-      "variant": "dashed",
+      "id": "payments-virtroidd",
+      "from": "payments",
+      "to": "virtroidd",
+      "label": "signed deposit reports"
+    },
+    {
+      "id": "payments-tron",
+      "from": "payments",
+      "to": "tron",
+      "label": "watch USDT deposits"
+    },
+    {
+      "id": "virtroidd-indexd",
+      "from": "virtroidd",
+      "to": "indexd",
+      "label": "account keys"
+    },
+    {
+      "id": "indexd-sia",
+      "from": "indexd",
+      "to": "sia",
+      "label": "pays hosts in SC"
+    },
+    {
+      "id": "snpvm-sia",
+      "from": "snpvm",
+      "to": "sia",
+      "label": "encrypted snapshots"
+    },
+    {
+      "id": "phone-snpvm",
+      "from": "phone",
+      "to": "snpvm",
+      "label": "direct stream · attested, pinned TLS",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "via": [
+        [
+          111,
+          800
+        ],
+        [
+          1420,
+          800
+        ],
+        [
+          1420,
+          502
+        ]
+      ]
+    },
+    {
+      "id": "phone-alephnode",
+      "from": "phone",
+      "to": "alephnode",
+      "label": "direct stream · pinned TLS",
       "fromSide": "top",
       "toSide": "top",
       "via": [
         [
-          970,
-          60
+          111,
+          40
         ],
         [
-          330,
-          60
+          1275,
+          40
         ]
       ]
-    },
-    {
-      "id": "edge-localnode",
-      "from": "edge",
-      "to": "localnode",
-      "label": "relay",
-      "fromSide": "bottom",
-      "toSide": "left"
-    },
-    {
-      "id": "localnode-virtroidd",
-      "from": "localnode",
-      "to": "virtroidd",
-      "label": "pull work",
-      "fromSide": "top",
-      "toSide": "bottom"
-    },
-    {
-      "id": "localnode-localredroid",
-      "from": "localnode",
-      "to": "localredroid",
-      "fromSide": "bottom",
-      "toSide": "top"
-    },
-    {
-      "id": "aleph-redroid",
-      "from": "alephnode",
-      "to": "alephredroid"
-    },
-    {
-      "id": "phone-aleph-direct",
-      "from": "phone",
-      "to": "alephnode",
-      "label": "direct stream \u00b7 pinned TLS \u00b7 IPv6",
-      "variant": "emphasis",
-      "fromSide": "bottom",
-      "toSide": "bottom",
-      "via": [
-        [
-          86,
-          740
-        ],
-        [
-          970,
-          740
-        ]
-      ]
-    },
-    {
-      "id": "localnode-aleph-fallback",
-      "from": "localnode",
-      "to": "alephnode",
-      "label": "fallback forward",
-      "variant": "dashed",
-      "fromSide": "right",
-      "toSide": "left"
     }
   ],
   "cards": [
@@ -384,37 +577,48 @@
       "dot": "cyan",
       "title": "Running today",
       "items": [
-        "One VPS runs the edge, control plane, database, a runtime node, Falco and Suricata",
-        "A second node on an Aleph Cloud VM serves accounts assigned to region eu",
-        "New runtimes go to a node in the account's region; a runtime stays on its node"
+        "One VPS runs the edge, control plane, database, a runtime node, the provisioner, the payments service, the Sia indexer, Falco and Suricata",
+        "Accounts in region snp-eu get their own SEV-SNP VM, created on demand and deleted after two unused hours",
+        "The original Aleph node serves accounts in region eu; everyone else runs on the VPS"
       ]
     },
     {
       "dot": "emerald",
       "title": "How the stream connects",
       "items": [
-        "VPS runtimes: phone to edge to virtnoded, over TLS",
-        "Remote runtimes: phone straight to the node, checking its pinned TLS key",
+        "VPS runtimes: phone to edge to virtnoded",
+        "Remote runtimes: phone straight to the node over TLS pinned to its key; a confidential VM must pass the phone's attestation check first",
         "No direct route (e.g. no IPv6): the VPS node forwards the stream unchanged",
-        "Video is end-to-end encrypted between phone and runtime either way"
+        "Remote nodes send heartbeats and fetch work through the edge, like phones"
       ]
     },
     {
       "dot": "rose",
       "title": "Trust boundary",
       "items": [
-        "Runtime hosts are trusted: the VPS operator, and the operator of an Aleph machine, can inspect live runtimes",
-        "Nodes sign every request with an approved P-256 key",
-        "The control plane only calls remote nodes on an operator allowlist"
+        "SEV-SNP VMs: CPU-encrypted memory, measured boot, encrypted data disk unlocked only after attestation",
+        "Still trusted there: the image builder, the provisioner, which holds the disk keys, and the control plane",
+        "The VPS node and the Aleph node are ordinary hosts that can see their runtimes",
+        "Only test builds verify the VMs until a signed measurement list is published"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Money and storage",
+      "items": [
+        "Each account has its own TRON deposit address; only the payments service holds the seed, and it checks every deposit on a second node",
+        "Balances pay per runtime minute and per GB-day; new accounts get one runtime and an hour free",
+        "Confidential VMs upload encrypted snapshots to Sia hosts and register them with indexd through the edge on :9982; indexd is still syncing"
       ]
     },
     {
       "dot": "amber",
       "title": "Next",
       "items": [
-        "Provisioner that creates and deletes Aleph VMs per user",
-        "SEV-SNP VMs, with the phone verifying attestation first",
-        "QUIC transport, and encrypted user data on Sia"
+        "Finish indexd's sync and form its Sia contracts",
+        "Publish a signed measurement list for release builds",
+        "Convert deposits into SC and Aleph credits automatically",
+        "QUIC streaming and a custom AOSP image"
       ]
     }
   ]
