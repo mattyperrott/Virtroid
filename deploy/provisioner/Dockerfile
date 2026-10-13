@@ -2,7 +2,7 @@
 # `aleph` CLI, built from a pinned source commit. Debian-based because the CLI
 # links OpenSSL, D-Bus and libusb dynamically.
 ARG RUST_BUILD_IMAGE=rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663
-ARG GO_BUILD_IMAGE=golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36
+ARG GO_BUILD_IMAGE=golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
 ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 # aleph-rs v0.21.0
 ARG ALEPH_RS_COMMIT=748b3dd61654a02f2033226b5c5abba36c1ac0b0

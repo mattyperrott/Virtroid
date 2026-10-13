@@ -59,7 +59,7 @@ printf '%s\n' \
 export VIRTROID_RELEASE_ENV_FILE="${release_env_file}"
 printf '%s\n' \
   "POSTGRES_IMAGE=postgres:18@sha256:${digest}" \
-  "GO_BUILD_IMAGE=golang:1.26.6-bookworm@sha256:${digest}" \
+  "GO_BUILD_IMAGE=golang:1.27.2-bookworm@sha256:${digest}" \
   "BACKEND_RUNTIME_IMAGE=alpine:3.23@sha256:${digest}" \
   "NODE_RUNTIME_IMAGE=redroid/redroid:14.0.0_64only-latest@sha256:${digest}" \
   "HAPROXY_IMAGE=haproxy:lts@sha256:${digest}" \
@@ -406,7 +406,7 @@ grep -q 'GitHub automation must not exist on the production VPS' "${script_dir}/
 grep -q 'installer_digest_before=' "${script_dir}/release-on-vps.sh"
 grep -q 'installer_digest_after=' "${script_dir}/release-on-vps.sh"
 grep -q 'installer_digest_after.*installer_digest_before' "${script_dir}/release-on-vps.sh"
-grep -q 'VIRTROID_PROFILES=edge,falco,nids' "${script_dir}/release-on-vps.sh"
+grep -q '^profiles=edge,falco,nids$' "${script_dir}/release-on-vps.sh"
 if grep -RniE 'restic|offsite|off-site' "${script_dir}" \
     --exclude=README.md \
     --exclude=test-env-safety.sh \
