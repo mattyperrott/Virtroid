@@ -40,8 +40,7 @@ Users pay for what they use from a USDT balance.
 > Virtroid is currently a **trusted-operator release candidate**: one VPS, an
 > ordinary runtime node on Aleph Cloud, and a pilot of per-account confidential
 > (AMD SEV-SNP) VMs on Aleph Cloud. Outside that pilot it does not protect an
-> active runtime from a compromised host or privileged infrastructure operator,
-> and only test builds of the app verify the confidential VMs today.
+> active runtime from a compromised host or privileged infrastructure operator.
 
 
 ---
@@ -70,8 +69,8 @@ Users pay for what they use from a USDT balance.
 | Direct node streaming | 🟡 Pilot | Phones stream straight from a remote node over key-pinned TLS (IPv6), falling back through the VPS edge when there is no direct route |
 | Automatic node provisioning | 🟡 Pilot | The provisioner creates a dedicated Aleph Cloud VM when an account in a provisioned region starts a runtime, and deletes unused ones, within a spending cap |
 | Confidential host isolation | 🟡 Pilot | Runtime VMs are AMD SEV-SNP guests with a measured, verified read-only root and an encrypted data disk unlocked only after attestation |
-| Hardware attestation | 🟡 Test builds | The phone verifies the VM's SEV-SNP report against AMD's root before streaming; the release app trusts no image until a signed list of approved measurements is published |
-| Sia storage | 🟡 Syncing | The Sia indexer runs on the VPS on Sia mainnet and is catching up with the chain; confidential VMs keep snapshots on their own disk until it is ready |
+| Hardware attestation | 🟡 Pilot | The phone verifies the VM's SEV-SNP report against AMD's root before streaming, and accepts only images on a list of measurements signed with an offline key (app 0.3.7 and later) |
+| Sia storage | 🟡 Pilot | The Sia indexer runs on the VPS on Sia mainnet, funded and forming storage contracts; confidential VMs keep snapshots on their own disk until it is ready |
 | Deposit conversion | ⏳ Not built | Moving deposits to a treasury and converting them into Siacoin and Aleph credits; done by hand today |
 
 
@@ -143,7 +142,7 @@ The diagram's source is [`assets/architecture/virtroid-target.archify.json`](ass
 - **Snapshots** are encrypted before they leave the runtime's node. On the VPS and the Aleph node they stay on that node's disk. Confidential VMs store them on Sia through the indexer, so a stopped runtime can restart on a new VM; until the indexer is ready they stay on the VM's own disk.
 - **Payments.** Each account's deposit address derives from one wallet whose seed only the payments service holds ([`deploy/vps/payments.md`](deploy/vps/payments.md)). Each deposit is credited once.
 
-Not built yet: QUIC streaming, a signed list of approved VM measurements, automatic deposit conversion, and the custom AOSP image.
+Not built yet: QUIC streaming, automatic deposit conversion, and the custom AOSP image.
 
 <details>
 <summary>Diagram of today's deployment</summary>
@@ -178,8 +177,8 @@ trusted there:
 - the provisioner on the VPS, which holds each VM's data-disk key;
 - the control plane, which decides where runtimes run.
 
-Only test builds of the app verify these VMs today. The release app refuses
-them until a signed list of approved measurements is published.
+Phones accept a VM only if its measurement is on a list signed with an
+offline key; app releases before 0.3.7 refuse these VMs.
 
 ### Implemented controls
 
@@ -203,8 +202,8 @@ them until a signed list of approved measurements is published.
 > [!CAUTION]
 > Virtroid must not currently be described as trustless, operator-blind,
 > anonymous by architecture, or fully end-to-end encrypted. Confidential
-> computing covers only the SEV-SNP pilot and is verified only by test builds of
-> the app. Elsewhere, transport encryption protects data in transit and snapshot
+> computing covers only the SEV-SNP pilot, verified by app 0.3.7 and later.
+> Elsewhere, transport encryption protects data in transit and snapshot
 > encryption protects stopped-runtime files; neither makes an active guest
 > confidential from its host.
 
@@ -240,25 +239,24 @@ demand-activated microphone input, physical-camera photo import, file delivery,
 idle cleanup, readiness, and security-event delivery.
 
 Confidential runtime VMs are running as a pilot on Aleph Cloud: accounts in the
-SEV-SNP region get their own VM on demand, and test builds of the app stream from
-it after checking its attestation. The original Aleph node still serves one
+SEV-SNP region get their own VM on demand, and the app streams from it after
+checking its attestation against the signed list of approved images. The original Aleph node still serves one
 assigned account; phones stream from it directly over IPv6, with a measured
 tap-to-screen of about 0.42 s from South-East Asia to the node in Finland,
 against about 0.3 s on the VPS.
 
 USDT deposits and charging are live, and new accounts start on a one-runtime,
-one-hour trial. The Sia indexer's wallet is funded; it is catching up with the
-chain, after which it forms its storage contracts.
+one-hour trial. The Sia indexer is synced and funded, and is forming its storage
+contracts.
 
 This is working release-candidate evidence—not a claim of complete production
 hardening or hostile multi-tenant isolation.
 
 ### Next
 
-1. Sia storage: finish the indexer's sync, form its contracts, and prove that a stopped runtime restarts from Sia on a new VM ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)).
-2. Publish a signed list of approved runtime VM measurements, so the release app trusts the confidential VMs and a new image needs no app release.
-3. Move deposits to a treasury and convert them into Siacoin and Aleph credits automatically.
-4. A custom AOSP build for the runtime, and QUIC for the stream.
+1. Sia storage: finish forming contracts and prove that a stopped runtime restarts from Sia on a new VM ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)).
+2. Move deposits to a treasury and convert them into Siacoin and Aleph credits automatically.
+3. A custom AOSP build for the runtime, and QUIC for the stream.
 
 > [!NOTE]
 > **Disclaimer:**

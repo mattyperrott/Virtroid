@@ -7,10 +7,10 @@ directory builds what the VMs boot (`nix/`). The provisioner
 (`backend/cmd/virtroid-provisioner`) creates and deletes them.
 
 > [!WARNING]
-> Running as a pilot: VMs boot on Aleph's SEV-SNP hosts in the `snp-eu` region
-> and test builds of the app stream from them after checking their
-> attestation. No signed measurement list is published yet (step 6), so release
-> builds refuse these VMs.
+> Running as a pilot: VMs boot on Aleph's SEV-SNP hosts in the `snp-eu` region,
+> and phones stream from them after checking their attestation against the
+> signed measurement list (step 6). App releases before 0.3.7 do not carry the
+> signing key and refuse these VMs.
 
 ## What a VM boots
 
