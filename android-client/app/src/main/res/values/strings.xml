@@ -548,4 +548,23 @@
     <string name="privacy_app_permissions">App permissions</string>
     <string name="privacy_app_permissions_body">Review notifications, microphone, and camera access</string>
     <string name="session_camera_permissions_setup_required">Grant camera access from Settings → Privacy &amp; Security → App permissions before using camera import.</string>
+    <!-- Wallet -->
+    <string name="wallet_title">Wallet</string>
+    <string name="wallet_open">Open wallet</string>
+    <string name="wallet_balance_label">Balance</string>
+    <string name="wallet_amount">%1$s USDT</string>
+    <string name="wallet_deposit_title">Deposit USDT</string>
+    <string name="wallet_network">TRON network (TRC20)</string>
+    <string name="wallet_deposit_qr">QR code of your deposit address</string>
+    <string name="wallet_copy_address">Copy address</string>
+    <string name="wallet_deposit_warning">Send only USDT on the TRON network (TRC20) to this address. Other tokens, or USDT on another network, can\'t be recovered.</string>
+    <string name="wallet_deposit_timing">Deposits show here about a minute after they confirm.</string>
+    <string name="wallet_history_title">Activity</string>
+    <string name="wallet_history_empty">No activity yet.</string>
+    <string name="wallet_kind_deposit">Deposit</string>
+    <string name="wallet_kind_runtime">Runtime use</string>
+    <string name="wallet_kind_storage">Storage</string>
+    <string name="wallet_kind_adjustment">Adjustment</string>
+    <string name="wallet_unavailable">Deposits aren\'t available yet.</string>
+    <string name="wallet_load_failed">Couldn\'t load your wallet: %1$s</string>
 </resources>

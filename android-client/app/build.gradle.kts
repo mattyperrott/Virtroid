@@ -196,6 +196,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("com.google.android.material:material:1.13.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // QR codes for deposit addresses.
+    implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is only a stub in JVM unit tests.
     testImplementation("org.json:json:20260522")

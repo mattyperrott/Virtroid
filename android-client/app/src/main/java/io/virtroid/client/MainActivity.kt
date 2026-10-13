@@ -119,6 +119,9 @@ class MainActivity : AppCompatActivity() {
         binding.logsNavButton.setOnClickListener {
             startActivity(SystemLogsActivity.createIntent(this))
         }
+        binding.walletButton.setOnClickListener {
+            startActivity(WalletActivity.createIntent(this))
+        }
         binding.settingsNavButton.setOnClickListener {
             startActivity(PrivacySecurityActivity.createIntent(this))
         }

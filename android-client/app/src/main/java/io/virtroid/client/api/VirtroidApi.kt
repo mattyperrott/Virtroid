@@ -196,6 +196,30 @@ data class TrustedDeviceSummary(
     val revokedAt: String?,
 )
 
+/** The account's USDT balance and deposit address; amounts are millionths of a USDT. */
+data class WalletSummary(
+    val currency: String,
+    val network: String,
+    val tokenContract: String,
+    val balanceMicro: Long,
+    val depositAddress: String,
+    val deposits: List<WalletDeposit>,
+    val entries: List<WalletEntry>,
+)
+
+data class WalletDeposit(
+    val txId: String,
+    val amountMicro: Long,
+    val blockTime: String,
+)
+
+data class WalletEntry(
+    val kind: String,
+    val amountMicro: Long,
+    val reference: String,
+    val createdAt: String,
+)
+
 data class EntitlementSummary(
     val accountId: String,
     val source: String,
@@ -492,6 +516,20 @@ class VirtroidApi(
 
             val items = payload.optJSONArray("items") ?: return@withContext emptyList()
             List(items.length()) { index -> items.getJSONObject(index).toRuntimeState() }
+        }
+
+    suspend fun getWallet(baseUrl: String, accountId: String, deviceId: String): WalletSummary =
+        withContext(Dispatchers.IO) {
+            val payload = executeJson(
+                signedJsonRequest(
+                    baseUrl = baseUrl,
+                    pathAndQuery = "/api/v1/me/wallet?account_id=$accountId&device_id=$deviceId",
+                    method = "GET",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                ),
+            )
+            payload.toWalletSummary()
         }
 
     suspend fun getEntitlement(baseUrl: String, accountId: String, deviceId: String): EntitlementSummary =
@@ -1553,6 +1591,35 @@ class VirtroidApi(
             lastPreflightStatus = nullableString("last_preflight_status"),
             lastPreflightJson = nullableString("last_preflight_json"),
             lastPreflightAt = nullableString("last_preflight_at"),
+        )
+    }
+
+    private fun JSONObject.toWalletSummary(): WalletSummary {
+        val deposits = optJSONArray("deposits")
+        val entries = optJSONArray("entries")
+        return WalletSummary(
+            currency = optString("currency", "USDT"),
+            network = optString("network", "TRON"),
+            tokenContract = optString("token_contract"),
+            balanceMicro = optLong("balance_micro", 0L),
+            depositAddress = optString("deposit_address"),
+            deposits = (0 until (deposits?.length() ?: 0)).map { index ->
+                val item = deposits!!.getJSONObject(index)
+                WalletDeposit(
+                    txId = item.optString("tx_id"),
+                    amountMicro = item.optLong("amount_micro", 0L),
+                    blockTime = item.optString("block_time"),
+                )
+            },
+            entries = (0 until (entries?.length() ?: 0)).map { index ->
+                val item = entries!!.getJSONObject(index)
+                WalletEntry(
+                    kind = item.optString("kind"),
+                    amountMicro = item.optLong("amount_micro", 0L),
+                    reference = item.optString("reference"),
+                    createdAt = item.optString("created_at"),
+                )
+            },
         )
     }
 
