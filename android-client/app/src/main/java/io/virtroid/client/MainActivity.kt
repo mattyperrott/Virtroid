@@ -492,6 +492,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         activeSessionStore.loadForRuntime(runtime.id)?.let { session ->
+            if (SessionActivity.liveSessionId == session.sessionId) {
+                // The viewer screen still holds this session's stream. A new
+                // relay token would make the node restart its viewer and cut
+                // that stream, so just bring the screen back.
+                appLogs.info("Returning to the open viewer for ${runtime.name}", "session")
+                startActivity(
+                    Intent(this, SessionActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+                )
+                return
+            }
             lifecycleScope.launch {
                 runCatching {
                     val state = api.getSessionState(session.baseUrl, session.accountId, session.deviceId, session.runtimeId, session.sessionId)

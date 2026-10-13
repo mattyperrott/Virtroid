@@ -244,6 +244,7 @@ class SessionActivity : AppCompatActivity() {
             finish()
             return
         }
+        liveSessionId = sessionId
 
         val title = runtimeName.ifBlank { getString(R.string.session_title_fallback) }
         binding.sessionTitleText.text = title
@@ -359,6 +360,9 @@ class SessionActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (liveSessionId == sessionId) {
+            liveSessionId = null
+        }
         inactivityJob?.cancel()
         heartbeatJob?.cancel()
         viewerReconnectJob?.cancel()
@@ -927,6 +931,14 @@ class SessionActivity : AppCompatActivity() {
     }
 
     companion object {
+        /**
+         * The session whose viewer screen exists right now, stream included.
+         * Back leaves it running behind the runtime list, so returning to it
+         * needs no new relay token (main thread only).
+         */
+        var liveSessionId: String? = null
+            private set
+
         private const val EXTRA_RUNTIME_NAME = "runtime_name"
         private const val EXTRA_VIEWER_ADDRESS = "viewer_address"
         private const val EXTRA_RELAY_HOST = "relay_host"
