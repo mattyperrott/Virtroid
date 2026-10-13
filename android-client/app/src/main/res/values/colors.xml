@@ -47,6 +47,8 @@
     <color name="v_text_dim">#858A85</color>
     <color name="v_border">#1CAFD135</color>
     <color name="v_border_soft">#0CAFD135</color>
+    <!-- A neutral edge for cards that need one. -->
+    <color name="v_hairline">#14FFFFFF</color>
     <color name="v_black">#000000</color>
     <color name="v_white">#F0F3EE</color>
     <color name="v_danger">#DF7E79</color>

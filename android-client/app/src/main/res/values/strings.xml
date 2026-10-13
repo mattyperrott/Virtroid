@@ -568,6 +568,9 @@
     <string name="wallet_network">TRON network (TRC20)</string>
     <string name="wallet_deposit_qr">QR code of your deposit address</string>
     <string name="wallet_copy_address">Copy address</string>
+    <string name="wallet_address_copied">Deposit address copied</string>
+    <string name="copy_to_clipboard">Copy to clipboard</string>
+    <string name="account_identity_title">Account Identity</string>
     <string name="wallet_deposit_warning">Send only USDT on the TRON network (TRC20) to this address. Other tokens, or USDT on another network, can\'t be recovered.</string>
     <string name="wallet_deposit_timing">Deposits show here about a minute after they confirm.</string>
     <string name="wallet_history_title">Activity</string>

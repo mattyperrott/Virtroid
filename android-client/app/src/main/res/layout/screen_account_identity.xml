@@ -29,13 +29,14 @@
                 android:padding="13dp"
                 android:src="@drawable/ic_arrow_back"
                 app:tint="@color/v_text_primary" />
-            <View
+            <TextView
+                android:id="@+id/text_title"
+                style="@style/VirtroidText.NavTitle"
                 android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-            <Space
-                android:layout_width="44dp"
-                android:layout_height="44dp" />
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="16dp"
+                android:text="@string/account_identity_title" />
         </LinearLayout>
         <View
             android:layout_width="match_parent"
@@ -59,60 +60,14 @@
                 android:paddingEnd="24dp"
                 android:paddingBottom="64dp">
                 <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="24dp"
-                    android:layout_marginBottom="40dp">
-                    <ImageView
-                        android:id="@+id/account_identity_icon"
-                        android:layout_width="72dp"
-                        android:layout_height="72dp"
-                        android:padding="18dp"
-                        android:src="@drawable/ic_fingerprint"
-                        app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="16dp">
-                        <TextView
-                            android:id="@+id/text_title"
-                            style="@style/VirtroidText.ScreenTitle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Account Identity"
-                            android:layout_marginBottom="8dp" />
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal">
-                            <View
-                                android:id="@+id/active_session_dot"
-                                android:layout_width="8dp"
-                                android:layout_height="8dp"
-                                android:background="@drawable/bg_dot_accent"
-                                android:layout_marginEnd="6dp" />
-                            <TextView
-                                android:id="@+id/text_active_session"
-                                style="@style/VirtroidText.Status"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Active Local Session" />
-                        </LinearLayout>
-                    </LinearLayout>
-                </LinearLayout>
-                <LinearLayout
                     android:id="@+id/item_account_id"
+                    android:layout_marginTop="24dp"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
+                    android:foreground="?attr/selectableItemBackground"
                     android:padding="16dp"
                     android:layout_marginBottom="12dp">
                     <ImageView
@@ -120,9 +75,9 @@
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:padding="13dp"
-                        android:src="@drawable/ic_copy"
+                        android:src="@drawable/ic_account"
                         app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -138,21 +93,23 @@
                         <TextView
                             android:id="@+id/item_account_id_subtitle"
                             style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="middle"
+                            android:maxLines="1"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_missing"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:id="@+id/item_account_id_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                    <ImageButton
+                        android:id="@+id/item_account_id_copy"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/copy_to_clipboard"
+                        android:padding="10dp"
+                        android:src="@drawable/ic_copy"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/item_device_fingerprint"
@@ -160,7 +117,8 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
+                    android:foreground="?attr/selectableItemBackground"
                     android:padding="16dp"
                     android:layout_marginBottom="12dp">
                     <ImageView
@@ -168,9 +126,9 @@
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:padding="13dp"
-                        android:src="@drawable/ic_fingerprint"
-                        app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:src="@drawable/ic_mobile"
+                        app:tint="@color/v_text_primary"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -186,28 +144,30 @@
                         <TextView
                             android:id="@+id/item_device_fingerprint_subtitle"
                             style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="middle"
+                            android:maxLines="1"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/device_missing"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:id="@+id/item_device_fingerprint_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                    <ImageButton
+                        android:id="@+id/item_device_fingerprint_copy"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/copy_to_clipboard"
+                        android:padding="10dp"
+                        android:src="@drawable/ic_copy"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/identity_sync_card"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
                     android:padding="16dp"
                     android:layout_marginBottom="36dp">
                     <LinearLayout
@@ -306,7 +266,7 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
                     android:foreground="?attr/selectableItemBackground"
                     android:padding="16dp"
                     android:layout_marginBottom="36dp">
@@ -317,8 +277,8 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_wallet"
                         android:importantForAccessibility="no"
-                        app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        app:tint="@color/v_text_primary"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -339,16 +299,14 @@
                             android:text="@string/account_wallet_subtitle"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
+                    <ImageView
+                        android:id="@+id/item_wallet_chevron"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
                         android:importantForAccessibility="no"
-                        android:layout_marginStart="8dp" />
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_apps"
@@ -365,7 +323,8 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
+                    android:foreground="?attr/selectableItemBackground"
                     android:padding="16dp"
                     android:layout_marginBottom="36dp">
                     <ImageView
@@ -374,8 +333,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_download"
-                        app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        app:tint="@color/v_text_primary"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -396,16 +355,14 @@
                             android:text="@string/account_apps_subtitle"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
+                    <ImageView
                         android:id="@+id/item_install_apps_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_decentralized_storage"
@@ -679,7 +636,8 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
+                    android:foreground="?attr/selectableItemBackground"
                     android:padding="16dp"
                     android:layout_marginBottom="12dp">
                     <ImageView
@@ -687,9 +645,9 @@
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:padding="13dp"
-                        android:src="@drawable/ic_terminal"
+                        android:src="@drawable/ic_lock"
                         app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -710,16 +668,14 @@
                             android:text="@string/account_identity_encryption_missing"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
+                    <ImageView
                         android:id="@+id/item_identity_password_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/item_device_signing_key"
@@ -727,7 +683,8 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
+                    android:foreground="?attr/selectableItemBackground"
                     android:padding="16dp"
                     android:layout_marginBottom="12dp">
                     <ImageView
@@ -735,9 +692,9 @@
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:padding="13dp"
-                        android:src="@drawable/ic_shield"
-                        app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:src="@drawable/ic_key"
+                        app:tint="@color/v_text_primary"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -759,16 +716,16 @@
                             android:textColor="@color/v_accent"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:id="@+id/item_device_signing_key_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                    <ImageButton
+                        android:id="@+id/item_device_signing_key_copy"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/copy_to_clipboard"
+                        android:padding="10dp"
+                        android:src="@drawable/ic_copy"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/item_linked_devices"
@@ -776,7 +733,8 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_surface_24"
+                    android:background="@drawable/bg_card"
+                    android:foreground="?attr/selectableItemBackground"
                     android:padding="16dp"
                     android:layout_marginBottom="12dp">
                     <ImageView
@@ -784,9 +742,9 @@
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:padding="13dp"
-                        android:src="@drawable/ic_fingerprint"
+                        android:src="@drawable/ic_devices"
                         app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -807,16 +765,14 @@
                             android:text="@string/account_linked_devices_subtitle"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
+                    <ImageView
                         android:id="@+id/item_linked_devices_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_danger_zone"

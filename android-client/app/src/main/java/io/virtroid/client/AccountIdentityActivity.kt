@@ -3,7 +3,10 @@ package io.virtroid.client
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.os.Bundle
+import android.view.View
+import android.widget.ImageButton
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -67,19 +70,30 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
 
         binding.buttonBack.setOnClickListener { finish() }
-        binding.itemAccountId.setOnClickListener {
-            copy("account_id", sessionStore.accountId.orEmpty(), getString(R.string.onboarding_account_copied))
+        // The row and its clipboard button both copy.
+        val copyAccountId = View.OnClickListener {
+            copy("account_id", sessionStore.accountId.orEmpty(), getString(R.string.onboarding_account_copied), binding.itemAccountIdCopy)
         }
-        binding.itemDeviceFingerprint.setOnClickListener {
-            val deviceId = linkedDeviceFingerprint()
-            copy("device_id", deviceId, getString(R.string.account_fingerprint_copied))
+        binding.itemAccountId.setOnClickListener(copyAccountId)
+        binding.itemAccountIdCopy.setOnClickListener(copyAccountId)
+        val copyDeviceId = View.OnClickListener {
+            copy("device_id", linkedDeviceFingerprint(), getString(R.string.account_fingerprint_copied), binding.itemDeviceFingerprintCopy)
         }
+        binding.itemDeviceFingerprint.setOnClickListener(copyDeviceId)
+        binding.itemDeviceFingerprintCopy.setOnClickListener(copyDeviceId)
         binding.itemIdentityPassword.setOnClickListener {
             showIdentityPasswordActions()
         }
-        binding.itemDeviceSigningKey.setOnClickListener {
-            copy("device_public_key", deviceIdentityStore.publicKeyMaterial(), getString(R.string.account_device_key_copied))
+        val copySigningKey = View.OnClickListener {
+            copy(
+                "device_public_key",
+                deviceIdentityStore.publicKeyMaterial(),
+                getString(R.string.account_device_key_copied),
+                binding.itemDeviceSigningKeyCopy,
+            )
         }
+        binding.itemDeviceSigningKey.setOnClickListener(copySigningKey)
+        binding.itemDeviceSigningKeyCopy.setOnClickListener(copySigningKey)
         binding.itemLinkedDevices.setOnClickListener {
             showLinkedDevices()
         }
@@ -127,16 +141,7 @@ class AccountIdentityActivity : AppCompatActivity() {
         val hasLinkedIdentity = accountId.isNotBlank() && deviceId.isNotBlank()
 
         binding.itemAccountIdSubtitle.text = accountId.ifBlank { getString(R.string.account_missing) }
-        binding.itemDeviceFingerprintSubtitle.text = if (deviceId.isBlank()) {
-            getString(R.string.device_missing)
-        } else {
-            "${shortId(linkedDeviceFingerprint())} / ${getString(R.string.account_identity_verified)}"
-        }
-        binding.textActiveSession.text = if (hasLinkedIdentity) {
-            getString(R.string.account_active_local_session)
-        } else {
-            getString(R.string.account_identity_not_linked)
-        }
+        binding.itemDeviceFingerprintSubtitle.text = linkedDeviceFingerprint().ifBlank { getString(R.string.device_missing) }
         val identityPasswordConfigured = identityPasswordStore.isConfigured(accountId, deviceId)
         val identityPasswordCached = identityPasswordStore.isUnlockedFor(accountId, deviceId)
         binding.identityEncryptionValue.text = when {
@@ -536,13 +541,20 @@ class AccountIdentityActivity : AppCompatActivity() {
         )
     }
 
-    private fun copy(label: String, value: String, message: String) {
+    private fun copy(label: String, value: String, message: String, button: ImageButton) {
         if (value.isBlank()) {
             return
         }
-        if (!copySensitiveToClipboard(label, value)) {
-            toast(message)
-        }
+        copySensitiveToClipboard(label, value)
+        Notice.copied(this, message)
+        // The button turns into an accent tick for a moment.
+        button.setImageResource(R.drawable.ic_check)
+        button.imageTintList = ColorStateList.valueOf(getColor(R.color.v_accent))
+        button.removeCallbacks(null)
+        button.postDelayed({
+            button.setImageResource(R.drawable.ic_copy)
+            button.imageTintList = ColorStateList.valueOf(getColor(R.color.v_text_muted))
+        }, COPIED_TICK_MS)
     }
 
     private fun shortId(value: String): String {
@@ -568,6 +580,8 @@ class AccountIdentityActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val COPIED_TICK_MS = 1_500L
+
         fun createIntent(context: Context): Intent = Intent(context, AccountIdentityActivity::class.java)
     }
 }
