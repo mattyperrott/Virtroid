@@ -282,6 +282,9 @@ services:
     depends_on:
       - virtroidd
     entrypoint: ["/usr/local/bin/virtroid-payments", "run"]
+    # The image's health check probes virtroidd's port.
+    healthcheck:
+      disable: true
     group_add:
       - "${PAYMENTS_SECRET_GID:-65532}"
     environment:
