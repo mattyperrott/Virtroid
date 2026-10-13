@@ -25,9 +25,16 @@ internal fun EntitlementSummary.startRuntimeBlockedMessage(context: Context): St
         "active_runtime_quota_exceeded" -> context.getString(R.string.entitlement_active_runtime_limit)
         "runtime_start_quota_exceeded" -> context.getString(R.string.entitlement_start_quota_reached)
         "runtime_trial_time_exceeded" -> context.getString(R.string.entitlement_trial_time_reached)
+        RUNTIME_BALANCE_INSUFFICIENT_CODE -> context.getString(R.string.entitlement_balance_insufficient)
         else -> startRuntimeBlockedReason ?: context.getString(R.string.entitlement_unavailable)
     }
 }
+
+internal const val RUNTIME_BALANCE_INSUFFICIENT_CODE = "runtime_balance_insufficient"
+
+/** Whether adding USDT in the wallet lets the account start a runtime again. */
+internal fun EntitlementSummary.startNeedsDeposit(): Boolean =
+    !canStartRuntime && startRuntimeBlockedCode in setOf("runtime_trial_time_exceeded", RUNTIME_BALANCE_INSUFFICIENT_CODE)
 
 internal fun Throwable.virtroidDisplayMessage(context: Context): String {
     if (isIdentityAuthenticationFailure()) {
@@ -42,6 +49,7 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
         "active_runtime_quota_exceeded" -> context.getString(R.string.entitlement_active_runtime_limit)
         "runtime_start_quota_exceeded" -> context.getString(R.string.entitlement_start_quota_reached)
         "runtime_trial_time_exceeded" -> context.getString(R.string.entitlement_trial_time_reached)
+        RUNTIME_BALANCE_INSUFFICIENT_CODE -> context.getString(R.string.entitlement_balance_insufficient)
         "runtime_storage_quota_exceeded" -> context.getString(R.string.entitlement_storage_quota_reached)
         "runtime_profile_not_allowed" -> context.getString(R.string.entitlement_profile_not_allowed)
         "no_ready_host" -> context.getString(R.string.entitlement_no_ready_host)

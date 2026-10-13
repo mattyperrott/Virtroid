@@ -96,6 +96,22 @@ class WalletActivity : AppCompatActivity() {
     private suspend fun render(wallet: WalletSummary) {
         binding.walletStatusText.visibility = View.GONE
         binding.walletBalanceText.text = getString(R.string.wallet_amount, formatUsdt(wallet.balanceMicro))
+        val pricing = buildList {
+            if (wallet.runtimePricePerHourMicro > 0) {
+                add(
+                    getString(
+                        R.string.wallet_pricing,
+                        formatUsdt(wallet.runtimePricePerHourMicro),
+                        formatUsdt(wallet.storagePricePerGibMonthMicro),
+                    ),
+                )
+            }
+            if (wallet.deposits.isEmpty()) {
+                add(getString(R.string.wallet_trial_note))
+            }
+        }
+        binding.walletPricingText.text = pricing.joinToString("\n\n")
+        binding.walletPricingText.visibility = if (pricing.isEmpty()) View.GONE else View.VISIBLE
         binding.walletDepositCard.visibility = View.VISIBLE
         if (wallet.depositAddress != shownAddress) {
             shownAddress = wallet.depositAddress

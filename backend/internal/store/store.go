@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101302
-	schemaVersionLabel               = "usdt wallets 2026-10-13"
+	currentSchemaVersion       int64 = 2026101303
+	schemaVersionLabel               = "usage charges 2026-10-13"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -62,7 +62,8 @@ var allowedAndroidImages = map[string]struct{}{
 }
 
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	pricing Pricing
 }
 
 var (
@@ -239,12 +240,16 @@ type AccountEntitlementSummary struct {
 	TrialRuntimeSecondsUsed      int64      `json:"trial_runtime_seconds_used"`
 	TrialRuntimeSecondsRemaining int64      `json:"trial_runtime_seconds_remaining"`
 	ExpiresAt                    *time.Time `json:"expires_at,omitempty"`
-	CanCreateRuntime             bool       `json:"can_create_runtime"`
-	CanStartRuntime              bool       `json:"can_start_runtime"`
-	CreateRuntimeBlockedCode     string     `json:"create_runtime_blocked_code,omitempty"`
-	CreateRuntimeBlockedReason   string     `json:"create_runtime_blocked_reason,omitempty"`
-	StartRuntimeBlockedCode      string     `json:"start_runtime_blocked_code,omitempty"`
-	StartRuntimeBlockedReason    string     `json:"start_runtime_blocked_reason,omitempty"`
+	// A paid account's USDT balance and what starting a runtime needs, in
+	// millionths of a USDT.
+	BalanceMicro               *int64 `json:"balance_micro,omitempty"`
+	MinimumStartBalanceMicro   *int64 `json:"minimum_start_balance_micro,omitempty"`
+	CanCreateRuntime           bool   `json:"can_create_runtime"`
+	CanStartRuntime            bool   `json:"can_start_runtime"`
+	CreateRuntimeBlockedCode   string `json:"create_runtime_blocked_code,omitempty"`
+	CreateRuntimeBlockedReason string `json:"create_runtime_blocked_reason,omitempty"`
+	StartRuntimeBlockedCode    string `json:"start_runtime_blocked_code,omitempty"`
+	StartRuntimeBlockedReason  string `json:"start_runtime_blocked_reason,omitempty"`
 }
 
 type AppCatalogEntry struct {
@@ -2897,6 +2902,20 @@ func (s *Store) GetAccountEntitlementSummary(ctx context.Context, accountID stri
 	if trialRuntimeTimeExhausted(entitlement, trialSecondsUsed) {
 		summary.blockStart(RuntimeTrialTimeExceededCode, ErrRuntimeTrialTimeQuota.Error())
 	}
+	if strings.EqualFold(strings.TrimSpace(entitlement.Source), "paid") {
+		balance, err := accountBalance(ctx, s.db, accountID)
+		if err != nil {
+			return AccountEntitlementSummary{}, err
+		}
+		summary.BalanceMicro = &balance
+		if s.pricing.Enabled() {
+			minimum := s.pricing.MinimumStartMicro()
+			summary.MinimumStartBalanceMicro = &minimum
+			if paidBalanceCheck(ctx, s.db, s.pricing, accountID, entitlement.Source, minimum) != nil {
+				summary.blockStart(RuntimeBalanceInsufficientCode, ErrRuntimeBalance.Error())
+			}
+		}
+	}
 
 	return summary, nil
 }
@@ -3768,7 +3787,7 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 	if current.CleanupPending {
 		return Runtime{}, ErrRuntimeCleanupPending
 	}
-	if err := ensureRuntimeStartEntitlementTX(ctx, tx, accountID, runtimeID); err != nil {
+	if err := ensureRuntimeStartEntitlementTX(ctx, tx, s.pricing, accountID, runtimeID); err != nil {
 		return Runtime{}, err
 	}
 
@@ -6983,7 +7002,7 @@ func (s *Store) CreateSession(ctx context.Context, deviceID, runtimeID string) (
 	if desiredState != "running" || status != "running" || connectionStatus != "online" {
 		return Session{}, ErrRuntimeNotReady
 	}
-	if err := ensureSessionTrialTimeAvailable(ctx, s.db, accountID); err != nil {
+	if err := ensureSessionTimeAvailable(ctx, s.db, s.pricing, accountID); err != nil {
 		return Session{}, err
 	}
 
@@ -7073,7 +7092,7 @@ func (s *Store) CreateSessionWithCapability(ctx context.Context, accountID, capa
 	if desiredState != "running" || status != "running" || connectionStatus != "online" {
 		return Session{}, ErrRuntimeNotReady
 	}
-	if err := ensureSessionTrialTimeAvailable(ctx, s.db, accountID); err != nil {
+	if err := ensureSessionTimeAvailable(ctx, s.db, s.pricing, accountID); err != nil {
 		return Session{}, err
 	}
 
@@ -7471,7 +7490,7 @@ func ensureRuntimeCreateEntitlementTX(ctx context.Context, tx *sql.Tx, accountID
 	return nil
 }
 
-func ensureRuntimeStartEntitlementTX(ctx context.Context, tx *sql.Tx, accountID, runtimeID string) error {
+func ensureRuntimeStartEntitlementTX(ctx context.Context, tx *sql.Tx, pricing Pricing, accountID, runtimeID string) error {
 	entitlement, err := accountEntitlementTX(ctx, tx, accountID)
 	if err != nil {
 		return err
@@ -7521,7 +7540,7 @@ func ensureRuntimeStartEntitlementTX(ctx context.Context, tx *sql.Tx, accountID,
 	if trialRuntimeTimeExhausted(entitlement, trialSecondsUsed) {
 		return ErrRuntimeTrialTimeQuota
 	}
-	return nil
+	return paidBalanceCheck(ctx, tx, pricing, accountID, entitlement.Source, pricing.MinimumStartMicro())
 }
 
 func accountEntitlementTX(ctx context.Context, tx *sql.Tx, accountID string) (AccountEntitlement, error) {
@@ -7764,7 +7783,9 @@ func trialRuntimeTimeExhausted(entitlement AccountEntitlement, used int64) bool 
 	return entitlement.TrialRuntimeSeconds <= 0 || used >= int64(entitlement.TrialRuntimeSeconds)
 }
 
-func ensureSessionTrialTimeAvailable(ctx context.Context, queryer queryRowContexter, accountID string) error {
+// ensureSessionTimeAvailable refuses a session to a trial account without
+// trial time left and to a paid account without balance.
+func ensureSessionTimeAvailable(ctx context.Context, queryer queryRowContexter, pricing Pricing, accountID string) error {
 	var source string
 	var limit int
 	err := queryer.QueryRowContext(ctx,
@@ -7780,7 +7801,7 @@ func ensureSessionTrialTimeAvailable(ctx context.Context, queryer queryRowContex
 		return err
 	}
 	if !strings.EqualFold(strings.TrimSpace(source), "trial") {
-		return nil
+		return paidBalanceCheck(ctx, queryer, pricing, accountID, source, 1)
 	}
 	used, err := trialRuntimeSecondsUsed(ctx, queryer, accountID)
 	if err != nil {

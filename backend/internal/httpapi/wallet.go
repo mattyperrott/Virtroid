@@ -65,6 +65,9 @@ func (a *API) getMyWallet(w http.ResponseWriter, r *http.Request) {
 		"deposit_address": address,
 		"deposits":        nonNilSlice(wallet.Deposits),
 		"entries":         nonNilSlice(wallet.Entries),
+		// What use costs once the account has paid.
+		"runtime_price_per_hour_micro":      a.cfg.RuntimePriceHourMicro,
+		"storage_price_per_gib_month_micro": a.cfg.StoragePriceGiBMonthMicro,
 	})
 }
 

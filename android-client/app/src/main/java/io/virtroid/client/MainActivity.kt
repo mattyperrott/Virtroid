@@ -395,9 +395,10 @@ class MainActivity : AppCompatActivity() {
             hideRuntimeProvisioning(cardBinding)
         }
         val actionsEnabled = provisioningMilestone == null && !isLocallyStopping
+        // Out of trial time or balance, Start stays tappable and opens the wallet.
         cardBinding.startRuntimeButton.isEnabled = actionsEnabled &&
             (state?.canStart ?: true) &&
-            (latestEntitlement?.canStartRuntime ?: true)
+            (latestEntitlement?.let { it.canStartRuntime || it.startNeedsDeposit() } ?: true)
         cardBinding.actionControlsButton.isEnabled = actionsEnabled
         cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
         cardBinding.liveDeleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
@@ -416,6 +417,9 @@ class MainActivity : AppCompatActivity() {
             }
             latestEntitlement?.startRuntimeBlockedMessage(this)?.let { message ->
                 toast(message)
+                if (latestEntitlement?.startNeedsDeposit() == true) {
+                    startActivity(WalletActivity.createIntent(this))
+                }
                 return@setOnClickListener
             }
             connectRuntime(runtime)

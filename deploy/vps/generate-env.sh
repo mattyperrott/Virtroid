@@ -193,6 +193,10 @@ write_env_var() {
   write_env_var TRON_DEPOSIT_XPUB ""
   write_env_var PAYMENTS_PUBLIC_KEY ""
   write_env_var PAYMENTS_SECRET_GID 65532
+  # What paid accounts are charged, in millionths of a USDT: per runtime hour
+  # and per GiB of stored runtime data per 30 days.
+  write_env_var RUNTIME_PRICE_PER_HOUR_MICRO 100000
+  write_env_var STORAGE_PRICE_PER_GIB_MONTH_MICRO 50000
 } > "${env_file}"
 
 chmod 600 "${env_file}"

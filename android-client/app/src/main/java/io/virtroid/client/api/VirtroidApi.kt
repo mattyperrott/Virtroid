@@ -205,6 +205,8 @@ data class WalletSummary(
     val depositAddress: String,
     val deposits: List<WalletDeposit>,
     val entries: List<WalletEntry>,
+    val runtimePricePerHourMicro: Long,
+    val storagePricePerGibMonthMicro: Long,
 )
 
 data class WalletDeposit(
@@ -240,6 +242,8 @@ data class EntitlementSummary(
     val trialRuntimeSecondsUsed: Long,
     val trialRuntimeSecondsRemaining: Long,
     val expiresAt: String?,
+    /** A paid account's USDT balance, in millionths. */
+    val balanceMicro: Long?,
     val canCreateRuntime: Boolean,
     val canStartRuntime: Boolean,
     val createRuntimeBlockedCode: String?,
@@ -1603,6 +1607,8 @@ class VirtroidApi(
             tokenContract = optString("token_contract"),
             balanceMicro = optLong("balance_micro", 0L),
             depositAddress = optString("deposit_address"),
+            runtimePricePerHourMicro = optLong("runtime_price_per_hour_micro", 0L),
+            storagePricePerGibMonthMicro = optLong("storage_price_per_gib_month_micro", 0L),
             deposits = (0 until (deposits?.length() ?: 0)).map { index ->
                 val item = deposits!!.getJSONObject(index)
                 WalletDeposit(
@@ -1644,6 +1650,7 @@ class VirtroidApi(
             trialRuntimeSecondsUsed = optLong("trial_runtime_seconds_used", 0L),
             trialRuntimeSecondsRemaining = optLong("trial_runtime_seconds_remaining", 0L),
             expiresAt = nullableString("expires_at"),
+            balanceMicro = if (has("balance_micro") && !isNull("balance_micro")) optLong("balance_micro") else null,
             canCreateRuntime = optBoolean("can_create_runtime", false),
             canStartRuntime = optBoolean("can_start_runtime", false),
             createRuntimeBlockedCode = nullableString("create_runtime_blocked_code"),

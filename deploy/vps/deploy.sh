@@ -463,6 +463,13 @@ validate_environment() {
     fi
     require_owned_secret /etc/virtroid/secrets/payments-seed "${PAYMENTS_SECRET_GID}" 440
     require_owned_secret /etc/virtroid/secrets/payments-key "${PAYMENTS_SECRET_GID}" 440
+    # virtroidd would fall back to its default price on a typo.
+    for price in RUNTIME_PRICE_PER_HOUR_MICRO STORAGE_PRICE_PER_GIB_MONTH_MICRO; do
+      if [ -n "${!price:-}" ] && { [[ ! "${!price}" =~ ^(0|[1-9][0-9]{0,9})$ ]] || [ "${!price}" -gt 1000000000 ]; }; then
+        echo "${price} must be millionths of a USDT, at most 1000000000" >&2
+        exit 1
+      fi
+    done
   elif [ -n "${TRON_DEPOSIT_XPUB:-}" ]; then
     echo "TRON_DEPOSIT_XPUB requires the payments Compose profile, or deposits would never be credited" >&2
     exit 1

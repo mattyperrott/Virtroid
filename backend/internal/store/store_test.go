@@ -2437,7 +2437,7 @@ func TestEnsureRuntimeStartEntitlementRejectsExhaustedTrialTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	if err := ensureRuntimeStartEntitlementTX(context.Background(), tx, accountID, runtimeID); !errors.Is(err, ErrRuntimeTrialTimeQuota) {
+	if err := ensureRuntimeStartEntitlementTX(context.Background(), tx, Pricing{}, accountID, runtimeID); !errors.Is(err, ErrRuntimeTrialTimeQuota) {
 		t.Fatalf("ensureRuntimeStartEntitlementTX error = %v, want %v", err, ErrRuntimeTrialTimeQuota)
 	}
 	if err := tx.Rollback(); err != nil {

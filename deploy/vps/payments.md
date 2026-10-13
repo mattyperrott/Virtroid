@@ -21,6 +21,27 @@ storage are paid from.
 Sweeping deposits into a treasury and converting them into Siacoin and Aleph
 credits are not built yet; deposits stay on their addresses until then.
 
+## Charging
+
+An account's first deposit ends its trial: from then on it is a paid account
+and its use is charged to its balance. Accounts the operator gave another
+entitlement source are never charged.
+
+- Runtime time: `RUNTIME_PRICE_PER_HOUR_MICRO` (millionths of a USDT, default
+  100000, i.e. 0.10 USDT) per hour a runtime is starting or running, charged
+  every minute into one ledger entry per runtime and hour. Runtimes keep
+  running for `RUNTIME_IDLE_TIMEOUT` after the app disconnects unless the user
+  stops them.
+- Storage: `STORAGE_PRICE_PER_GIB_MONTH_MICRO` (default 50000, i.e. 0.05 USDT)
+  per GiB of stored runtime data, local or on Sia, per 30 days, charged once a
+  day.
+- Starting a runtime needs ten minutes of runtime credit. When the balance
+  reaches zero, the account's runtimes are stopped. Their stored data is kept
+  and storage charges continue, so the balance can go below zero.
+
+The defaults are placeholders: set both prices in `.env` before taking
+deposits. The app's Wallet screen shows them.
+
 ## What each party sees
 
 - TronGrid and PublicNode see which addresses this server asks about.

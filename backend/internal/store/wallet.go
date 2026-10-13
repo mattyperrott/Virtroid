@@ -203,5 +203,27 @@ func (s *Store) CreditDeposit(ctx context.Context, deposit DepositCredit) (bool,
 	); err != nil {
 		return false, err
 	}
+	// The first deposit ends the trial: from now on the account pays for use.
+	// Charging starts now, not from when a running runtime was started.
+	switched, err := tx.ExecContext(ctx,
+		`UPDATE account_entitlements
+		    SET source = 'paid', expires_at = NULL, updated_at = NOW()
+		  WHERE account_id = $1 AND source = 'trial'`,
+		accountID,
+	)
+	if err != nil {
+		return false, err
+	}
+	if count, err := switched.RowsAffected(); err != nil {
+		return false, err
+	} else if count > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE runtimes SET billed_through = NOW()
+			  WHERE account_id = $1 AND started_at IS NOT NULL AND deleted_at IS NULL`,
+			accountID,
+		); err != nil {
+			return false, err
+		}
+	}
 	return true, tx.Commit()
 }

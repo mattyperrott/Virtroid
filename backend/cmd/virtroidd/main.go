@@ -35,11 +35,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("sia storage: %v", err)
 	}
+	// Accounts only become paid through deposits, so without wallets nothing
+	// is charged.
+	if cfg.TronDepositXPub != "" {
+		pg.SetPricing(store.Pricing{
+			RuntimeHourMicro:     cfg.RuntimePriceHourMicro,
+			StorageGiBMonthMicro: cfg.StoragePriceGiBMonthMicro,
+		})
+	}
 
 	go sessionReaperLoop(ctx, pg, cfg)
 	go appCatalogSyncLoop(ctx, pg, cfg)
 	go provisioningLoop(ctx, pg, cfg)
 	go siaReleaseLoop(ctx, pg, sia)
+	go chargingLoop(ctx, pg)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
@@ -151,6 +160,34 @@ func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerCo
 			return
 		case <-ticker.C:
 			runReaper()
+		}
+	}
+}
+
+// chargingLoop charges paid accounts for their use every minute and stops
+// their runtimes once the balance is used up.
+func chargingLoop(ctx context.Context, pg *store.Store) {
+	charge := func() {
+		runBackgroundIteration("charging", func() {
+			result, err := pg.ChargeUsage(ctx)
+			if err != nil {
+				log.Printf("charging failed: %v", err)
+				return
+			}
+			if result.StorageCharges > 0 || len(result.StoppedRuntimeIDs) > 0 {
+				log.Printf("charging: runtime_charges=%d storage_charges=%d runtimes_stopped_without_balance=%d",
+					result.RuntimeCharges, result.StorageCharges, len(result.StoppedRuntimeIDs))
+			}
+		})
+	}
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			charge()
 		}
 	}
 }

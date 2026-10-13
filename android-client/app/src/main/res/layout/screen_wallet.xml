@@ -84,6 +84,14 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:text="-" />
+
+                <TextView
+                    android:id="@+id/walletPricingText"
+                    style="@style/VirtroidText.Body.Compact"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <TextView

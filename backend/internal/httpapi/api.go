@@ -1783,6 +1783,8 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusPaymentRequired, store.RuntimeEntitlementRequiredCode, err.Error())
 		case store.ErrRuntimeTrialTimeQuota:
 			writeAPIError(w, http.StatusPaymentRequired, store.RuntimeTrialTimeExceededCode, err.Error())
+		case store.ErrRuntimeBalance:
+			writeAPIError(w, http.StatusPaymentRequired, store.RuntimeBalanceInsufficientCode, err.Error())
 		default:
 			writeInternalAPIError(w, "session_create_failed", err)
 		}
@@ -3655,6 +3657,8 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusTooManyRequests, store.RuntimeStartQuotaExceededCode, err.Error())
 	case store.ErrRuntimeTrialTimeQuota:
 		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeTrialTimeExceededCode, err.Error())
+	case store.ErrRuntimeBalance:
+		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeBalanceInsufficientCode, err.Error())
 	case store.ErrRuntimeProfile:
 		writeAPIError(w, http.StatusBadRequest, store.RuntimeProfileNotAllowedCode, err.Error())
 	default:

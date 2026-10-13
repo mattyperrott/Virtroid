@@ -159,7 +159,8 @@
     <string name="entitlement_runtime_quota_reached">Runtime limit reached for this account.</string>
     <string name="entitlement_active_runtime_limit">Stop the active runtime before starting another one.</string>
     <string name="entitlement_start_quota_reached">Daily runtime start limit reached.</string>
-    <string name="entitlement_trial_time_reached">Trial runtime time has been used. A new session cannot be started.</string>
+    <string name="entitlement_trial_time_reached">Your trial time is used up. Add USDT in your wallet to keep using runtimes.</string>
+    <string name="entitlement_balance_insufficient">Your USDT balance is too low to run a runtime. Add USDT in your wallet.</string>
     <string name="entitlement_storage_quota_reached">Encrypted storage limit reached. Wipe or delete stored runtime data before stopping with a new snapshot.</string>
     <string name="entitlement_profile_not_allowed">This runtime profile is not available yet.</string>
     <string name="entitlement_no_ready_host">No runtime node is ready right now.</string>
@@ -567,4 +568,6 @@
     <string name="wallet_kind_adjustment">Adjustment</string>
     <string name="wallet_unavailable">Deposits aren\'t available yet.</string>
     <string name="wallet_load_failed">Couldn\'t load your wallet: %1$s</string>
+    <string name="wallet_pricing">Runtimes cost %1$s USDT per hour while running. Stored runtime data costs %2$s USDT per GB per month.</string>
+    <string name="wallet_trial_note">Your free trial ends with your first deposit. After that, use is paid from this balance.</string>
 </resources>

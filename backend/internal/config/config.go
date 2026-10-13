@@ -73,7 +73,19 @@ type ServerConfig struct {
 	// TronDepositXPub leaves wallets off.
 	TronDepositXPub   string
 	PaymentsPublicKey string
+	// What paid accounts are charged, in millionths of a USDT: per hour a
+	// runtime runs, and per GiB of stored runtime data per 30 days.
+	RuntimePriceHourMicro     int64
+	StoragePriceGiBMonthMicro int64
 }
+
+const (
+	// 0.10 USDT per runtime hour and 0.05 USDT per GiB-month until the
+	// operator sets prices.
+	defaultRuntimePriceHourMicro     int64 = 100_000
+	defaultStoragePriceGiBMonthMicro int64 = 50_000
+	maxPriceMicro                    int64 = 1_000_000_000
+)
 
 type NodeConfig struct {
 	NodeID                string
@@ -186,6 +198,14 @@ func LoadServer() ServerConfig {
 	if err != nil {
 		siaTotalShards = 30
 	}
+	runtimePriceHourMicro, err := parseEnvInt64("RUNTIME_PRICE_PER_HOUR_MICRO", defaultRuntimePriceHourMicro)
+	if err != nil || runtimePriceHourMicro < 0 || runtimePriceHourMicro > maxPriceMicro {
+		runtimePriceHourMicro = defaultRuntimePriceHourMicro
+	}
+	storagePriceGiBMonthMicro, err := parseEnvInt64("STORAGE_PRICE_PER_GIB_MONTH_MICRO", defaultStoragePriceGiBMonthMicro)
+	if err != nil || storagePriceGiBMonthMicro < 0 || storagePriceGiBMonthMicro > maxPriceMicro {
+		storagePriceGiBMonthMicro = defaultStoragePriceGiBMonthMicro
+	}
 	provisionerMaxVMs, err := parseEnvInt("PROVISIONER_MAX_VMS", 0)
 	if err != nil || provisionerMaxVMs < 0 {
 		provisionerMaxVMs = 0
@@ -249,6 +269,8 @@ func LoadServer() ServerConfig {
 		SiaTotalShards:                   siaTotalShards,
 		TronDepositXPub:                  strings.TrimSpace(os.Getenv("TRON_DEPOSIT_XPUB")),
 		PaymentsPublicKey:                strings.TrimSpace(os.Getenv("PAYMENTS_PUBLIC_KEY")),
+		RuntimePriceHourMicro:            runtimePriceHourMicro,
+		StoragePriceGiBMonthMicro:        storagePriceGiBMonthMicro,
 	}
 }
 

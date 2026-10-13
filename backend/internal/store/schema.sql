@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS usdt_deposits (
 CREATE INDEX IF NOT EXISTS idx_usdt_deposits_account ON usdt_deposits (account_id, block_time DESC);
 
 -- Amounts are in millionths of a USDT: credits positive, charges negative.
+-- Deposits are never changed. Usage charges accumulate into one entry per
+-- runtime and UTC hour ('runtime:<id>:<hour>') and one per account and UTC day
+-- for storage ('storage:<date>').
 CREATE TABLE IF NOT EXISTS account_ledger (
     id BIGSERIAL PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -39,6 +42,8 @@ CREATE TABLE IF NOT EXISTS account_ledger (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_account_ledger_account ON account_ledger (account_id, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_ledger_usage
+    ON account_ledger (account_id, reference) WHERE kind IN ('runtime', 'storage');
 
 -- Bootstrap invitations authorize exactly one new account/device transaction.
 -- Only the SHA-256 digest is retained; the plaintext token is returned once by
@@ -447,6 +452,8 @@ ALTER TABLE runtimes DROP COLUMN IF EXISTS active_blob_key_b64;
 ALTER TABLE runtimes DROP COLUMN IF EXISTS active_blob_key_expires_at;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_last_snapshot_at TIMESTAMPTZ;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+-- How far a paid account has been charged for the runtime's current run.
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS billed_through TIMESTAMPTZ;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS load_average DOUBLE PRECISION;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS container_name TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS adb_port INTEGER;
