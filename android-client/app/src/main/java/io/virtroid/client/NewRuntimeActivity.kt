@@ -3,7 +3,6 @@ package io.virtroid.client
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -22,6 +21,7 @@ import io.virtroid.client.security.enableSecureWindow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import io.virtroid.client.ui.Notice
 
 class NewRuntimeActivity : AppCompatActivity() {
     private lateinit var binding: ScreenCreateSessionBinding
@@ -145,7 +145,6 @@ class NewRuntimeActivity : AppCompatActivity() {
                         ),
                     )
                     appLogs.info("Runtime profile created", "runtime")
-                    toast(getString(R.string.runtime_created))
                     delay(550L)
                     setResult(RESULT_OK)
                     finish()
@@ -277,7 +276,7 @@ class NewRuntimeActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     companion object {

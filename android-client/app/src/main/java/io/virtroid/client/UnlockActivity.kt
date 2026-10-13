@@ -3,7 +3,6 @@ package io.virtroid.client
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -21,6 +20,7 @@ import io.virtroid.client.databinding.ScreenPinAuthenticationBinding
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.Notice
 
 class UnlockActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPinAuthenticationBinding
@@ -265,7 +265,7 @@ class UnlockActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     companion object {

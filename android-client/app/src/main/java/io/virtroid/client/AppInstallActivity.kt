@@ -13,7 +13,6 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -41,6 +40,7 @@ import java.io.IOException
 import javax.net.ssl.HttpsURLConnection
 import java.util.Locale
 import kotlin.math.roundToInt
+import io.virtroid.client.ui.Notice
 
 class AppInstallActivity : AppCompatActivity() {
     private lateinit var binding: ScreenAppInstallBinding
@@ -506,7 +506,7 @@ class AppInstallActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     companion object {

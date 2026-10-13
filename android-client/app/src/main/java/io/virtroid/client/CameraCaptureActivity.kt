@@ -25,7 +25,6 @@ import android.util.Size
 import android.view.Surface
 import android.view.TextureView
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import io.virtroid.client.databinding.ScreenCameraCaptureBinding
@@ -447,7 +446,8 @@ class CameraCaptureActivity : AppCompatActivity() {
 
     private fun fail(message: String) {
         runOnUiThread {
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            // This screen closes at once, so the viewer shows the message.
+            setResult(RESULT_CANCELED, Intent().putExtra(EXTRA_CAPTURE_ERROR, message))
             finish()
         }
     }
@@ -480,6 +480,7 @@ class CameraCaptureActivity : AppCompatActivity() {
         const val EXTRA_CAPTURE_NAME = "capture_name"
         const val EXTRA_CAPTURE_KIND = "capture_kind"
         const val EXTRA_CAPTURE_HAS_AUDIO = "capture_has_audio"
+        const val EXTRA_CAPTURE_ERROR = "capture_error"
         const val CAPTURE_KIND_PHOTO = "photo"
         const val CAPTURE_KIND_VIDEO = "video"
         private const val EXTRA_RECORD_AUDIO = "record_audio"

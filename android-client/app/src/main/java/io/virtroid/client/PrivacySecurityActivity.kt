@@ -3,7 +3,6 @@ package io.virtroid.client
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -27,6 +26,7 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import io.virtroid.client.ui.Notice
 
 class PrivacySecurityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPrivacySecurityBinding
@@ -245,9 +245,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
                     val authenticatedCipher = result.cryptoObject?.cipher
-                    if (authenticatedCipher != null && appLockStore.saveBiometricVaultKey(authenticatedCipher)) {
-                        toast(getString(R.string.privacy_biometric_enabled))
-                    } else {
+                    if (authenticatedCipher == null || !appLockStore.saveBiometricVaultKey(authenticatedCipher)) {
                         toast(getString(R.string.privacy_biometric_enable_failed))
                     }
                     renderSettings()
@@ -355,7 +353,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     companion object {

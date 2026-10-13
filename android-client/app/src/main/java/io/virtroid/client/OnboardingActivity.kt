@@ -7,7 +7,6 @@ import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.ImageView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -36,6 +35,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
 import kotlin.random.Random
+import io.virtroid.client.ui.Notice
 
 class OnboardingActivity : AppCompatActivity() {
     private lateinit var binding: ScreenIdentityProvisioningBinding
@@ -548,7 +548,7 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     private data class PendingIdentity(

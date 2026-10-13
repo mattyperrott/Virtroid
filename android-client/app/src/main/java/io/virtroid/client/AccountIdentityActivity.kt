@@ -4,7 +4,6 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -31,6 +30,7 @@ import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import io.virtroid.client.ui.Notice
 
 class AccountIdentityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenAccountIdentityBinding
@@ -374,7 +374,6 @@ class AccountIdentityActivity : AppCompatActivity() {
                 )
             }.onSuccess {
                 appLogs.critical("Trusted device revoked: ${shortId(device.id)}", "auth")
-                toast(getString(R.string.account_revoke_device_done))
                 if (device.id == signingDeviceId) {
                     resetLocalIdentity()
                 } else {
@@ -548,7 +547,7 @@ class AccountIdentityActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     companion object {

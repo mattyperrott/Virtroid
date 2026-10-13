@@ -16,7 +16,6 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import androidx.appcompat.app.AppCompatActivity
@@ -52,6 +51,7 @@ import java.io.IOException
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import io.virtroid.client.ui.Notice
 
 class SessionActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionViewerBinding
@@ -98,7 +98,10 @@ class SessionActivity : AppCompatActivity() {
     private var microphoneFailureReported = false
 
     private val cameraCapture = registerForActivityResult(StartActivityForResult()) { result ->
-        if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
+        if (result.resultCode != Activity.RESULT_OK) {
+            result.data?.getStringExtra(CameraCaptureActivity.EXTRA_CAPTURE_ERROR)?.let { toast(it) }
+            return@registerForActivityResult
+        }
         val path = result.data?.getStringExtra(CameraCaptureActivity.EXTRA_CAPTURE_PATH).orEmpty()
         val name = result.data?.getStringExtra(CameraCaptureActivity.EXTRA_CAPTURE_NAME).orEmpty()
         val kind = result.data?.getStringExtra(CameraCaptureActivity.EXTRA_CAPTURE_KIND)
@@ -185,7 +188,6 @@ class SessionActivity : AppCompatActivity() {
                     val failedHost = sessionHost
                     sessionHost = null
                     failedHost?.destroy()
-                    toast(getString(R.string.session_failed))
                     checkSessionAfterStreamDisconnect(message)
                 }
             }
@@ -507,7 +509,6 @@ class SessionActivity : AppCompatActivity() {
 
     private fun retryViewerConnection(delayMs: Long = 0L) {
         if (sessionUnavailable) {
-            toast(getString(R.string.session_heartbeat_stale))
             return
         }
         if (viewerReconnectJob?.isActive == true) {
@@ -765,7 +766,7 @@ class SessionActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     private fun showEndingError(error: Throwable) {

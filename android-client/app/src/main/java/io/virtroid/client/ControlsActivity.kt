@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.text.InputType
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
@@ -37,6 +36,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.IOException
+import io.virtroid.client.ui.Notice
 
 class ControlsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionControlsBinding
@@ -271,7 +271,6 @@ class ControlsActivity : AppCompatActivity() {
                 runtime = it
                 runtimeState = null
                 bindRuntime(it)
-                toast(getString(R.string.runtime_saved))
             }.onFailure {
                 toast(it.virtroidDisplayMessage(this@ControlsActivity))
                 loadRuntime()
@@ -337,11 +336,7 @@ class ControlsActivity : AppCompatActivity() {
                     entitlement = latestEntitlement
                     latestEntitlement.startRuntimeBlockedMessage(this@ControlsActivity)?.let { throw IOException(it) }
                     retryWhileRuntimeHostProvisioning(
-                        onWaiting = { attempt, _ ->
-                            if (attempt == 1) {
-                                toast(getString(R.string.runtime_host_provisioning))
-                            }
-                        },
+                        onWaiting = { _, _ -> },
                         beforeAttempt = { withStarted { } },
                     ) {
                         api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
@@ -355,7 +350,6 @@ class ControlsActivity : AppCompatActivity() {
                 }.onSuccess {
                     runtime = it
                     runtimeState = null
-                    toast(getString(R.string.controls_restart_complete))
                 }.onFailure {
                     toast(it.virtroidDisplayMessage(this@ControlsActivity))
                     loadRuntime()
@@ -416,7 +410,6 @@ class ControlsActivity : AppCompatActivity() {
                         activeSessionStore.loadForRuntime(current.id)?.let {
                             activeSessionStore.clear()
                         }
-                        toast(getString(R.string.status_wiping_runtime))
                         finishToRuntimeList()
                     }.onFailure {
                         toast(it.virtroidDisplayMessage(this@ControlsActivity))
@@ -505,7 +498,6 @@ class ControlsActivity : AppCompatActivity() {
                         api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
                         snapshotRollbackGuard.clearRuntime(accountId, current.id)
                     }.onSuccess {
-                        toast(getString(R.string.runtime_delete_queued))
                         finishToRuntimeList()
                     }.onFailure {
                         toast(it.virtroidDisplayMessage(this@ControlsActivity))
@@ -549,7 +541,7 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     private fun RuntimeSummary.isReadyForSession(): Boolean {

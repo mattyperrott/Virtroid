@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -30,6 +29,7 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import io.virtroid.client.ui.Notice
 
 class SystemLogsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSystemLogsBinding
@@ -192,7 +192,6 @@ class SystemLogsActivity : AppCompatActivity() {
 
     private fun clearLogs() {
         appLogs.clearAll()
-        toast(getString(R.string.system_logs_cleared))
     }
 
     private fun visibleEntries(entries: List<AppLogEntry>): List<AppLogEntry> {
@@ -204,7 +203,7 @@ class SystemLogsActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

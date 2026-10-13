@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.view.WindowManager
 import android.view.LayoutInflater
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.core.view.ViewCompat
@@ -49,6 +48,7 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.max
+import io.virtroid.client.ui.Notice
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ScreenMyRuntimesBinding
@@ -362,8 +362,13 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeStatTwoValue.text = runtime.uptimeLabel()
         cardBinding.runtimeStatThreeValue.text = runtime.loadLabel()
 
-        cardBinding.runtimeErrorText.isVisible = !runtime.lastError.isNullOrBlank()
-        cardBinding.runtimeErrorText.text = runtime.lastError.orEmpty()
+        // A greyed-out Start says why: the runtime's own error, else the
+        // account limit that blocks starting it.
+        val startBlockedReason = latestEntitlement?.startRuntimeBlockedMessage(this)
+            ?.takeIf { state?.canStart ?: true }
+        val errorLine = runtime.lastError?.takeIf { it.isNotBlank() } ?: startBlockedReason
+        cardBinding.runtimeErrorText.isVisible = errorLine != null
+        cardBinding.runtimeErrorText.text = errorLine.orEmpty()
         runtime.lastError?.takeIf { it.isNotBlank() }?.let { error ->
             if (reportedRuntimeErrors[runtime.id] != error) {
                 reportedRuntimeErrors[runtime.id] = error
@@ -396,7 +401,6 @@ class MainActivity : AppCompatActivity() {
 
         cardBinding.connectRuntimeButton.setOnClickListener {
             if (isLocallyStopping) {
-                toast(getString(R.string.runtime_shutdown_in_progress))
                 refreshRuntimes(showBusy = false)
                 return@setOnClickListener
             }
@@ -404,7 +408,6 @@ class MainActivity : AppCompatActivity() {
         }
         cardBinding.startRuntimeButton.setOnClickListener {
             if (isLocallyStopping) {
-                toast(getString(R.string.runtime_shutdown_in_progress))
                 refreshRuntimes(showBusy = false)
                 return@setOnClickListener
             }
@@ -486,7 +489,6 @@ class MainActivity : AppCompatActivity() {
             appLogs.warn("Runtime ${runtime.name} still reported online after shutdown request; allowing reconnect", "session")
         }
         if (runtime.id in locallyStoppingRuntimeIds && !runtime.isStoppedForSession()) {
-            toast(getString(R.string.runtime_shutdown_in_progress))
             refreshRuntimes(showBusy = false)
             return
         }
@@ -549,7 +551,6 @@ class MainActivity : AppCompatActivity() {
         val deviceId = requireDeviceId() ?: return
         val baseUrl = currentBaseUrl()
         if (connectJob?.isActive == true) {
-            toast(getString(R.string.status_preparing_session))
             return
         }
         setBusy(true, getString(R.string.status_preparing_session))
@@ -1077,7 +1078,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Notice.show(this, message)
     }
 
     private fun RuntimeSummary.isReadyForSession(): Boolean {
