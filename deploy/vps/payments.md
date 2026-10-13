@@ -1,0 +1,54 @@
+# USDT deposits
+
+Users pay by sending USDT on the TRON network (TRC20) to a deposit address of
+their own. Deposits are credited to a USDT balance that runtime use and
+storage are paid from.
+
+- Each account's address is the key at `m/44'/195'/0'/0/i` of one BIP39 seed,
+  with `i` the account's deposit index (1, 2, ...). It is the path TronLink and
+  most Tron wallets use, so the seed also opens every address there.
+- `virtroidd` holds only the extended public key of that path
+  (`TRON_DEPOSIT_XPUB`): it derives the address a user sees, keeps the USDT
+  ledger, and credits each transfer once.
+- `virtroid-payments` (the `payments` profile) holds the seed. It lists
+  confirmed USDT transfers to the accounts' addresses through TronGrid, checks
+  each one again on a second node (PublicNode by default) and reports it to
+  `virtroidd`, signed with its own key (`PAYMENTS_PUBLIC_KEY`). It only watches
+  addresses its own seed derives, so every address users see is one this
+  wallet can spend. Addresses whose wallet was opened in the last day are
+  checked every 30 seconds, others every 30 minutes.
+
+Sweeping deposits into a treasury and converting them into Siacoin and Aleph
+credits are not built yet; deposits stay on their addresses until then.
+
+## What each party sees
+
+- TronGrid and PublicNode see which addresses this server asks about.
+- The blockchain is public: anyone can see each deposit address's transfers.
+- VPS root can read the seed and spend every deposit.
+
+## Turning it on
+
+1. A dedicated group for the secrets:
+
+   ```sh
+   sudo groupadd --system virtroid-payments
+   getent group virtroid-payments | cut -d: -f3
+   ```
+
+2. The secrets, using the backend image of the current release:
+
+   ```sh
+   sudo virtroid-configure-payments-secrets "$VIRTROID_BACKEND_IMAGE" <gid>
+   ```
+
+   Read `/etc/virtroid/secrets/payments-seed` once and copy the 24 words to
+   two offline places. They control every deposit.
+3. In `.env`: the `TRON_DEPOSIT_XPUB` and `PAYMENTS_PUBLIC_KEY` lines the
+   script printed, and `PAYMENTS_SECRET_GID=<gid>`. The release then starts the
+   `payments` profile.
+4. Optional: a TronGrid API key (free account) raises its rate limits; put it
+   in a secret file and point `TRONGRID_API_KEY_FILE` at it.
+
+The app's Wallet screen then shows each user's balance, deposit address and
+activity.

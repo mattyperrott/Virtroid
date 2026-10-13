@@ -39,6 +39,7 @@ compose_args=(
   --profile nids
   --profile provisioner
   --profile indexd
+  --profile payments
 )
 
 docker "${compose_args[@]}" config --quiet
@@ -116,6 +117,12 @@ grep -q 'POSTGRES_PASSWORD_FILE: /run/secrets/indexd-postgres-password' "${tmp_d
 grep -q 'SIA_INDEXER_ADMIN_PASSWORD_FILE: /run/secrets/sia-indexer-admin-password' "${tmp_dir}/rendered-compose.yml"
 grep -q 'SIA_KEY_SECRET_FILE: /run/secrets/sia-key-secret' "${tmp_dir}/rendered-compose.yml"
 grep -q 'indexd-database:' "${tmp_dir}/rendered-compose.yml"
+grep -q 'PAYMENTS_SEED_FILE: /run/secrets/payments-seed' "${tmp_dir}/rendered-compose.yml"
+grep -q 'payments-egress:' "${tmp_dir}/rendered-compose.yml"
+if grep -Eq 'PAYMENTS_SEED:|PAYMENTS_PRIVATE_KEY:' "${tmp_dir}/rendered-compose.yml"; then
+  echo "rendered Compose contains payments secrets in environment metadata" >&2
+  exit 1
+fi
 if grep -Eq 'recoveryPhrase|SIA_KEY_SECRET:|SIA_INDEXER_ADMIN_PASSWORD:' "${tmp_dir}/rendered-compose.yml"; then
   echo "rendered Compose contains indexd secrets in environment metadata" >&2
   exit 1

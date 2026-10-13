@@ -71,7 +71,7 @@ profiles="${VIRTROID_PROFILES:-edge}"
 IFS=',' read -ra profile_list <<< "${profiles}"
 for profile in "${profile_list[@]}"; do
   case "${profile}" in
-    edge|renterd|falco|nids|provisioner|indexd) ;;
+    edge|renterd|falco|nids|provisioner|indexd|payments) ;;
     *) die "unsupported production profile: ${profile}" ;;
   esac
 done
@@ -352,6 +352,9 @@ if profile_enabled edge; then
 fi
 if profile_enabled provisioner; then
   compose up -d --no-deps --no-build --pull never provisioner
+fi
+if profile_enabled payments; then
+  compose up -d --no-deps --no-build --pull never --force-recreate payments
 fi
 
 VIRTROID_ENV_FILE="${deploy_env}" \

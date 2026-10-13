@@ -451,6 +451,22 @@ validate_environment() {
     echo "SIA_INDEXER_APP_URL requires the indexd Compose profile" >&2
     exit 1
   fi
+  if profile_enabled payments; then
+    require_env TRON_DEPOSIT_XPUB PAYMENTS_PUBLIC_KEY PAYMENTS_SECRET_GID
+    if [[ ! "${PAYMENTS_SECRET_GID}" =~ ^[0-9]+$ ]] || [ "${PAYMENTS_SECRET_GID}" -le 0 ] || [ "${PAYMENTS_SECRET_GID}" -ge 65534 ]; then
+      echo "PAYMENTS_SECRET_GID must be a dedicated numeric group id" >&2
+      exit 1
+    fi
+    if [[ ! "${TRON_DEPOSIT_XPUB}" =~ ^xpub[1-9A-HJ-NP-Za-km-z]{107}$ ]]; then
+      echo "TRON_DEPOSIT_XPUB must be the xpub virtroid-payments printed" >&2
+      exit 1
+    fi
+    require_owned_secret /etc/virtroid/secrets/payments-seed "${PAYMENTS_SECRET_GID}" 440
+    require_owned_secret /etc/virtroid/secrets/payments-key "${PAYMENTS_SECRET_GID}" 440
+  elif [ -n "${TRON_DEPOSIT_XPUB:-}" ]; then
+    echo "TRON_DEPOSIT_XPUB requires the payments Compose profile, or deposits would never be credited" >&2
+    exit 1
+  fi
   if profile_enabled falco && ! require_digest_image FALCO_IMAGE; then
     invalid_image=1
   fi
@@ -907,6 +923,9 @@ fi
 if profile_enabled provisioner; then
   core_services+=(provisioner)
 fi
+if profile_enabled payments; then
+  core_services+=(payments)
+fi
 
 case "${command_name}" in
   validate)
@@ -950,6 +969,9 @@ case "${command_name}" in
     fi
     if profile_enabled provisioner; then
       restart_services+=(provisioner)
+    fi
+    if profile_enabled payments; then
+      restart_services+=(payments)
     fi
     compose up -d --no-build --pull never --force-recreate "${restart_services[@]}"
     health

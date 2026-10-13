@@ -187,6 +187,12 @@ write_env_var() {
   write_env_var SIA_KEY_SECRET_FILE ""
   write_env_var INDEXD_CONFIG_FILE /etc/virtroid/secrets/indexd.yml
   write_env_var INDEXD_POSTGRES_PASSWORD_FILE /etc/virtroid/secrets/indexd-postgres-password
+
+  # USDT (TRC20) deposits stay off until configure-payments-secrets.sh prints
+  # these two values (payments.md).
+  write_env_var TRON_DEPOSIT_XPUB ""
+  write_env_var PAYMENTS_PUBLIC_KEY ""
+  write_env_var PAYMENTS_SECRET_GID 65532
 } > "${env_file}"
 
 chmod 600 "${env_file}"

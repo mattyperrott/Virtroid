@@ -76,6 +76,9 @@ services:
       SIA_TOTAL_SHARDS: ${SIA_TOTAL_SHARDS:-30}
       SIA_MAX_PINNED_BYTES: ${SIA_MAX_PINNED_BYTES:-68719476736}
       SIA_FUND_TARGET_BYTES: ${SIA_FUND_TARGET_BYTES:-1073741824}
+      # USDT (TRC20) wallets (payments.md); an empty xpub leaves them off.
+      TRON_DEPOSIT_XPUB: ${TRON_DEPOSIT_XPUB:-}
+      PAYMENTS_PUBLIC_KEY: ${PAYMENTS_PUBLIC_KEY:-}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       SECURITY_EVENT_RATE_LIMIT_PER_MINUTE: ${SECURITY_EVENT_RATE_LIMIT_PER_MINUTE:-120}
       SECURITY_EVENT_RETENTION: ${SECURITY_EVENT_RETENTION:-168h}
@@ -263,6 +266,51 @@ services:
     networks:
       - control
       - app-egress
+
+  payments:
+    # Holds the hot wallet accounts' USDT deposit addresses belong to, finds
+    # confirmed deposits, checks each on a second Tron node and reports it to
+    # virtroidd (payments.md). It alone holds the seed.
+    image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
+    labels:
+      com.virtroid.source-sha: ${VIRTROID_SOURCE_SHA:?set VIRTROID_SOURCE_SHA to the deployed 40-character commit SHA}
+      com.virtroid.deployment-tree-sha256: ${VIRTROID_DEPLOYMENT_TREE_SHA256:?set VIRTROID_DEPLOYMENT_TREE_SHA256 to the reviewed deployment-tree digest}
+    container_name: virtroid-payments
+    profiles:
+      - payments
+    restart: unless-stopped
+    depends_on:
+      - virtroidd
+    entrypoint: ["/usr/local/bin/virtroid-payments", "run"]
+    group_add:
+      - "${PAYMENTS_SECRET_GID:-65532}"
+    environment:
+      CONTROL_PLANE_URL: http://virtroidd:8080
+      PAYMENTS_SEED_FILE: /run/secrets/payments-seed
+      PAYMENTS_PRIVATE_KEY_FILE: /run/secrets/payments-key
+      TRONGRID_URL: ${TRONGRID_URL:-https://api.trongrid.io}
+      TRON_VERIFY_URL: ${TRON_VERIFY_URL:-https://tron-rpc.publicnode.com}
+    volumes:
+      - /etc/virtroid/secrets/payments-seed:/run/secrets/payments-seed:ro
+      - /etc/virtroid/secrets/payments-key:/run/secrets/payments-key:ro
+    mem_limit: "${PAYMENTS_MEMORY_LIMIT:-256m}"
+    cpus: "${PAYMENTS_CPU_LIMIT:-0.5}"
+    pids_limit: ${PAYMENTS_PIDS_LIMIT:-64}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - control
+      - payments-egress
 
   virtroid-admin:
     image: ${VIRTROID_BACKEND_IMAGE:?set VIRTROID_BACKEND_IMAGE to the verified local Virtroid release tag}
@@ -652,6 +700,8 @@ networks:
   indexd-database:
     internal: true
   indexd-egress:
+    driver: bridge
+  payments-egress:
     driver: bridge
   edge-egress:
     driver: bridge

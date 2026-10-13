@@ -5,12 +5,15 @@
 //
 //	virtroid-payments seed FILE   write a new 24-word seed phrase to FILE
 //	                              (never printed) and print its xpub
-//	virtroid-payments xpub        print the xpub of PAYMENTS_SEED_FILE
+//	virtroid-payments public      print what virtroidd needs: the xpub of
+//	                              PAYMENTS_SEED_FILE and the public key of
+//	                              PAYMENTS_PRIVATE_KEY_FILE
 //	virtroid-payments run         watch deposits
 package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"log"
@@ -36,8 +39,8 @@ func main() {
 			usage()
 		}
 		err = writeSeed(os.Args[2])
-	case "xpub":
-		err = printXPub()
+	case "public":
+		err = printPublic()
 	case "run":
 		err = run()
 	default:
@@ -49,7 +52,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: virtroid-payments seed FILE | xpub | run")
+	fmt.Fprintln(os.Stderr, "usage: virtroid-payments seed FILE | public | run")
 	os.Exit(2)
 }
 
@@ -94,7 +97,23 @@ func openWallet() (*tron.Wallet, error) {
 	return tron.OpenWallet(string(phrase))
 }
 
-func printXPub() error {
+func signingKey() (*ecdsa.PrivateKey, string, error) {
+	keyFile := strings.TrimSpace(os.Getenv("PAYMENTS_PRIVATE_KEY_FILE"))
+	if keyFile == "" {
+		return nil, "", errors.New("PAYMENTS_PRIVATE_KEY_FILE is required")
+	}
+	keyMaterial, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, "", err
+	}
+	privateKey, publicKey, err := nodeauth.LoadPrivateKey(string(keyMaterial))
+	if err != nil || privateKey == nil {
+		return nil, "", errors.New("PAYMENTS_PRIVATE_KEY_FILE must hold a P-256 private key")
+	}
+	return privateKey, publicKey, nil
+}
+
+func printPublic() error {
 	wallet, err := openWallet()
 	if err != nil {
 		return err
@@ -103,7 +122,11 @@ func printXPub() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("TRON_DEPOSIT_XPUB=%s\n", xpub)
+	_, publicKey, err := signingKey()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("TRON_DEPOSIT_XPUB=%s\nPAYMENTS_PUBLIC_KEY=%s\n", xpub, publicKey)
 	return nil
 }
 
@@ -112,18 +135,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	keyFile := strings.TrimSpace(os.Getenv("PAYMENTS_PRIVATE_KEY_FILE"))
-	controlPlaneURL := strings.TrimSpace(os.Getenv("CONTROL_PLANE_URL"))
-	if keyFile == "" || controlPlaneURL == "" {
-		return errors.New("PAYMENTS_PRIVATE_KEY_FILE and CONTROL_PLANE_URL are required")
-	}
-	keyMaterial, err := os.ReadFile(keyFile)
+	privateKey, _, err := signingKey()
 	if err != nil {
 		return err
 	}
-	privateKey, _, err := nodeauth.LoadPrivateKey(string(keyMaterial))
-	if err != nil || privateKey == nil {
-		return errors.New("PAYMENTS_PRIVATE_KEY_FILE must hold a P-256 private key")
+	controlPlaneURL := strings.TrimSpace(os.Getenv("CONTROL_PLANE_URL"))
+	if controlPlaneURL == "" {
+		return errors.New("CONTROL_PLANE_URL is required")
 	}
 	apiKey := ""
 	if path := strings.TrimSpace(os.Getenv("TRONGRID_API_KEY_FILE")); path != "" {

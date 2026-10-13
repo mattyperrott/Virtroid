@@ -28,6 +28,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroid-viewercrypt ./cmd/viewercrypt
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/falco-forwarder ./cmd/falco-forwarder
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroid-admin ./cmd/virtroid-admin
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/virtroid-payments ./cmd/virtroid-payments
 
 FROM ${BACKEND_RUNTIME_IMAGE}
 
@@ -52,6 +53,7 @@ COPY --from=build /out/virtnoded /usr/local/bin/virtnoded
 COPY --from=build /out/virtroid-viewercrypt /usr/local/bin/virtroid-viewercrypt
 COPY --from=build /out/falco-forwarder /usr/local/bin/falco-forwarder
 COPY --from=build /out/virtroid-admin /usr/local/bin/virtroid-admin
+COPY --from=build /out/virtroid-payments /usr/local/bin/virtroid-payments
 
 USER virtroid
 WORKDIR /home/virtroid

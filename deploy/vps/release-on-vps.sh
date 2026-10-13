@@ -131,6 +131,10 @@ fi
 if grep -Eq '^SIA_INDEXER_APP_URL=https://' /opt/virtroid/deploy/vps/.env 2>/dev/null; then
   profiles="${profiles},indexd"
 fi
+# The payments service runs once the operator set its public key (payments.md).
+if grep -Eq '^PAYMENTS_PUBLIC_KEY=.+' /opt/virtroid/deploy/vps/.env 2>/dev/null; then
+  profiles="${profiles},payments"
+fi
 VIRTROID_PROFILES="${profiles}" \
   /usr/local/sbin/virtroid-apply-local-release "${stage}" "${expected_fingerprint}"
 trap - EXIT HUP INT TERM

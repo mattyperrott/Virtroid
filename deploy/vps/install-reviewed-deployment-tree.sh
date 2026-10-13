@@ -150,6 +150,7 @@ calculate_tree_digest() {
 runtime_sources=(
   configure-renterd-secrets.sh
   configure-indexd-secrets.sh
+  configure-payments-secrets.sh
   renterd-admin.sh
   renterd-smoke-test.sh
   derive-node-fingerprint.sh
@@ -173,6 +174,7 @@ runtime_sources=(
 runtime_destinations=(
   /usr/local/sbin/virtroid-configure-renterd-secrets
   /usr/local/sbin/virtroid-configure-indexd-secrets
+  /usr/local/sbin/virtroid-configure-payments-secrets
   /usr/local/sbin/virtroid-renterd-admin
   /usr/local/sbin/virtroid-renterd-smoke-test
   /usr/local/sbin/virtroid-derive-node-fingerprint
@@ -194,7 +196,7 @@ runtime_destinations=(
   /etc/apt/apt.conf.d/52virtroid-unattended-upgrades
 )
 runtime_modes=(
-  0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
+  0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
   0644 0644 0644 0640 0644 0644
   0755 0644
 )
@@ -233,12 +235,12 @@ fi
 required_tree_files=(
   .env.example README.md apply-local-release.sh build-local-release.sh
   certbot-deploy-hook.sh configure-host-firewall.sh
-  configure-indexd-secrets.sh configure-renterd-secrets.sh create-deploy-user.sh
+  configure-indexd-secrets.sh configure-payments-secrets.sh configure-renterd-secrets.sh create-deploy-user.sh
   deploy.sh deployment-tree-digest.sh
   derive-node-fingerprint.sh docker-compose.yml enable-key-only-ssh.sh
   fail2ban-virtroid.conf audit-virtroid.rules generate-env.sh haproxy.cfg
   install-reviewed-deployment-tree.sh prepare-redroid-host.sh
-  operator-console-disabled snp-measurements-disabled sia-disabled indexd.md
+  operator-console-disabled snp-measurements-disabled sia-disabled indexd.md payments.md
   release-on-vps.sh renterd-admin.sh renterd-mysql-init.sql
   renterd-smoke-test.sh
   redroid-binderfs.service release.env.example renterd.md
