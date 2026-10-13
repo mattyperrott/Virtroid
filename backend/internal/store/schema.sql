@@ -290,11 +290,13 @@ ALTER TABLE account_storage ADD COLUMN IF NOT EXISTS last_preflight_status TEXT;
 ALTER TABLE account_storage ADD COLUMN IF NOT EXISTS last_preflight_json TEXT;
 ALTER TABLE account_storage ADD COLUMN IF NOT EXISTS last_preflight_at TIMESTAMPTZ;
 
+-- A new account gets a trial: one runtime and an hour of running time. Its
+-- first USDT deposit makes it 'paid' and lifts the trial's limits.
 CREATE TABLE IF NOT EXISTS account_entitlements (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     source TEXT NOT NULL DEFAULT 'trial',
     status TEXT NOT NULL DEFAULT 'active',
-    runtime_limit INTEGER NOT NULL DEFAULT 3,
+    runtime_limit INTEGER NOT NULL DEFAULT 1,
     active_runtime_limit INTEGER NOT NULL DEFAULT 1,
     runtime_starts_per_day INTEGER NOT NULL DEFAULT 10,
     storage_bytes_limit BIGINT NOT NULL DEFAULT 1073741824,
@@ -306,13 +308,15 @@ CREATE TABLE IF NOT EXISTS account_entitlements (
 
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'trial';
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
-ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_limit INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_limit INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS active_runtime_limit INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS runtime_starts_per_day INTEGER NOT NULL DEFAULT 10;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS storage_bytes_limit BIGINT NOT NULL DEFAULT 1073741824;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS trial_runtime_seconds INTEGER NOT NULL DEFAULT 3600;
 ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
-ALTER TABLE account_entitlements ALTER COLUMN runtime_limit SET DEFAULT 3;
+ALTER TABLE account_entitlements ALTER COLUMN runtime_limit SET DEFAULT 1;
+-- Seconds a trial account's runtimes have run, metered every minute.
+ALTER TABLE account_entitlements ADD COLUMN IF NOT EXISTS trial_runtime_seconds_used BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE account_entitlements ALTER COLUMN runtime_starts_per_day SET DEFAULT 10;
 
 UPDATE account_entitlements

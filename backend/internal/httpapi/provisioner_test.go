@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/nodeauth"
@@ -112,6 +114,8 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	defer func() { _ = st.DeleteAccount(context.Background(), accountID) }()
+	// The test makes a second runtime, more than a trial allows.
+	raiseRuntimeLimit(t, accountID)
 
 	// Shared region: the usual no-node error.
 	resp := httptest.NewRecorder()
@@ -366,5 +370,17 @@ func TestSNPMeasurementsAreServedAsSigned(t *testing.T) {
 	resp := get()
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"payload":"cGF5bG9hZA=="`) {
 		t.Fatalf("list response = %d %s", resp.Code, resp.Body.String())
+	}
+}
+
+func raiseRuntimeLimit(t *testing.T, accountID string) {
+	t.Helper()
+	db, err := sql.Open("pgx", os.Getenv("VIRTROID_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE account_entitlements SET runtime_limit = 10 WHERE account_id = $1`, accountID); err != nil {
+		t.Fatalf("raise runtime limit: %v", err)
 	}
 }

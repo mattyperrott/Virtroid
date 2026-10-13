@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 	"time"
@@ -40,99 +41,148 @@ func (s *Store) SetPricing(pricing Pricing) {
 	s.pricing = pricing
 }
 
-// ChargeResult is what one charging pass did.
-type ChargeResult struct {
+// UsageResult is what one metering pass did.
+type UsageResult struct {
 	RuntimeCharges    int
 	StorageCharges    int
+	TrialSeconds      int64
 	StoppedRuntimeIDs []string
 }
 
-// ChargeUsage charges paid accounts for runtime time since the last pass and
-// for each day's storage, then queues stops for runtimes of accounts whose
-// balance has run out. Runtime time accumulates into one ledger entry per
-// runtime and UTC hour, storage into one per account and UTC day, so passing
-// again, or twice at once, never charges anything twice.
-func (s *Store) ChargeUsage(ctx context.Context) (ChargeResult, error) {
-	var result ChargeResult
-	if !s.pricing.Enabled() {
-		return result, nil
-	}
+// MeterUsage runs every minute. It adds the time trial accounts' runtimes ran
+// to their trial, charges paid accounts for runtime time and each day's
+// storage, and queues stops for runtimes whose trial hour or balance is used
+// up. Runtime time is counted from where the last pass stopped, and charges
+// accumulate into one ledger entry per runtime and UTC hour and one per
+// account and UTC month for storage, so passing again, or twice at once,
+// never counts anything twice.
+func (s *Store) MeterUsage(ctx context.Context) (UsageResult, error) {
+	var result UsageResult
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
 	defer tx.Rollback()
 
-	if result.RuntimeCharges, err = chargeRuntimeTimeTX(ctx, tx, s.pricing.RuntimeHourMicro); err != nil {
-		return result, fmt.Errorf("charge runtime time: %w", err)
+	if result.RuntimeCharges, result.TrialSeconds, err = meterRuntimeTimeTX(ctx, tx, s.pricing.RuntimeHourMicro); err != nil {
+		return result, fmt.Errorf("meter runtime time: %w", err)
 	}
-	if result.StorageCharges, err = chargeStorageTX(ctx, tx, s.pricing.StorageGiBMonthMicro); err != nil {
-		return result, fmt.Errorf("charge storage: %w", err)
+	if s.pricing.Enabled() {
+		if result.StorageCharges, err = chargeStorageTX(ctx, tx, s.pricing.StorageGiBMonthMicro); err != nil {
+			return result, fmt.Errorf("charge storage: %w", err)
+		}
 	}
-	if result.StoppedRuntimeIDs, err = stopRuntimesWithoutBalanceTX(ctx, tx); err != nil {
-		return result, fmt.Errorf("stop runtimes without balance: %w", err)
+	trialOver, err := queueRuntimeStopsTX(ctx, tx,
+		`SELECT r.id
+		   FROM runtimes r
+		   JOIN account_entitlements e ON e.account_id = r.account_id
+		  WHERE e.source = 'trial'
+		    AND r.deleted_at IS NULL
+		    AND r.desired_state = 'running'
+		    AND e.trial_runtime_seconds_used >= e.trial_runtime_seconds
+		    FOR UPDATE OF r SKIP LOCKED`,
+		"trial runtime time used up",
+		"Runtime stop queued because the trial's hour of running time is used up.",
+	)
+	if err != nil {
+		return result, fmt.Errorf("stop runtimes out of trial time: %w", err)
+	}
+	result.StoppedRuntimeIDs = trialOver
+	if s.pricing.Enabled() {
+		withoutBalance, err := queueRuntimeStopsTX(ctx, tx,
+			`SELECT r.id
+			   FROM runtimes r
+			   JOIN account_entitlements e ON e.account_id = r.account_id
+			  WHERE e.source = 'paid'
+			    AND r.deleted_at IS NULL
+			    AND r.desired_state = 'running'
+			    AND (SELECT COALESCE(SUM(l.amount_micro), 0) FROM account_ledger l WHERE l.account_id = r.account_id) <= 0
+			    FOR UPDATE OF r SKIP LOCKED`,
+			"USDT balance used up",
+			"Runtime stop queued because the account's USDT balance is used up.",
+		)
+		if err != nil {
+			return result, fmt.Errorf("stop runtimes without balance: %w", err)
+		}
+		result.StoppedRuntimeIDs = append(result.StoppedRuntimeIDs, withoutBalance...)
 	}
 	return result, tx.Commit()
 }
 
-// chargeRuntimeTimeTX charges each running runtime of a paid account for the
-// time since it was last charged or started. A runtime that is desired running
-// but down (in error or on a lost node) is not charged for that time.
-func chargeRuntimeTimeTX(ctx context.Context, tx *sql.Tx, hourMicro int64) (int, error) {
+// meterRuntimeTimeTX counts the time each running runtime of a trial or paid
+// account ran since the last pass or its start: into the trial for a trial
+// account, as a charge for a paid one. Only time the node reports the runtime
+// running counts; booting, or being down in error or on a lost node, does not.
+func meterRuntimeTimeTX(ctx context.Context, tx *sql.Tx, hourMicro int64) (int, int64, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT r.id::text, r.account_id::text, r.status,
+		`SELECT r.id::text, r.account_id::text, e.source, r.status,
 		        GREATEST(COALESCE(r.billed_through, r.started_at), r.started_at), NOW()
 		   FROM runtimes r
 		   JOIN account_entitlements e ON e.account_id = r.account_id
-		  WHERE e.source = 'paid'
+		  WHERE e.source IN ('trial', 'paid')
 		    AND r.deleted_at IS NULL
 		    AND r.desired_state = 'running'
 		    AND r.started_at IS NOT NULL
 		    FOR UPDATE OF r SKIP LOCKED`,
 	)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	type due struct {
-		runtimeID, accountID, status string
-		since, now                   time.Time
+		runtimeID, accountID, source, status string
+		since, now                           time.Time
 	}
 	var runtimes []due
 	for rows.Next() {
 		var d due
-		if err := rows.Scan(&d.runtimeID, &d.accountID, &d.status, &d.since, &d.now); err != nil {
+		if err := rows.Scan(&d.runtimeID, &d.accountID, &d.source, &d.status, &d.since, &d.now); err != nil {
 			rows.Close()
-			return 0, err
+			return 0, 0, err
 		}
 		runtimes = append(runtimes, d)
 	}
 	if err := rows.Close(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	charges := 0
+	var trialSeconds int64
 	for _, d := range runtimes {
-		if d.status == "starting" || d.status == "running" {
-			for _, part := range splitByHour(d.since, d.now) {
-				amount := mulDivRound(part.duration.Microseconds(), hourMicro, time.Hour.Microseconds())
-				if amount <= 0 {
-					continue
+		if d.status == "running" && d.now.After(d.since) {
+			switch d.source {
+			case "trial":
+				seconds := int64(math.Round(d.now.Sub(d.since).Seconds()))
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE account_entitlements
+					    SET trial_runtime_seconds_used = trial_runtime_seconds_used + $2, updated_at = NOW()
+					  WHERE account_id = $1`,
+					d.accountID, seconds,
+				); err != nil {
+					return charges, trialSeconds, err
 				}
-				reference := "runtime:" + d.runtimeID + ":" + part.start.Format("2006-01-02T15")
-				if err := addUsageChargeTX(ctx, tx, d.accountID, "runtime", reference, amount); err != nil {
-					return charges, err
+				trialSeconds += seconds
+			case "paid":
+				for _, part := range splitByHour(d.since, d.now) {
+					amount := mulDivRound(part.duration.Microseconds(), hourMicro, time.Hour.Microseconds())
+					if amount <= 0 {
+						continue
+					}
+					reference := "runtime:" + d.runtimeID + ":" + part.start.Format("2006-01-02T15")
+					if err := addUsageChargeTX(ctx, tx, d.accountID, "runtime", reference, amount); err != nil {
+						return charges, trialSeconds, err
+					}
+					charges++
 				}
-				charges++
 			}
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE runtimes SET billed_through = $2 WHERE id = $1`,
 			d.runtimeID, d.now,
 		); err != nil {
-			return charges, err
+			return charges, trialSeconds, err
 		}
 	}
-	return charges, nil
+	return charges, trialSeconds, nil
 }
 
 // chargeStorageTX charges each paid account once per UTC day for the
@@ -192,20 +242,11 @@ func addUsageChargeTX(ctx context.Context, tx *sql.Tx, accountID, kind, referenc
 	return err
 }
 
-// stopRuntimesWithoutBalanceTX queues a stop for every running runtime of a
-// paid account whose balance is zero or less. Their stored data is kept.
-func stopRuntimesWithoutBalanceTX(ctx context.Context, tx *sql.Tx) ([]string, error) {
+// queueRuntimeStopsTX queues a stop for the runtimes candidates selects, closes
+// their sessions and says why in their logs. Their stored data is kept.
+func queueRuntimeStopsTX(ctx context.Context, tx *sql.Tx, candidates, sessionReason, logMessage string) ([]string, error) {
 	runtimeIDs, err := queryStringColumnTX(ctx, tx,
-		`WITH candidates AS (
-		     SELECT r.id
-		       FROM runtimes r
-		       JOIN account_entitlements e ON e.account_id = r.account_id
-		      WHERE e.source = 'paid'
-		        AND r.deleted_at IS NULL
-		        AND r.desired_state = 'running'
-		        AND (SELECT COALESCE(SUM(l.amount_micro), 0) FROM account_ledger l WHERE l.account_id = r.account_id) <= 0
-		        FOR UPDATE OF r SKIP LOCKED
-		 )
+		`WITH candidates AS (`+candidates+`)
 		 UPDATE runtimes r
 		    SET status = CASE WHEN r.host_id IS NULL THEN 'stopped' ELSE 'stopping' END,
 		        desired_state = 'stopped',
@@ -222,10 +263,10 @@ func stopRuntimesWithoutBalanceTX(ctx context.Context, tx *sql.Tx) ([]string, er
 		return nil, err
 	}
 	for _, runtimeID := range runtimeIDs {
-		if err := closeRuntimeSessionsTX(ctx, tx, runtimeID, "USDT balance used up"); err != nil {
+		if err := closeRuntimeSessionsTX(ctx, tx, runtimeID, sessionReason); err != nil {
 			return nil, err
 		}
-		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because the account's USDT balance is used up."); err != nil {
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", logMessage); err != nil {
 			return nil, err
 		}
 		if _, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtimeID); err != nil {

@@ -104,6 +104,27 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/trialBannerText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_accent_soft_12"
+            android:drawablePadding="10dp"
+            android:fontFamily="sans"
+            android:foreground="?attr/selectableItemBackground"
+            android:paddingStart="16dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="12dp"
+            android:textColor="@color/v_text_primary"
+            android:textSize="14sp"
+            android:visibility="gone"
+            app:drawableStartCompat="@drawable/ic_wallet"
+            app:drawableTint="@color/v_accent" />
+
+        <TextView
             android:id="@+id/runtimeEmptyText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

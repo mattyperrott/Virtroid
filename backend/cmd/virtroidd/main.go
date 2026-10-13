@@ -48,7 +48,7 @@ func main() {
 	go appCatalogSyncLoop(ctx, pg, cfg)
 	go provisioningLoop(ctx, pg, cfg)
 	go siaReleaseLoop(ctx, pg, sia)
-	go chargingLoop(ctx, pg)
+	go usageLoop(ctx, pg)
 
 	server := &http.Server{
 		Addr:              cfg.BindAddr,
@@ -164,19 +164,19 @@ func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerCo
 	}
 }
 
-// chargingLoop charges paid accounts for their use every minute and stops
-// their runtimes once the balance is used up.
-func chargingLoop(ctx context.Context, pg *store.Store) {
-	charge := func() {
-		runBackgroundIteration("charging", func() {
-			result, err := pg.ChargeUsage(ctx)
+// usageLoop meters runtime use every minute: trial time, and charges to paid
+// accounts. It stops runtimes whose trial hour or balance is used up.
+func usageLoop(ctx context.Context, pg *store.Store) {
+	meter := func() {
+		runBackgroundIteration("usage metering", func() {
+			result, err := pg.MeterUsage(ctx)
 			if err != nil {
-				log.Printf("charging failed: %v", err)
+				log.Printf("usage metering failed: %v", err)
 				return
 			}
 			if result.StorageCharges > 0 || len(result.StoppedRuntimeIDs) > 0 {
-				log.Printf("charging: runtime_charges=%d storage_charges=%d runtimes_stopped_without_balance=%d",
-					result.RuntimeCharges, result.StorageCharges, len(result.StoppedRuntimeIDs))
+				log.Printf("usage: runtime_charges=%d storage_charges=%d trial_seconds=%d runtimes_stopped=%d",
+					result.RuntimeCharges, result.StorageCharges, result.TrialSeconds, len(result.StoppedRuntimeIDs))
 			}
 		})
 	}
@@ -187,7 +187,7 @@ func chargingLoop(ctx context.Context, pg *store.Store) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			charge()
+			meter()
 		}
 	}
 }

@@ -108,6 +108,8 @@ func TestWalletDepositsPostgresIntegration(t *testing.T) {
 	type walletView struct {
 		Currency       string                `json:"currency"`
 		BalanceMicro   int64                 `json:"balance_micro"`
+		Plan           string                `json:"plan"`
+		TrialLeft      int64                 `json:"trial_seconds_remaining"`
 		DepositAddress string                `json:"deposit_address"`
 		Deposits       []store.WalletDeposit `json:"deposits"`
 		Entries        []store.LedgerEntry   `json:"entries"`
@@ -126,7 +128,8 @@ func TestWalletDepositsPostgresIntegration(t *testing.T) {
 		return view
 	}
 	view := openWallet()
-	if view.Currency != "USDT" || view.BalanceMicro != 0 || !tron.ValidAddress(view.DepositAddress) || len(view.Deposits) != 0 {
+	if view.Currency != "USDT" || view.BalanceMicro != 0 || !tron.ValidAddress(view.DepositAddress) || len(view.Deposits) != 0 ||
+		view.Plan != "trial" || view.TrialLeft != 3600 {
 		t.Fatalf("new wallet = %+v", view)
 	}
 	if again := openWallet(); again.DepositAddress != view.DepositAddress {
@@ -188,7 +191,8 @@ func TestWalletDepositsPostgresIntegration(t *testing.T) {
 		}
 	}
 	view = openWallet()
-	if view.BalanceMicro != 25_000_000 || len(view.Deposits) != 1 || len(view.Entries) != 1 || view.Entries[0].Kind != "deposit" {
+	if view.BalanceMicro != 25_000_000 || len(view.Deposits) != 1 || len(view.Entries) != 1 || view.Entries[0].Kind != "deposit" ||
+		view.Plan != "paid" || view.TrialLeft != 0 {
 		t.Fatalf("wallet after the deposit = %+v", view)
 	}
 

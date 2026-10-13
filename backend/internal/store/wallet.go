@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// What a paid account may use: the trial's limits lifted. One runtime still
+// runs at a time, since each account's VM has room for one.
+const (
+	PaidRuntimeLimit        = 10
+	PaidRuntimeStartsPerDay = 1000
+	PaidStorageBytesLimit   = int64(64 << 30)
+)
+
 // ErrDepositAccountNotFound means no live account owns a deposit index.
 var ErrDepositAccountNotFound = errors.New("no account owns this deposit address")
 
@@ -16,8 +24,12 @@ var ErrDepositAccountNotFound = errors.New("no account owns this deposit address
 type Wallet struct {
 	DepositIndex int64
 	BalanceMicro int64
-	Deposits     []WalletDeposit
-	Entries      []LedgerEntry
+	// Plan is the account's entitlement source: trial, paid, or one the
+	// operator set. A trial's running time left is in TrialSecondsLeft.
+	Plan             string
+	TrialSecondsLeft int64
+	Deposits         []WalletDeposit
+	Entries          []LedgerEntry
 }
 
 type WalletDeposit struct {
@@ -65,6 +77,19 @@ func (s *Store) AccountWallet(ctx context.Context, accountID string) (Wallet, er
 		accountID,
 	).Scan(&wallet.BalanceMicro); err != nil {
 		return wallet, err
+	}
+	err = tx.QueryRowContext(ctx,
+		`SELECT source, GREATEST(trial_runtime_seconds - trial_runtime_seconds_used, 0)
+		   FROM account_entitlements WHERE account_id = $1`,
+		accountID,
+	).Scan(&wallet.Plan, &wallet.TrialSecondsLeft)
+	if errors.Is(err, sql.ErrNoRows) {
+		wallet.Plan = "none"
+	} else if err != nil {
+		return wallet, err
+	}
+	if wallet.Plan != "trial" {
+		wallet.TrialSecondsLeft = 0
 	}
 
 	rows, err := tx.QueryContext(ctx,
@@ -203,13 +228,22 @@ func (s *Store) CreditDeposit(ctx context.Context, deposit DepositCredit) (bool,
 	); err != nil {
 		return false, err
 	}
-	// The first deposit ends the trial: from now on the account pays for use.
-	// Charging starts now, not from when a running runtime was started.
+	// The first deposit ends the trial and lifts its limits: from now on the
+	// account pays for use. Charging starts now, not from when a running
+	// runtime was started.
 	switched, err := tx.ExecContext(ctx,
 		`UPDATE account_entitlements
-		    SET source = 'paid', expires_at = NULL, updated_at = NOW()
+		    SET source = 'paid',
+		        expires_at = NULL,
+		        runtime_limit = GREATEST(runtime_limit, $2),
+		        runtime_starts_per_day = GREATEST(runtime_starts_per_day, $3),
+		        storage_bytes_limit = GREATEST(storage_bytes_limit, $4),
+		        updated_at = NOW()
 		  WHERE account_id = $1 AND source = 'trial'`,
 		accountID,
+		PaidRuntimeLimit,
+		PaidRuntimeStartsPerDay,
+		PaidStorageBytesLimit,
 	)
 	if err != nil {
 		return false, err

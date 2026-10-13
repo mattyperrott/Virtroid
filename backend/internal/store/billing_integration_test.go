@@ -90,9 +90,9 @@ func TestPostgresUsageCharges(t *testing.T) {
 		}
 		return total
 	}
-	charge := func() ChargeResult {
+	charge := func() UsageResult {
 		t.Helper()
-		result, err := st.ChargeUsage(ctx)
+		result, err := st.MeterUsage(ctx)
 		if err != nil {
 			t.Fatalf("charge usage: %v", err)
 		}
@@ -100,13 +100,25 @@ func TestPostgresUsageCharges(t *testing.T) {
 	}
 	near := func(got, want, tolerance int64) bool { return got >= want-tolerance && got <= want+tolerance }
 
-	trialAccount, _ := newRunningRuntime()
+	trialAccount, trialRuntime := newRunningRuntime()
 	paidAccount, paidRuntime := newRunningRuntime()
+	trialUsed := func() int64 {
+		t.Helper()
+		used, err := trialRuntimeSecondsUsed(ctx, st.db, trialAccount)
+		if err != nil {
+			t.Fatalf("trial time used: %v", err)
+		}
+		return used
+	}
 
-	// Charging is off until prices are set.
+	// Charging is off until prices are set, but trial time always counts: the
+	// trial runtime has run for half an hour.
 	deposit(paidAccount, 1_000_000)
 	if result := charge(); result.RuntimeCharges != 0 || result.StorageCharges != 0 {
 		t.Fatalf("charged without prices: %+v", result)
+	}
+	if used := trialUsed(); used < 1795 || used > 1805 {
+		t.Fatalf("trial time used = %d, want about 1800", used)
 	}
 
 	// 1 USDT per runtime hour is 1000 per second; 64 MiB at this price is
@@ -165,9 +177,35 @@ func TestPostgresUsageCharges(t *testing.T) {
 		t.Fatalf("runtime ledger entries = %d err=%v, want one per hour", hourEntries, err)
 	}
 
-	// Trial accounts are never charged.
+	// Trial accounts are never charged; their time adds up to the hour, after
+	// which their runtime stops and cannot start again.
 	if got := charged(trialAccount, "runtime") + charged(trialAccount, "storage"); got != 0 {
 		t.Fatalf("trial account charged %d", got)
+	}
+	exec(`UPDATE runtimes SET billed_through = NOW() - INTERVAL '31 minutes' WHERE id = $1`, trialRuntime)
+	if result := charge(); !slices.Contains(result.StoppedRuntimeIDs, trialRuntime) {
+		t.Fatalf("trial runtime past its hour not stopped: %+v (used %d)", result, trialUsed())
+	}
+	trialSummary, err := st.GetAccountEntitlementSummary(ctx, trialAccount)
+	if err != nil {
+		t.Fatalf("trial summary: %v", err)
+	}
+	if trialSummary.RuntimeLimit != 1 || trialSummary.CanStartRuntime || trialSummary.StartRuntimeBlockedCode != RuntimeTrialTimeExceededCode ||
+		trialSummary.TrialRuntimeSecondsRemaining != 0 {
+		t.Fatalf("trial summary after the hour = %+v", trialSummary)
+	}
+	if _, err := st.StartRuntime(ctx, trialAccount, trialRuntime); !errors.Is(err, ErrRuntimeTrialTimeQuota) {
+		t.Fatalf("start after the trial error = %v, want %v", err, ErrRuntimeTrialTimeQuota)
+	}
+	// A deposit ends the trial and lifts its limits.
+	deposit(trialAccount, 5_000_000)
+	trialSummary, err = st.GetAccountEntitlementSummary(ctx, trialAccount)
+	if err != nil {
+		t.Fatalf("summary after deposit: %v", err)
+	}
+	if trialSummary.Source != "paid" || trialSummary.RuntimeLimit != PaidRuntimeLimit || trialSummary.StorageBytesLimit != PaidStorageBytesLimit ||
+		trialSummary.RuntimeStartsPerDay != PaidRuntimeStartsPerDay || !trialSummary.CanStartRuntime || !trialSummary.CanCreateRuntime {
+		t.Fatalf("summary after deposit = %+v", trialSummary)
 	}
 
 	// Another 30 minutes use up the balance: the runtime is stopped and cannot

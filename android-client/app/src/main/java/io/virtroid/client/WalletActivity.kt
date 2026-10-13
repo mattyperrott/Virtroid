@@ -106,8 +106,14 @@ class WalletActivity : AppCompatActivity() {
                     ),
                 )
             }
-            if (wallet.deposits.isEmpty()) {
-                add(getString(R.string.wallet_trial_note))
+            if (wallet.plan == "trial") {
+                add(
+                    if (wallet.trialSecondsRemaining > 0) {
+                        getString(R.string.wallet_trial_note, trialMinutes(this@WalletActivity, wallet.trialSecondsRemaining))
+                    } else {
+                        getString(R.string.wallet_trial_used_up)
+                    },
+                )
             }
         }
         binding.walletPricingText.text = pricing.joinToString("\n\n")

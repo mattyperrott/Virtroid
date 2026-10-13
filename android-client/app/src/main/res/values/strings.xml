@@ -157,6 +157,9 @@
     <string name="entitlement_unavailable">Runtime allowance is unavailable.</string>
     <string name="entitlement_required">Storage or plan setup is required before creating runtimes.</string>
     <string name="entitlement_runtime_quota_reached">Runtime limit reached for this account.</string>
+    <string name="entitlement_trial_runtime_limit">Your free trial includes one runtime. Add USDT in your wallet to create more.</string>
+    <string name="trial_banner_time_left">Free trial: %1$s of running time left. Tap to add USDT and lift the trial limits.</string>
+    <string name="trial_banner_used_up">Your free hour is used up. Tap to add USDT and keep going.</string>
     <string name="entitlement_active_runtime_limit">Stop the active runtime before starting another one.</string>
     <string name="entitlement_start_quota_reached">Daily runtime start limit reached.</string>
     <string name="entitlement_trial_time_reached">Your trial time is used up. Add USDT in your wallet to keep using runtimes.</string>
@@ -569,5 +572,10 @@
     <string name="wallet_unavailable">Deposits aren\'t available yet.</string>
     <string name="wallet_load_failed">Couldn\'t load your wallet: %1$s</string>
     <string name="wallet_pricing">Runtimes cost %1$s USDT per hour while running. Stored runtime data costs %2$s USDT per GB per month.</string>
-    <string name="wallet_trial_note">Your free trial ends with your first deposit. After that, use is paid from this balance.</string>
+    <string name="wallet_trial_note">Free trial: one runtime and %1$s of running time left. Your first deposit ends the trial and lifts its limits; after that, use is paid from this balance.</string>
+    <string name="wallet_trial_used_up">Your free hour of running time is used up. Deposit USDT to keep using your runtime. Your first deposit also lifts the trial\'s limits.</string>
+    <plurals name="trial_minutes">
+        <item quantity="one">%d minute</item>
+        <item quantity="other">%d minutes</item>
+    </plurals>
 </resources>

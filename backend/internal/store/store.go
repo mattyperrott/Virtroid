@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101304
-	schemaVersionLabel               = "operator services 2026-10-13"
+	currentSchemaVersion       int64 = 2026101305
+	schemaVersionLabel               = "running-time trial 2026-10-13"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -6239,60 +6239,6 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		return SessionReapResult{}, err
 	}
 
-	trialQuotaRuntimeIDs, err := queryStringColumnTX(ctx, tx,
-		`WITH usage AS (
-		     SELECT r.id,
-		            e.trial_runtime_seconds,
-		            COALESCE(FLOOR(SUM(GREATEST(
-		                0,
-		                EXTRACT(EPOCH FROM (
-		                    CASE
-		                        WHEN s.status IN ('pending', 'active') THEN LEAST(NOW(), s.expires_at)
-		                        ELSE COALESCE(s.ended_at, s.updated_at, s.created_at)
-		                    END - s.created_at
-		                ))
-		            ))), 0)::bigint AS seconds_used
-		       FROM runtimes r
-		       JOIN account_entitlements e ON e.account_id = r.account_id
-		       LEFT JOIN sessions s ON s.runtime_id = r.id
-		      WHERE r.deleted_at IS NULL
-		        AND r.desired_state = 'running'
-		        AND e.source = 'trial'
-		        AND e.status = 'active'
-		      GROUP BY r.id, e.trial_runtime_seconds
-		 ),
-		 candidates AS (
-		     SELECT id
-		       FROM usage
-		      WHERE trial_runtime_seconds <= 0 OR seconds_used >= trial_runtime_seconds
-		 ),
-		 updated AS (
-		     UPDATE runtimes r
-		        SET status = CASE WHEN r.host_id IS NULL THEN 'stopped' ELSE 'stopping' END,
-		            desired_state = 'stopped',
-		            operation_generation = r.operation_generation + 1,
-		            connection_status = CASE WHEN r.host_id IS NULL THEN 'offline' ELSE 'disconnecting' END,
-		            started_at = NULL,
-		            last_error = NULL,
-		            updated_at = NOW()
-		       FROM candidates c
-		      WHERE r.id = c.id
-		      RETURNING r.id
-		 )
-		 SELECT id FROM updated`,
-	)
-	if err != nil {
-		return SessionReapResult{}, err
-	}
-	for _, runtimeID := range trialQuotaRuntimeIDs {
-		if err := closeRuntimeSessionsTX(ctx, tx, runtimeID, "trial runtime time quota reached"); err != nil {
-			return SessionReapResult{}, err
-		}
-		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because the trial runtime time quota was reached."); err != nil {
-			return SessionReapResult{}, err
-		}
-	}
-
 	stoppedRuntimeIDs, err := queryStringColumnTX(ctx, tx,
 		`WITH latest_session AS (
 		     SELECT runtime_id, MAX(updated_at) AS last_session_at
@@ -6341,7 +6287,6 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 	if err != nil {
 		return SessionReapResult{}, err
 	}
-	allStoppedRuntimeIDs := append(append([]string{}, trialQuotaRuntimeIDs...), stoppedRuntimeIDs...)
 
 	revokedStoppedRuntimeCapabilities := 0
 	for _, runtimeID := range stoppedRuntimeIDs {
@@ -6349,7 +6294,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 			return SessionReapResult{}, err
 		}
 	}
-	for _, runtimeID := range allStoppedRuntimeIDs {
+	for _, runtimeID := range stoppedRuntimeIDs {
 		revokedCount, err := revokeRuntimeCapabilitiesForRuntimeTX(ctx, tx, runtimeID)
 		if err != nil {
 			return SessionReapResult{}, err
@@ -6384,7 +6329,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		RevokedRuntimeCapabilities:    revokedStoppedRuntimeCapabilities + revokedSessionCapabilities + revokedExpiredCapabilities,
 		PrunedRuntimeCapabilityNonces: prunedRuntimeCapabilityNonces,
 		PrunedBlobKeyHandoffs:         prunedBlobKeyHandoffs,
-		StoppedRuntimeIDs:             allStoppedRuntimeIDs,
+		StoppedRuntimeIDs:             stoppedRuntimeIDs,
 	}, nil
 }
 
@@ -7752,27 +7697,17 @@ func accountStorageBytesUsed(ctx context.Context, queryer queryContexter, accoun
 	return total, rows.Err()
 }
 
-// trialRuntimeSecondsUsed derives usage from durable session history instead
-// of process memory or a periodically flushed counter. Active sessions accrue
-// only through the current time, expired sessions stop at their expiry, and
-// closed sessions stop at their recorded end time.
+// trialRuntimeSecondsUsed is how long the account's runtimes have run while
+// it was on trial, as the usage meter recorded it.
 func trialRuntimeSecondsUsed(ctx context.Context, queryer queryRowContexter, accountID string) (int64, error) {
 	var used int64
 	err := queryer.QueryRowContext(ctx,
-		`SELECT COALESCE(FLOOR(SUM(GREATEST(
-		            0,
-		            EXTRACT(EPOCH FROM (
-		                CASE
-		                    WHEN s.status IN ('pending', 'active') THEN LEAST(NOW(), s.expires_at)
-		                    ELSE COALESCE(s.ended_at, s.updated_at, s.created_at)
-		                END - s.created_at
-		            ))
-		        ))), 0)::bigint
-		   FROM sessions s
-		   JOIN runtimes r ON r.id = s.runtime_id
-		  WHERE r.account_id = $1`,
+		`SELECT trial_runtime_seconds_used FROM account_entitlements WHERE account_id = $1`,
 		strings.TrimSpace(accountID),
 	).Scan(&used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	return used, err
 }
 

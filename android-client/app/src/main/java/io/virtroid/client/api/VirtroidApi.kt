@@ -207,6 +207,9 @@ data class WalletSummary(
     val entries: List<WalletEntry>,
     val runtimePricePerHourMicro: Long,
     val storagePricePerGibMonthMicro: Long,
+    /** trial, paid, or a plan the operator set. */
+    val plan: String,
+    val trialSecondsRemaining: Long,
 )
 
 data class WalletDeposit(
@@ -1609,6 +1612,8 @@ class VirtroidApi(
             depositAddress = optString("deposit_address"),
             runtimePricePerHourMicro = optLong("runtime_price_per_hour_micro", 0L),
             storagePricePerGibMonthMicro = optLong("storage_price_per_gib_month_micro", 0L),
+            plan = optString("plan", "none"),
+            trialSecondsRemaining = optLong("trial_seconds_remaining", 0L),
             deposits = (0 until (deposits?.length() ?: 0)).map { index ->
                 val item = deposits!!.getJSONObject(index)
                 WalletDeposit(

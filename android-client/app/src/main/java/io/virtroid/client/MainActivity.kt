@@ -119,6 +119,7 @@ class MainActivity : AppCompatActivity() {
         binding.logsNavButton.setOnClickListener {
             startActivity(SystemLogsActivity.createIntent(this))
         }
+        binding.trialBannerText.setOnClickListener { startActivity(WalletActivity.createIntent(this)) }
         binding.walletButton.setOnClickListener {
             startActivity(WalletActivity.createIntent(this))
         }
@@ -268,6 +269,9 @@ class MainActivity : AppCompatActivity() {
         latestEntitlement = entitlement
         latestRuntimes = runtimes
         latestRuntimeStates = stateByRuntimeId
+        val trialBanner = entitlement?.trialBanner(this)
+        binding.trialBannerText.isVisible = trialBanner != null
+        binding.trialBannerText.text = trialBanner.orEmpty()
         binding.runtimeListContainer.removeAllViews()
         binding.runtimeEmptyText.isVisible = runtimes.isEmpty()
         binding.runtimeEmptyText.text = if (runtimes.isEmpty()) {
@@ -477,6 +481,9 @@ class MainActivity : AppCompatActivity() {
     private fun openNewRuntime() {
         latestEntitlement?.createRuntimeBlockedMessage(this)?.let { message ->
             toast(message)
+            if (latestEntitlement?.createNeedsDeposit() == true) {
+                startActivity(WalletActivity.createIntent(this))
+            }
             return
         }
         startActivity(NewRuntimeActivity.createIntent(this))

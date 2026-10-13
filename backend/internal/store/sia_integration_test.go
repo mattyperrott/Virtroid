@@ -48,6 +48,8 @@ func TestPostgresSiaAccounts(t *testing.T) {
 		); err != nil {
 			t.Fatalf("bootstrap account: %v", err)
 		}
+		// Some checks below make several runtimes, more than a trial allows.
+		exec(`UPDATE account_entitlements SET runtime_limit = 10 WHERE account_id = $1`, accountID)
 		return accountID
 	}
 	newRuntime := func(accountID string) Runtime {

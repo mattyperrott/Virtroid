@@ -71,6 +71,12 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 		if err := st.SetAccountRuntimeRegion(ctx, accountID, region); err != nil {
 			t.Fatalf("set account region: %v", err)
 		}
+		// Each start below makes a new runtime, more than a trial allows.
+		if _, err := st.db.ExecContext(ctx,
+			`UPDATE account_entitlements SET runtime_limit = 10 WHERE account_id = $1`, accountID,
+		); err != nil {
+			t.Fatalf("raise runtime limit: %v", err)
+		}
 		return accountID
 	}
 	startRuntime := func(accountID string) (Runtime, error) {

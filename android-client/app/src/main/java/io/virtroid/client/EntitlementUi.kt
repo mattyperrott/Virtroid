@@ -11,7 +11,9 @@ internal fun EntitlementSummary.createRuntimeBlockedMessage(context: Context): S
     }
     return when (createRuntimeBlockedCode) {
         "runtime_entitlement_required" -> context.getString(R.string.entitlement_required)
-        "runtime_quota_exceeded" -> context.getString(R.string.entitlement_runtime_quota_reached)
+        "runtime_quota_exceeded" -> context.getString(
+            if (isTrial()) R.string.entitlement_trial_runtime_limit else R.string.entitlement_runtime_quota_reached,
+        )
         else -> createRuntimeBlockedReason ?: context.getString(R.string.entitlement_unavailable)
     }
 }
@@ -35,6 +37,29 @@ internal const val RUNTIME_BALANCE_INSUFFICIENT_CODE = "runtime_balance_insuffic
 /** Whether adding USDT in the wallet lets the account start a runtime again. */
 internal fun EntitlementSummary.startNeedsDeposit(): Boolean =
     !canStartRuntime && startRuntimeBlockedCode in setOf("runtime_trial_time_exceeded", RUNTIME_BALANCE_INSUFFICIENT_CODE)
+
+/** Whether adding USDT in the wallet lets the account create another runtime. */
+internal fun EntitlementSummary.createNeedsDeposit(): Boolean =
+    !canCreateRuntime && isTrial() && createRuntimeBlockedCode == "runtime_quota_exceeded"
+
+internal fun EntitlementSummary.isTrial(): Boolean = source.equals("trial", ignoreCase = true)
+
+/** The home screen's trial banner, or null when the account is not on trial. */
+internal fun EntitlementSummary.trialBanner(context: Context): String? {
+    if (!isTrial()) {
+        return null
+    }
+    if (trialRuntimeSecondsRemaining <= 0) {
+        return context.getString(R.string.trial_banner_used_up)
+    }
+    return context.getString(R.string.trial_banner_time_left, trialMinutes(context, trialRuntimeSecondsRemaining))
+}
+
+/** Running time left, in whole minutes rounded up so a started minute still shows. */
+internal fun trialMinutes(context: Context, seconds: Long): String {
+    val minutes = ((seconds + 59) / 60).toInt()
+    return context.resources.getQuantityString(R.plurals.trial_minutes, minutes, minutes)
+}
 
 internal fun Throwable.virtroidDisplayMessage(context: Context): String {
     if (isIdentityAuthenticationFailure()) {

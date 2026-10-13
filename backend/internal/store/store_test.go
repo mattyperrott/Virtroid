@@ -1969,7 +1969,7 @@ func TestGetAccountEntitlementSummaryReportsRemainingTrialUse(t *testing.T) {
 	mock.ExpectQuery("runtime_start_events").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
-	mock.ExpectQuery("FROM sessions s").
+	mock.ExpectQuery("SELECT trial_runtime_seconds_used").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(900)))
 	mock.ExpectQuery("SELECT blob_manifest_json").
@@ -2349,7 +2349,7 @@ func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtime_start_events").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("FROM sessions s").
+	mock.ExpectQuery("SELECT trial_runtime_seconds_used").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(0)))
 	mock.ExpectQuery("SELECT h.id FROM hosts h").
@@ -2428,7 +2428,7 @@ func TestEnsureRuntimeStartEntitlementRejectsExhaustedTrialTime(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM runtime_start_events").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("FROM sessions s").
+	mock.ExpectQuery("SELECT trial_runtime_seconds_used").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(3600)))
 	mock.ExpectRollback()
@@ -3352,7 +3352,7 @@ func TestCreateSessionRejectsExhaustedTrialTime(t *testing.T) {
 	mock.ExpectQuery("SELECT source, trial_runtime_seconds").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"source", "trial_runtime_seconds"}).AddRow("trial", 3600))
-	mock.ExpectQuery("FROM sessions s").
+	mock.ExpectQuery("SELECT trial_runtime_seconds_used").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(int64(3600)))
 
@@ -3858,8 +3858,6 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 		WithArgs("120 seconds").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).
 			AddRow("22222222-2222-2222-2222-222222222222"))
-	mock.ExpectQuery("WITH usage AS").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("WITH latest_session").
 		WithArgs("120 seconds", "180 seconds").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).
@@ -3913,72 +3911,6 @@ func TestIdleRuntimeReaperUsesNewestRuntimeOrSessionActivity(t *testing.T) {
 	}
 	if strings.Contains(idleRuntimeLastActivitySQL, "r.updated_at") {
 		t.Fatal("idle runtime activity must not use node-refreshed runtimes.updated_at")
-	}
-}
-
-func TestReapStaleSessionsStopsRuntimeAtTrialTimeQuota(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock: %v", err)
-	}
-	defer db.Close()
-
-	st := &Store{db: db}
-	runtimeID := "55555555-5555-5555-5555-555555555555"
-
-	mock.ExpectBegin()
-	mock.ExpectQuery("UPDATE sessions").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	mock.ExpectQuery("UPDATE sessions").
-		WithArgs("120 seconds").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	mock.ExpectQuery("WITH usage AS").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(runtimeID))
-	mock.ExpectExec("UPDATE sessions").
-		WithArgs(runtimeID, "trial runtime time quota reached").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO runtime_logs").
-		WithArgs(
-			runtimeID,
-			"system",
-			"warn",
-			"Runtime stop queued because the trial runtime time quota was reached.",
-		).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectQuery("WITH latest_session").
-		WithArgs("120 seconds", "180 seconds").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	mock.ExpectExec("UPDATE runtime_capabilities").
-		WithArgs(runtimeID).
-		WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectExec("UPDATE runtime_capabilities AS c").
-		WillReturnResult(sqlmock.NewResult(0, 3))
-	mock.ExpectExec("UPDATE runtime_capabilities").
-		WillReturnResult(sqlmock.NewResult(0, 4))
-	mock.ExpectExec("DELETE FROM runtime_capability_nonces").
-		WillReturnResult(sqlmock.NewResult(0, 5))
-	mock.ExpectExec("DELETE FROM runtime_blob_key_handoffs").
-		WillReturnResult(sqlmock.NewResult(0, 6))
-	mock.ExpectCommit()
-
-	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute, 3*time.Minute)
-	if err != nil {
-		t.Fatalf("ReapStaleSessions returned error: %v", err)
-	}
-	if result.ExpiredPendingSessions != 0 || result.StaleActiveSessions != 0 {
-		t.Fatalf("session counts = %+v, want no expired or stale sessions", result)
-	}
-	if len(result.StoppedRuntimeIDs) != 1 || result.StoppedRuntimeIDs[0] != runtimeID {
-		t.Fatalf("stopped runtime ids = %v, want [%s]", result.StoppedRuntimeIDs, runtimeID)
-	}
-	if result.RevokedRuntimeCapabilities != 9 || result.PrunedRuntimeCapabilityNonces != 5 {
-		t.Fatalf("capability cleanup = %+v, want 9 revoked capabilities and 5 pruned nonces", result)
-	}
-	if result.PrunedBlobKeyHandoffs != 6 {
-		t.Fatalf("pruned blob-key handoffs = %d, want 6", result.PrunedBlobKeyHandoffs)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
@@ -4304,7 +4236,7 @@ func expectTrialTimeAvailable(mock sqlmock.Sqlmock, accountID string, used int64
 	mock.ExpectQuery("SELECT source, trial_runtime_seconds").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"source", "trial_runtime_seconds"}).AddRow("trial", 3600))
-	mock.ExpectQuery("FROM sessions s").
+	mock.ExpectQuery("SELECT trial_runtime_seconds_used").
 		WithArgs(accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"seconds"}).AddRow(used))
 }

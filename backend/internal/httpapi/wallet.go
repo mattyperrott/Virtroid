@@ -58,13 +58,15 @@ func (a *API) getMyWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"currency":        "USDT",
-		"network":         "TRON",
-		"token_contract":  tron.USDTContract,
-		"balance_micro":   wallet.BalanceMicro,
-		"deposit_address": address,
-		"deposits":        nonNilSlice(wallet.Deposits),
-		"entries":         nonNilSlice(wallet.Entries),
+		"currency":                "USDT",
+		"network":                 "TRON",
+		"token_contract":          tron.USDTContract,
+		"balance_micro":           wallet.BalanceMicro,
+		"deposit_address":         address,
+		"deposits":                nonNilSlice(wallet.Deposits),
+		"entries":                 nonNilSlice(wallet.Entries),
+		"plan":                    wallet.Plan,
+		"trial_seconds_remaining": wallet.TrialSecondsLeft,
 		// What use costs once the account has paid.
 		"runtime_price_per_hour_micro":      a.cfg.RuntimePriceHourMicro,
 		"storage_price_per_gib_month_micro": a.cfg.StoragePriceGiBMonthMicro,

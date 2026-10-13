@@ -23,15 +23,22 @@ credits are not built yet; deposits stay on their addresses until then.
 
 ## Charging
 
-An account's first deposit ends its trial: from then on it is a paid account
-and its use is charged to its balance. Accounts the operator gave another
-entitlement source are never charged.
+A new account starts on a free trial: one runtime and an hour of running
+time. virtroidd meters the time every minute while a runtime runs (booting
+does not count). When the hour is used up the runtime stops, keeping its
+data, and cannot start again until the account deposits.
+
+The first deposit ends the trial and lifts its limits: up to 10 runtimes,
+1,000 starts a day and 64 GiB of stored data. One runtime still runs at a
+time, as each account's VM has room for one. From then on the account's use is
+charged to its balance. Accounts the operator gave another entitlement source
+are never charged.
 
 - Runtime time: `RUNTIME_PRICE_PER_HOUR_MICRO` (millionths of a USDT, default
-  100000, i.e. 0.10 USDT) per hour a runtime is starting or running, charged
-  every minute into one ledger entry per runtime and hour. Runtimes keep
-  running for `RUNTIME_IDLE_TIMEOUT` after the app disconnects unless the user
-  stops them.
+  100000, i.e. 0.10 USDT) per hour a runtime is running, charged every minute
+  into one ledger entry per runtime and hour. Runtimes keep running for
+  `RUNTIME_IDLE_TIMEOUT` after the app disconnects unless the user stops them,
+  and that time counts towards the trial hour and is charged too.
 - Storage: `STORAGE_PRICE_PER_GIB_MONTH_MICRO` (default 50000, i.e. 0.05 USDT)
   per GiB of stored runtime data, local or on Sia, per 30 days, charged once a
   day.
