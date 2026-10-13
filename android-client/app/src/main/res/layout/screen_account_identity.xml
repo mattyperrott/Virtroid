@@ -76,8 +76,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_account"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_icon_tile" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -127,8 +127,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_mobile"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_icon_tile" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -277,8 +277,8 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_wallet"
                         android:importantForAccessibility="no"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_icon_tile" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -333,8 +333,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_download"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_icon_tile" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -646,8 +646,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_lock"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_icon_tile" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -693,8 +693,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_key"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_icon_tile" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -743,8 +743,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_devices"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_icon_tile" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
