@@ -114,14 +114,19 @@ object SnpAttestationVerifier {
         viewerKeySignature: String,
         allowedMeasurements: Set<String>,
         now: Date = Date(),
-    ) {
+    ): String {
         if (expectedTlsPin.isNotBlank() && sha256Base64(attestation.tlsSpki) != expectedTlsPin.trim()) {
             throw SnpAttestationException("attestation is for a different node key than the session pins")
         }
         verifyAmdSignature(attestation, now)
         checkReport(attestation.report, attestation.tlsSpki, allowedMeasurements)
         verifyViewerKey(attestation.tlsSpki, runtimeId, viewerPublicKey, viewerKeySignature)
+        return measurementHex(attestation.report)
     }
+
+    /** The VM's launch measurement, as the approved lists write it. */
+    fun measurementHex(report: ByteArray): String =
+        report.copyOfRange(MEASUREMENT_OFFSET, MEASUREMENT_OFFSET + MEASUREMENT_SIZE).toHex()
 
     /** The report is signed by the chip's VCEK, which chains to AMD's root. */
     fun verifyAmdSignature(attestation: NodeAttestation, now: Date = Date()) {
@@ -187,7 +192,7 @@ object SnpAttestationVerifier {
         if (!MessageDigest.isEqual(expectedReportData, report.copyOfRange(REPORT_DATA_OFFSET, REPORT_DATA_OFFSET + 64))) {
             throw SnpAttestationException("attestation report does not bind the node's TLS key")
         }
-        val measurement = report.copyOfRange(MEASUREMENT_OFFSET, MEASUREMENT_OFFSET + MEASUREMENT_SIZE).toHex()
+        val measurement = measurementHex(report)
         if (measurement !in allowedMeasurements) {
             throw UnapprovedMeasurementException(measurement)
         }

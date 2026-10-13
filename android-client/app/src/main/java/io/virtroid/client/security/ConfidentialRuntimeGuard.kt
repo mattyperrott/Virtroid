@@ -3,6 +3,7 @@ package io.virtroid.client.security
 import android.content.Context
 import io.virtroid.client.R
 import io.virtroid.client.api.SessionAttestation
+import io.virtroid.client.data.AppLogStore
 import java.io.IOException
 import java.security.PublicKey
 
@@ -38,18 +39,21 @@ class ConfidentialRuntimeGuard(
         if (!required) {
             return
         }
+        var verified: Pair<String, String>? = null
         val verify = {
             if (attestation.nodeAttestationJson.isBlank()) {
                 throw SnpAttestationException("the server sent no attestation for a confidential runtime")
             }
-            SnpAttestationVerifier.verify(
-                attestation = NodeAttestation.parse(attestation.nodeAttestationJson),
+            val node = NodeAttestation.parse(attestation.nodeAttestationJson)
+            val measurement = SnpAttestationVerifier.verify(
+                attestation = node,
                 expectedTlsPin = relayTlsPin,
                 runtimeId = runtimeId,
                 viewerPublicKey = viewerPublicKey,
                 viewerKeySignature = attestation.viewerKeySignature,
                 allowedMeasurements = approvedMeasurements(),
             )
+            verified = node.product to measurement
         }
         try {
             try {
@@ -73,6 +77,13 @@ class ConfidentialRuntimeGuard(
             )
         }
         attested.edit().putBoolean(runtimeId, true).apply()
+        verified?.let { (product, measurement) ->
+            AppLogStore.get(context).security(
+                "Confidential server verified: AMD SEV-SNP report from a $product chip, signed by AMD; " +
+                    "launch measurement ${measurement.take(16)}… is approved; the stream is bound to the attested VM's key.",
+                "attestation",
+            )
+        }
     }
 
     fun approvedMeasurements(): Set<String> = storedList()?.measurements ?: bundledMeasurements
