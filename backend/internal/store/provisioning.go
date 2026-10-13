@@ -90,7 +90,13 @@ type ProvisioningSummary struct {
 	AccountsGone  int
 	Retired       int
 	SparesCreated int
+	// RuntimesReset counts runtimes whose VM was deleted with their data.
+	RuntimesReset int
 }
+
+// lostRuntimeDataMessage is the runtime log entry for a runtime whose VM, and
+// the snapshot on its data disk, is gone.
+const lostRuntimeDataMessage = "This runtime's private server was replaced, and the data stored on it could not be kept. It starts fresh next time."
 
 const provisionedVMColumns = `id, account_id::text, region, state, desired, item_hash, crn_hash,
 	public_ip, node_public_key, failure, retire_reason, progress, requested_at, state_changed_at,
@@ -521,6 +527,62 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 			return summary, err
 		}
 		summary.Retired = rowsAffected(result)
+	}
+
+	// A deleted VM took the snapshots on its data disk with it. Runtimes that
+	// lived there would otherwise wait for it forever: forget the lost data,
+	// say so in the runtime's log, and let it start fresh on the account's
+	// next VM. Deletions waiting on that VM have nothing left to clean.
+	rows, err := tx.QueryContext(ctx,
+		`UPDATE runtimes r
+		    SET host_id = NULL,
+		        blob_host_id = NULL,
+		        blob_manifest_json = NULL,
+		        blob_last_snapshot_at = NULL,
+		        cleanup_pending = FALSE,
+		        container_name = NULL,
+		        adb_port = NULL,
+		        started_at = NULL,
+		        connection_status = 'offline',
+		        status = CASE WHEN r.desired_state = 'deleted' THEN 'deleted' ELSE 'stopped' END,
+		        desired_state = CASE WHEN r.desired_state = 'deleted' THEN 'deleted' ELSE 'stopped' END,
+		        deleted_at = CASE WHEN r.desired_state = 'deleted' THEN NOW() ELSE NULL END,
+		        operation_generation = r.operation_generation + 1,
+		        updated_at = NOW()
+		  WHERE r.deleted_at IS NULL
+		    AND (r.host_id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted')
+		         OR r.blob_host_id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted'))
+		  RETURNING r.id, r.desired_state`,
+	)
+	if err != nil {
+		return summary, err
+	}
+	var lost []string
+	for rows.Next() {
+		var runtimeID, desired string
+		if err := rows.Scan(&runtimeID, &desired); err != nil {
+			rows.Close()
+			return summary, err
+		}
+		summary.RuntimesReset++
+		if desired != "deleted" {
+			lost = append(lost, runtimeID)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return summary, err
+	}
+	if err := rows.Err(); err != nil {
+		return summary, err
+	}
+	for _, runtimeID := range lost {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO runtime_logs (runtime_id, source, level, message) VALUES ($1, 'control-plane', 'warn', $2)`,
+			runtimeID,
+			lostRuntimeDataMessage,
+		); err != nil {
+			return summary, err
+		}
 	}
 
 	if policy.MaxVMs > 0 && policy.WarmSpares > 0 {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"strings"
@@ -236,6 +237,56 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 	}
 	if keys, err := st.AuthorizedNodeKeys(ctx, aliceVM.ID); err == nil && len(keys) > 0 {
 		t.Fatalf("deleted VM still has authorized keys: %v", keys)
+	}
+
+	// Runtimes whose data lived on a deleted VM start fresh instead of waiting
+	// for it, and their log says why; a deletion waiting on it completes.
+	newRuntime := func(name string) Runtime {
+		t.Helper()
+		runtime, err := st.CreateRuntime(ctx, newAccount(), CreateRuntimeInput{Name: name, FileMode: "upload-only"})
+		if err != nil {
+			t.Fatalf("create runtime: %v", err)
+		}
+		return runtime
+	}
+	orphan, deleting := newRuntime("CI orphan"), newRuntime("CI deleting")
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE runtimes SET blob_host_id = $2, blob_store_kind = 'local-disk', blob_manifest_json = '{"chunks":[]}',
+		        blob_last_snapshot_at = NOW() WHERE id = $1`, orphan.ID, aliceVM.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE runtimes SET host_id = $2, desired_state = 'deleted', status = 'deleting' WHERE id = $1`,
+		deleting.ID, aliceVM.ID); err != nil {
+		t.Fatal(err)
+	}
+	summary, err = st.ReconcileProvisionedVMs(ctx, policy)
+	if err != nil || summary.RuntimesReset != 2 {
+		t.Fatalf("reconcile summary = %+v err=%v, want two runtimes reset", summary, err)
+	}
+	var hostID, blobHostID, manifest sql.NullString
+	var status, desired string
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT host_id, blob_host_id, blob_manifest_json, status, desired_state FROM runtimes WHERE id = $1`, orphan.ID,
+	).Scan(&hostID, &blobHostID, &manifest, &status, &desired); err != nil {
+		t.Fatal(err)
+	}
+	if hostID.Valid || blobHostID.Valid || manifest.Valid || status != "stopped" || desired != "stopped" {
+		t.Fatalf("orphaned runtime host=%v blob_host=%v manifest=%v status=%s desired=%s, want a fresh stopped runtime",
+			hostID, blobHostID, manifest, status, desired)
+	}
+	var logged int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runtime_logs WHERE runtime_id = $1 AND message = $2`, orphan.ID, lostRuntimeDataMessage,
+	).Scan(&logged); err != nil || logged != 1 {
+		t.Fatalf("lost-data log entries = %d err=%v, want 1", logged, err)
+	}
+	var deletedAt sql.NullTime
+	if err := st.db.QueryRowContext(ctx, `SELECT deleted_at FROM runtimes WHERE id = $1`, deleting.ID).Scan(&deletedAt); err != nil || !deletedAt.Valid {
+		t.Fatalf("deletion waiting on the deleted VM: deleted_at=%v err=%v, want it completed", deletedAt, err)
+	}
+	if summary, err := st.ReconcileProvisionedVMs(ctx, policy); err != nil || summary.RuntimesReset != 0 {
+		t.Fatalf("second reconcile = %+v err=%v, want nothing left to reset", summary, err)
 	}
 
 	// Warm spares fill free capacity and are handed to the next account.
