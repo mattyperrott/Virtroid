@@ -127,6 +127,10 @@ profiles=edge,falco,nids
 if grep -Eq '^PROVISIONER_MAX_VMS=[1-9][0-9]*$' /opt/virtroid/deploy/vps/.env 2>/dev/null; then
   profiles="${profiles},provisioner"
 fi
+# The Sia indexer runs once the operator set its application URL (indexd.md).
+if grep -Eq '^SIA_INDEXER_APP_URL=https://' /opt/virtroid/deploy/vps/.env 2>/dev/null; then
+  profiles="${profiles},indexd"
+fi
 VIRTROID_PROFILES="${profiles}" \
   /usr/local/sbin/virtroid-apply-local-release "${stage}" "${expected_fingerprint}"
 trap - EXIT HUP INT TERM

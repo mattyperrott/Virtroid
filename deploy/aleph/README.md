@@ -191,9 +191,12 @@ them, and `PROVISIONER_MAX_VMS` caps how many exist at once.
   same secrets, and the node comes back with its data disk intact. A VM that
   restarts more than three times after being unlocked, before its node ever
   comes up, is failing to boot and is retired.
-- Runtime snapshots stay on the VM's data disk until Sia storage lands, so a
-  retired VM's data is gone. VMs with a runtime on them are therefore never
-  retired automatically.
+- With `NODE_BLOB_STORE_KIND=local-disk`, runtime snapshots stay on the VM's
+  data disk, so a retired VM's data is gone and VMs with a runtime on them are
+  never retired automatically. Images built with `sia-indexd` keep snapshots
+  on Sia instead ([`deploy/vps/indexd.md`](../vps/indexd.md)): a stopped
+  runtime then holds no VM, and its next start restores it on whichever VM
+  the account gets.
 - The stock ReDroid 14 image turns unprivileged BPF on: its bpfloader sets
   `kernel.unprivileged_bpf_disabled` to 0, and Android reboots if it cannot.
   In a runtime VM that reaches only the one account's VM; on the VPS it is

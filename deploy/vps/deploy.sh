@@ -211,6 +211,19 @@ require_digest_image() {
   fi
 }
 
+# require_owned_secret checks a secret file is a regular root-owned file with
+# exactly the given group and mode.
+require_owned_secret() {
+  local path="$1" group="$2" mode="$3"
+  if [ ! -f "${path}" ] || [ -L "${path}" ] ||
+     [ "$(stat -c '%u' "${path}")" -ne 0 ] ||
+     [ "$(stat -c '%g' "${path}")" -ne "${group}" ] ||
+     [ "$(stat -c '%a' "${path}")" != "${mode}" ]; then
+    echo "${path} must be a root-owned regular file with group ${group} and mode ${mode}" >&2
+    exit 1
+  fi
+}
+
 require_generated_hex_secret() {
   local key="$1"
   local value="${!key:-}"
@@ -393,6 +406,50 @@ validate_environment() {
       exit 1
     fi
     /usr/local/sbin/virtroid-configure-renterd-secrets verify-activation >/dev/null
+  fi
+  if profile_enabled indexd; then
+    require_env \
+      INDEXD_IMAGE \
+      INDEXD_POSTGRES_IMAGE \
+      INDEXD_CONFIG_FILE \
+      INDEXD_POSTGRES_PASSWORD_FILE \
+      SIA_INDEXER_APP_URL \
+      SIA_INDEXER_ADMIN_PASSWORD_FILE \
+      SIA_KEY_SECRET_FILE \
+      SIA_SECRET_GID
+    if ! require_digest_image INDEXD_IMAGE; then
+      invalid_image=1
+    fi
+    if ! require_digest_image INDEXD_POSTGRES_IMAGE; then
+      invalid_image=1
+    fi
+    if [ "${INDEXD_CONFIG_FILE}" != /etc/virtroid/secrets/indexd.yml ] ||
+       [ "${INDEXD_POSTGRES_PASSWORD_FILE}" != /etc/virtroid/secrets/indexd-postgres-password ] ||
+       [ "${SIA_INDEXER_ADMIN_PASSWORD_FILE}" != /etc/virtroid/secrets/sia-indexer-admin-password ] ||
+       [ "${SIA_KEY_SECRET_FILE}" != /etc/virtroid/secrets/sia-key-secret ]; then
+      echo "indexd must use the fixed root-owned secret paths under /etc/virtroid/secrets" >&2
+      exit 1
+    fi
+    if [[ ! "${SIA_SECRET_GID}" =~ ^[0-9]+$ ]] || [ "${SIA_SECRET_GID}" -le 0 ] || [ "${SIA_SECRET_GID}" -ge 65534 ]; then
+      echo "SIA_SECRET_GID must be a dedicated numeric group id" >&2
+      exit 1
+    fi
+    require_owned_secret "${INDEXD_CONFIG_FILE}" 0 600
+    require_owned_secret "${INDEXD_POSTGRES_PASSWORD_FILE}" 0 600
+    require_owned_secret "${SIA_INDEXER_ADMIN_PASSWORD_FILE}" "${SIA_SECRET_GID}" 440
+    require_owned_secret "${SIA_KEY_SECRET_FILE}" "${SIA_SECRET_GID}" 440
+    if [ "${SIA_INDEXER_APP_URL}" != "${PUBLIC_BASE_URL%/}:9982" ]; then
+      echo "SIA_INDEXER_APP_URL must be PUBLIC_BASE_URL on port 9982, where the edge serves indexd" >&2
+      exit 1
+    fi
+    # Nodes sign their requests for this URL, so indexd must advertise it.
+    if ! grep -Fxq "  advertiseURL: \"${SIA_INDEXER_APP_URL}\"" "${INDEXD_CONFIG_FILE}"; then
+      echo "indexd.yml must advertise SIA_INDEXER_APP_URL" >&2
+      exit 1
+    fi
+  elif [ -n "${SIA_INDEXER_APP_URL:-}" ]; then
+    echo "SIA_INDEXER_APP_URL requires the indexd Compose profile" >&2
+    exit 1
   fi
   if profile_enabled falco && ! require_digest_image FALCO_IMAGE; then
     invalid_image=1

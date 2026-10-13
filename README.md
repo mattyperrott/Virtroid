@@ -132,7 +132,7 @@ The diagram's source is [`assets/architecture/virtroid-target.archify.json`](ass
 - **Streams** from VPS runtimes pass through the edge. Streams from a remote node go straight from the phone to the node, which proves its identity with a TLS key pinned in the session. When the phone has no direct route (for example no IPv6), the VPS node forwards the stream unchanged.
 - On every path the viewer stream is encrypted between the phone and the viewer proxy inside the runtime, so the edge and a forwarding node only relay ciphertext. The runtime's own host can still see the runtime.
 
-Built but not yet deployed: the provisioner, SEV-SNP runtime VMs, and phone-side attestation ([`deploy/aleph/`](deploy/aleph/README.md)). Not built yet: QUIC, Sia storage, and payments.
+Running as a pilot: the provisioner, SEV-SNP runtime VMs, and phone-side attestation ([`deploy/aleph/`](deploy/aleph/README.md)). Built but not yet deployed: Sia storage through indexd ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)). Not built yet: QUIC and payments.
 
 <details>
 <summary>Diagram of today's deployment</summary>
@@ -219,9 +219,9 @@ hardening or hostile multi-tenant isolation.
 
 ### Next
 
-1. Run the confidential VM path end to end on Aleph: build and publish the runtime and image, then approve their measurements in the app ([`deploy/aleph/`](deploy/aleph/README.md)).
-2. Measure the root disk too, so a compromised VPS cannot hand a VM a modified disk.
-3. QUIC for the stream, and encrypted user data on Sia.
+1. Encrypted user data on Sia: run indexd on the VPS, fund its wallet, and build runtime VMs that keep their snapshots there ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)).
+2. Approve runtime VM measurements through a signed list, so a new image needs no app release.
+3. A custom AOSP build for the runtime, and QUIC for the stream.
 
 > [!NOTE]
 > **Disclaimer:**

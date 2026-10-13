@@ -38,6 +38,7 @@ compose_args=(
   --profile falco
   --profile nids
   --profile provisioner
+  --profile indexd
 )
 
 docker "${compose_args[@]}" config --quiet
@@ -108,6 +109,15 @@ grep -q 'MYSQL_ROOT_PASSWORD_FILE: /run/secrets/renterd-mysql-root-password' "${
 grep -q 'renterd-database:' "${tmp_dir}/rendered-compose.yml"
 if grep -Eq 'RENTERD_(SEED|API_PASSWORD):|NODE_SIA_RENTERD_PASSWORD:' "${tmp_dir}/rendered-compose.yml"; then
   echo "rendered Compose contains renterd secrets in environment metadata" >&2
+  exit 1
+fi
+grep -q 'INDEXD_CONFIG_FILE: /run/secrets/indexd.yml' "${tmp_dir}/rendered-compose.yml"
+grep -q 'POSTGRES_PASSWORD_FILE: /run/secrets/indexd-postgres-password' "${tmp_dir}/rendered-compose.yml"
+grep -q 'SIA_INDEXER_ADMIN_PASSWORD_FILE: /run/secrets/sia-indexer-admin-password' "${tmp_dir}/rendered-compose.yml"
+grep -q 'SIA_KEY_SECRET_FILE: /run/secrets/sia-key-secret' "${tmp_dir}/rendered-compose.yml"
+grep -q 'indexd-database:' "${tmp_dir}/rendered-compose.yml"
+if grep -Eq 'recoveryPhrase|SIA_KEY_SECRET:|SIA_INDEXER_ADMIN_PASSWORD:' "${tmp_dir}/rendered-compose.yml"; then
+  echo "rendered Compose contains indexd secrets in environment metadata" >&2
   exit 1
 fi
 if grep -q '^    build:' "${tmp_dir}/rendered-compose.yml"; then

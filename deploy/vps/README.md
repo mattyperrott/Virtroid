@@ -7,8 +7,8 @@
 > approved production node registry. Production builds, release bundles,
 > release state and operational secrets remain on the VPS. Virtroid does not
 > create automated VPS-local application-data or database backups.
-> A renterd recovery seed is the deliberate exception: two physical offline
-> copies must exist outside both the VPS and developer machines. Developer
+> A renterd or indexd recovery seed is the deliberate exception: two physical
+> offline copies must exist outside both the VPS and developer machines. Developer
 > machines and source-hosting services are not release runners.
 
 This folder is intended to be deployable on a fresh Ubuntu VPS with:
@@ -308,7 +308,8 @@ Runtime state and the control-plane database are persistent on the active VPS.
 There is no automated Virtroid backup service, retained database dump, or
 `/srv/virtroid` archive. A VPS or provider storage failure can therefore cause
 permanent data loss until a separately designed renterd recovery architecture is
-introduced.
+introduced. With Sia storage ([`indexd.md`](indexd.md)) runtime snapshots live
+on Sia hosts, but indexd's database on this VPS is what locates them.
 
 ## Preinstalled Runtime Apps
 

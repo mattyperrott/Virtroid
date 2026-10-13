@@ -17,10 +17,16 @@ for command_name in comm sort ufw; do
 done
 
 allow_http_acme="${VIRTROID_ALLOW_HTTP_ACME:-true}"
+# Runtime VMs reach the Sia indexer's application API on 9982 (indexd.md).
+allow_sia_app="${VIRTROID_ALLOW_SIA_APP:-false}"
 reset_firewall="${VIRTROID_FIREWALL_RESET:-false}"
 case "${allow_http_acme}" in
   true|false) ;;
   *) echo "VIRTROID_ALLOW_HTTP_ACME must be true or false" >&2; exit 64 ;;
+esac
+case "${allow_sia_app}" in
+  true|false) ;;
+  *) echo "VIRTROID_ALLOW_SIA_APP must be true or false" >&2; exit 64 ;;
 esac
 case "${reset_firewall}" in
   true|false) ;;
@@ -33,6 +39,9 @@ expected_rules="$(printf '%s\n' \
 )"
 if [ "${allow_http_acme}" = true ]; then
   expected_rules="$(printf '%s\n%s\n' "${expected_rules}" 'ufw allow 80/tcp')"
+fi
+if [ "${allow_sia_app}" = true ]; then
+  expected_rules="$(printf '%s\n%s\n' "${expected_rules}" 'ufw allow 9982/tcp')"
 fi
 expected_rules="$(printf '%s\n' "${expected_rules}" | sort -u)"
 actual_rules="$(ufw show added | sed -n '/^ufw /p' | sort -u)"
@@ -59,6 +68,9 @@ if [ "${allow_http_acme}" = true ]; then
   ufw allow 80/tcp >/dev/null
 fi
 ufw allow 443/tcp >/dev/null
+if [ "${allow_sia_app}" = true ]; then
+  ufw allow 9982/tcp >/dev/null
+fi
 ufw logging low >/dev/null
 ufw --force enable >/dev/null
 

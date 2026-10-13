@@ -110,6 +110,8 @@ write_env_var() {
   write_env_var NODE_RUNTIME_IMAGE "${NODE_RUNTIME_IMAGE:-redroid/redroid:14.0.0_64only-latest@sha256:REPLACE_WITH_64_HEX}"
   write_env_var HAPROXY_IMAGE "${HAPROXY_IMAGE:-haproxy:lts@sha256:REPLACE_WITH_64_HEX}"
   write_env_var RENTERD_IMAGE "${RENTERD_IMAGE:-ghcr.io/siafoundation/renterd:2.9.3@sha256:72c589044aa47a09ab8349aad8b639a9cde2dd44bf27df73255d0f7bb29a2316}"
+  write_env_var INDEXD_IMAGE "${INDEXD_IMAGE:-ghcr.io/siafoundation/indexd:0.6.1@sha256:cf04dfc8248288fcc6bea80e09452f11f57cdd72a538cb1367d868cca855ef04}"
+  write_env_var INDEXD_POSTGRES_IMAGE "${INDEXD_POSTGRES_IMAGE:-postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c}"
   write_env_var RENTERD_MYSQL_IMAGE "${RENTERD_MYSQL_IMAGE:-mysql:8.4@sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d}"
   write_env_var FALCO_IMAGE "${FALCO_IMAGE:-falcosecurity/falco:0.43.0@sha256:88c01fa17bcc03c990a2691d08e7d43d746e32b07dbe9c6eb77bfdb3646cec41}"
   write_env_var SURICATA_IMAGE "${SURICATA_IMAGE:-jasonish/suricata:8.0.6@sha256:51a59543dcb6e5f9d586c06053c6b71d462cea919b45719090443f4af1428780}"
@@ -176,6 +178,15 @@ write_env_var() {
   write_env_var RENTERD_MYSQL_PASSWORD_FILE /etc/virtroid/secrets/renterd-mysql-password
   write_env_var RENTERD_MYSQL_ROOT_PASSWORD_FILE /etc/virtroid/secrets/renterd-mysql-root-password
   write_env_var RENTERD_LOG_LEVEL info
+
+  # Sia storage through indexd stays off until SIA_INDEXER_APP_URL is set (indexd.md).
+  write_env_var SIA_INDEXER_APP_URL ""
+  write_env_var SIA_APP_PUBLISH 127.0.0.1:9982
+  write_env_var SIA_SECRET_GID 65533
+  write_env_var SIA_INDEXER_ADMIN_PASSWORD_FILE ""
+  write_env_var SIA_KEY_SECRET_FILE ""
+  write_env_var INDEXD_CONFIG_FILE /etc/virtroid/secrets/indexd.yml
+  write_env_var INDEXD_POSTGRES_PASSWORD_FILE /etc/virtroid/secrets/indexd-postgres-password
 } > "${env_file}"
 
 chmod 600 "${env_file}"
