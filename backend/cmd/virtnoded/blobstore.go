@@ -383,6 +383,20 @@ func (n *nodeAgent) prepareSessionPersistence(ctx context.Context, runtime runti
 		clearBytes(masterKey)
 		return nil, err
 	}
+	if sia, ok := store.(*siaBlobStore); ok {
+		// Without an indexer on the control plane the snapshot stays on this
+		// node's disk, so a Sia image can run before Sia is turned on.
+		if _, _, err := sia.account(ctx, runtime.ID); errors.Is(err, errSiaNotConfigured) {
+			store, err = n.blobStore(blobStoreLocal)
+			if err != nil {
+				clearBytes(masterKey)
+				return nil, err
+			}
+		} else if err != nil {
+			clearBytes(masterKey)
+			return nil, err
+		}
+	}
 	report := n.runBlobPreflightForKind(ctx, store.kind())
 	if !report.OK {
 		clearBytes(masterKey)

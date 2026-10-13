@@ -498,3 +498,40 @@ func newSiaTestNode(t *testing.T, root, runtimeID string, objects siaObjects) *n
 	node.siaAccounts.locks = map[string]*sync.RWMutex{credentials.account(): {}}
 	return node
 }
+
+func TestSiaNodeKeepsSnapshotsLocalWithoutAnIndexer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"sia_not_configured"}`))
+	}))
+	defer server.Close()
+	node := &nodeAgent{
+		cfg: config.NodeConfig{
+			ControlPlaneURL: server.URL,
+			RuntimeRoot:     t.TempDir(),
+			BlobStoreKind:   blobStoreSia,
+		},
+		controlPlane: &http.Client{Timeout: 5 * time.Second},
+	}
+	runtime := runtimeAssignment{ID: "runtime-1", BlobAutoSnapshot: true}
+	node.cacheRuntimeBlobKey(runtime.ID, testBlobKey(9))
+	plan, err := node.prepareSessionPersistence(context.Background(), runtime)
+	if err != nil {
+		t.Fatalf("prepareSessionPersistence: %v", err)
+	}
+	defer clearBytes(plan.masterKey)
+	if plan.store.kind() != blobStoreLocal {
+		t.Fatalf("store = %s, want %s without an indexer", plan.store.kind(), blobStoreLocal)
+	}
+
+	sia := newSiaTestNode(t, t.TempDir(), runtime.ID, newFakeSiaObjects())
+	sia.cacheRuntimeBlobKey(runtime.ID, testBlobKey(9))
+	plan, err = sia.prepareSessionPersistence(context.Background(), runtime)
+	if err != nil {
+		t.Fatalf("prepareSessionPersistence with an indexer: %v", err)
+	}
+	defer clearBytes(plan.masterKey)
+	if plan.store.kind() != blobStoreSia {
+		t.Fatalf("store = %s, want %s", plan.store.kind(), blobStoreSia)
+	}
+}
