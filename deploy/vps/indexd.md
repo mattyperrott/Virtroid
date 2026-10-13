@@ -68,7 +68,8 @@ regular off-server dump, before runtime VMs keep their only copy on Sia.
    SIA_KEY_SECRET_FILE=/etc/virtroid/secrets/sia-key-secret
    ```
 
-5. Open the port: `sudo VIRTROID_ALLOW_SIA_APP=true virtroid-configure-host-firewall`.
+5. Open the port: `sudo virtroid-configure-host-firewall` (with `SIA_APP_PUBLISH=9982`
+   in `.env`, it and the release's hardening check expect port 9982 open).
 6. Release as usual. indexd syncs the chain itself (the explorer is off, so it
    learns neither the wallet address nor this server's IP); that takes hours.
 7. When it is synced, send Siacoin to the wallet address that `/wallet` shows,

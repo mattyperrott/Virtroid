@@ -12,7 +12,14 @@ fi
 require_root_locked="${VIRTROID_REQUIRE_ROOT_LOCKED:-false}"
 require_key_only_ssh="${VIRTROID_REQUIRE_KEY_ONLY_SSH:-false}"
 allow_http_acme="${VIRTROID_ALLOW_HTTP_ACME:-true}"
-for value_name in require_root_locked require_key_only_ssh allow_http_acme; do
+# Port 9982 is open while the production env publishes the Sia indexer's
+# application API (indexd.md).
+allow_sia_app="${VIRTROID_ALLOW_SIA_APP:-false}"
+if [ -z "${VIRTROID_ALLOW_SIA_APP:-}" ] &&
+   grep -Eq '^SIA_APP_PUBLISH=9982$' /opt/virtroid/deploy/vps/.env 2>/dev/null; then
+  allow_sia_app=true
+fi
+for value_name in require_root_locked require_key_only_ssh allow_http_acme allow_sia_app; do
   value="${!value_name}"
   case "${value}" in
     true|false) ;;
@@ -55,6 +62,9 @@ expected_rules="$(printf '%s\n' \
 )"
 if [ "${allow_http_acme}" = true ]; then
   expected_rules="$(printf '%s\n%s\n' "${expected_rules}" 'ufw allow 80/tcp')"
+fi
+if [ "${allow_sia_app}" = true ]; then
+  expected_rules="$(printf '%s\n%s\n' "${expected_rules}" 'ufw allow 9982/tcp')"
 fi
 expected_rules="$(printf '%s\n' "${expected_rules}" | sort -u)"
 actual_rules="$(ufw show added | sed -n '/^ufw /p' | sort -u)"

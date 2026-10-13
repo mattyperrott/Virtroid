@@ -17,8 +17,13 @@ for command_name in comm sort ufw; do
 done
 
 allow_http_acme="${VIRTROID_ALLOW_HTTP_ACME:-true}"
-# Runtime VMs reach the Sia indexer's application API on 9982 (indexd.md).
+# Runtime VMs reach the Sia indexer's application API on 9982 (indexd.md);
+# by default while the production env publishes it.
 allow_sia_app="${VIRTROID_ALLOW_SIA_APP:-false}"
+if [ -z "${VIRTROID_ALLOW_SIA_APP:-}" ] &&
+   grep -Eq '^SIA_APP_PUBLISH=9982$' /opt/virtroid/deploy/vps/.env 2>/dev/null; then
+  allow_sia_app=true
+fi
 reset_firewall="${VIRTROID_FIREWALL_RESET:-false}"
 case "${allow_http_acme}" in
   true|false) ;;
