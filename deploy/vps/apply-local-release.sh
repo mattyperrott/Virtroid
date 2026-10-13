@@ -71,7 +71,7 @@ profiles="${VIRTROID_PROFILES:-edge}"
 IFS=',' read -ra profile_list <<< "${profiles}"
 for profile in "${profile_list[@]}"; do
   case "${profile}" in
-    edge|renterd|falco|nids|provisioner) ;;
+    edge|renterd|falco|nids|provisioner|indexd) ;;
     *) die "unsupported production profile: ${profile}" ;;
   esac
 done
@@ -283,6 +283,9 @@ compose up --no-start --no-deps --force-recreate --no-build --pull never "${back
 compose up -d --no-build --pull never postgres
 if profile_enabled renterd; then
   compose up -d --no-build --pull never renterd
+fi
+if profile_enabled indexd; then
+  compose up -d --no-build --pull never indexd
 fi
 compose up -d --no-deps --no-build --pull never virtroidd
 

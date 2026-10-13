@@ -889,6 +889,10 @@ if profile_enabled renterd; then
   core_services+=(renterd-mysql renterd)
   pull_services+=(renterd-mysql renterd)
 fi
+if profile_enabled indexd; then
+  core_services+=(indexd-postgres indexd)
+  pull_services+=(indexd-postgres indexd)
+fi
 if profile_enabled falco || profile_enabled nids; then
   core_services+=(falco-forwarder)
 fi
@@ -931,6 +935,9 @@ case "${command_name}" in
     fi
     if profile_enabled renterd; then
       restart_services+=(renterd)
+    fi
+    if profile_enabled indexd; then
+      restart_services+=(indexd)
     fi
     if profile_enabled falco; then
       restart_services+=(falco)
