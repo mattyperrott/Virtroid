@@ -7,8 +7,10 @@ directory builds what the VMs boot (`nix/`). The provisioner
 (`backend/cmd/virtroid-provisioner`) creates and deletes them.
 
 > [!WARNING]
-> Built and unit-tested, but not yet booted on a real Aleph SNP host. The
-> first VM needs a supervised run (step 6).
+> Running as a pilot: VMs boot on Aleph's SEV-SNP hosts in the `snp-eu` region
+> and test builds of the app stream from them after checking their
+> attestation. No signed measurement list is published yet (step 6), so release
+> builds refuse these VMs.
 
 ## What a VM boots
 

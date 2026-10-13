@@ -18,12 +18,13 @@
 
 ---
 
-## What VirtRoid Does 
+## What Virtroid Does
 
 
-Virtroid runs Android separately from the user's physical phone. The phone is an authenticated controller and encrypted viewer; applications, storage,
-network identity, and lifecycle state remain inside a remotely hosted ReDroid
-runtime.  
+Virtroid runs Android separately from the user's physical phone. The phone is an
+authenticated controller and encrypted viewer; applications, storage, network
+identity, and lifecycle state remain inside a remotely hosted ReDroid runtime.
+Users pay for what they use from a USDT balance.
 
 <p align="left">
   <a href="#what-virtroid-does">Overview</a> ·
@@ -36,10 +37,11 @@ runtime.
 <br>
 
 > [!IMPORTANT]
-> Virtroid is currently a **trusted-operator release candidate**: one VPS, plus
-> a pilot runtime node on Aleph Cloud. It does not yet protect an active runtime
-> from a compromised host or privileged infrastructure operator, including the
-> operator of a remote node's machine.
+> Virtroid is currently a **trusted-operator release candidate**: one VPS, an
+> ordinary runtime node on Aleph Cloud, and a pilot of per-account confidential
+> (AMD SEV-SNP) VMs on Aleph Cloud. Outside that pilot it does not protect an
+> active runtime from a compromised host or privileged infrastructure operator,
+> and only test builds of the app verify the confidential VMs today.
 
 
 ---
@@ -50,24 +52,27 @@ runtime.
 
 | Area | Status | Included |
 | :--- | :---: | :--- |
-| Identity and recovery | ✅ Deployed | Invite-gated bootstrap, device signing, trusted-device management, account deletion, and replacement-phone recovery with live acceptance pending |
+| Identity and recovery | ✅ Deployed | Invite-gated bootstrap, device signing, linked-phone management, identity password changes, account deletion, and replacement-phone recovery with live acceptance pending |
 | Runtime lifecycle | ✅ Deployed | Create, start, stop, restore, persona restart, factory reset, idle cleanup, and permanent deletion |
 | Remote viewer | ✅ Deployed | Encrypted live control, reconnect handling, runtime audio, demand-activated physical microphone input, and 30 fps runtimes (about 0.3 s tap-to-screen on the VPS) |
 | Camera and media | ✅ Deployed | Explicit physical-camera photo and video capture followed by guest media import |
 | Applications | ✅ Deployed | Pinned F-Droid catalog entries with hash, package, size, transport, and compatibility validation |
 | Notifications | ✅ Deployed | Encrypted forwarding of package, app label, timestamp, and title only; no message body or preview |
 | Client protection | ✅ Deployed | Android Keystore, encrypted local state, application lock, biometric unlock, and secure-window handling |
+| Wallet and billing | ✅ Deployed | USDT (TRC20) deposits to a per-account address, balance and activity in the app, a free trial of one runtime and one hour of running time, then per-minute runtime and daily storage charges |
 | Snapshot persistence | ✅ Deployed | Encrypted local snapshots, authenticated manifests, monotonic generations, rollback rejection, quotas, and cleanup tracking |
 | Control plane | ✅ Deployed | Signed requests, scoped capabilities, replay protection, policy limits, readiness, lifecycle state, and audit data |
-| Operator console | ✅ Deployed | Authenticated read-only command centre with sanitized fleet, security, hygiene, and release telemetry |
+| Operator console | ✅ Deployed | The Observatory: an authenticated, read-only command centre with sanitized fleet, runtime VM, payments, Sia, security, hygiene, and release telemetry |
 | Host monitoring | ✅ Deployed | Falco HIDS, Suricata NIDS, bounded sensor ingestion, and sanitized client security notices |
 | Reproducible deployment | ✅ Deployed | Protected VPS-local builds, immutable release identity, schema checks, hardening checks, and health gates |
 | Active-runtime file import | ✅ Backend path | Signed and bounded delivery is live-proved; the generic client upload action is intentionally absent |
-| Multi-node scheduling | 🟡 Pilot | Region-based placement; a second node on Aleph Cloud serves explicitly assigned accounts |
+| Multi-node scheduling | 🟡 Pilot | Region-based placement across the VPS, an Aleph Cloud node, and per-account confidential VMs |
 | Direct node streaming | 🟡 Pilot | Phones stream straight from a remote node over key-pinned TLS (IPv6), falling back through the VPS edge when there is no direct route |
-| Automatic node provisioning | 🟡 Built, not deployed | A provisioner creates and deletes a dedicated Aleph VM per account, within a spending cap and with warm spares |
-| Confidential host isolation | 🟡 Built, not deployed | Runtime VMs are AMD SEV-SNP guests with LUKS-encrypted disks unlocked only after attestation; today's runtimes still run on the VPS or an ordinary Aleph VM |
-| Hardware attestation | 🟡 Built, not deployed | The phone verifies the VM's SEV-SNP report against AMD's root before streaming, and refuses unapproved images |
+| Automatic node provisioning | 🟡 Pilot | The provisioner creates a dedicated Aleph Cloud VM when an account in a provisioned region starts a runtime, and deletes unused ones, within a spending cap |
+| Confidential host isolation | 🟡 Pilot | Runtime VMs are AMD SEV-SNP guests with a measured, verified read-only root and an encrypted data disk unlocked only after attestation |
+| Hardware attestation | 🟡 Test builds | The phone verifies the VM's SEV-SNP report against AMD's root before streaming; the release app trusts no image until a signed list of approved measurements is published |
+| Sia storage | 🟡 Syncing | The Sia indexer runs on the VPS on Sia mainnet and is catching up with the chain; confidential VMs keep snapshots on their own disk until it is ready |
+| Deposit conversion | ⏳ Not built | Moving deposits to a treasury and converting them into Siacoin and Aleph credits; done by hand today |
 
 
 ---
@@ -110,7 +115,7 @@ it lives on Sia.
 - **Lifecycle.** A connected runtime is hot. A disconnected one is kept warm for 15 minutes for instant reconnects, then saved to Sia and removed. The VM itself is destroyed after long inactivity, on image updates, or if compromise is suspected. The provisioner's Aleph account holds a capped credit balance.
 - **The VPS.** The edge, control plane, payments, and storage are isolated from each other. Nodes and runtime agents come in through the edge like phones do. Falco, Suricata, and auditd ship logs off-host to an append-only bucket.
 - **User data.** The durable copy is on Sia only, encrypted before it leaves the VM. `indexd` sees only opaque metadata and pays Sia hosts in SC.
-- **Money.** Users deposit USDT (TRC20) to their own deposit address. Deposits become credits, spent per runtime minute and per GB stored.
+- **Money.** Users deposit USDT (TRC20) to their own deposit address. Deposits become a USDT balance, spent per minute a runtime runs and per GB stored per day. New accounts get one runtime and an hour of running time free.
 
 The diagram's source is [`assets/architecture/virtroid-target.archify.json`](assets/architecture/virtroid-target.archify.json).
 
@@ -118,21 +123,27 @@ The diagram's source is [`assets/architecture/virtroid-target.archify.json`](ass
 
 | Component | Responsibility |
 | :--- | :--- |
-| Android client | Identity, onboarding, runtime controls, local security, viewer, media capture, and notification display |
-| HAProxy | Public HTTPS termination, the API, and viewer ingress for VPS runtimes and the fallback path |
-| `virtroidd` | Accounts, devices, policy, region-based placement, runtimes, capabilities, sessions, operator telemetry, and notification delivery |
-| `virtnoded` | ReDroid lifecycle, media paths, viewer relay, application provisioning, snapshots, and cleanup, on the VPS and on remote nodes |
-| Remote node | A `virtnoded` host outside the VPS (today an Aleph Cloud VM) that serves a public TLS endpoint authenticated by its pinned key |
-| PostgreSQL | Authoritative control-plane and lifecycle state |
+| Android client | Identity, onboarding, wallet, runtime controls, local security, viewer, attestation checks, media capture, and notification display |
+| HAProxy | Public HTTPS termination, the API, viewer ingress for VPS runtimes and the fallback path, and the Sia indexer's application API |
+| `virtroidd` | Accounts, devices, policy, billing, region-based placement, runtimes, capabilities, sessions, notification delivery, and the Observatory |
+| `virtnoded` | ReDroid lifecycle, media paths, viewer relay, application provisioning, snapshots, and cleanup, on the VPS and on every remote node |
+| Provisioner | Creates each confidential VM on Aleph Cloud, sends its secrets only after verifying its attestation, and deletes it when unused |
+| Confidential runtime VM | One per account in a provisioned region: an AMD SEV-SNP guest booting the measured image from [`deploy/aleph/`](deploy/aleph/README.md) with `virtnoded` and ReDroid |
+| Aleph node | The original remote node: an ordinary, non-confidential Aleph Cloud VM serving one assigned account |
+| Payments service | Holds the deposit wallet's seed, finds confirmed USDT deposits on TRON, checks them on a second node, and reports them to `virtroidd` |
+| Sia indexer (indexd) | Gives each account its own keys and pays Sia hosts for the encrypted snapshots that confidential VMs store |
+| PostgreSQL | Authoritative control-plane, billing, and lifecycle state |
 | ReDroid | Independently hosted Android runtime |
 | Runtime agent | Allowlisted notification metadata collection inside the guest |
 
 - **Control** always goes through the VPS: the phone's signed requests reach `virtroidd` through the edge, and nodes send heartbeats and fetch their work the same way.
-- **Placement** follows the account's region. Accounts default to the VPS; an operator assigns an account to a remote region with `virtroid-admin set-account-region`. A runtime stays on the node that holds its data.
-- **Streams** from VPS runtimes pass through the edge. Streams from a remote node go straight from the phone to the node, which proves its identity with a TLS key pinned in the session. When the phone has no direct route (for example no IPv6), the VPS node forwards the stream unchanged.
-- On every path the viewer stream is encrypted between the phone and the viewer proxy inside the runtime, so the edge and a forwarding node only relay ciphertext. The runtime's own host can still see the runtime.
+- **Placement** follows the account's region. Accounts default to the VPS; an operator assigns an account to a region with `virtroid-admin set-account-region`. In a provisioned region, starting a runtime gets the account its own confidential VM, which takes a few minutes the first time; the VM is deleted after two unused hours.
+- **Streams** from VPS runtimes pass through the edge. Streams from a remote node go straight from the phone to the node, which proves its identity with a TLS key pinned in the session; a confidential VM also has to pass the phone's attestation check first. When the phone has no direct route (for example no IPv6), the VPS node forwards the stream unchanged.
+- On every path the viewer stream is encrypted between the phone and the viewer proxy inside the runtime, so the edge and a forwarding node only relay ciphertext.
+- **Snapshots** are encrypted before they leave the runtime's node. On the VPS and the Aleph node they stay on that node's disk. Confidential VMs store them on Sia through the indexer, so a stopped runtime can restart on a new VM; until the indexer is ready they stay on the VM's own disk.
+- **Payments.** Each account's deposit address derives from one wallet whose seed only the payments service holds ([`deploy/vps/payments.md`](deploy/vps/payments.md)). Each deposit is credited once.
 
-Running as a pilot: the provisioner, SEV-SNP runtime VMs, and phone-side attestation ([`deploy/aleph/`](deploy/aleph/README.md)). Built but not yet deployed: Sia storage through indexd ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)). Not built yet: QUIC and payments.
+Not built yet: QUIC streaming, a signed list of approved VM measurements, automatic deposit conversion, and the custom AOSP image.
 
 <details>
 <summary>Diagram of today's deployment</summary>
@@ -151,10 +162,24 @@ Source: [`assets/architecture/virtroid-deployment.archify.json`](assets/architec
 
 ## Security Boundary
 
-Virtroid protects the client-to-service path and stopped-runtime persistence, but the runtime host remains trusted. 
-A sufficiently privileged VPS administrator, compromised node agent, Docker controller, or host-level tool can inspect or alter a live Android runtime.  
+Outside the confidential pilot, Virtroid protects the client-to-service path and
+stopped-runtime persistence, but the runtime host stays trusted. A sufficiently
+privileged VPS administrator, compromised node agent, Docker controller, or
+host-level tool can inspect or alter a live Android runtime. The same applies to
+the original Aleph node, an ordinary VM whose host operator can see its runtimes.
 
-The same applies to a remote node: whoever operates the machine under an Aleph Cloud VM can inspect the runtimes on it, because today's pilot node is an ordinary, non-confidential VM. Only explicitly assigned accounts are placed there.
+Accounts in a provisioned region run in their own AMD SEV-SNP VM. The CPU
+encrypts its memory; its firmware, kernel, initrd and read-only root are
+measured; its data disk is encrypted; and the phone checks its attestation
+before streaming. The Aleph host operator cannot read that runtime. Still
+trusted there:
+
+- whoever builds the image, though anyone can rebuild it and compare the measurement;
+- the provisioner on the VPS, which holds each VM's data-disk key;
+- the control plane, which decides where runtimes run.
+
+Only test builds of the app verify these VMs today. The release app refuses
+them until a signed list of approved measurements is published.
 
 ### Implemented controls
 
@@ -163,8 +188,11 @@ The same applies to a remote node: whoever operates the machine under an Aleph C
 - Runtime- and session-scoped capabilities with expiry
 - TLS viewer transport with session-bound relay credentials
 - Remote nodes reached only at operator-allowlisted IPs, over TLS pinned to each node's reported key, for both control-plane calls and phone streams
+- SEV-SNP attestation of runtime VMs, checked by the provisioner before it releases a VM's secrets and by the phone before it streams
 - Android Keystore-backed client secrets and encrypted local state
-- AES-GCM snapshot encryption with authenticated manifests and monotonic generations
+- AES-GCM snapshot encryption with authenticated manifests and monotonic generations, under an account key wrapped by the user's identity password
+- Identity password changes accepted only with a signature from the account's recovery key
+- Deposit addresses derived from a public key, with the wallet seed held only by the isolated payments service, which signs its reports
 - Bounded resource quotas and explicit lifecycle cleanup obligations
 - Loopback-bound services, deny-by-default firewalling, AppArmor, Auditd, Fail2ban, and unattended security updates
 - Falco and Suricata event collection with sanitized, account-scoped client delivery
@@ -173,11 +201,12 @@ The same applies to a remote node: whoever operates the machine under an Aleph C
 <br>
 
 > [!CAUTION]
-> Virtroid must not currently be described as trustless, host-blind,
-> operator-blind, anonymous by architecture, confidential computing, or fully
-> end-to-end encrypted. Transport encryption protects data in transit and
-> snapshot encryption protects stopped-runtime files; neither makes an active
-> guest confidential from its host.
+> Virtroid must not currently be described as trustless, operator-blind,
+> anonymous by architecture, or fully end-to-end encrypted. Confidential
+> computing covers only the SEV-SNP pilot and is verified only by test builds of
+> the app. Elsewhere, transport encryption protects data in transit and snapshot
+> encryption protects stopped-runtime files; neither makes an active guest
+> confidential from its host.
 
 
 ---
@@ -188,10 +217,10 @@ The same applies to a remote node: whoever operates the machine under an Aleph C
 | Path | Purpose |
 | :--- | :--- |
 | [`android-client/`](android-client/) | Android controller app, runtime agent, scrcpy integration, tests, and signing gates |
-| [`operator-console/`](operator-console/) | React operator interface and production UI bundle |
-| [`backend/cmd/`](backend/cmd/) | Control plane, node agent, administration, viewer encryption, and sensor entry points |
-| [`backend/internal/`](backend/internal/) | Identity, policy, persistence, lifecycle, security, and operator API logic |
-| [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, and release tooling |
+| [`operator-console/`](operator-console/) | The Observatory: the React operator console and its production bundle |
+| [`backend/cmd/`](backend/cmd/) | Control plane, node agent, provisioner, payments service, administration, viewer encryption, and sensor entry points |
+| [`backend/internal/`](backend/internal/) | Identity, policy, billing, persistence, lifecycle, Sia, TRON, security, and operator API logic |
+| [`deploy/vps/`](deploy/vps/) | Reproducible deployment, hardening, HAProxy, Falco, Suricata, the Sia indexer and payments services, and release tooling |
 | [`deploy/aleph/`](deploy/aleph/) | The confidential runtime VM image, its kernel, and the operator guide for provisioning |
 | [`deploy/provisioner/`](deploy/provisioner/) | The provisioner image: `virtroid-provisioner` plus Aleph's `aleph` CLI |
 | [`assets/`](assets/) | Architecture diagram images and their Archify source |
@@ -204,24 +233,32 @@ The same applies to a remote node: whoever operates the machine under an Aleph C
 ## Current status
 
 The Android client, Go control plane, runtime node, ReDroid guests, PostgreSQL,
-HAProxy edge, operator console, and host sensors are deployed on the active VPS.
-Physical-device acceptance has covered runtime lifecycle, encrypted viewing and
-reconnection, audio, demand-activated microphone input, physical-camera photo
-import, file delivery, idle cleanup, readiness, and security-event delivery.
+HAProxy edge, Observatory, and host sensors are deployed on the active VPS, with
+the payments service and the Sia indexer beside them. Physical-device acceptance
+has covered runtime lifecycle, encrypted viewing and reconnection, audio,
+demand-activated microphone input, physical-camera photo import, file delivery,
+idle cleanup, readiness, and security-event delivery.
 
-A second runtime node on an Aleph Cloud VM is live as a pilot for one assigned
-account. Phones stream from it directly over IPv6; measured tap-to-screen was
-about 0.42 s from South-East Asia to the node in Finland, against about 0.3 s
-on the VPS.
+Confidential runtime VMs are running as a pilot on Aleph Cloud: accounts in the
+SEV-SNP region get their own VM on demand, and test builds of the app stream from
+it after checking its attestation. The original Aleph node still serves one
+assigned account; phones stream from it directly over IPv6, with a measured
+tap-to-screen of about 0.42 s from South-East Asia to the node in Finland,
+against about 0.3 s on the VPS.
+
+USDT deposits and charging are live, and new accounts start on a one-runtime,
+one-hour trial. The Sia indexer's wallet is funded; it is catching up with the
+chain, after which it forms its storage contracts.
 
 This is working release-candidate evidence—not a claim of complete production
-hardening or hostile multi-tenant isolation. 
+hardening or hostile multi-tenant isolation.
 
 ### Next
 
-1. Encrypted user data on Sia: run indexd on the VPS, fund its wallet, and build runtime VMs that keep their snapshots there ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)).
-2. Approve runtime VM measurements through a signed list, so a new image needs no app release.
-3. A custom AOSP build for the runtime, and QUIC for the stream.
+1. Sia storage: finish the indexer's sync, form its contracts, and prove that a stopped runtime restarts from Sia on a new VM ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)).
+2. Publish a signed list of approved runtime VM measurements, so the release app trusts the confidential VMs and a new image needs no app release.
+3. Move deposits to a treasury and convert them into Siacoin and Aleph credits automatically.
+4. A custom AOSP build for the runtime, and QUIC for the stream.
 
 > [!NOTE]
 > **Disclaimer:**
