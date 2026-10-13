@@ -28,10 +28,13 @@ internal object RelayLatencyProbe {
         } else {
             SSLSocketFactory.getDefault() as SSLSocketFactory
         }
+        // Resolved before the clock starts, so a DNS lookup for the edge's
+        // name is not counted as network latency.
+        val address = InetSocketAddress(endpoint.host, endpoint.port)
         (factory.createSocket() as SSLSocket).use { socket ->
             socket.soTimeout = TIMEOUT_MS
             val startedAt = SystemClock.elapsedRealtimeNanos()
-            socket.connect(InetSocketAddress(endpoint.host, endpoint.port), TIMEOUT_MS)
+            socket.connect(address, TIMEOUT_MS)
             val roundTripMs = (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000
             if (!pinned) {
                 socket.sslParameters = socket.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
