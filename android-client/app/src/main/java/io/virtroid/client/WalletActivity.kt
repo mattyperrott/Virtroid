@@ -172,7 +172,7 @@ class WalletActivity : AppCompatActivity() {
     private fun copyAddress() {
         val address = shownAddress ?: return
         copySensitiveToClipboard("USDT deposit address", address, clearAfterMs = ADDRESS_CLIPBOARD_MS)
-        Notice.copied(this, getString(R.string.wallet_address_copied))
+        Notice.confirm(this, getString(R.string.wallet_address_copied))
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

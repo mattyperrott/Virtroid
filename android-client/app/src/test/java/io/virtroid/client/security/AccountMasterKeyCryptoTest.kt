@@ -102,4 +102,45 @@ class AccountMasterKeyCryptoTest {
         challenge.deviceName,
         challenge.devicePublicKey,
     ).joinToString("\n")
+    @Test
+    fun passwordChangeKeepsTheAccountKeyAndProvesTheOldPassword() {
+        val deviceId = "22222222-2222-2222-2222-222222222222"
+        val newPassword = "a completely different passphrase"
+        val bundle = AccountMasterKeyCrypto.create(accountId, password)
+
+        val rewrapped = AccountMasterKeyCrypto.rewrap(bundle.credential, deviceId, password, newPassword)
+
+        // Same account key and recovery key, new envelope.
+        assertEquals(bundle.blobAccessKey, rewrapped.blobAccessKey)
+        assertEquals(bundle.credential.recoveryPublicKey, rewrapped.credential.recoveryPublicKey)
+        assertEquals(bundle.credential.blobKeyVerifier, rewrapped.credential.blobKeyVerifier)
+        assertNotEquals(bundle.credential.envelopeCiphertext, rewrapped.credential.envelopeCiphertext)
+        assertEquals(bundle.blobAccessKey, AccountMasterKeyCrypto.unlock(rewrapped.credential, newPassword).blobAccessKey)
+        try {
+            AccountMasterKeyCrypto.unlock(rewrapped.credential, password)
+            fail("the old password still opened the new envelope")
+        } catch (_: IllegalArgumentException) {
+        }
+
+        // The proof is the recovery key's signature over this device and envelope.
+        val verifier = Signature.getInstance("SHA256withECDSA")
+        verifier.initVerify(
+            KeyFactory.getInstance("EC").generatePublic(
+                X509EncodedKeySpec(Base64.getDecoder().decode(bundle.credential.recoveryPublicKey)),
+            ),
+        )
+        verifier.update(AccountMasterKeyCrypto.rewrapCanonical(rewrapped.credential, deviceId).toByteArray())
+        assertTrue(verifier.verify(Base64.getUrlDecoder().decode(rewrapped.proof)))
+    }
+
+    @Test
+    fun passwordChangeNeedsTheCurrentPassword() {
+        val bundle = AccountMasterKeyCrypto.create(accountId, password)
+        try {
+            AccountMasterKeyCrypto.rewrap(bundle.credential, "device", "not the current password", "a new long password")
+            fail("rewrapped without the current password")
+        } catch (error: IllegalArgumentException) {
+            assertTrue(error.message.orEmpty().contains("password", ignoreCase = true))
+        }
+    }
 }

@@ -1187,13 +1187,78 @@ func verifyRecoverySignature(publicKeyMaterial string, challenge store.AccountRe
 	return ecdsa.VerifyASN1(publicKey, digest[:], signature)
 }
 
+// changeMyIdentityPassword stores the account's recovery envelope rewrapped
+// under a new identity password. The account key itself does not change, so
+// runtime snapshots stay readable. The proof is a signature by the account's
+// recovery key over the new envelope: only someone who opened the old envelope,
+// that is who knows the old password, holds that key.
 func (a *API) changeMyIdentityPassword(w http.ResponseWriter, r *http.Request) {
-	writeAPIError(
-		w,
-		http.StatusNotImplemented,
-		"identity_password_rotation_unavailable",
-		"password rotation is unavailable until snapshots can be transactionally rewrapped",
-	)
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Credential store.AccountRecoveryCredential `json:"credential"`
+		Proof      string                          `json:"proof"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	current, err := a.store.GetAccountRecoveryCredential(r.Context(), accountID)
+	if errors.Is(err, store.ErrRecoveryNotConfigured) {
+		writeAPIError(w, http.StatusNotFound, "account_recovery_not_configured", "account recovery is not configured")
+		return
+	}
+	if err != nil {
+		writeInternalAPIError(w, "account_recovery_lookup_failed", err)
+		return
+	}
+	req.Credential.AccountID = accountID
+	if !verifyRewrapProof(current.RecoveryPublicKey, deviceID, req.Credential, req.Proof) {
+		writeAPIError(w, http.StatusForbidden, "account_recovery_proof_invalid", "the current identity password could not be verified")
+		return
+	}
+	updated, err := a.store.RewrapAccountRecoveryCredential(r.Context(), accountID, deviceID, req.Credential)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, updated)
+	case errors.Is(err, store.ErrDeviceNotFound), errors.Is(err, store.ErrRecoveryNotConfigured):
+		writeAPIError(w, http.StatusNotFound, "account_recovery_unavailable", "account recovery is unavailable")
+	case errors.Is(err, store.ErrIdentityAuthFailed):
+		writeAPIError(w, http.StatusForbidden, "account_recovery_key_mismatch", "the new password must wrap the same account key")
+	default:
+		if _, validateErr := store.ValidateAccountRecoveryCredential(req.Credential); validateErr != nil {
+			writeAPIError(w, http.StatusBadRequest, "account_recovery_invalid", validateErr.Error())
+		} else {
+			writeInternalAPIError(w, "identity_password_change_failed", err)
+		}
+	}
+}
+
+func rewrapProofCanonical(deviceID string, credential store.AccountRecoveryCredential) string {
+	return strings.Join([]string{
+		"VIRTROID-ACCOUNT-RECOVERY-REWRAP-V1",
+		strings.TrimSpace(credential.AccountID),
+		strings.TrimSpace(deviceID),
+		strings.TrimSpace(credential.KDFSalt),
+		strconv.Itoa(credential.KDFIterations),
+		strings.TrimSpace(credential.EnvelopeIV),
+		strings.TrimSpace(credential.EnvelopeCiphertext),
+	}, "\n")
+}
+
+func verifyRewrapProof(publicKeyMaterial, deviceID string, credential store.AccountRecoveryCredential, proof string) bool {
+	publicKey, err := parseRecoveryPublicKey(publicKeyMaterial)
+	if err != nil {
+		return false
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(proof))
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(rewrapProofCanonical(deviceID, credential)))
+	return ecdsa.VerifyASN1(publicKey, digest[:], signature)
 }
 
 func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {

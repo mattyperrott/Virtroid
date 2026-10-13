@@ -51,6 +51,13 @@ data class UnlockedAccountRecovery(
     val recoveryPrivateKey: String,
 )
 
+/** The account's keys wrapped under a new password, with the server's proof. */
+data class RewrappedAccountRecovery(
+    val credential: AccountRecoveryCredential,
+    val proof: String,
+    val blobAccessKey: String,
+)
+
 object AccountMasterKeyCrypto {
     const val VERSION = 2
     const val KDF_ALGORITHM = "PBKDF2_HMAC_SHA256_V2"
@@ -62,6 +69,7 @@ object AccountMasterKeyCrypto {
     private const val ENVELOPE_CONTEXT = "VIRTROID-ACCOUNT-MASTER-KEY-ENVELOPE-V2"
     private const val PAYLOAD_CONTEXT = "VIRTROID-ACCOUNT-RECOVERY-PAYLOAD-V2"
     private const val RECOVERY_SIGNATURE_CONTEXT = "VIRTROID-ACCOUNT-RECOVERY-V1"
+    private const val REWRAP_SIGNATURE_CONTEXT = "VIRTROID-ACCOUNT-RECOVERY-REWRAP-V1"
     private val b64Encoder = Base64.getEncoder()
     private val b64Decoder = Base64.getDecoder()
     private val b64UrlEncoder = Base64.getUrlEncoder().withoutPadding()
@@ -78,27 +86,11 @@ object AccountMasterKeyCrypto {
         val recoveryKeys = KeyPairGenerator.getInstance("EC").apply {
             initialize(ECGenParameterSpec("secp256r1"), SecureRandom())
         }.generateKeyPair()
-        val salt = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val saltEncoded = b64UrlEncoder.encodeToString(salt)
-        val ivEncoded = b64UrlEncoder.encodeToString(iv)
-        val wrappingKey = deriveWrappingKey(password, salt, KDF_ITERATIONS)
-
         val recoveryPrivateKeyBytes = recoveryKeys.private.encoded
-        val plaintext = try {
-            encodePayload(masterKeyBytes, recoveryPrivateKeyBytes)
+        val sealed = try {
+            seal(accountId, password, masterKeyBytes, recoveryPrivateKeyBytes)
         } finally {
             recoveryPrivateKeyBytes.fill(0)
-        }
-        val aad = envelopeAad(accountId, saltEncoded, KDF_ITERATIONS)
-        val ciphertext = try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
-            cipher.updateAAD(aad)
-            cipher.doFinal(plaintext)
-        } finally {
-            wrappingKey.fill(0)
-            plaintext.fill(0)
             masterKeyBytes.fill(0)
         }
 
@@ -107,16 +99,93 @@ object AccountMasterKeyCrypto {
                 accountId = accountId.trim(),
                 version = VERSION,
                 kdfAlgorithm = KDF_ALGORITHM,
-                kdfSalt = saltEncoded,
+                kdfSalt = sealed.salt,
                 kdfIterations = KDF_ITERATIONS,
                 envelopeAlgorithm = ENVELOPE_ALGORITHM,
-                envelopeIv = ivEncoded,
-                envelopeCiphertext = b64UrlEncoder.encodeToString(ciphertext),
+                envelopeIv = sealed.iv,
+                envelopeCiphertext = sealed.ciphertext,
                 recoveryPublicKey = b64Encoder.encodeToString(recoveryKeys.public.encoded),
                 blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey),
             ),
             blobAccessKey = blobAccessKey,
         )
+    }
+
+    /**
+     * Wraps the same account key and recovery key under [newPassword]. The
+     * account key does not change, so encrypted snapshots stay readable. The
+     * proof, a recovery-key signature over the new envelope, shows the server
+     * that whoever replaces it opened the old one.
+     */
+    fun rewrap(
+        credential: AccountRecoveryCredential,
+        deviceId: String,
+        currentPassword: String,
+        newPassword: String,
+    ): RewrappedAccountRecovery {
+        require(newPassword.isNotBlank()) { "blob encryption password is required" }
+        val unlocked = unlock(credential, currentPassword)
+        val masterKeyBytes = decodeBlobAccessKey(unlocked.blobAccessKey)
+        val recoveryPrivateKeyBytes = b64Decoder.decode(unlocked.recoveryPrivateKey)
+        val sealed = try {
+            seal(credential.accountId, newPassword, masterKeyBytes, recoveryPrivateKeyBytes)
+        } finally {
+            masterKeyBytes.fill(0)
+            recoveryPrivateKeyBytes.fill(0)
+        }
+        val rewrapped = credential.copy(
+            accountId = credential.accountId.trim(),
+            version = VERSION,
+            kdfAlgorithm = KDF_ALGORITHM,
+            kdfSalt = sealed.salt,
+            kdfIterations = KDF_ITERATIONS,
+            envelopeAlgorithm = ENVELOPE_ALGORITHM,
+            envelopeIv = sealed.iv,
+            envelopeCiphertext = sealed.ciphertext,
+        )
+        val signature = Signature.getInstance("SHA256withECDSA")
+        signature.initSign(parseRecoveryPrivateKey(unlocked.recoveryPrivateKey))
+        signature.update(rewrapCanonical(rewrapped, deviceId).toByteArray(Charsets.UTF_8))
+        return RewrappedAccountRecovery(
+            credential = rewrapped,
+            proof = b64UrlEncoder.encodeToString(signature.sign()),
+            blobAccessKey = unlocked.blobAccessKey,
+        )
+    }
+
+    internal fun rewrapCanonical(credential: AccountRecoveryCredential, deviceId: String): String = listOf(
+        REWRAP_SIGNATURE_CONTEXT,
+        credential.accountId.trim(),
+        deviceId.trim(),
+        credential.kdfSalt.trim(),
+        credential.kdfIterations.toString(),
+        credential.envelopeIv.trim(),
+        credential.envelopeCiphertext.trim(),
+    ).joinToString("\n")
+
+    private class SealedEnvelope(val salt: String, val iv: String, val ciphertext: String)
+
+    private fun seal(
+        accountId: String,
+        password: String,
+        masterKey: ByteArray,
+        recoveryPrivateKey: ByteArray,
+    ): SealedEnvelope {
+        val salt = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val saltEncoded = b64UrlEncoder.encodeToString(salt)
+        val wrappingKey = deriveWrappingKey(password, salt, KDF_ITERATIONS)
+        val plaintext = encodePayload(masterKey, recoveryPrivateKey)
+        val ciphertext = try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(wrappingKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(envelopeAad(accountId, saltEncoded, KDF_ITERATIONS))
+            cipher.doFinal(plaintext)
+        } finally {
+            wrappingKey.fill(0)
+            plaintext.fill(0)
+        }
+        return SealedEnvelope(saltEncoded, b64UrlEncoder.encodeToString(iv), b64UrlEncoder.encodeToString(ciphertext))
     }
 
     fun unlock(credential: AccountRecoveryCredential, password: String): UnlockedAccountRecovery {

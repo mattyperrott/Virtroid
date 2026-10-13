@@ -396,6 +396,7 @@ class ControlsActivity : AppCompatActivity() {
             title = getString(R.string.controls_wipe_confirm_title),
             message = getString(R.string.controls_wipe_confirm_body),
             confirmLabel = getString(R.string.controls_confirm),
+            destructive = true,
             onConfirmed = wipe@{
                 val accountId = sessionStore.accountId ?: return@wipe
                 lifecycleScope.launch {
@@ -483,6 +484,7 @@ class ControlsActivity : AppCompatActivity() {
             title = getString(R.string.controls_delete_confirm_title),
             message = getString(R.string.controls_delete_confirm_body),
             confirmLabel = getString(R.string.controls_confirm),
+            destructive = true,
             onConfirmed = delete@{
                 val accountId = sessionStore.accountId ?: return@delete
                 val deviceId = sessionStore.deviceId ?: return@delete

@@ -1,6 +1,5 @@
 package io.virtroid.client
 
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -27,6 +26,7 @@ import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.promptIdentityPasswordSetup
 import io.virtroid.client.security.showConfirmation
 import kotlinx.coroutines.launch
@@ -34,6 +34,7 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.VirtroidSheet
 
 class AccountIdentityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenAccountIdentityBinding
@@ -47,6 +48,9 @@ class AccountIdentityActivity : AppCompatActivity() {
     private val deviceIdentityStore = DeviceIdentityStore()
     private val api = VirtroidApi()
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
+    private val dateFormatter = DateTimeFormatter.ofPattern("d MMM", Locale.US)
+    // Linked phones still active, once the server has said.
+    private var linkedPhoneCount: Int? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,6 +123,7 @@ class AccountIdentityActivity : AppCompatActivity() {
         if (::binding.isInitialized) {
             refreshAppSelections()
             refreshWallet()
+            refreshLinkedDeviceCount()
         }
     }
 
@@ -156,7 +161,9 @@ class AccountIdentityActivity : AppCompatActivity() {
             else -> getString(R.string.account_identity_encryption_missing)
         }
         binding.itemLinkedDevicesSubtitle.text = if (hasLinkedIdentity) {
-            getString(R.string.account_linked_devices_subtitle)
+            linkedPhoneCount?.takeIf { it > 0 }
+                ?.let { resources.getQuantityString(R.plurals.account_linked_devices_count, it, it) }
+                ?: getString(R.string.account_linked_devices_subtitle)
         } else {
             getString(R.string.account_identity_not_linked)
         }
@@ -322,20 +329,44 @@ class AccountIdentityActivity : AppCompatActivity() {
                 api.listDevices(sessionStore.baseUrl, accountId, deviceId)
             }.onSuccess { devices ->
                 binding.itemLinkedDevices.isEnabled = true
+                renderLinkedDeviceCount(devices)
                 if (devices.isEmpty()) {
                     toast(getString(R.string.account_linked_devices_empty))
                     return@onSuccess
                 }
-                val labels = devices.map { device -> linkedDeviceLabel(device, deviceId) }.toTypedArray()
-                AlertDialog.Builder(this@AccountIdentityActivity)
-                    .setTitle(getString(R.string.account_linked_devices_title))
-                    .setItems(labels) { _, index ->
-                        confirmDeviceRevoke(
-                            device = devices[index],
-                            activeDeviceCount = devices.count { it.revokedAt == null },
+                val activeCount = devices.count { it.revokedAt == null }
+                val sheet = VirtroidSheet(this@AccountIdentityActivity)
+                    .title(getString(R.string.account_linked_devices_title))
+                    .message(getString(R.string.account_linked_devices_body))
+                // This phone first, then the others; revoked phones last.
+                devices
+                    .sortedWith(compareBy({ it.revokedAt != null }, { it.id != deviceId }))
+                    .forEach { device ->
+                        val name = device.name.ifBlank { shortId(device.id) }
+                        val isThisPhone = device.id == deviceId
+                        val revoked = device.revokedAt != null
+                        sheet.row(
+                            icon = R.drawable.ic_mobile,
+                            title = name,
+                            subtitle = if (isThisPhone && !revoked) {
+                                getString(R.string.account_linked_devices_this_phone, formatRemoteDate(device.createdAt))
+                            } else {
+                                linkedDeviceDetail(device)
+                            },
+                            action = when {
+                                revoked -> null
+                                isThisPhone -> getString(R.string.account_linked_devices_sign_out)
+                                else -> getString(R.string.account_revoke_device_confirm)
+                            },
+                            actionTone = VirtroidSheet.Tone.DANGER,
+                            dimmed = revoked,
+                            onClick = if (revoked) null else {
+                                { confirmDeviceRevoke(device, activeCount) }
+                            },
                         )
                     }
-                    .setNegativeButton(getString(R.string.controls_cancel), null)
+                sheet.note(getString(R.string.account_linked_devices_add_note))
+                    .secondary(getString(R.string.identity_password_close))
                     .show()
             }.onFailure { error ->
                 binding.itemLinkedDevices.isEnabled = true
@@ -345,17 +376,33 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
     }
 
-    private fun linkedDeviceLabel(device: TrustedDeviceSummary, currentDeviceId: String): String {
-        val currentMarker = if (device.id == currentDeviceId) {
-            " - ${getString(R.string.account_linked_devices_current)}"
-        } else {
-            ""
+    /** One line: when the phone was added and last seen, or when it was revoked. */
+    private fun linkedDeviceDetail(device: TrustedDeviceSummary): String {
+        device.revokedAt?.takeIf { it.isNotBlank() }?.let {
+            return getString(R.string.account_linked_devices_revoked, formatRemoteDate(it))
         }
-        val activity = device.lastSeenAt
+        val seen = device.lastSeenAt
             ?.takeIf { it.isNotBlank() }
-            ?.let { getString(R.string.account_linked_devices_last_seen, formatRemoteTimestamp(it)) }
+            ?.let { getString(R.string.account_linked_devices_last_seen, formatRemoteDate(it)) }
             ?: getString(R.string.account_linked_devices_never_seen)
-        return "${device.name.ifBlank { shortId(device.id) }}$currentMarker\n${shortId(device.id)} - $activity"
+        return getString(R.string.account_linked_devices_active, formatRemoteDate(device.createdAt), seen)
+    }
+
+    private fun refreshLinkedDeviceCount() {
+        val accountId = sessionStore.accountId.orEmpty()
+        val deviceId = sessionStore.deviceId.orEmpty()
+        if (accountId.isBlank() || deviceId.isBlank()) {
+            return
+        }
+        lifecycleScope.launch {
+            runCatching { api.listDevices(sessionStore.baseUrl, accountId, deviceId) }
+                .onSuccess(::renderLinkedDeviceCount)
+        }
+    }
+
+    private fun renderLinkedDeviceCount(devices: List<TrustedDeviceSummary>) {
+        linkedPhoneCount = devices.count { it.revokedAt == null }
+        renderIdentity()
     }
 
     private fun confirmDeviceRevoke(device: TrustedDeviceSummary, activeDeviceCount: Int) {
@@ -373,6 +420,7 @@ class AccountIdentityActivity : AppCompatActivity() {
             title = getString(R.string.account_revoke_device_title),
             message = message,
             confirmLabel = getString(R.string.account_revoke_device_confirm),
+            destructive = true,
             onConfirmed = { revokeDevice(device) },
         )
     }
@@ -414,8 +462,8 @@ class AccountIdentityActivity : AppCompatActivity() {
     private fun confirmLocalDataWipe() {
         showConfirmation(
             title = getString(R.string.account_wipe_local_title),
-            message = getString(R.string.account_wipe_local_body),
-            confirmLabel = getString(R.string.privacy_force_clear_cache),
+            message = getString(R.string.account_wipe_local_confirm_body),
+            confirmLabel = getString(R.string.account_wipe_local_confirm),
             onConfirmed = {
                 activeSessionStore.clear()
                 identityPasswordStore.clearUnlocked()
@@ -434,41 +482,37 @@ class AccountIdentityActivity : AppCompatActivity() {
             return
         }
 
-        val configured = identityPasswordStore.isConfigured(accountId, deviceId)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(getString(R.string.identity_password_title))
-            .setMessage(
-                if (configured) {
-                    getString(R.string.identity_password_change_body)
-                } else {
-                    getString(R.string.identity_password_setup_body)
-                },
-            )
-            .setNegativeButton(
-                getString(if (configured) R.string.identity_password_close else R.string.controls_cancel),
-                null,
-            )
-        if (configured) {
-            dialog.setNeutralButton(getString(R.string.identity_password_clear_cache)) { _, _ ->
-                identityPasswordStore.clearUnlocked()
-                renderIdentity()
-                toast(getString(R.string.identity_password_cache_cleared))
+        val sheet = VirtroidSheet(this).title(getString(R.string.account_identity_password_title))
+        if (identityPasswordStore.isConfigured(accountId, deviceId)) {
+            sheet.message(getString(R.string.identity_password_change_body))
+                .row(
+                    icon = R.drawable.ic_edit,
+                    title = getString(R.string.identity_password_change_row),
+                    subtitle = getString(R.string.identity_password_change_row_subtitle),
+                ) { changeIdentityPassword(accountId, deviceId) }
+            if (identityPasswordStore.isUnlockedFor(accountId, deviceId)) {
+                sheet.row(
+                    icon = R.drawable.ic_lock,
+                    title = getString(R.string.identity_password_lock_row),
+                    subtitle = getString(R.string.identity_password_lock_row_subtitle),
+                ) {
+                    identityPasswordStore.clearUnlocked()
+                    renderIdentity()
+                    Notice.confirm(this, getString(R.string.identity_password_cache_cleared))
+                }
             }
         } else {
-            dialog.setPositiveButton(getString(R.string.identity_password_set_action)) { _, _ ->
-                configureIdentityPassword(accountId, deviceId)
-            }
+            sheet.message(getString(R.string.identity_password_setup_body))
+                .row(
+                    icon = R.drawable.ic_lock,
+                    title = getString(R.string.identity_password_set_action),
+                ) { configureIdentityPassword(accountId, deviceId) }
         }
-        dialog.show()
+        sheet.secondary(getString(R.string.identity_password_close)).show()
     }
 
     private fun configureIdentityPassword(accountId: String, deviceId: String) {
         lifecycleScope.launch {
-            if (identityPasswordStore.isConfigured(accountId, deviceId)) {
-                toast(getString(R.string.identity_password_change_action))
-                return@launch
-            }
-
             val password = promptIdentityPasswordSetup() ?: return@launch
 
             runCatching {
@@ -481,7 +525,7 @@ class AccountIdentityActivity : AppCompatActivity() {
             }.onSuccess {
                 appLogs.info("Identity blob password configured", "auth")
                 renderIdentity()
-                toast(getString(R.string.identity_password_updated))
+                Notice.confirm(this@AccountIdentityActivity, getString(R.string.identity_password_updated))
             }.onFailure { error ->
                 appLogs.error("Identity blob password setup failed: ${error.message}", "auth")
                 toast(error.virtroidDisplayMessage(this@AccountIdentityActivity))
@@ -489,11 +533,47 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Rewraps the account key under a new password: the current one opens the
+     * stored envelope, so a wrong one changes nothing.
+     */
+    private fun changeIdentityPassword(accountId: String, deviceId: String) {
+        lifecycleScope.launch {
+            val current = promptIdentityPassword(
+                title = getString(R.string.identity_password_current_title),
+                hint = getString(R.string.identity_password_current_body),
+            )?.takeIf { it.isNotBlank() } ?: return@launch
+            val next = promptIdentityPasswordSetup(
+                title = getString(R.string.identity_password_new_title),
+                body = getString(R.string.identity_password_new_body),
+            ) ?: return@launch
+            if (next == current) {
+                toast(getString(R.string.identity_password_same))
+                return@launch
+            }
+
+            binding.itemIdentityPassword.isEnabled = false
+            binding.itemIdentityPasswordSubtitle.text = getString(R.string.identity_password_changing)
+            runCatching {
+                identityKeyManager.changePassword(sessionStore.baseUrl, accountId, deviceId, current, next)
+            }.onSuccess {
+                appLogs.info("Identity password changed", "auth")
+                Notice.confirm(this@AccountIdentityActivity, getString(R.string.identity_password_changed))
+            }.onFailure { error ->
+                appLogs.error("Identity password change failed: ${error.message}", "auth")
+                toast(error.virtroidDisplayMessage(this@AccountIdentityActivity))
+            }
+            binding.itemIdentityPassword.isEnabled = true
+            renderIdentity()
+        }
+    }
+
     private fun confirmLocalIdentityReset() {
         showConfirmation(
             title = getString(R.string.account_delete_local_identity_title),
-            message = getString(R.string.account_delete_local_identity_body),
+            message = getString(R.string.account_delete_local_identity_confirm_body),
             confirmLabel = getString(R.string.account_delete_local_identity_confirm),
+            destructive = true,
             onConfirmed = ::deleteServerAccountAndResetLocal,
         )
     }
@@ -546,7 +626,7 @@ class AccountIdentityActivity : AppCompatActivity() {
             return
         }
         copySensitiveToClipboard(label, value)
-        Notice.copied(this, message)
+        Notice.confirm(this, message)
         // The button turns into an accent tick for a moment.
         button.setImageResource(R.drawable.ic_check)
         button.imageTintList = ColorStateList.valueOf(getColor(R.color.v_accent))
@@ -563,6 +643,12 @@ class AccountIdentityActivity : AppCompatActivity() {
         } else {
             value.take(8) + "..." + value.takeLast(6)
         }
+    }
+
+    private fun formatRemoteDate(value: String): String {
+        return runCatching {
+            OffsetDateTime.parse(value).format(dateFormatter)
+        }.getOrDefault(shortId(value))
     }
 
     private fun formatRemoteTimestamp(value: String): String {

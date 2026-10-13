@@ -444,6 +444,7 @@ class MainActivity : AppCompatActivity() {
             title = getString(R.string.controls_delete_confirm_title),
             message = getString(R.string.controls_delete_confirm_body),
             confirmLabel = getString(R.string.controls_confirm),
+            destructive = true,
             onConfirmed = { deleteRuntime(runtime) },
         )
     }

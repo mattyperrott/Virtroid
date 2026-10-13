@@ -186,7 +186,7 @@ class SystemLogsActivity : AppCompatActivity() {
                 "${Instant.ofEpochMilli(entry.timestampMs)} ${entry.level.name}/${entry.source}: ${entry.message}"
             }
         copySensitiveToClipboard("Virtroid logs", text, clearAfterMs = 15_000L)
-        Notice.copied(this, getString(R.string.system_logs_copied))
+        Notice.confirm(this, getString(R.string.system_logs_copied))
     }
 
     private fun clearLogs() {

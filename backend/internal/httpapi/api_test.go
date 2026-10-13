@@ -229,34 +229,56 @@ func TestBootstrapRateLimiterPrunesExpiredEntriesAndCapsClients(t *testing.T) {
 	}
 }
 
-func TestIdentityPasswordRotationFailsClosedBeforeStoreMutation(t *testing.T) {
-	// A nil store makes any accidental authentication, verifier lookup, or
-	// mutation call panic. The route must reject before touching persistence.
+func TestIdentityPasswordChangeRequiresSignedDevice(t *testing.T) {
+	// A nil store makes any accidental lookup or mutation panic: an unsigned
+	// request must be rejected before persistence is touched.
 	handler := New(config.ServerConfig{AppEnv: "production"}, nil)
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/me/identity/change-password",
-		strings.NewReader(`{"blob_key_verifier":"replacement","current_blob_key_verifier":"current"}`),
+		strings.NewReader(`{"credential":{},"proof":"x"}`),
 	)
 	resp := httptest.NewRecorder()
-
 	handler.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want %d", resp.Code, http.StatusNotImplemented)
-	}
-	var payload map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if payload["code"] != "identity_password_rotation_unavailable" {
-		t.Fatalf("payload = %#v, want stable unavailable code", payload)
-	}
-	if !strings.Contains(payload["error"], "transactionally rewrapped") {
-		t.Fatalf("error = %q, want snapshot rewrap explanation", payload["error"])
+	if resp.Code != http.StatusUnauthorized && resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want the unsigned request rejected", resp.Code)
 	}
 	if resp.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", resp.Header().Get("Cache-Control"))
+	}
+}
+
+func TestRewrapProofBindsDeviceAndEnvelope(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(publicKeyDER)
+	credential := store.AccountRecoveryCredential{
+		AccountID: "22222222-2222-2222-2222-222222222222", KDFSalt: "salt", KDFIterations: 600_000,
+		EnvelopeIV: "iv", EnvelopeCiphertext: "ciphertext",
+	}
+	deviceID := "33333333-3333-3333-3333-333333333333"
+	digest := sha256.Sum256([]byte(rewrapProofCanonical(deviceID, credential)))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := base64.RawURLEncoding.EncodeToString(signature)
+	if !verifyRewrapProof(publicKey, deviceID, credential, proof) {
+		t.Fatal("valid rewrap proof was rejected")
+	}
+	if verifyRewrapProof(publicKey, "44444444-4444-4444-4444-444444444444", credential, proof) {
+		t.Fatal("rewrap proof accepted for another device")
+	}
+	changed := credential
+	changed.EnvelopeCiphertext = "other ciphertext"
+	if verifyRewrapProof(publicKey, deviceID, changed, proof) {
+		t.Fatal("rewrap proof accepted for another envelope")
 	}
 }
 

@@ -2183,6 +2183,77 @@ func scanAccountRecoveryCredential(row interface{ Scan(...any) error }, destinat
 	)
 }
 
+// RewrapAccountRecoveryCredential replaces the account's recovery envelope
+// with the same keys wrapped under a new identity password: the request must
+// come from a linked device and carry the same recovery public key and blob
+// key verifier, so only the password-derived salt, IV and ciphertext change.
+// Callers check the old password first, by a signature from the recovery key.
+func (s *Store) RewrapAccountRecoveryCredential(
+	ctx context.Context,
+	accountID string,
+	deviceID string,
+	input AccountRecoveryCredential,
+) (AccountRecoveryCredential, error) {
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+	input.AccountID = accountID
+	validated, err := ValidateAccountRecoveryCredential(input)
+	if err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	defer tx.Rollback()
+
+	var linked bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM devices WHERE account_id = $1 AND id = $2 AND revoked_at IS NULL)`,
+		accountID, deviceID,
+	).Scan(&linked); err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	if !linked {
+		return AccountRecoveryCredential{}, ErrDeviceNotFound
+	}
+	var current AccountRecoveryCredential
+	if err := scanAccountRecoveryCredential(tx.QueryRowContext(ctx, `
+		SELECT account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
+		       envelope_algorithm, envelope_iv, envelope_ciphertext,
+		       recovery_public_key, blob_key_verifier, created_at, updated_at
+		  FROM account_recovery_credentials
+		 WHERE account_id = $1
+		 FOR UPDATE
+	`, accountID), &current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AccountRecoveryCredential{}, ErrRecoveryNotConfigured
+		}
+		return AccountRecoveryCredential{}, err
+	}
+	if subtle.ConstantTimeCompare([]byte(current.RecoveryPublicKey), []byte(validated.RecoveryPublicKey)) != 1 ||
+		subtle.ConstantTimeCompare([]byte(current.BlobKeyVerifier), []byte(validated.BlobKeyVerifier)) != 1 {
+		return AccountRecoveryCredential{}, ErrIdentityAuthFailed
+	}
+
+	var updated AccountRecoveryCredential
+	if err := scanAccountRecoveryCredential(tx.QueryRowContext(ctx, `
+		UPDATE account_recovery_credentials
+		   SET version = $2, kdf_algorithm = $3, kdf_salt = $4, kdf_iterations = $5,
+		       envelope_algorithm = $6, envelope_iv = $7, envelope_ciphertext = $8,
+		       updated_at = NOW()
+		 WHERE account_id = $1
+		 RETURNING account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
+		           envelope_algorithm, envelope_iv, envelope_ciphertext,
+		           recovery_public_key, blob_key_verifier, created_at, updated_at
+	`, accountID, validated.Version, validated.KDFAlgorithm, validated.KDFSalt, validated.KDFIterations,
+		validated.EnvelopeAlgorithm, validated.EnvelopeIV, validated.EnvelopeCiphertext), &updated); err != nil {
+		return AccountRecoveryCredential{}, err
+	}
+	return updated, tx.Commit()
+}
+
 func (s *Store) GetAccountRecoveryCredential(ctx context.Context, accountID string) (AccountRecoveryCredential, error) {
 	return getAccountRecoveryCredentialQuery(ctx, s.db, strings.TrimSpace(accountID))
 }

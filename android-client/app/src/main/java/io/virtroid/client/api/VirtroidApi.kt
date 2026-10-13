@@ -365,6 +365,31 @@ class VirtroidApi(
         payload.toAccountRecoveryCredential()
     }
 
+    /** Stores the account's recovery envelope rewrapped under a new identity password. */
+    suspend fun changeIdentityPassword(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        credential: AccountRecoveryCredential,
+        proof: String,
+    ): AccountRecoveryCredential = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("credential", credential.toJson())
+            .put("proof", proof)
+            .toString()
+        val payload = executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/identity/change-password",
+                method = "POST",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = body,
+            ),
+        )
+        payload.toAccountRecoveryCredential()
+    }
+
     suspend fun beginAccountRecovery(
         baseUrl: String,
         accountId: String,

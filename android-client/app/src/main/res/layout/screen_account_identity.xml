@@ -107,7 +107,8 @@
                         android:layout_marginStart="8dp"
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:contentDescription="@string/copy_to_clipboard"
-                        android:padding="10dp"
+                        android:padding="12dp"
+                        android:scaleType="fitCenter"
                         android:src="@drawable/ic_copy"
                         app:tint="@color/v_text_muted" />
                 </LinearLayout>
@@ -158,7 +159,8 @@
                         android:layout_marginStart="8dp"
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:contentDescription="@string/copy_to_clipboard"
-                        android:padding="10dp"
+                        android:padding="12dp"
+                        android:scaleType="fitCenter"
                         android:src="@drawable/ic_copy"
                         app:tint="@color/v_text_muted" />
                 </LinearLayout>
@@ -294,6 +296,8 @@
                         <TextView
                             android:id="@+id/item_wallet_subtitle"
                             style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="end"
+                            android:maxLines="1"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_wallet_subtitle"
@@ -350,6 +354,8 @@
                         <TextView
                             android:id="@+id/item_install_apps_subtitle"
                             style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="end"
+                            android:maxLines="1"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_apps_subtitle"
@@ -659,10 +665,12 @@
                             style="@style/VirtroidText.CardTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Identity Password" />
+                            android:text="@string/account_identity_password_title" />
                         <TextView
                             android:id="@+id/item_identity_password_subtitle"
                             style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="end"
+                            android:maxLines="1"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_identity_encryption_missing"
@@ -710,6 +718,8 @@
                         <TextView
                             android:id="@+id/item_device_signing_key_subtitle"
                             style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="end"
+                            android:maxLines="1"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_identity_verified"
@@ -723,7 +733,8 @@
                         android:layout_marginStart="8dp"
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:contentDescription="@string/copy_to_clipboard"
-                        android:padding="10dp"
+                        android:padding="12dp"
+                        android:scaleType="fitCenter"
                         android:src="@drawable/ic_copy"
                         app:tint="@color/v_text_muted" />
                 </LinearLayout>
@@ -760,6 +771,8 @@
                         <TextView
                             android:id="@+id/item_linked_devices_subtitle"
                             style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="end"
+                            android:maxLines="1"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/account_linked_devices_subtitle"
@@ -801,7 +814,7 @@
                             android:id="@+id/wipe_user_data_title"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Wipe User Data"
+                            android:text="@string/account_wipe_local_title"
                             android:textColor="@color/v_amber"
                             android:textSize="15sp"
                             android:fontFamily="sans"
@@ -836,7 +849,7 @@
                             android:id="@+id/delete_identity_title"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Delete Identity"
+                            android:text="@string/account_delete_local_identity_title"
                             android:textColor="@color/v_danger"
                             android:textSize="15sp"
                             android:fontFamily="sans"

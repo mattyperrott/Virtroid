@@ -93,9 +93,14 @@ suspend fun AppCompatActivity.promptPassphrase(
     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
 )
 
-suspend fun AppCompatActivity.promptIdentityPasswordSetup(): String? =
+suspend fun AppCompatActivity.promptIdentityPasswordSetup(
+    title: String? = null,
+    body: String? = null,
+): String? =
     suspendCancellableCoroutine { continuation ->
         val binding = DialogIdentityPasswordSetupBinding.inflate(layoutInflater)
+        title?.let { binding.passwordDialogTitleText.text = it }
+        body?.let { binding.passwordDialogBodyText.text = it }
         binding.passwordInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         binding.passwordConfirmInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         binding.passwordInputLayout.configureAccessiblePasswordToggle(binding.passwordInput)

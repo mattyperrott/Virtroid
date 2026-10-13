@@ -59,6 +59,27 @@ class IdentityKeyManager(
         return passwordStore.cacheBlobAccessKey(accountId, deviceId, blobAccessKey)
     }
 
+    /**
+     * Changes the identity password: the stored envelope is rewrapped under
+     * [newPassword] after [currentPassword] opens it. Throws when the current
+     * password is wrong; nothing changes then.
+     */
+    suspend fun changePassword(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        currentPassword: String,
+        newPassword: String,
+    ): String {
+        val credential = api.getAccountRecoveryCredential(baseUrl, accountId, deviceId)
+        val rewrapped = withContext(Dispatchers.Default) {
+            AccountMasterKeyCrypto.rewrap(credential, deviceId, currentPassword, newPassword)
+        }
+        api.changeIdentityPassword(baseUrl, accountId, deviceId, rewrapped.credential, rewrapped.proof)
+        passwordStore.saveConfigured(accountId, deviceId)
+        return passwordStore.cacheBlobAccessKey(accountId, deviceId, rewrapped.blobAccessKey)
+    }
+
     private suspend fun registerOrUnlockExisting(
         baseUrl: String,
         accountId: String,

@@ -44,11 +44,11 @@ object Notice {
     }
 
     /**
-     * Confirms a copy in the brand colour, a tick and the message on the
-     * accent, under the top bar: Android 13 and later show their own
-     * clipboard preview at the bottom, which apps cannot turn off.
+     * Confirms something done, such as a copy, in the brand colour: a tick
+     * and the message on the accent, under the top bar, clear of the
+     * clipboard preview Android 13 and later show at the bottom.
      */
-    fun copied(activity: Activity, message: String) {
+    fun confirm(activity: Activity, message: String) {
         if (message.isBlank() || activity.isFinishing || activity.isDestroyed) {
             return
         }
