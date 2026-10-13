@@ -136,7 +136,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                                 it.status.ifBlank { "stopped" },
                                 it.connectionStatus.ifBlank { "offline" },
                             ),
-                            detail = latestProvisionRuntimeLogs.lastOrNull()?.let { message -> "... $message" }
+                            detail = latestProvisionRuntimeLogs.lastOrNull()
                                 ?: getString(R.string.new_runtime_provision_detail_ready),
                             events = runtimeProgressEvents(
                                 latestProvisionRuntimeLogs,
@@ -155,7 +155,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                         ProvisionMilestone(
                             title = getString(R.string.new_runtime_provision_title_error),
                             command = getString(R.string.new_runtime_provision_command_error),
-                            detail = "... ${it.message ?: getString(R.string.status_error)}",
+                            detail = it.message ?: getString(R.string.status_error),
                             events = listOf(getString(R.string.runtime_provisioning_event_error)),
                         ),
                     )
@@ -210,7 +210,7 @@ class NewRuntimeActivity : AppCompatActivity() {
     }
 
     private fun provisionMilestoneForRuntime(runtime: RuntimeSummary, logs: List<String>): ProvisionMilestone {
-        val detail = logs.lastOrNull()?.let { "... $it" }
+        val detail = logs.lastOrNull()
         val command = getString(
             R.string.runtime_progress_command_state,
             runtime.status.ifBlank { "unknown" },

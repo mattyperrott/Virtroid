@@ -765,7 +765,7 @@ class MainActivity : AppCompatActivity() {
                 progress.region.ifBlank { "-" },
                 formatElapsed(progress.elapsedSeconds),
             ),
-            detail = progress.detail.takeIf { it.isNotBlank() }?.let { "... $it" }
+            detail = progress.detail.takeIf { it.isNotBlank() }
                 ?: getString(R.string.runtime_host_provisioning_detail),
             events = runtimeHostEvents[id].orEmpty()
                 .map { getString(R.string.runtime_host_provisioning_event, it) }
@@ -1157,7 +1157,7 @@ class MainActivity : AppCompatActivity() {
             return RuntimeProvisioningMilestone(
                 title = getString(R.string.runtime_provisioning_title_error),
                 command = getString(R.string.runtime_provisioning_command_error),
-                detail = "... ${lastError.orEmpty()}",
+                detail = lastError.orEmpty(),
                 events = listOf(getString(R.string.runtime_provisioning_event_error)),
             )
         }
@@ -1165,7 +1165,7 @@ class MainActivity : AppCompatActivity() {
         runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
         val logMessages = runtimeProvisioningLogMessages[id].orEmpty()
         val latestLog = logMessages.lastOrNull()
-        fun detail(defaultValue: String): String = latestLog?.let { "... $it" } ?: defaultValue
+        fun detail(defaultValue: String): String = latestLog ?: defaultValue
         fun command(): String = getString(
             R.string.runtime_progress_command_state,
             backendState.ifBlank { status.ifBlank { "unknown" } },
@@ -1214,7 +1214,7 @@ class MainActivity : AppCompatActivity() {
     private fun RuntimeSummary.stoppingMilestone(): RuntimeProvisioningMilestone {
         runtimeProvisioningStartedAtMs.getOrPut(id) { System.currentTimeMillis() }
         val logMessages = runtimeProvisioningLogMessages[id].orEmpty()
-        val detail = logMessages.lastOrNull()?.let { "... $it" }
+        val detail = logMessages.lastOrNull()
             ?: getString(R.string.runtime_lifecycle_detail_stopping)
         return RuntimeProvisioningMilestone(
             title = getString(R.string.runtime_lifecycle_title_stopping),

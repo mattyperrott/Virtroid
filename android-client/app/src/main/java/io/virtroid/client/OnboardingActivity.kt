@@ -118,7 +118,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Preparing Local Signing Key ...",
                 command = "> android-keystore load signing key",
-                detail = "... loading public verification material_",
+                detail = "loading public verification material_",
             )
             val publicKey = deviceIdentityStore.publicKeyMaterial()
             markPreviousMilestone("Local signing key ready", deviceIdentityStore.defaultDeviceName(this@OnboardingActivity))
@@ -126,7 +126,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Registering Account And Device ...",
                 command = "> POST /api/v1/bootstrap",
-                detail = "... waiting for control plane registration_",
+                detail = "waiting for control plane registration_",
             )
             val result = api.bootstrap(
                 baseUrl = sessionStore.baseUrl,
@@ -145,7 +145,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Binding Device Identity ...",
                 command = "> bind device public key",
-                detail = "... confirming signed device registration_",
+                detail = "confirming signed device registration_",
             )
             renderProvisionedDevice(result.deviceId, registered = true)
             markPreviousMilestone("Device ID registered", shortDescriptor(result.deviceId))
@@ -154,7 +154,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Identity Ready",
                 command = "> launch secure client",
-                detail = "... provisioning completed_",
+                detail = "provisioning completed_",
             )
             delay(FINAL_VISUAL_DELAY_MS)
         }.onSuccess {
@@ -164,7 +164,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Provisioning Failed",
                 command = "> provisioning error",
-                detail = "... $message",
+                detail = message,
             )
             toast(message)
             binding.continueSetupButton.isEnabled = true
@@ -187,7 +187,7 @@ class OnboardingActivity : AppCompatActivity() {
                 updateActiveMilestone(
                     title = "Preparing Identity Verifier ...",
                     command = "> derive identity verifier",
-                    detail = "... using local identity password_",
+                    detail = "using local identity password_",
                 )
                 registerBlobIdentity(
                     BootstrapResult(accountId = accountId, deviceId = deviceId, runtimeId = ""),
@@ -197,14 +197,14 @@ class OnboardingActivity : AppCompatActivity() {
                 updateActiveMilestone(
                     title = "Identity Ready",
                     command = "> launch secure client",
-                    detail = "... provisioning completed_",
+                    detail = "provisioning completed_",
                 )
                 delay(FINAL_VISUAL_DELAY_MS)
             }.onFailure {
                 updateActiveMilestone(
                     title = "Provisioning Failed",
                     command = "> identity register",
-                    detail = "... ${it.message ?: getString(R.string.status_error)}",
+                    detail = it.message ?: getString(R.string.status_error),
                 )
                 toast(it.message ?: getString(R.string.status_error))
                 binding.continueSetupButton.isEnabled = true
@@ -223,7 +223,7 @@ class OnboardingActivity : AppCompatActivity() {
         updateActiveMilestone(
             title = "Protecting And Registering Account Key ...",
             command = "> POST /api/v1/me/identity/recovery",
-            detail = "... encrypting recovery material locally; password stays here_",
+            detail = "encrypting recovery material locally; password stays here_",
         )
         if (createNewAccountKey) {
             identityKeyManager.createAndRegister(
@@ -258,7 +258,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Preparing Replacement Device ...",
                 command = "> android-keystore generate signing key",
-                detail = "... binding a new device identity_",
+                detail = "binding a new device identity_",
             )
             val publicKey = deviceIdentityStore.publicKeyMaterial()
             val deviceId = deriveDeviceId(input.accountId)
@@ -268,7 +268,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Requesting Recovery Challenge ...",
                 command = "> POST /api/v1/recovery/challenge",
-                detail = "... fetching the password-encrypted account key_",
+                detail = "fetching the password-encrypted account key_",
             )
             val start = api.beginAccountRecovery(
                 baseUrl = sessionStore.baseUrl,
@@ -282,7 +282,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Unlocking Account Key ...",
                 command = "> decrypt recovery envelope locally",
-                detail = "... the blob password never leaves this phone_",
+                detail = "the blob password never leaves this phone_",
             )
             val unlocked = withContext(Dispatchers.Default) {
                 AccountMasterKeyCrypto.unlock(start.credential, input.password)
@@ -295,7 +295,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Enrolling This Phone ...",
                 command = "> POST /api/v1/recovery/complete",
-                detail = "... registering the new trusted device_",
+                detail = "registering the new trusted device_",
             )
             val result = api.completeAccountRecovery(sessionStore.baseUrl, start, recoverySignature)
             sessionStore.saveBootstrap(result.accountId, result.deviceId)
@@ -310,7 +310,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Identity Recovered",
                 command = "> launch secure client",
-                detail = "... encrypted runtime snapshots are available_",
+                detail = "encrypted runtime snapshots are available_",
             )
             delay(FINAL_VISUAL_DELAY_MS)
         }.onSuccess {
@@ -321,7 +321,7 @@ class OnboardingActivity : AppCompatActivity() {
             updateActiveMilestone(
                 title = "Recovery Failed",
                 command = "> recovery error",
-                detail = "... $message",
+                detail = message,
             )
             toast(message)
             binding.continueSetupButton.isEnabled = true
