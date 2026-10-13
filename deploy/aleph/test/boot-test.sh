@@ -53,7 +53,7 @@ for m in dm-mod dm-bufio dm-verity dm-crypt; do \$B insmod /lib/modules/\$m.ko |
 
 /bin/veritysetup open /dev/vda virtroid-root /dev/vda $roothash --hash-offset=$offset || fail "verity"
 \$B mkdir -p /mnt/lower /mnt/ov /mnt/root
-\$B mount -t ext4 -o ro,nodev /dev/mapper/virtroid-root /mnt/lower || fail "mount root"
+\$B mount -t erofs -o ro,nodev /dev/mapper/virtroid-root /mnt/lower || fail "mount root"
 \$B mount -t tmpfs tmpfs /mnt/ov
 \$B mkdir -p /mnt/ov/u /mnt/ov/w
 \$B mount -t overlay overlay -o lowerdir=/mnt/lower,upperdir=/mnt/ov/u,workdir=/mnt/ov/w /mnt/root || fail "overlay"

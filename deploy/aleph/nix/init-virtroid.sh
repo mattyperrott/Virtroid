@@ -39,7 +39,7 @@ wait_for_rootfs_blkdev
 /bin/veritysetup open "$blkdev" virtroid-root "$blkdev" "$ROOTHASH" --hash-offset="$HASH_OFFSET" 2>&1 ||
     fatal "root disk does not match the measured root hash"
 /bin/busybox mkdir -p /mnt/root
-/bin/busybox mount -t ext4 -o ro,nodev /dev/mapper/virtroid-root /mnt/root || fatal "cannot mount the root"
+/bin/busybox mount -t erofs -o ro,nodev /dev/mapper/virtroid-root /mnt/root || fatal "cannot mount the root"
 echo "init: root verified (${ROOTHASH})"
 
 /bin/busybox mkdir -m 0700 -p /tmp/secrets

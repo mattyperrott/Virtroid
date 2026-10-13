@@ -73,6 +73,8 @@
         mkdir -p $out
         cp ${rootfs} $out/root.img
         chmod u+w $out/root.img
+        # The hash tree starts on a 4 KiB block boundary after the filesystem.
+        truncate -s %4096 $out/root.img
         size=$(stat -c %s $out/root.img)
         veritysetup format \
           --data-blocks=$(( size / 4096 )) --hash-offset=$size \

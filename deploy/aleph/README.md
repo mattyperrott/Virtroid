@@ -16,14 +16,17 @@ Everything below is part of the SEV-SNP launch measurement, so a phone that
 accepts the measurement has checked all of it:
 
 - **Firmware and kernel.** Aleph's measured OVMF and a 6.18 LTS guest kernel
-  built from Aleph's minimal option list, plus binder, overlayfs, veth, bridge,
-  nftables NAT and configfs-tsm (`kernel-virtroid.fragment`).
+  built from Aleph's minimal option list, plus what Docker and Android need
+  (binder, overlayfs, netfilter, DMA-BUF heaps and more, following AOSP's
+  android-base.config), EROFS and configfs-tsm (`kernel-virtroid.fragment`).
 - **Initrd** (`nix/init-virtroid.sh`, adapted from Aleph's). It holds the root
   disk's dm-verity root hash, so the measurement covers the root too. It
   verifies the root, starts Aleph's attestation agent in owner-auth mode, and
   waits for the provisioner's secrets.
-- **Read-only root** (`nix/rootfs.nix`), built reproducibly by Nix. It contains:
-  - Docker, cryptsetup, nftables and adb;
+- **Read-only root** (`nix/rootfs.nix`), a zstd-compressed EROFS image built
+  reproducibly by Nix, about 720 MiB with its hash tree. It contains:
+  - Docker's daemon, containerd and runc (without nixpkgs' image-building
+    extras), cryptsetup, nftables and adb;
   - `virtnoded` and its viewer encryption tool;
   - the Android runtime image, loaded at boot and never pulled;
   - the pinned apps.

@@ -16,6 +16,13 @@ CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
 # Android's low-memory killer (lmkd) watches memory pressure through PSI.
 CONFIG_PSI=y
 
+# The root is a zstd-compressed EROFS image under dm-verity (EROFS sits in
+# the miscellaneous filesystems menu).
+CONFIG_MISC_FILESYSTEMS=y
+CONFIG_EROFS_FS=y
+CONFIG_EROFS_FS_ZIP=y
+CONFIG_EROFS_FS_ZIP_ZSTD=y
+
 # virtnoded's attestation report comes through configfs-tsm.
 CONFIG_CONFIGFS_FS=y
 CONFIG_TSM_REPORTS=y

@@ -2,16 +2,41 @@
 
 # The read-only root of a Virtroid runtime VM: Docker, cryptsetup, nftables,
 # adb, virtnoded, the Android runtime image and the pinned apps, and nothing
-# else (no shell login, SSH, package manager or compiler). It is mounted under
-# dm-verity, so it is built reproducibly: fixed ownership, timestamps, UUID
-# and hash seed, after aleph-vm's nix/compose-rootfs.nix (MIT licence,
-# Copyright (c) 2021-2024 ALEPH.IM SAS).
+# else (no shell login, SSH, package manager or compiler). It is a compressed
+# EROFS image mounted under dm-verity, so it is built reproducibly: fixed
+# ownership, timestamps and UUID.
 #
 # `assets` holds the deployment's own inputs, measured like everything else:
 #   node.env            virtnoded's fixed settings (see assets-example/)
 #   apks/               the pinned APKs (the runtime agent, optional manifest.json)
 # and the Android runtime image comes in as runtimeImageTar (see flake.nix).
 let
+  # Docker's daemon, containerd and runc without what nixpkgs' docker adds for
+  # building images (buildx, compose), rootless mode, or journald logging,
+  # which links systemd. The node uses none of them.
+  docker = pkgs.docker.override {
+    withSystemd = false;
+    withBtrfs = false;
+    withLvm = false;
+    buildxSupport = false;
+    composeSupport = false;
+  };
+  # Only the binaries: nixpkgs' wrappers put git, xfsprogs, xz and more on
+  # dockerd's PATH, and all of that would land in the root with them.
+  dockerBinaries = pkgs.runCommand "virtroid-docker" { } ''
+    mkdir -p $out/bin
+    libexec=$(dirname "$(dirname "$(readlink -f ${docker}/bin/dockerd)")")/libexec/docker
+    for bin in dockerd docker-proxy containerd containerd-shim-runc-v2 runc; do
+      cp -L "$libexec/$bin" "$out/bin/$bin"
+    done
+    cp -L ${docker}/libexec/docker/docker $out/bin/docker
+  '';
+  # adb alone: the rest of android-tools brings Python.
+  adb = pkgs.runCommand "virtroid-adb" { } ''
+    mkdir -p $out/bin
+    cp -L ${pkgs.android-tools}/bin/adb $out/bin/adb
+  '';
+
   packages = with pkgs; [
     bashNonInteractive
     coreutils
@@ -26,8 +51,8 @@ let
     iptables
     cryptsetup
     e2fsprogs
-    docker
-    android-tools
+    dockerBinaries
+    adb
     virtroid-node
   ];
 
@@ -40,8 +65,8 @@ let
 
   closure = pkgs.closureInfo { rootPaths = [ env pkgs.cacert pkgs.iana-etc ]; };
 in
-pkgs.runCommand "virtroid-rootfs.ext4" {
-  nativeBuildInputs = [ pkgs.e2fsprogs pkgs.fakeroot ];
+pkgs.runCommand "virtroid-rootfs.erofs" {
+  nativeBuildInputs = [ pkgs.erofs-utils ];
   SOURCE_DATE_EPOCH = "0";
 } ''
   for required in node.env apks; do
@@ -86,14 +111,10 @@ pkgs.runCommand "virtroid-rootfs.ext4" {
   printf 'ID=virtroid\nNAME="Virtroid runtime VM"\n' > etc/os-release
   cd ..
 
-  size=$(du -sm rootfs | cut -f1)
-  size=$(( size + size / 10 + 64 ))
-  truncate -s "''${size}M" $out
-  # Reproducible mkfs: see aleph-vm nix/rootfs.nix for each lever.
-  fakeroot -- sh -c '
-    chown -R 0:0 rootfs
-    mkfs.ext4 -b 4096 -U 00000000-0000-0000-0000-000000000000 \
-      -E hash_seed=a1e5c0de-1111-2222-3333-444455556666,lazy_itable_init=0,lazy_journal_init=0 \
-      -O ^has_journal -d rootfs '"$out"'
-  '
+  # A compressed, read-only EROFS image: Android images compress well, and the
+  # root is downloaded by every new VM. Fixed timestamps, owner and UUID keep
+  # it reproducible.
+  mkfs.erofs --quiet -zzstd,level=15 -C262144 -Ededupe,all-fragments,ztailpacking \
+    -T0 --all-root -U 00000000-0000-0000-0000-000000000000 \
+    $out rootfs
 ''
