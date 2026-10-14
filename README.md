@@ -160,7 +160,7 @@ The diagram's source is [`assets/architecture/virtroid-lifecycle.archify.json`](
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/architecture/virtroid-target-dark.png">
-  <img alt="Virtroid architecture: the phone sends a signed start through the edge; virtroidd checks credit and the provisioner has Aleph Cloud boot the account's own SEV-SNP VM from a measured image, releasing its disk key after attestation; the phone verifies the attestation, then streams from the VM; user data is restored from and saved to independent Sia hosts through the indexer; notifications are relayed to the phone; the app catalogue follows F-Droid's signed index; payments arrive as USDT on TRON and are converted into Siacoin and Aleph credits" src="assets/architecture/virtroid-target-light.png">
+  <img alt="Virtroid architecture: the phone sends a signed start through the edge; virtroidd checks credit and the provisioner has Aleph Cloud boot the account's own SEV-SNP VM from a measured image, releasing its disk key after attestation; the phone verifies the attestation, then streams from the VM; user data is restored from and saved to independent Sia hosts through the indexer; notifications are relayed to the phone" src="assets/architecture/virtroid-target-light.png">
 </picture>
 
 The diagram's source is [`assets/architecture/virtroid-target.archify.json`](assets/architecture/virtroid-target.archify.json).
