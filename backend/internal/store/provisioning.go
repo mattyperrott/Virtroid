@@ -532,7 +532,8 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 	// A deleted VM took the snapshots on its data disk with it. Runtimes that
 	// lived there would otherwise wait for it forever: forget the lost data,
 	// say so in the runtime's log, and let it start fresh on the account's
-	// next VM. Deletions waiting on that VM have nothing left to clean.
+	// next VM. The floor counts the lost generations, so phones still see
+	// floor + generation rise when its snapshots are numbered from 1 again. Deletions waiting on that VM have nothing left to clean.
 	// A snapshot in a remote store such as Sia is not lost: the runtime keeps
 	// it and starts from it on the next VM, and a deletion waits for the next
 	// node of the account to remove it.
@@ -540,7 +541,8 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 		`WITH affected AS (
 		     SELECT id,
 		            NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL
-		            AND COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk') <> 'local-disk' AS remote
+		            AND COALESCE(NULLIF(TRIM(blob_store_kind), ''), 'local-disk') <> 'local-disk' AS remote,
+		            `+manifestGenerationSQL+` AS lost_generation
 		       FROM runtimes
 		      WHERE deleted_at IS NULL
 		        AND (host_id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted')
@@ -550,6 +552,8 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 		    SET host_id = NULL,
 		        blob_host_id = NULL,
 		        blob_manifest_json = CASE WHEN affected.remote THEN r.blob_manifest_json ELSE NULL END,
+		        blob_generation_floor = CASE WHEN affected.remote THEN r.blob_generation_floor
+		            ELSE r.blob_generation_floor + affected.lost_generation END,
 		        blob_last_snapshot_at = CASE WHEN affected.remote THEN r.blob_last_snapshot_at ELSE NULL END,
 		        cleanup_pending = FALSE,
 		        container_name = NULL,

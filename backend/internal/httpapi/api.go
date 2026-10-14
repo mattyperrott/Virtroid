@@ -3348,7 +3348,36 @@ func (a *API) securityEventAppend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "client_notices_queued": queued})
 }
 
+// Signing keys a phone can name in X-Virtroid-Signing-Key. Without the
+// header a request is signed by the device key.
+const notificationRelaySigningKey = "notification-relay"
+
 func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	return a.requireSignedRequest(w, r, a.store.DevicePublicKey, deviceSignatureContext)
+}
+
+// requireSignedRelayRequest accepts the device key or, for the notification
+// stream and its acknowledgements only, the relay key the phone registered
+// with its subscription: the device key works only while the phone is
+// unlocked, and the relay has to reconnect while it is locked.
+func (a *API) requireSignedRelayRequest(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	switch strings.TrimSpace(r.Header.Get("X-Virtroid-Signing-Key")) {
+	case "":
+		return a.requireSignedDeviceRequest(w, r)
+	case notificationRelaySigningKey:
+		return a.requireSignedRequest(w, r, a.store.NotificationRelayPublicKey, relaySignatureContext)
+	default:
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unknown signing key"})
+		return "", "", false
+	}
+}
+
+func (a *API) requireSignedRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	lookupPublicKey func(ctx context.Context, accountID, deviceID string) (string, error),
+	signatureContext string,
+) (string, string, bool) {
 	accountID := strings.TrimSpace(r.Header.Get("X-Virtroid-Account-ID"))
 	deviceID := strings.TrimSpace(r.Header.Get("X-Virtroid-Device-ID"))
 	timestampRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Timestamp"))
@@ -3384,7 +3413,7 @@ func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request)
 		return "", "", false
 	}
 
-	publicKeyMaterial, err := a.store.DevicePublicKey(r.Context(), accountID, deviceID)
+	publicKeyMaterial, err := lookupPublicKey(r.Context(), accountID, deviceID)
 	if err != nil {
 		if err == store.ErrDeviceNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -3414,7 +3443,7 @@ func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request)
 		return "", "", false
 	}
 
-	canonical := signedRequestCanonical(r.Method, r.URL.RequestURI(), accountID, deviceID, timestampRaw, nonce, bodyHash)
+	canonical := signedRequestCanonicalFor(signatureContext, r.Method, r.URL.RequestURI(), accountID, deviceID, timestampRaw, nonce, bodyHash)
 	digest := sha256.Sum256([]byte(canonical))
 	if !ecdsa.VerifyASN1(publicKey, digest[:], signatureDER) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "device signature verification failed"})
@@ -3433,9 +3462,18 @@ func (a *API) requireSignedDeviceRequest(w http.ResponseWriter, r *http.Request)
 	return accountID, deviceID, true
 }
 
+const (
+	deviceSignatureContext = "VIRTROID-DEVICE-SIGNATURE-V1"
+	relaySignatureContext  = "VIRTROID-RELAY-SIGNATURE-V1"
+)
+
 func signedRequestCanonical(method, requestURI, accountID, deviceID, timestamp, nonce, bodyHash string) string {
+	return signedRequestCanonicalFor(deviceSignatureContext, method, requestURI, accountID, deviceID, timestamp, nonce, bodyHash)
+}
+
+func signedRequestCanonicalFor(signatureContext, method, requestURI, accountID, deviceID, timestamp, nonce, bodyHash string) string {
 	return strings.Join([]string{
-		"VIRTROID-DEVICE-SIGNATURE-V1",
+		signatureContext,
 		strings.ToUpper(method),
 		requestURI,
 		accountID,

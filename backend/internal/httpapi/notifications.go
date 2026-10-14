@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -97,6 +98,7 @@ func (a *API) upsertMyNotificationSubscription(w http.ResponseWriter, r *http.Re
 	var req struct {
 		DeviceID            string `json:"device_id"`
 		EncryptionPublicKey string `json:"encryption_public_key"`
+		RelayPublicKey      string `json:"relay_public_key"`
 	}
 	if err := decodeStrictJSON(r.Body, maxNotificationSubscriptionBodyBytes, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid notification subscription"})
@@ -108,10 +110,22 @@ func (a *API) upsertMyNotificationSubscription(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid notification subscription"})
 		return
 	}
+	relayPublicKey := strings.TrimSpace(req.RelayPublicKey)
+	if relayPublicKey != "" {
+		if len(relayPublicKey) > maxNotificationPublicKeyChars {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid notification subscription"})
+			return
+		}
+		if key, err := parseECDSAPublicKeyMaterial(relayPublicKey); err != nil || key.Curve != elliptic.P256() {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid notification subscription"})
+			return
+		}
+	}
 	if err := a.store.UpsertDeviceNotificationSubscription(r.Context(), store.DeviceNotificationSubscription{
 		DeviceID:            deviceID,
 		AccountID:           accountID,
 		EncryptionPublicKey: strings.TrimSpace(req.EncryptionPublicKey),
+		RelayPublicKey:      relayPublicKey,
 	}); err != nil {
 		if errors.Is(err, store.ErrDeviceNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -137,7 +151,7 @@ func (a *API) deleteMyNotificationSubscription(w http.ResponseWriter, r *http.Re
 }
 
 func (a *API) streamMyNotifications(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	accountID, deviceID, ok := a.requireSignedRelayRequest(w, r)
 	if !ok {
 		return
 	}
@@ -207,7 +221,7 @@ func (a *API) streamMyNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) ackMyNotificationDelivery(w http.ResponseWriter, r *http.Request) {
-	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	accountID, deviceID, ok := a.requireSignedRelayRequest(w, r)
 	if !ok {
 		return
 	}

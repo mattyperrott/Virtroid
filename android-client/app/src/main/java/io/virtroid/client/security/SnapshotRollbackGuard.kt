@@ -11,17 +11,21 @@ class SnapshotRollbackGuard(context: Context) {
 
     @Synchronized
     fun verifyAndRecord(accountId: String, runtime: RuntimeSummary) {
-        val generation = runtime.blobSnapshotGeneration
         val snapshotId = runtime.blobSnapshotId.orEmpty()
-        if (generation < 0L || generation > 0L && snapshotId.isBlank()) {
-            throw SnapshotRollbackException("Snapshot metadata is invalid for runtime ${runtime.id}.")
-        }
+        val floor = runtime.blobGenerationFloor
+        val generation = effectiveSnapshotGeneration(runtime.blobSnapshotGeneration, snapshotId, floor, runtime.id)
         val key = recordKey(accountId, runtime.id)
         val previous = readRecord(key)
         val resetKey = resetRecordKey(key)
         if (prefs.getBoolean(resetKey, false) && isEmptySnapshotState(generation, snapshotId)) {
             removeRecord(key)
             prefs.edit().remove(resetKey).apply()
+            return
+        }
+        if (isLostSnapshotState(previous?.generation, generation, snapshotId, floor)) {
+            // The snapshot was lost (with its VM, or wiped from another
+            // phone). Remember the floor so that only later snapshots pass.
+            writeRecord(key, SnapshotRecord(floor, ""))
             return
         }
         verifySnapshotAdvance(previous?.generation, previous?.snapshotId, generation, snapshotId, runtime.id)
@@ -112,4 +116,29 @@ internal fun verifySnapshotAdvance(
 
 internal fun isEmptySnapshotState(generation: Long, snapshotId: String): Boolean {
     return generation == 0L && snapshotId.isBlank()
+}
+
+/**
+ * The generation this phone compares: the server's floor (the generations the
+ * runtime has lost) plus the snapshot's own, which restarts at 1 after a
+ * loss. It only rises. 0 when there is no snapshot.
+ */
+internal fun effectiveSnapshotGeneration(generation: Long, snapshotId: String, floor: Long, runtimeId: String): Long {
+    if (generation < 0L || floor < 0L || generation > 0L && snapshotId.isBlank() || generation > Long.MAX_VALUE - floor) {
+        throw SnapshotRollbackException("Snapshot metadata is invalid for runtime $runtimeId.")
+    }
+    return if (isEmptySnapshotState(generation, snapshotId)) 0L else floor + generation
+}
+
+/**
+ * True when the server reports no snapshot because the one this phone last
+ * saw was lost: the floor covers that generation, so every later snapshot
+ * compares higher. Losing data is not a rollback, since no older snapshot
+ * is accepted in its place.
+ */
+internal fun isLostSnapshotState(previousGeneration: Long?, generation: Long, snapshotId: String, floor: Long): Boolean {
+    return previousGeneration != null &&
+        isEmptySnapshotState(generation, snapshotId) &&
+        floor > 0L &&
+        floor >= previousGeneration
 }

@@ -47,6 +47,7 @@ class NotificationRelayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val identityStore by lazy { NotificationRelayIdentityStore(this) }
     private val signingStore = DeviceIdentityStore()
+    private val relayKeyStore = NotificationRelayKeyStore()
     private val encryptionStore by lazy { PushEncryptionKeyStore(this) }
     private val logs by lazy { AppLogStore.get(this) }
     private var streamJob: Job? = null
@@ -190,13 +191,25 @@ class NotificationRelayService : Service() {
             .url(identity.baseUrl + path)
             .method(method, requestBody)
             .apply {
-                signingStore.signedHeaders(
-                    method = method,
-                    requestUri = path,
-                    accountId = identity.accountId,
-                    deviceId = identity.deviceId,
-                    body = bodyBytes,
-                ).forEach { (name, value) -> header(name, value) }
+                // The device key refuses to sign while the phone is locked;
+                // the relay key, registered for these two requests only, can.
+                runCatching {
+                    signingStore.signedHeaders(
+                        method = method,
+                        requestUri = path,
+                        accountId = identity.accountId,
+                        deviceId = identity.deviceId,
+                        body = bodyBytes,
+                    )
+                }.getOrElse {
+                    relayKeyStore.signedHeaders(
+                        method = method,
+                        requestUri = path,
+                        accountId = identity.accountId,
+                        deviceId = identity.deviceId,
+                        body = bodyBytes,
+                    )
+                }.forEach { (name, value) -> header(name, value) }
             }
             .build()
     }

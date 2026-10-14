@@ -4046,6 +4046,7 @@ func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, person
 		nil,
 		now,
 		now,
+		int64(0),
 	)
 }
 
@@ -4149,6 +4150,7 @@ func runtimeRowValues(
 		nil,
 		now,
 		now,
+		int64(0),
 	}
 }
 
@@ -4278,5 +4280,6 @@ func runtimeColumnNames() []string {
 		"deleted_at",
 		"created_at",
 		"updated_at",
+		"blob_generation_floor",
 	}
 }

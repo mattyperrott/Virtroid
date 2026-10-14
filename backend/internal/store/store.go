@@ -26,14 +26,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at`
+const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at, blob_generation_floor`
 
 const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101305
-	schemaVersionLabel               = "running-time trial 2026-10-13"
+	currentSchemaVersion       int64 = 2026101401
+	schemaVersionLabel               = "generation floor, relay key 2026-10-14"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -288,9 +288,12 @@ type DeviceNotificationSubscription struct {
 	DeviceID            string
 	AccountID           string
 	EncryptionPublicKey string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	LastConnectedAt     *time.Time
+	// RelayPublicKey signs only the notification stream and its
+	// acknowledgements, so the phone can reconnect while locked. Optional.
+	RelayPublicKey  string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	LastConnectedAt *time.Time
 }
 
 type RuntimeNotificationDelivery struct {
@@ -320,29 +323,33 @@ type RuntimeNotificationTarget struct {
 }
 
 type Runtime struct {
-	ID                  string            `json:"id"`
-	AccountID           string            `json:"account_id"`
-	Name                string            `json:"name"`
-	Status              string            `json:"status"`
-	DesiredState        string            `json:"desired_state"`
-	ConnectionStatus    string            `json:"connection_status"`
-	HostID              *string           `json:"host_id,omitempty"`
-	PersonaVersion      int               `json:"persona_version"`
-	ActivePersonaJSON   *string           `json:"active_persona_json,omitempty"`
-	AndroidImage        string            `json:"android_image"`
-	AndroidVersion      string            `json:"android_version"`
-	WidthPx             int               `json:"width_px"`
-	HeightPx            int               `json:"height_px"`
-	DensityDpi          int               `json:"density_dpi"`
-	AudioEnabled        bool              `json:"audio_enabled"`
-	CameraMode          string            `json:"camera_mode"`
-	FileMode            string            `json:"file_mode"`
-	BlobAutoSnapshot    bool              `json:"blob_auto_snapshot"`
-	BlobRetainDays      int               `json:"blob_retain_days"`
-	BlobStoreKind       *string           `json:"blob_store_kind,omitempty"`
-	BlobManifestJSON    *string           `json:"blob_manifest_json,omitempty"`
-	BlobHostID          *string           `json:"-"`
-	BlobLastSnapshotAt  *time.Time        `json:"blob_last_snapshot_at,omitempty"`
+	ID                 string     `json:"id"`
+	AccountID          string     `json:"account_id"`
+	Name               string     `json:"name"`
+	Status             string     `json:"status"`
+	DesiredState       string     `json:"desired_state"`
+	ConnectionStatus   string     `json:"connection_status"`
+	HostID             *string    `json:"host_id,omitempty"`
+	PersonaVersion     int        `json:"persona_version"`
+	ActivePersonaJSON  *string    `json:"active_persona_json,omitempty"`
+	AndroidImage       string     `json:"android_image"`
+	AndroidVersion     string     `json:"android_version"`
+	WidthPx            int        `json:"width_px"`
+	HeightPx           int        `json:"height_px"`
+	DensityDpi         int        `json:"density_dpi"`
+	AudioEnabled       bool       `json:"audio_enabled"`
+	CameraMode         string     `json:"camera_mode"`
+	FileMode           string     `json:"file_mode"`
+	BlobAutoSnapshot   bool       `json:"blob_auto_snapshot"`
+	BlobRetainDays     int        `json:"blob_retain_days"`
+	BlobStoreKind      *string    `json:"blob_store_kind,omitempty"`
+	BlobManifestJSON   *string    `json:"blob_manifest_json,omitempty"`
+	BlobHostID         *string    `json:"-"`
+	BlobLastSnapshotAt *time.Time `json:"blob_last_snapshot_at,omitempty"`
+	// BlobGenerationFloor counts the snapshot generations this runtime lost
+	// (with a deleted VM, or wiped). Snapshot numbering restarts at 1 after
+	// a loss; floor + generation keeps rising, so phones compare that.
+	BlobGenerationFloor int64             `json:"blob_generation_floor"`
 	StorageBytesLimit   *int64            `json:"storage_bytes_limit,omitempty"`
 	StorageBytesUsed    *int64            `json:"storage_bytes_used,omitempty"`
 	StartedAt           *time.Time        `json:"started_at,omitempty"`
@@ -3057,6 +3064,32 @@ func (s *Store) DevicePublicKey(ctx context.Context, accountID, deviceID string)
 	return strings.TrimSpace(publicKey), nil
 }
 
+// NotificationRelayPublicKey returns the relay key a device registered with
+// its notification subscription, while the device and account are active.
+func (s *Store) NotificationRelayPublicKey(ctx context.Context, accountID, deviceID string) (string, error) {
+	var publicKey string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT n.relay_public_key
+		   FROM device_notification_subscriptions n
+		   JOIN devices d ON d.id = n.device_id AND d.account_id = n.account_id
+		   JOIN accounts a ON a.id = d.account_id
+		  WHERE n.account_id = $1
+		    AND n.device_id = $2
+		    AND NULLIF(TRIM(COALESCE(n.relay_public_key, '')), '') IS NOT NULL
+		    AND a.deleted_at IS NULL
+		    AND d.revoked_at IS NULL`,
+		accountID,
+		deviceID,
+	).Scan(&publicKey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrDeviceNotFound
+		}
+		return "", err
+	}
+	return strings.TrimSpace(publicKey), nil
+}
+
 func (s *Store) UpsertDeviceNotificationSubscription(ctx context.Context, subscription DeviceNotificationSubscription) error {
 	if strings.TrimSpace(subscription.AccountID) == "" || strings.TrimSpace(subscription.DeviceID) == "" ||
 		strings.TrimSpace(subscription.EncryptionPublicKey) == "" {
@@ -3064,20 +3097,22 @@ func (s *Store) UpsertDeviceNotificationSubscription(ctx context.Context, subscr
 	}
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO device_notification_subscriptions (
-		     device_id, account_id, encryption_public_key, updated_at
+		     device_id, account_id, encryption_public_key, relay_public_key, updated_at
 		 )
-		 SELECT d.id, d.account_id, $3, NOW()
+		 SELECT d.id, d.account_id, $3, NULLIF($4, ''), NOW()
 		   FROM devices d
 		   JOIN accounts a ON a.id = d.account_id
 		  WHERE d.id = $2 AND d.account_id = $1
 		    AND d.revoked_at IS NULL AND a.deleted_at IS NULL
 		 ON CONFLICT (device_id) DO UPDATE
 		 SET encryption_public_key = EXCLUDED.encryption_public_key,
+		     relay_public_key = EXCLUDED.relay_public_key,
 		     account_id = EXCLUDED.account_id,
 		     updated_at = NOW()`,
 		subscription.AccountID,
 		subscription.DeviceID,
 		strings.TrimSpace(subscription.EncryptionPublicKey),
+		strings.TrimSpace(subscription.RelayPublicKey),
 	)
 	if err != nil {
 		return err
@@ -6813,6 +6848,7 @@ func updateRuntimeObservationRecord(ctx context.Context, execer execContexter, r
 			     active_persona_json = CASE WHEN $10 THEN NULL ELSE COALESCE($11, active_persona_json) END,
 			     blob_store_kind = CASE WHEN $12 THEN NULL ELSE COALESCE($13, blob_store_kind) END,
 			     blob_manifest_json = CASE WHEN $12 THEN NULL ELSE COALESCE($14, blob_manifest_json) END,
+			     blob_generation_floor = CASE WHEN $12 THEN blob_generation_floor + `+manifestGenerationSQL+` ELSE blob_generation_floor END,
 			     blob_host_id = CASE
 			         WHEN $12 THEN NULL
 			         -- Only a local-disk snapshot ties the runtime to this node.
@@ -6965,6 +7001,12 @@ func (s *Store) updateRuntimeObservationWithStorageQuota(
 	}
 	return tx.Commit()
 }
+
+// manifestGenerationSQL is the newest generation in a runtime row's manifest
+// (a migration fallback inside it is older), or 0, read without a cast that
+// could fail on a malformed manifest.
+const manifestGenerationSQL = `COALESCE((SELECT MAX(m[1]::BIGINT)
+	   FROM regexp_matches(COALESCE(runtimes.blob_manifest_json, ''), '"generation"\s*:\s*([0-9]{1,18})', 'g') AS m), 0)`
 
 func validateStoredBlobManifestAdvance(currentRaw string, incoming *storedBlobManifestUsage) error {
 	if incoming == nil || incoming.Version != 3 || incoming.Generation <= 0 || strings.TrimSpace(incoming.SnapshotID) == "" {
@@ -8038,6 +8080,7 @@ func scanRuntimeDest(runtime *Runtime) []any {
 		&runtime.DeletedAt,
 		&runtime.CreatedAt,
 		&runtime.UpdatedAt,
+		&runtime.BlobGenerationFloor,
 	}
 }
 

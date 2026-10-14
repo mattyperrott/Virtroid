@@ -28,7 +28,8 @@ class NotificationRelayManager(context: Context) {
         val identity = NotificationRelayIdentityStore.RelayIdentity(baseUrl, accountId, deviceId)
         val identityChanged = previousIdentity != null && previousIdentity != identity
         val encryptionPublicKey = PushEncryptionKeyStore(appContext).publicKeyMaterial()
-        val registrationKey = listOf(baseUrl, accountId, deviceId, encryptionPublicKey).joinToString("\u0000")
+        val relayPublicKey = NotificationRelayKeyStore().publicKeyMaterial()
+        val registrationKey = listOf(baseUrl, accountId, deviceId, encryptionPublicKey, relayPublicKey).joinToString("\u0000")
 
         identityStore.save(baseUrl, accountId, deviceId)
         startService()
@@ -42,6 +43,7 @@ class NotificationRelayManager(context: Context) {
                     accountId = accountId,
                     deviceId = deviceId,
                     encryptionPublicKey = encryptionPublicKey,
+                    relayPublicKey = relayPublicKey,
                 )
             }.onSuccess {
                 synchronized(registrationLock) { registeredKey = registrationKey }
@@ -63,6 +65,7 @@ class NotificationRelayManager(context: Context) {
         identityStore.clear()
         appContext.stopService(Intent(appContext, NotificationRelayService::class.java))
         PushEncryptionKeyStore(appContext).clear()
+        NotificationRelayKeyStore().deleteKey()
         synchronized(registrationLock) {
             registeredKey = null
             registrationsInFlight.clear()

@@ -226,6 +226,9 @@ CREATE TABLE IF NOT EXISTS device_notification_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_device_notification_subscriptions_account
     ON device_notification_subscriptions (account_id);
+-- A key the phone can use while locked, accepted only to open its notification
+-- stream and acknowledge deliveries.
+ALTER TABLE device_notification_subscriptions ADD COLUMN IF NOT EXISTS relay_public_key TEXT;
 
 DROP TABLE IF EXISTS device_push_subscriptions;
 
@@ -474,6 +477,11 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS viewer_port INTEGER;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS wipe_requested BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS cleanup_pending BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS operation_generation BIGINT NOT NULL DEFAULT 1;
+-- Snapshot generations the runtime lost (with a deleted VM's data disk, or
+-- wiped). Numbering restarts at 1 after a loss; phones compare floor +
+-- generation, which only rises, so they accept the fresh start but never an
+-- older snapshot.
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_generation_floor BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE runtimes ALTER COLUMN android_image SET DEFAULT 'redroid/redroid:14.0.0_64only-latest';
@@ -491,6 +499,21 @@ SET cleanup_pending = TRUE
 WHERE status = 'stopped'
   AND desired_state <> 'running'
   AND host_id IS NOT NULL;
+
+-- Runtimes whose VM was deleted with their data before the floor existed:
+-- the lost generation was not recorded, so skip far past any it could have
+-- reached.
+UPDATE runtimes r
+SET blob_generation_floor = 1000
+WHERE r.blob_generation_floor = 0
+  AND r.deleted_at IS NULL
+  AND NULLIF(TRIM(COALESCE(r.blob_manifest_json, '')), '') IS NULL
+  AND EXISTS (
+      SELECT 1 FROM runtime_logs l
+       WHERE l.runtime_id = r.id
+         AND l.source = 'control-plane'
+         AND l.message LIKE 'This runtime''s private server was replaced%'
+  );
 
 CREATE TABLE IF NOT EXISTS runtime_capabilities (
     id TEXT PRIMARY KEY,

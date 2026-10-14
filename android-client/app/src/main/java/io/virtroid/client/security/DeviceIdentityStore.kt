@@ -78,35 +78,7 @@ class DeviceIdentityStore {
         body: ByteArray,
     ): Map<String, String> {
         publicKeyMaterial()
-        val timestamp = (System.currentTimeMillis() / 1000L).toString()
-        val nonce = UUID.randomUUID().toString()
-        val bodyHash = MessageDigest.getInstance("SHA-256")
-            .digest(body)
-            .let { Base64.encodeToString(it, B64_URL_FLAGS) }
-        val canonical = listOf(
-            SIGNATURE_CONTEXT,
-            method.uppercase(),
-            requestUri,
-            accountId.trim(),
-            deviceId.trim(),
-            timestamp,
-            nonce,
-            bodyHash,
-        ).joinToString("\n")
-
-        val signature = Signature.getInstance("SHA256withECDSA")
-        signature.initSign(privateKey())
-        signature.update(canonical.toByteArray(Charsets.UTF_8))
-        val signed = Base64.encodeToString(signature.sign(), B64_URL_FLAGS)
-
-        return mapOf(
-            "X-Virtroid-Account-ID" to accountId.trim(),
-            "X-Virtroid-Device-ID" to deviceId.trim(),
-            "X-Virtroid-Timestamp" to timestamp,
-            "X-Virtroid-Nonce" to nonce,
-            "X-Virtroid-Body-SHA256" to bodyHash,
-            "X-Virtroid-Signature" to signed,
-        )
+        return signedRequestHeaders(privateKey(), SIGNATURE_CONTEXT, method, requestUri, accountId, deviceId, body)
     }
 
     private fun privateKey(): PrivateKey {
@@ -130,8 +102,49 @@ class DeviceIdentityStore {
         const val KEY_INSTALL_DEVICE_ID = "install_device_id"
         const val KEY_CLIENT_ALIAS = "client_alias"
         const val SIGNATURE_CONTEXT = "VIRTROID-DEVICE-SIGNATURE-V1"
-        const val B64_URL_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
         val CLIENT_ALIAS_REGEX = Regex("""Client [0-9A-F]{6}""")
         var pendingDevicePrefs: KeystorePrefs? = null
     }
+}
+
+/** Signs a request as the control plane expects, under [signatureContext]. */
+internal fun signedRequestHeaders(
+    privateKey: PrivateKey,
+    signatureContext: String,
+    method: String,
+    requestUri: String,
+    accountId: String,
+    deviceId: String,
+    body: ByteArray,
+): Map<String, String> {
+    val flags = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
+    val timestamp = (System.currentTimeMillis() / 1000L).toString()
+    val nonce = UUID.randomUUID().toString()
+    val bodyHash = MessageDigest.getInstance("SHA-256")
+        .digest(body)
+        .let { Base64.encodeToString(it, flags) }
+    val canonical = listOf(
+        signatureContext,
+        method.uppercase(),
+        requestUri,
+        accountId.trim(),
+        deviceId.trim(),
+        timestamp,
+        nonce,
+        bodyHash,
+    ).joinToString("\n")
+
+    val signature = Signature.getInstance("SHA256withECDSA")
+    signature.initSign(privateKey)
+    signature.update(canonical.toByteArray(Charsets.UTF_8))
+    val signed = Base64.encodeToString(signature.sign(), flags)
+
+    return mapOf(
+        "X-Virtroid-Account-ID" to accountId.trim(),
+        "X-Virtroid-Device-ID" to deviceId.trim(),
+        "X-Virtroid-Timestamp" to timestamp,
+        "X-Virtroid-Nonce" to nonce,
+        "X-Virtroid-Body-SHA256" to bodyHash,
+        "X-Virtroid-Signature" to signed,
+    )
 }

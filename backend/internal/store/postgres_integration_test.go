@@ -425,6 +425,35 @@ func TestPostgresSnapshotGenerationRejectionIntegration(t *testing.T) {
 	if stored.BlobManifestJSON == nil || *stored.BlobManifestJSON != generationTwo {
 		t.Fatalf("stored snapshot changed after rejected generation: %v", stored.BlobManifestJSON)
 	}
+
+	// A wipe adds the cleared generation to the floor; the node numbers the
+	// next snapshot from 1 again, and floor + generation still rises.
+	if err := st.UpdateRuntimeObservation(ctx, runtime.ID, RuntimeObservation{
+		HostID:              nodeID,
+		Status:              "running",
+		ConnectionStatus:    "online",
+		ClearBlobManifest:   true,
+		OperationGeneration: runtime.OperationGeneration,
+	}); err != nil {
+		t.Fatalf("wipe snapshot: %v", err)
+	}
+	if err := st.UpdateRuntimeObservation(ctx, runtime.ID, RuntimeObservation{
+		HostID:              nodeID,
+		Status:              "running",
+		ConnectionStatus:    "online",
+		BlobStoreKind:       &storeKind,
+		BlobManifestJSON:    &generationOne,
+		OperationGeneration: runtime.OperationGeneration,
+	}); err != nil {
+		t.Fatalf("first snapshot after the wipe: %v", err)
+	}
+	stored, err = st.GetRuntime(ctx, accountID, runtime.ID)
+	if err != nil {
+		t.Fatalf("read disposable runtime after the wipe: %v", err)
+	}
+	if stored.BlobGenerationFloor != 2 || stored.BlobManifestJSON == nil || *stored.BlobManifestJSON != generationOne {
+		t.Fatalf("after the wipe floor=%d manifest=%v, want floor 2 and generation one", stored.BlobGenerationFloor, stored.BlobManifestJSON)
+	}
 }
 
 func TestPostgresApprovedNodeRegistryIntegration(t *testing.T) {

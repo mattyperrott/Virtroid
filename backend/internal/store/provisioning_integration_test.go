@@ -257,7 +257,8 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 	}
 	orphan, deleting := newRuntime("CI orphan"), newRuntime("CI deleting")
 	if _, err := st.db.ExecContext(ctx,
-		`UPDATE runtimes SET blob_host_id = $2, blob_store_kind = 'local-disk', blob_manifest_json = '{"chunks":[]}',
+		`UPDATE runtimes SET blob_host_id = $2, blob_store_kind = 'local-disk',
+		        blob_manifest_json = '{"generation":4,"chunks":[],"migration_fallback":{"generation":3,"chunks":[]}}',
 		        blob_last_snapshot_at = NOW() WHERE id = $1`, orphan.ID, aliceVM.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -303,14 +304,23 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 	}
 	var hostID, blobHostID, manifest sql.NullString
 	var status, desired string
+	var floor int64
 	if err := st.db.QueryRowContext(ctx,
-		`SELECT host_id, blob_host_id, blob_manifest_json, status, desired_state FROM runtimes WHERE id = $1`, orphan.ID,
-	).Scan(&hostID, &blobHostID, &manifest, &status, &desired); err != nil {
+		`SELECT host_id, blob_host_id, blob_manifest_json, status, desired_state, blob_generation_floor
+		   FROM runtimes WHERE id = $1`, orphan.ID,
+	).Scan(&hostID, &blobHostID, &manifest, &status, &desired, &floor); err != nil {
 		t.Fatal(err)
 	}
 	if hostID.Valid || blobHostID.Valid || manifest.Valid || status != "stopped" || desired != "stopped" {
 		t.Fatalf("orphaned runtime host=%v blob_host=%v manifest=%v status=%s desired=%s, want a fresh stopped runtime",
 			hostID, blobHostID, manifest, status, desired)
+	}
+	// Phones see floor + generation keep rising past the lost generation 4.
+	if floor != 4 {
+		t.Fatalf("orphaned runtime generation floor = %d, want 4", floor)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT blob_generation_floor FROM runtimes WHERE id = $1`, onSia.ID).Scan(&floor); err != nil || floor != 0 {
+		t.Fatalf("sia runtime generation floor = %d err=%v, want 0", floor, err)
 	}
 	var logged int
 	if err := st.db.QueryRowContext(ctx,

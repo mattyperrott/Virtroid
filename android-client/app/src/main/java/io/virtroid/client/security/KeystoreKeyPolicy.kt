@@ -11,13 +11,18 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
 internal object KeystoreKeyPolicy {
-    fun generateSigningKey(alias: String): KeyPair {
+    /**
+     * A P-256 signing key. [unlockedDeviceRequired] keeps it unusable while
+     * the phone is locked; only a key that must work in the background, such
+     * as the notification relay's, turns that off.
+     */
+    fun generateSigningKey(alias: String, unlockedDeviceRequired: Boolean = true): KeyPair {
         return try {
-            generateSigningKey(alias, strongBox = true)
+            generateSigningKey(alias, strongBox = true, unlockedDeviceRequired)
         } catch (_: StrongBoxUnavailableException) {
-            generateSigningKey(alias, strongBox = false)
+            generateSigningKey(alias, strongBox = false, unlockedDeviceRequired)
         } catch (_: ProviderException) {
-            generateSigningKey(alias, strongBox = false)
+            generateSigningKey(alias, strongBox = false, unlockedDeviceRequired)
         }
     }
 
@@ -31,7 +36,7 @@ internal object KeystoreKeyPolicy {
         }
     }
 
-    private fun generateSigningKey(alias: String, strongBox: Boolean): KeyPair {
+    private fun generateSigningKey(alias: String, strongBox: Boolean, unlockedDeviceRequired: Boolean): KeyPair {
         val generator = KeyPairGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_EC,
             ANDROID_KEYSTORE,
@@ -42,7 +47,7 @@ internal object KeystoreKeyPolicy {
         )
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
-            .setUnlockedDeviceRequired(true)
+            .setUnlockedDeviceRequired(unlockedDeviceRequired)
             .setIsStrongBoxBacked(strongBox)
             .build()
         generator.initialize(spec)

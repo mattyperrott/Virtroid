@@ -46,6 +46,8 @@ data class RuntimeSummary(
     val blobLastSnapshotAt: String?,
     val blobSnapshotId: String?,
     val blobSnapshotGeneration: Long,
+    /** The newest generation the server says was lost with a deleted VM. */
+    val blobGenerationFloor: Long,
     val startedAt: String?,
     val loadAverage: Double?,
     val adbPort: Int?,
@@ -1086,10 +1088,12 @@ class VirtroidApi(
         accountId: String,
         deviceId: String,
         encryptionPublicKey: String,
+        relayPublicKey: String,
     ) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("device_id", deviceId)
             .put("encryption_public_key", encryptionPublicKey)
+            .put("relay_public_key", relayPublicKey)
             .toString()
         executeJson(
             signedJsonRequest(
@@ -1564,6 +1568,7 @@ class VirtroidApi(
             blobLastSnapshotAt = nullableString("blob_last_snapshot_at"),
             blobSnapshotId = blobManifest?.nullableString("snapshot_id"),
             blobSnapshotGeneration = blobManifest?.optLong("generation", 0L) ?: 0L,
+            blobGenerationFloor = optLong("blob_generation_floor", 0L),
             startedAt = nullableString("started_at"),
             loadAverage = if (has("load_average") && !isNull("load_average")) optDouble("load_average") else null,
             adbPort = optInt("adb_port").takeIf { has("adb_port") && !isNull("adb_port") },
