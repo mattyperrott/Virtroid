@@ -689,6 +689,10 @@ func (o *sdkSiaObjects) remove(ctx context.Context, objectID string) error {
 	return err
 }
 
+// list returns the account's objects. indexd publishes a change to this
+// listing about a second after it, so an object saved or deleted just now may
+// not show yet; pruning keeps the newest snapshot by id, so it never depends on
+// seeing it here.
 func (o *sdkSiaObjects) list(ctx context.Context) ([]siaObjectInfo, error) {
 	var listed []siaObjectInfo
 	seen := make(map[types.Hash256]bool)

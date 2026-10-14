@@ -138,19 +138,30 @@ func TestSiaIndexerIntegration(t *testing.T) {
 	if err := store.pruneRuntime(ctx, runtimeID, second.Namespace, second.SnapshotID); err != nil {
 		t.Fatalf("pruneRuntime: %v", err)
 	}
-	listed, err := objects.list(ctx)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(listed) != 1 || listed[0].ID != second.SiaObject {
-		t.Fatalf("objects after prune = %+v, want only %s", listed, second.SiaObject)
-	}
+	waitForObjects(ctx, t, objects, "after prune", func(listed []siaObjectInfo) bool {
+		return len(listed) == 1 && listed[0].ID == second.SiaObject
+	})
 
 	if err := store.clearRuntime(ctx, runtimeID); err != nil {
 		t.Fatalf("clearRuntime: %v", err)
 	}
-	if listed, err := objects.list(ctx); err != nil || len(listed) != 0 {
-		t.Fatalf("objects after clear = %+v (err=%v)", listed, err)
+	waitForObjects(ctx, t, objects, "after clear", func(listed []siaObjectInfo) bool { return len(listed) == 0 })
+}
+
+// waitForObjects waits for the account's object listing to match: indexd
+// publishes an object's change to its listing about a second after it.
+func waitForObjects(ctx context.Context, t *testing.T, objects siaObjects, when string, match func([]siaObjectInfo) bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		listed, err := objects.list(ctx)
+		if err == nil && match(listed) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("objects %s = %+v (err=%v)", when, listed, err)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
