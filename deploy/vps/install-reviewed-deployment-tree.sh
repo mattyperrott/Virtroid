@@ -170,6 +170,9 @@ runtime_sources=(
   sysctl-virtroid-hardening.conf
   certbot-deploy-hook.sh
   unattended-upgrades-virtroid.conf
+  db-backup.sh
+  virtroid-db-backup.service
+  virtroid-db-backup.timer
 )
 runtime_destinations=(
   /usr/local/sbin/virtroid-configure-renterd-secrets
@@ -194,11 +197,15 @@ runtime_destinations=(
   /etc/sysctl.d/99-virtroid-hardening.conf
   /etc/letsencrypt/renewal-hooks/deploy/virtroid-haproxy.sh
   /etc/apt/apt.conf.d/52virtroid-unattended-upgrades
+  /usr/local/sbin/virtroid-db-backup
+  /etc/systemd/system/virtroid-db-backup.service
+  /etc/systemd/system/virtroid-db-backup.timer
 )
 runtime_modes=(
   0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755 0755
   0644 0644 0644 0640 0644 0644
   0755 0644
+  0755 0644 0644
 )
 
 retired_runtime_destinations=(
@@ -249,7 +256,7 @@ required_tree_files=(
   test-env-safety.sh test-node-fingerprint.sh
   test-certbot-deploy-hook.sh
   unattended-upgrades-virtroid.conf verify-host-hardening.sh
-  virtroid-binderfs-setup.sh
+  virtroid-binderfs-setup.sh db-backup.sh virtroid-db-backup.service virtroid-db-backup.timer
   suricata/README.md suricata/virtroid.rules
 )
 
@@ -305,6 +312,7 @@ install_runtime_copies() {
   systemctl enable --now ufw
   systemctl enable --now unattended-upgrades
   systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+  systemctl enable --now virtroid-db-backup.timer
   VIRTROID_REQUIRE_ROOT_LOCKED=true \
     VIRTROID_REQUIRE_KEY_ONLY_SSH=true \
     /usr/local/sbin/virtroid-verify-host-hardening

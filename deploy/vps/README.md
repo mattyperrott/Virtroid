@@ -5,10 +5,12 @@
 > `2026073001`; the previously observed VPS release used schema `2026072102`,
 > and the node-registry release used schema `2026071903`, with the
 > approved production node registry. Production builds, release bundles,
-> release state and operational secrets remain on the VPS. Virtroid does not
-> create automated VPS-local application-data or database backups.
-> A renterd or indexd recovery seed is the deliberate exception: two physical
-> offline copies must exist outside both the VPS and developer machines. Developer
+> release state and operational secrets remain on the VPS. The one copy that
+> leaves it is the nightly sealed database copy stored on Aleph
+> ([`indexd.md`](indexd.md#backups)), which only the indexd recovery phrase
+> opens. That phrase is the deliberate exception to keeping secrets here: two
+> physical offline copies must exist outside both the VPS and developer
+> machines. Developer
 > machines and source-hosting services are not release runners.
 
 This folder is intended to be deployable on a fresh Ubuntu VPS with:
@@ -247,8 +249,8 @@ The direct release helper starts:
 - `edge` via HAProxy by default
 
 Host preparation also enables Fail2ban, conservative SSH attempt/grace limits,
-and bounded container logs. It does not install or schedule application-data or
-database backups.
+and bounded container logs. The reviewed tree installs the nightly database
+copy (`virtroid-db-backup.timer`, see [`indexd.md`](indexd.md#backups)).
 
 ## Operator revocation and reactivation
 
@@ -305,11 +307,12 @@ sudo docker exec virtroid-postgres psql -U virtroid -d virtroid -x -c \
 ## Persistence and recovery boundary
 
 Runtime state and the control-plane database are persistent on the active VPS.
-There is no automated Virtroid backup service, retained database dump, or
-`/srv/virtroid` archive. A VPS or provider storage failure can therefore cause
-permanent data loss until a separately designed renterd recovery architecture is
-introduced. With Sia storage ([`indexd.md`](indexd.md)) runtime snapshots live
-on Sia hosts, but indexd's database on this VPS is what locates them.
+With Sia storage ([`indexd.md`](indexd.md)) runtime snapshots live on Sia hosts,
+and indexd's database on this VPS is what locates them. Every night both
+databases are dumped, sealed with a key derived from the indexd recovery
+phrase, and stored on Aleph; [`indexd.md`](indexd.md#backups) says how to
+restore them. A copy is at most a day old, so losing the VPS can lose the last
+day's changes, including snapshots saved since the copy.
 
 ## Preinstalled Runtime Apps
 

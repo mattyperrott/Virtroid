@@ -31,13 +31,72 @@ plus the fix for running with the explorer off, which 0.6.1 crashes on.
   that only the phone and the runtime's node hold.
 - The wallet's funding and contract transactions are public on the Sia chain.
 
-## Before relying on it
+## Backups
 
 indexd's database is the only map from a snapshot to its shards and holds the
-host contracts. Losing it, or this VPS, loses every snapshot on Sia, even
-though the shards are still on the hosts. Virtroid makes no automated backups
-(README.md), so decide how that database would be recovered, for example a
-regular off-server dump, before runtime VMs keep their only copy on Sia.
+host contracts. Losing it, or this VPS, would lose every snapshot on Sia, even
+though the shards are still on the hosts. So every night
+`virtroid-db-backup` (run by `virtroid-db-backup.timer`):
+
+1. dumps the control plane's and indexd's databases, and checks each dump
+   reads back;
+2. seals them with a key derived from the indexd recovery phrase (HKDF-SHA256,
+   AES-256-GCM in numbered 64 KiB chunks, so a cut-off or altered copy does not
+   open), in a container with no network, and checks the sealed copy opens to
+   the same bytes;
+3. keeps the newest three sealed copies in `/var/lib/virtroid-db-backup`;
+4. stores the copy on Aleph with the provisioner's account (on the owner's
+   behalf when `ALEPH_OWNER_ADDRESS` is set), keeps the newest fourteen there,
+   and lists them in `/var/lib/virtroid-db-backup/aleph-copies`.
+
+What a copy shows: the ciphertext is public on Aleph's storage, and so are its
+size, its time and the address that stored it. Without the recovery phrase it
+reveals nothing else. Anyone with the phrase can open every copy, as they can
+already spend the wallet, so keep it as before: two offline places, never on
+this server's disk outside `indexd.yml`.
+
+A copy is at most a day old: losing the VPS loses the last day's changes,
+including snapshots saved since the copy.
+
+`systemctl status virtroid-db-backup.service` shows the last run;
+`sudo systemctl start virtroid-db-backup.service` makes a copy now.
+
+### Restoring on a new server
+
+1. Find the newest copy. List the STORE messages of the address that stored
+   it (the owner's address, or the provisioner's when it pays itself), newest
+   first:
+
+   ```sh
+   curl -s "https://api2.aleph.im/api/v0/messages.json?addresses=<address>&msgTypes=STORE&pagination=20" |
+     jq -r '.messages[] | "\(.time) \(.content.item_hash)"'
+   ```
+
+   Download one with
+   `curl -o copy.vbak https://api2.aleph.im/api/v0/storage/raw/<content item hash>`.
+   A Virtroid copy starts with the line `VRTBAK1`.
+2. Put the recovery phrase in a file only you can read (not on a command
+   line), open the copy, and unpack it:
+
+   ```sh
+   install -m 0600 /dev/null phrase && nano phrase
+   docker run --rm --network none -v "$PWD:/work" --entrypoint virtroid-admin \
+     "$VIRTROID_BACKEND_IMAGE" backup-open --phrase-file /work/phrase \
+     --in /work/copy.vbak --out /work/bundle.tar
+   tar -xf bundle.tar   # manifest.txt, control-plane.dump, indexd.dump
+   ```
+
+3. Set the server up as usual, using the same recovery phrase for indexd
+   (`configure-indexd-secrets.sh` keeps an existing `indexd.yml`, so write
+   that phrase into it first). Start only the two databases, restore, then
+   release:
+
+   ```sh
+   docker exec -i virtroid-postgres pg_restore -U virtroid -d virtroid --clean --if-exists < control-plane.dump
+   docker exec -i virtroid-indexd-postgres pg_restore -U indexd -d indexd --clean --if-exists < indexd.dump
+   ```
+
+4. Remove `phrase`, `copy.vbak`, `bundle.tar` and the dumps.
 
 ## Turning it on
 

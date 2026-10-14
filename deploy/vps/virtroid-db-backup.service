@@ -1,0 +1,10 @@
+[Unit]
+Description=Seal the Virtroid databases and store a copy on Aleph
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/virtroid-db-backup
+Nice=10
+IOSchedulingClass=idle

@@ -39,13 +39,21 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("command is required: approve, bootstrap-invite, list, operator-approve, operator-revoke, public-key, revoke, or rotate")
+		return errors.New("command is required: approve, backup-open, backup-seal, bootstrap-invite, list, operator-approve, operator-revoke, public-key, revoke, or rotate")
 	}
 	// Public-key derivation intentionally has no database dependency. This lets
 	// an operator inspect a candidate image against the node's existing private
 	// key before the registry schema or control plane is deployed.
 	if args[0] == "public-key" {
 		return runPublicKey(args[1:], stdout, stderr)
+	}
+	// Backups are sealed and opened without the database, which a restore
+	// does not have yet.
+	switch args[0] {
+	case "backup-seal":
+		return runBackupSeal(args[1:], os.Stdin, stdout, stderr)
+	case "backup-open":
+		return runBackupOpen(args[1:], os.Stdin, stdout, stderr)
 	}
 	command, err := prepareDatabaseCommand(args, stderr)
 	if err != nil {

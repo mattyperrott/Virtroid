@@ -46,6 +46,7 @@ for unit_name in \
   unattended-upgrades.service \
   apt-daily.timer \
   apt-daily-upgrade.timer \
+  virtroid-db-backup.timer \
   redroid-binderfs.service; do
   systemctl is-enabled --quiet "${unit_name}" ||
     fail "${unit_name} is not enabled"
