@@ -22,4 +22,13 @@
 /backend/virtroid-viewercrypt
 /backend/virtroidd
 /backend/virtroid-admin
+/backend/cmd/*/falco-forwarder
+/backend/cmd/*/lifecycleqa
+/backend/cmd/*/viewercrypt
+/backend/cmd/*/virtnoded
+/backend/cmd/*/virtroid-admin
+/backend/cmd/*/virtroid-measurements
+/backend/cmd/*/virtroid-payments
+/backend/cmd/*/virtroid-provisioner
+/backend/cmd/*/virtroidd
 /.archify/
