@@ -1301,7 +1301,13 @@ function ReportsWorkspace({ overview }: { overview: OverviewResponse }) {
   const active = overview.runtimes.filter((runtime) => runtime.status === "running").length;
   const attention = overview.runtimes.filter((runtime) => runtime.status === "attention").length;
   const exportCsv = () => {
-    const cells = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+    // Spreadsheets run a text cell that starts, after any spaces, with =, +,
+    // -, @, a tab or a carriage return (or their full-width forms) as a
+    // formula; a leading apostrophe keeps it text.
+    const cells = (value: string | number) => {
+      const text = typeof value === "number" ? String(value) : value.replace(/^(\s*[=+\-@\t\r\uFF1D\uFF0B\uFF0D\uFF20])/, "'$1");
+      return `"${text.replace(/"/g, '""')}"`;
+    };
     const rows = [["runtime_id", "name", "status", "desired_state", "connection", "host", "account_id", "snapshot", "updated"], ...overview.runtimes.map((runtime) => [runtime.id, runtime.name, runtime.status, runtime.desiredState, runtime.connection, runtime.host, runtime.accountId, runtime.snapshot, runtime.updated])];
     const blob = new Blob([rows.map((row) => row.map(cells).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
