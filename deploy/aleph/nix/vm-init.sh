@@ -102,6 +102,11 @@ table inet virtroid {
 EOF
 
 # --- Docker, the runtime image, and the node ------------------------------------
+# Docker's store is on the data disk, whose encryption does not stop the host
+# replaying older blocks. Start it empty, so the image and layers that run are
+# always the ones loaded from the measured root below. Runtime data lives in
+# bind mounts outside it, and the node recreates its containers.
+rm -rf /srv/virtroid/docker
 dockerd --data-root /srv/virtroid/docker --exec-root /run/docker --pidfile /run/docker.pid \
   --log-level warn >/var/log/dockerd.log 2>&1 &
 dockerd_pid=$!
@@ -118,12 +123,9 @@ set -a
 . /etc/virtroid/runtime.env
 set +a
 # The Android image ships inside the measured root; nothing is pulled.
-if ! docker image inspect "${NODE_RUNTIME_IMAGE}" >/dev/null 2>&1; then
-  docker load -i /usr/share/virtroid/runtime-image.tar >/dev/null || die "cannot load the runtime image"
-  docker image inspect "${NODE_RUNTIME_IMAGE}" >/dev/null 2>&1 || die "runtime image does not match NODE_RUNTIME_IMAGE"
-fi
-docker network inspect virtroid-guest >/dev/null 2>&1 ||
-  docker network create virtroid-guest >/dev/null || die "cannot create the runtime network"
+docker load -i /usr/share/virtroid/runtime-image.tar >/dev/null || die "cannot load the runtime image"
+docker image inspect "${NODE_RUNTIME_IMAGE}" >/dev/null 2>&1 || die "runtime image does not match NODE_RUNTIME_IMAGE"
+docker network create virtroid-guest >/dev/null || die "cannot create the runtime network"
 
 export NODE_ID="${node_id}" NODE_NAME="${node_id}" NODE_PRIVATE_KEY_B64="${node_key}" NODE_REGION="${region}"
 export CONTROL_PLANE_URL="${control_plane}" NODE_PUBLIC_CONTROL_PLANE_URL="${control_plane}"
