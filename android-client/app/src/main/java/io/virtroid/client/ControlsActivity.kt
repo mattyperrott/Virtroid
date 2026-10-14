@@ -594,7 +594,7 @@ class ControlsActivity : AppCompatActivity() {
     private fun showIdleSettings() {
         val current = runtime ?: return
         val canStopNow = runtimeState?.canStop == true
-        showIdlePeriodPicker(
+        showIdlePeriodSheet(
             selectedSeconds = current.idleTimeoutSeconds,
             extra = { sheet ->
                 if (canStopNow) {

@@ -80,6 +80,12 @@ class VirtroidSheet(private val activity: Activity) {
         binding.sheetScroll.isVisible = true
     }
 
+    /** Adds a view of the caller's own, such as a slider, where rows go. */
+    fun content(view: View) = apply {
+        binding.sheetRows.addView(view)
+        binding.sheetScroll.isVisible = true
+    }
+
     /** The main button; [destructive] makes it red for deleting or revoking. */
     fun primary(label: String, destructive: Boolean = false, onClick: () -> Unit) = apply {
         binding.sheetPrimaryButton.text = label

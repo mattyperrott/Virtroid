@@ -1,0 +1,20 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12,3a9,9 0,1 1,0 18a9,9 0,1 1,0 -18z"
+        android:strokeColor="@color/virtroid_primary"
+        android:strokeWidth="2" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12,11v5.5"
+        android:strokeColor="@color/virtroid_primary"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.2" />
+    <path
+        android:fillColor="@color/virtroid_primary"
+        android:pathData="M12,6.6a1.35,1.35 0,1 1,0 2.7a1.35,1.35 0,1 1,0 -2.7z" />
+</vector>

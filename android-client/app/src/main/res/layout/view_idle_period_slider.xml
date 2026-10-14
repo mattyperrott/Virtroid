@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- How long a runtime keeps running with no viewer open: the chosen period
+     and a slider over the periods the control plane offers. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/idle_period_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/idle_period_icon"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="16dp"
+            android:background="@drawable/bg_accent_soft_circle"
+            android:importantForAccessibility="no"
+            android:padding="13dp"
+            android:src="@drawable/ic_power"
+            app:tint="@color/v_accent" />
+
+        <LinearLayout
+            android:id="@+id/idle_period_intro"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/VirtroidText.CardTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/new_runtime_idle_title" />
+
+            <TextView
+                style="@style/VirtroidText.Body.Compact"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/new_runtime_idle_caption" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/idle_period_value"
+            style="@style/VirtroidText.CardTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:textColor="@color/v_accent" />
+    </LinearLayout>
+
+    <com.google.android.material.slider.Slider
+        android:id="@+id/idle_period_slider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:contentDescription="@string/new_runtime_idle_title"
+        android:stepSize="1"
+        android:value="0"
+        android:valueFrom="0"
+        android:valueTo="1"
+        app:haloColor="@color/v_border"
+        app:labelBehavior="gone"
+        app:thumbColor="@color/v_accent"
+        app:tickColorActive="@color/v_bg"
+        app:tickColorInactive="@color/v_text_muted"
+        app:trackColorActive="@color/v_accent"
+        app:trackColorInactive="@color/v_surface_light" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:importantForAccessibility="noHideDescendants">
+
+        <TextView
+            android:id="@+id/idle_period_min"
+            style="@style/VirtroidText.Body.Compact"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxLines="1"
+            android:textColor="@color/v_text_muted" />
+
+        <TextView
+            android:id="@+id/idle_period_max"
+            style="@style/VirtroidText.Body.Compact"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:textColor="@color/v_text_muted" />
+    </LinearLayout>
+</LinearLayout>

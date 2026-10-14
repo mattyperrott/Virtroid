@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.VirtroidSheet
 
 class NewRuntimeActivity : AppCompatActivity() {
     private lateinit var binding: ScreenCreateSessionBinding
@@ -72,13 +73,9 @@ class NewRuntimeActivity : AppCompatActivity() {
         appPicks = AppInstallActivity.decodePicks(savedInstanceState?.getString(STATE_APP_PICKS))
         renderAppPicks()
         idleTimeoutSeconds = savedInstanceState?.getInt(STATE_IDLE_TIMEOUT, idleTimeoutSeconds) ?: idleTimeoutSeconds
-        binding.newRuntimeIdleRow.setOnClickListener {
-            showIdlePeriodPicker(idleTimeoutSeconds) { seconds ->
-                idleTimeoutSeconds = seconds
-                renderIdlePeriod()
-            }
-        }
-        renderIdlePeriod()
+        bindIdlePeriodSlider(binding.newRuntimeIdlePicker, idleTimeoutSeconds) { idleTimeoutSeconds = it }
+        binding.optionStandardPersistent.setOnClickListener { showStorageInfo() }
+        binding.newRuntimeStorageInfo.setOnClickListener { showStorageInfo() }
         loadEntitlement()
     }
 
@@ -88,8 +85,17 @@ class NewRuntimeActivity : AppCompatActivity() {
         outState.putInt(STATE_IDLE_TIMEOUT, idleTimeoutSeconds)
     }
 
-    private fun renderIdlePeriod() {
-        binding.newRuntimeIdleSubtitle.text = getString(R.string.new_runtime_idle_subtitle, idlePeriodLabel(idleTimeoutSeconds))
+    /** What happens to the runtime's data, behind the storage card's one line. */
+    private fun showStorageInfo() {
+        VirtroidSheet(this)
+            .title(getString(R.string.new_runtime_persistent_title))
+            .row(R.drawable.ic_lock, getString(R.string.storage_info_encrypted_title), getString(R.string.storage_info_encrypted_body))
+            .row(R.drawable.ic_hexagon, getString(R.string.storage_info_shards_title), getString(R.string.storage_info_shards_body))
+            .row(R.drawable.ic_refresh, getString(R.string.storage_info_kept_title), getString(R.string.storage_info_kept_body))
+            .row(R.drawable.ic_delete, getString(R.string.storage_info_removed_title), getString(R.string.storage_info_removed_body))
+            .note(getString(R.string.storage_info_note))
+            .primary(getString(R.string.storage_info_close)) {}
+            .show()
     }
 
     private fun renderAppPicks() {

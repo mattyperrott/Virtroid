@@ -2,6 +2,7 @@ package io.virtroid.client
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.os.Bundle
 import android.view.WindowManager
 import android.view.LayoutInflater
@@ -371,11 +372,9 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeStatTwoValue.text = runtime.uptimeLabel()
         cardBinding.runtimeStatThreeValue.text = runtime.loadLabel()
 
-        // A greyed-out Start says why: the runtime's own error, else the
-        // account limit that blocks starting it.
-        val startBlockedReason = latestEntitlement?.startRuntimeBlockedMessage(this)
-            ?.takeIf { state?.canStart ?: true }
-        val errorLine = runtime.lastError?.takeIf { it.isNotBlank() } ?: startBlockedReason
+        // The card shows the runtime's own error; an account limit that blocks
+        // starting it is said in a red notice when Start is tapped.
+        val errorLine = runtime.lastError?.takeIf { it.isNotBlank() }
         cardBinding.runtimeErrorText.isVisible = errorLine != null
         cardBinding.runtimeErrorText.text = errorLine.orEmpty()
         runtime.lastError?.takeIf { it.isNotBlank() }?.let { error ->
@@ -401,10 +400,17 @@ class MainActivity : AppCompatActivity() {
             hideRuntimeProvisioning(cardBinding)
         }
         val actionsEnabled = provisioningMilestone == null && !isLocallyStopping
-        // Out of trial time or balance, Start stays tappable and opens the wallet.
-        cardBinding.startRuntimeButton.isEnabled = actionsEnabled &&
-            (state?.canStart ?: true) &&
-            (latestEntitlement?.let { it.canStartRuntime || it.startNeedsDeposit() } ?: true)
+        // Blocked by an account limit, Start stays tappable but muted, to say
+        // why (and open the wallet when out of trial time or balance). Its
+        // press animation owns the alpha, so the colours mute it instead.
+        val startBlockedByAccount = latestEntitlement?.canStartRuntime == false
+        cardBinding.startRuntimeButton.isEnabled = actionsEnabled && (state?.canStart ?: true)
+        cardBinding.startRuntimeButton.setTextColor(
+            getColor(if (startBlockedByAccount) R.color.v_text_muted else R.color.v_text_primary),
+        )
+        cardBinding.startRuntimeButton.iconTint = ColorStateList.valueOf(
+            getColor(if (startBlockedByAccount) R.color.v_text_muted else R.color.v_accent),
+        )
         cardBinding.actionControlsButton.isEnabled = actionsEnabled
         cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
         cardBinding.liveDeleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
@@ -422,7 +428,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             latestEntitlement?.startRuntimeBlockedMessage(this)?.let { message ->
-                toast(message)
+                Notice.error(this, message)
                 if (latestEntitlement?.startNeedsDeposit() == true) {
                     startActivity(WalletActivity.createIntent(this))
                 }

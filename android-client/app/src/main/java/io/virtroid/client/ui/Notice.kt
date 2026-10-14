@@ -43,6 +43,23 @@ object Notice {
         present(activity, view, message)
     }
 
+    /** Says why something can't be done, in red, over the bottom of the screen. */
+    fun error(activity: Activity, message: String) {
+        if (message.isBlank() || activity.isFinishing || activity.isDestroyed) {
+            return
+        }
+        val view = TextView(activity).apply {
+            text = message
+            textSize = 13f
+            maxLines = 3
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(activity.getColor(R.color.v_bg))
+            setPadding(activity.dp(16), activity.dp(10), activity.dp(16), activity.dp(10))
+            setBackgroundColor(activity.getColor(R.color.v_danger))
+        }
+        present(activity, view, message)
+    }
+
     /**
      * Confirms something done, such as a copy, in the brand colour: a tick
      * and the message on the accent, under the top bar, clear of the

@@ -103,50 +103,19 @@
                     android:layout_marginTop="0dp"
                     android:layout_marginBottom="12dp" />
                 <LinearLayout
-                    android:id="@+id/new_runtime_idle_row"
+                    android:id="@+id/new_runtime_idle_card"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
+                    android:orientation="vertical"
                     android:background="@drawable/bg_surface_stroke_24"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:padding="16dp"
+                    android:paddingStart="16dp"
+                    android:paddingTop="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="12dp"
                     android:layout_marginBottom="32dp">
-                    <ImageView
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:padding="13dp"
-                        android:importantForAccessibility="no"
-                        android:src="@drawable/ic_power"
-                        app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="16dp">
-                        <TextView
-                            style="@style/VirtroidText.CardTitle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/new_runtime_idle_title" />
-                        <TextView
-                            android:id="@+id/new_runtime_idle_subtitle"
-                            style="@style/VirtroidText.Body.Compact"
-                            android:ellipsize="end"
-                            android:maxLines="1"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp" />
-                    </LinearLayout>
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:layout_marginStart="8dp"
-                        android:importantForAccessibility="no"
-                        android:src="@drawable/ic_chevron_right"
-                        app:tint="@color/v_text_muted" />
+                    <include
+                        android:id="@+id/new_runtime_idle_picker"
+                        layout="@layout/view_idle_period_slider" />
                 </LinearLayout>
                 <TextView
                     android:id="@+id/label_apps"
@@ -219,22 +188,42 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:background="@drawable/bg_surface_stroke_24"
-                    android:padding="18dp"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:paddingStart="18dp"
+                    android:paddingTop="10dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="18dp"
                     android:layout_marginBottom="32dp">
-                    <TextView
-                        android:id="@+id/text_standard_title"
-                        style="@style/VirtroidText.CardTitle"
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/new_runtime_persistent_title" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+                        <TextView
+                            android:id="@+id/text_standard_title"
+                            style="@style/VirtroidText.CardTitle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/new_runtime_persistent_title" />
+                        <ImageButton
+                            android:id="@+id/new_runtime_storage_info"
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:contentDescription="@string/new_runtime_storage_info"
+                            android:padding="11dp"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_info"
+                            app:tint="@color/v_text_muted" />
+                    </LinearLayout>
                     <TextView
                         android:id="@+id/text_standard_subtitle"
                         style="@style/VirtroidText.Body"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/new_runtime_persistent_body"
-                        android:lineSpacingExtra="3dp"
-                        android:layout_marginTop="6dp" />
+                        android:layout_marginEnd="10dp"
+                        android:text="@string/new_runtime_persistent_summary" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/settings_card"
