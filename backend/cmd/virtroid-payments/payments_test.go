@@ -234,3 +234,16 @@ func TestWatcherReportsVerifiedDepositsOnceAndSkipsForeignAddresses(t *testing.T
 		t.Fatal("an unverified transfer was reported")
 	}
 }
+
+func TestRequestGateSpacesRequests(t *testing.T) {
+	gate := newRequestGate(30 * time.Millisecond)
+	start := time.Now()
+	for i := 0; i < 4; i++ {
+		if err := gate.wait(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if elapsed := time.Since(start); elapsed < 90*time.Millisecond {
+		t.Fatalf("four requests took %s, want at least 90ms", elapsed)
+	}
+}

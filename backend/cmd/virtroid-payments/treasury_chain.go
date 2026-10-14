@@ -121,6 +121,9 @@ func (g tronGrid) txOutcome(ctx context.Context, txID string) (done, succeeded b
 }
 
 func (g tronGrid) postJSON(ctx context.Context, route string, body any, out any) error {
+	if err := g.gate.wait(ctx); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err

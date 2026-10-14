@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"virtroid/backend/internal/tron"
@@ -36,6 +37,40 @@ type tronGrid struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
+	// gate spaces requests: without an API key TronGrid takes about one a
+	// second, shared by the deposit watcher and the treasury.
+	gate *requestGate
+}
+
+// requestGate lets one request through per interval.
+type requestGate struct {
+	mu       sync.Mutex
+	interval time.Duration
+	next     time.Time
+}
+
+func newRequestGate(interval time.Duration) *requestGate {
+	return &requestGate{interval: interval}
+}
+
+func (g *requestGate) wait(ctx context.Context) error {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	now := time.Now()
+	at := g.next
+	if at.Before(now) {
+		at = now
+	}
+	g.next = at.Add(g.interval)
+	g.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Until(at)):
+		return nil
+	}
 }
 
 // transfersTo lists confirmed USDT transfers to address since the given time,
@@ -97,6 +132,9 @@ func (g tronGrid) transfersTo(ctx context.Context, address string, since time.Ti
 }
 
 func (g tronGrid) getJSON(ctx context.Context, endpoint string, out any) error {
+	if err := g.gate.wait(ctx); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err

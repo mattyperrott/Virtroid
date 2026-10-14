@@ -159,7 +159,11 @@ func run() error {
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	control := httpControlPlane{baseURL: controlPlaneURL, privateKey: privateKey, client: client}
-	grid := tronGrid{baseURL: envOrDefault("TRONGRID_URL", "https://api.trongrid.io"), apiKey: apiKey, client: client}
+	gap := 1100 * time.Millisecond
+	if apiKey != "" {
+		gap = 100 * time.Millisecond
+	}
+	grid := tronGrid{baseURL: envOrDefault("TRONGRID_URL", "https://api.trongrid.io"), apiKey: apiKey, client: client, gate: newRequestGate(gap)}
 	w := newWatcher(
 		wallet,
 		control,
