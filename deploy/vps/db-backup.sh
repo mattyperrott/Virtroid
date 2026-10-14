@@ -39,13 +39,18 @@ setting() {
   printf '%s' "${value:-$2}"
 }
 
-backend_image="$(setting VIRTROID_BACKEND_IMAGE "")"
-provisioner_image="$(setting PROVISIONER_IMAGE "")"
+# The images the running release uses, which carry the tools this needs.
+running_image() {
+  docker inspect --format '{{.Config.Image}}' "$1" 2>/dev/null || true
+}
+backend_image="$(running_image virtroidd)"
+provisioner_image="$(running_image virtroid-provisioner)"
+provisioner_image="${provisioner_image:-$(setting PROVISIONER_IMAGE "")}"
 aleph_account="$(setting ALEPH_ACCOUNT virtroid-provisioner)"
 aleph_owner="$(setting ALEPH_OWNER_ADDRESS "")"
 postgres_user="$(setting POSTGRES_USER virtroid)"
 postgres_db="$(setting POSTGRES_DB virtroid)"
-[ -n "${backend_image}" ] || die "VIRTROID_BACKEND_IMAGE is not set in ${env_file}"
+[ -n "${backend_image}" ] || die "virtroidd is not running, so the release's image is unknown"
 [ -r "${phrase_file}" ] || die "the recovery phrase (${phrase_file}) is missing; backups are sealed with it"
 
 install -d -o root -g root -m 0700 "${state_dir}"
@@ -74,7 +79,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' virtroid-indexd-postgres 2>/dev/n
 fi
 {
   echo "created=${stamp}"
-  echo "source=$(setting VIRTROID_SOURCE_SHA unknown)"
+  echo "source=$(docker inspect --format '{{index .Config.Labels "com.virtroid.source-sha"}}' virtroidd 2>/dev/null || echo unknown)"
   echo "files=${included}"
 } > "${work}/manifest.txt"
 # shellcheck disable=SC2086
