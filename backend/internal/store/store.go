@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101401
-	schemaVersionLabel               = "generation floor, relay key 2026-10-14"
+	currentSchemaVersion       int64 = 2026101402
+	schemaVersionLabel               = "runtime app selections 2026-10-14"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -413,6 +413,8 @@ type CreateRuntimeInput struct {
 	FileMode         string
 	BlobAutoSnapshot bool
 	BlobRetainDays   int
+	// AppPackages are catalog apps to install on the runtime's first start.
+	AppPackages []string
 }
 
 type UpdateRuntimeInput struct {
@@ -1498,6 +1500,11 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		return Runtime{}, err
 	}
 
+	if len(input.AppPackages) > 0 {
+		if err := replaceRuntimeAppSelectionsTX(ctx, tx, runtime.ID, input.AppPackages); err != nil {
+			return Runtime{}, err
+		}
+	}
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", "Runtime profile created. A fresh container will be assigned when a session starts."); err != nil {
 		return Runtime{}, err
 	}
@@ -2574,141 +2581,6 @@ func redactStoragePaymentAddresses(value any) {
 			redactStoragePaymentAddresses(child)
 		}
 	}
-}
-
-func (s *Store) ListAppCatalog(ctx context.Context, accountID, search string) ([]AppCatalogEntry, error) {
-	accountID = strings.TrimSpace(accountID)
-	if accountID == "" {
-		return nil, errors.New("account id is required")
-	}
-	search = strings.TrimSpace(strings.ToLower(search))
-	if len(search) > 80 {
-		search = search[:80]
-	}
-	term := "%"
-	if search != "" {
-		term = "%" + search + "%"
-	}
-
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT c.package_name, c.source, c.display_name, c.summary, c.icon_url,
-		        c.version_name, c.version_code, c.apk_url, c.apk_sha256, c.apk_size_bytes,
-		        c.min_sdk, c.native_code, c.license, c.categories_json, c.anti_features_json,
-		        c.recommended, c.catalog_updated_at,
-		        EXISTS (
-		            SELECT 1
-		              FROM account_app_selections s
-		             WHERE s.account_id = $1
-		               AND s.package_name = c.package_name
-		        ) AS selected
-		   FROM app_catalog c
-		  WHERE c.enabled = TRUE
-		    AND ($2 = '%' OR LOWER(c.display_name) LIKE $2 OR LOWER(c.package_name) LIKE $2 OR LOWER(c.summary) LIKE $2)
-		  ORDER BY c.recommended DESC, LOWER(c.display_name), c.package_name
-		  LIMIT $3`,
-		accountID,
-		term,
-		catalogResponseLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	entries, err := scanAppCatalogRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	return entries, nil
-}
-
-func (s *Store) ListPublicAppCatalog(ctx context.Context, search string) ([]AppCatalogEntry, error) {
-	search = strings.TrimSpace(strings.ToLower(search))
-	if len(search) > 80 {
-		search = search[:80]
-	}
-	term := "%"
-	if search != "" {
-		term = "%" + search + "%"
-	}
-
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT c.package_name, c.source, c.display_name, c.summary, c.icon_url,
-		        c.version_name, c.version_code, c.apk_url, c.apk_sha256, c.apk_size_bytes,
-		        c.min_sdk, c.native_code, c.license, c.categories_json, c.anti_features_json,
-		        c.recommended, c.catalog_updated_at, FALSE AS selected
-		   FROM app_catalog c
-		  WHERE c.enabled = TRUE
-		    AND ($1 = '%' OR LOWER(c.display_name) LIKE $1 OR LOWER(c.package_name) LIKE $1 OR LOWER(c.summary) LIKE $1)
-		  ORDER BY c.recommended DESC, LOWER(c.display_name), c.package_name
-		  LIMIT $2`,
-		term,
-		catalogResponseLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	entries, err := scanAppCatalogRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	return entries, nil
-}
-
-func (s *Store) ReplaceAccountAppSelections(ctx context.Context, accountID string, packageNames []string) ([]AppCatalogEntry, error) {
-	accountID = strings.TrimSpace(accountID)
-	if accountID == "" {
-		return nil, errors.New("account id is required")
-	}
-	normalized, err := normalizeAppPackageSelections(packageNames)
-	if err != nil {
-		return nil, err
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	for _, packageName := range normalized {
-		var exists bool
-		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS (
-			    SELECT 1 FROM app_catalog
-			     WHERE package_name = $1
-			       AND enabled = TRUE
-			)`,
-			packageName,
-		).Scan(&exists); err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, fmt.Errorf("app package is not available: %s", packageName)
-		}
-	}
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM account_app_selections WHERE account_id = $1`, accountID); err != nil {
-		return nil, err
-	}
-	for _, packageName := range normalized {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO account_app_selections (account_id, package_name, selected_at)
-			 VALUES ($1, $2, NOW())
-			 ON CONFLICT (account_id, package_name) DO NOTHING`,
-			accountID,
-			packageName,
-		); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return s.ListAppCatalog(ctx, accountID, "")
 }
 
 func (s *Store) UpsertAppCatalogEntries(ctx context.Context, entries []AppCatalogEntry) (int, error) {
@@ -6537,51 +6409,6 @@ func attachStorageQuotaToRuntimesTX(ctx context.Context, tx *sql.Tx, runtimes []
 		runtimes[i].StorageBytesUsed = &used
 	}
 	return nil
-}
-
-func attachSelectedAppsToRuntimesTX(ctx context.Context, tx *sql.Tx, runtimes []Runtime) error {
-	if len(runtimes) == 0 {
-		return nil
-	}
-	appsByAccount := make(map[string][]AppCatalogEntry)
-	for i := range runtimes {
-		accountID := strings.TrimSpace(runtimes[i].AccountID)
-		if accountID == "" {
-			continue
-		}
-		apps, ok := appsByAccount[accountID]
-		if !ok {
-			var err error
-			apps, err = selectedAppsForAccountTX(ctx, tx, accountID)
-			if err != nil {
-				return err
-			}
-			appsByAccount[accountID] = apps
-		}
-		runtimes[i].SelectedApps = apps
-	}
-	return nil
-}
-
-func selectedAppsForAccountTX(ctx context.Context, tx *sql.Tx, accountID string) ([]AppCatalogEntry, error) {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT c.package_name, c.source, c.display_name, c.summary, c.icon_url,
-		        c.version_name, c.version_code, c.apk_url, c.apk_sha256, c.apk_size_bytes,
-		        c.min_sdk, c.native_code, c.license, c.categories_json, c.anti_features_json,
-		        c.recommended, c.catalog_updated_at, TRUE AS selected
-		   FROM account_app_selections s
-		   JOIN app_catalog c ON c.package_name = s.package_name
-		  WHERE s.account_id = $1
-		    AND c.enabled = TRUE
-		  ORDER BY c.recommended DESC, c.display_name ASC
-		  LIMIT 32`,
-		accountID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanAppCatalogRows(rows)
 }
 
 func allocateMissingViewerPortsForHostTX(ctx context.Context, tx *sql.Tx, hostID string) error {

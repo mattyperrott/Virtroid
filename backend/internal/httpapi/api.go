@@ -398,6 +398,8 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/capability", api.registerMyRuntimeCapability)
 	mux.HandleFunc("PATCH /api/v1/me/runtimes/{id}", api.updateMyRuntime)
 	mux.HandleFunc("DELETE /api/v1/me/runtimes/{id}", api.deleteMyRuntime)
+	mux.HandleFunc("GET /api/v1/me/runtimes/{id}/apps", api.getMyRuntimeApps)
+	mux.HandleFunc("PUT /api/v1/me/runtimes/{id}/apps", api.updateMyRuntimeApps)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/delete", api.deleteMyRuntime)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/blob-key-lease", api.createRuntimeBlobKeyLease)
 	mux.HandleFunc("POST /api/v1/me/runtimes/{id}/start", api.startMyRuntime)
@@ -842,13 +844,25 @@ func (a *API) listMyRuntimeStates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listAppCatalog(w http.ResponseWriter, r *http.Request) {
-	items, err := a.store.ListPublicAppCatalog(r.Context(), r.URL.Query().Get("search"))
+	page, err := a.store.ListAppCatalogPage(r.Context(), appCatalogQuery(r))
 	if err != nil {
 		writeInternalAPIError(w, "public_catalog_list_failed", err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, page)
+}
+
+// maxAppSelectionBodyBytes fits a runtime's largest selection of package names.
+const maxAppSelectionBodyBytes = 16 << 10
+
+// appCatalogQuery reads search, limit and offset; without a limit a page is
+// as long as the catalog's maximum, as older app releases expect.
+func appCatalogQuery(r *http.Request) store.AppCatalogQuery {
+	values := r.URL.Query()
+	limit, _ := strconv.Atoi(values.Get("limit"))
+	offset, _ := strconv.Atoi(values.Get("offset"))
+	return store.AppCatalogQuery{Search: values.Get("search"), Limit: limit, Offset: offset}
 }
 
 func (a *API) getMyEntitlement(w http.ResponseWriter, r *http.Request) {
@@ -872,12 +886,53 @@ func (a *API) listMyAppCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := a.store.ListAppCatalog(r.Context(), accountID, r.URL.Query().Get("search"))
+	query := appCatalogQuery(r)
+	query.AccountID = accountID
+	query.RuntimeID = strings.TrimSpace(r.URL.Query().Get("runtime_id"))
+	page, err := a.store.ListAppCatalogPage(r.Context(), query)
 	if err != nil {
 		writeInternalAPIError(w, "account_catalog_list_failed", err)
 		return
 	}
 
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (a *API) getMyRuntimeApps(w http.ResponseWriter, r *http.Request) {
+	accountID, _, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+	items, err := a.store.RuntimeAppSelections(r.Context(), accountID, r.PathValue("id"))
+	if err != nil {
+		writeRuntimeMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) updateMyRuntimeApps(w http.ResponseWriter, r *http.Request) {
+	accountID, deviceID, ok := a.requireSignedDeviceRequest(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		AccountID    string   `json:"account_id"`
+		DeviceID     string   `json:"device_id"`
+		PackageNames []string `json:"package_names"`
+	}
+	if err := decodeStrictJSON(r.Body, maxAppSelectionBodyBytes, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if !a.validateSignedDeviceBody(w, accountID, deviceID, req.AccountID, req.DeviceID) {
+		return
+	}
+	items, err := a.store.ReplaceRuntimeAppSelections(r.Context(), accountID, r.PathValue("id"), req.PackageNames)
+	if err != nil {
+		writeRuntimeMutationError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -1426,6 +1481,8 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		FileMode         string `json:"file_mode"`
 		BlobAutoSnapshot bool   `json:"blob_auto_snapshot"`
 		BlobRetainDays   int    `json:"blob_retain_days"`
+		// AppPackages are catalog apps to install on the runtime.
+		AppPackages []string `json:"app_packages"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1454,6 +1511,7 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		FileMode:         req.FileMode,
 		BlobAutoSnapshot: req.BlobAutoSnapshot,
 		BlobRetainDays:   req.BlobRetainDays,
+		AppPackages:      req.AppPackages,
 	})
 	if err != nil {
 		writeRuntimeMutationError(w, err)
@@ -3737,6 +3795,10 @@ func writeInternalAPIError(w http.ResponseWriter, code string, err error) {
 }
 
 func writeRuntimeMutationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrAppSelection) {
+		writeAPIError(w, http.StatusBadRequest, "app_selection_invalid", err.Error())
+		return
+	}
 	switch err {
 	case store.ErrRuntimeNotFound:
 		writeAPIError(w, http.StatusNotFound, "runtime_not_found", err.Error())

@@ -515,6 +515,21 @@ WHERE r.blob_generation_floor = 0
          AND l.message LIKE 'This runtime''s private server was replaced%'
   );
 
+-- Apps the runtime's node installs when they are missing. Selections used to
+-- belong to the account; each runtime keeps what its account had selected.
+CREATE TABLE IF NOT EXISTS runtime_app_selections (
+    runtime_id UUID NOT NULL REFERENCES runtimes(id) ON DELETE CASCADE,
+    package_name TEXT NOT NULL REFERENCES app_catalog(package_name) ON DELETE RESTRICT,
+    selected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (runtime_id, package_name)
+);
+INSERT INTO runtime_app_selections (runtime_id, package_name, selected_at)
+SELECT r.id, s.package_name, s.selected_at
+  FROM account_app_selections s
+  JOIN runtimes r ON r.account_id = s.account_id AND r.deleted_at IS NULL
+ON CONFLICT (runtime_id, package_name) DO NOTHING;
+DELETE FROM account_app_selections;
+
 CREATE TABLE IF NOT EXISTS runtime_capabilities (
     id TEXT PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

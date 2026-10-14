@@ -2136,7 +2136,7 @@ func TestUpdateRuntimeObservationCommitsWithinStorageQuota(t *testing.T) {
 	}
 }
 
-func TestListAppCatalogMarksSelectedApps(t *testing.T) {
+func TestListAppCatalogPageMarksSelectedApps(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -2148,7 +2148,7 @@ func TestListAppCatalogMarksSelectedApps(t *testing.T) {
 	accountID := "11111111-1111-1111-1111-111111111111"
 
 	mock.ExpectQuery("SELECT c.package_name").
-		WithArgs(accountID, "%", catalogResponseLimit).
+		WithArgs(accountID, "", "%", 31, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"package_name", "source", "display_name", "summary", "icon_url",
 			"version_name", "version_code", "apk_url", "apk_sha256", "apk_size_bytes",
@@ -2175,12 +2175,13 @@ func TestListAppCatalogMarksSelectedApps(t *testing.T) {
 			true,
 		))
 
-	items, err := st.ListAppCatalog(context.Background(), accountID, "")
+	page, err := st.ListAppCatalogPage(context.Background(), AppCatalogQuery{AccountID: accountID, Limit: 30})
 	if err != nil {
-		t.Fatalf("ListAppCatalog returned error: %v", err)
+		t.Fatalf("ListAppCatalogPage returned error: %v", err)
 	}
-	if len(items) != 1 || !items[0].Selected || items[0].PackageName != "org.videolan.vlc" {
-		t.Fatalf("items = %+v, want selected VLC", items)
+	items := page.Items
+	if len(items) != 1 || !items[0].Selected || items[0].PackageName != "org.videolan.vlc" || page.NextOffset != nil {
+		t.Fatalf("page = %+v, want selected VLC and no next page", page)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -3117,7 +3118,7 @@ func TestListAssignedRuntimesRestoresMissingViewerPort(t *testing.T) {
 		WithArgs("host-1").
 		WillReturnRows(runtimeRows(now, 46000))
 	mock.ExpectQuery("SELECT c.package_name").
-		WithArgs("11111111-1111-1111-1111-111111111111").
+		WithArgs("33333333-3333-3333-3333-333333333333", maxRuntimeAppSelections).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"package_name", "source", "display_name", "summary", "icon_url",
 			"version_name", "version_code", "apk_url", "apk_sha256", "apk_size_bytes",
