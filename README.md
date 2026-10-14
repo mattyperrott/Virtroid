@@ -70,7 +70,7 @@ Users pay for what they use from a USDT balance.
 | Automatic node provisioning | 🟡 Pilot | The provisioner creates a dedicated Aleph Cloud VM when an account in a provisioned region starts a runtime, and deletes unused ones, within a spending cap |
 | Confidential host isolation | 🟡 Pilot | Runtime VMs are AMD SEV-SNP guests with a measured, verified read-only root and an encrypted data disk unlocked only after attestation |
 | Hardware attestation | 🟡 Pilot | The phone verifies the VM's SEV-SNP report against AMD's root before streaming, and accepts only images on a list of measurements signed with an offline key (app 0.3.7 and later) |
-| Sia storage | 🟡 Pilot | The Sia indexer runs on the VPS on Sia mainnet, funded and forming storage contracts; confidential VMs keep snapshots on their own disk until it is ready |
+| Sia storage | 🟡 Pilot | The Sia indexer runs on the VPS on Sia mainnet with its storage contracts; a 64 MiB snapshot saves at about 5 MiB/s and restores at about 18 MiB/s, spread over 30 hosts so any 10 recover it |
 | Deposit conversion | ⏳ Not built | Moving deposits to a treasury and converting them into Siacoin and Aleph credits; done by hand today |
 
 
@@ -246,15 +246,15 @@ tap-to-screen of about 0.42 s from South-East Asia to the node in Finland,
 against about 0.3 s on the VPS.
 
 USDT deposits and charging are live, and new accounts start on a one-runtime,
-one-hour trial. The Sia indexer is synced and funded, and is forming its storage
-contracts.
+one-hour trial. The Sia indexer holds storage contracts with over 30 hosts, and
+saving and restoring snapshots through it is proven on Sia mainnet.
 
 This is working release-candidate evidence—not a claim of complete production
 hardening or hostile multi-tenant isolation.
 
 ### Next
 
-1. Sia storage: finish forming contracts and prove that a stopped runtime restarts from Sia on a new VM ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)).
+1. Sia storage: prove on a real phone that a stopped runtime restarts from Sia on a new VM ([`deploy/vps/indexd.md`](deploy/vps/indexd.md)).
 2. Move deposits to a treasury and convert them into Siacoin and Aleph credits automatically.
 3. A custom AOSP build for the runtime, and QUIC for the stream.
 
