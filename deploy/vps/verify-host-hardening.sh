@@ -46,13 +46,21 @@ for unit_name in \
   unattended-upgrades.service \
   apt-daily.timer \
   apt-daily-upgrade.timer \
-  virtroid-db-backup.timer \
   redroid-binderfs.service; do
   systemctl is-enabled --quiet "${unit_name}" ||
     fail "${unit_name} is not enabled"
   systemctl is-active --quiet "${unit_name}" ||
     fail "${unit_name} is not active"
 done
+# The nightly database copy, once a release has installed it (the installer
+# checks its unit files are the reviewed ones). The release that first ships
+# it runs the previous installer before the new one adds the timer.
+if [ -e /etc/systemd/system/virtroid-db-backup.timer ]; then
+  systemctl is-enabled --quiet virtroid-db-backup.timer ||
+    fail "virtroid-db-backup.timer is not enabled"
+  systemctl is-active --quiet virtroid-db-backup.timer ||
+    fail "virtroid-db-backup.timer is not active"
+fi
 
 aa-enabled >/dev/null || fail "AppArmor is not enabled"
 mountpoint -q /dev/binderfs || fail "binderfs is not mounted"
