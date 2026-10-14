@@ -108,6 +108,7 @@ class ConfidentialRuntimeGuard(
     }
 
     private suspend fun verifyRefreshingList(verify: () -> Unit, fetchMeasurementList: suspend () -> String?) {
+        refreshListIfStale(fetchMeasurementList)
         try {
             try {
                 verify()
@@ -129,6 +130,25 @@ class ConfidentialRuntimeGuard(
                 error,
             )
         }
+    }
+
+    /**
+     * Fetches the signed list now and then even when every image checks out:
+     * otherwise a revoked image would stay approved on this phone until it
+     * met one it didn't know. A failed fetch keeps the list it has.
+     */
+    private suspend fun refreshListIfStale(fetchMeasurementList: suspend () -> String?) {
+        val now = System.currentTimeMillis()
+        if (now - lists.getLong(KEY_LIST_CHECKED_AT, 0) < LIST_REFRESH_MS) {
+            return
+        }
+        val document = try {
+            fetchMeasurementList()
+        } catch (error: IOException) {
+            null
+        } ?: return
+        accept(document)
+        lists.edit().putLong(KEY_LIST_CHECKED_AT, now).apply()
     }
 
     fun approvedMeasurements(): Set<String> = storedList()?.measurements ?: bundledMeasurements
@@ -164,6 +184,8 @@ class ConfidentialRuntimeGuard(
         private const val LIST_PREFS = "virtroid_measurement_list"
         private const val KEY_DOCUMENT = "document"
         private const val KEY_HIGHEST_SERIAL = "highest_serial"
+        private const val KEY_LIST_CHECKED_AT = "list_checked_at"
+        private const val LIST_REFRESH_MS = 6 * 60 * 60 * 1_000L
 
         fun loadMeasurements(context: Context): Set<String> =
             context.resources.openRawResource(R.raw.snp_launch_measurements).bufferedReader().useLines { lines ->

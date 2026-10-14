@@ -35,6 +35,11 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
         }
         NotificationRelayManager(this).ensureRegistered()
         registerActivityLifecycleCallbacks(this)
+        // Camera captures wait in the cache only until they're sent to the
+        // runtime; one left by a crash or a kill goes now.
+        cacheDir.listFiles { file ->
+            file.name.startsWith("virtroid-photo-") || file.name.startsWith("virtroid-video-")
+        }?.forEach { it.delete() }
         AppLogStore.get(this).info("App startup", "lifecycle")
     }
 

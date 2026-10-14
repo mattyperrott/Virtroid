@@ -636,6 +636,11 @@ public class Scrcpy extends Service {
         // Touch packets are tiny; Nagle would hold them back waiting for ACKs.
         sslSocket.setTcpNoDelay(true);
         sslSocket.connect(new InetSocketAddress(host, port), 5000);
+        // A stalled server must not hang the TLS, relay or viewer handshakes;
+        // the stream itself clears this once frames flow. Keepalive notices
+        // a peer that vanished without closing.
+        sslSocket.setSoTimeout(15_000);
+        sslSocket.setKeepAlive(true);
         if (!directToNode) {
             SSLParameters sslParameters = sslSocket.getSSLParameters();
             sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
