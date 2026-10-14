@@ -1070,6 +1070,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun RuntimeSummary.loadLabel(): String {
+        // The last load a runtime reported stays on it after it stops.
+        if (!isReadyForSession()) {
+            return getString(R.string.runtime_stat_load_unknown)
+        }
         val value = loadAverage ?: return getString(R.string.runtime_stat_load_unknown)
         return String.format(Locale.US, "%.2f", value)
     }
