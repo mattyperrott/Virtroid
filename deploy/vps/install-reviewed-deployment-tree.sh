@@ -300,6 +300,8 @@ install_runtime_copies() {
   remove_retired_operational_monitoring
   systemctl daemon-reload
   modprobe sch_fq_codel
+  modprobe sch_fq
+  modprobe tcp_bbr
   sysctl --system >/dev/null
   systemctl enable --now apparmor
   systemctl enable --now auditd

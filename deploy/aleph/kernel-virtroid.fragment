@@ -139,6 +139,16 @@ CONFIG_IPV6_ROUTER_PREF=y
 CONFIG_IPV6_ROUTE_INFO=y
 CONFIG_IPV6_OPTIMISTIC_DAD=y
 
+# BBR congestion control with fair queueing, the default for every socket:
+# the viewer's stream crosses long, lossy paths (Bangkok to Europe is about
+# 230 ms), where CUBIC backs off hard on each loss and queues fill.
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_DEFAULT_BBR=y
+CONFIG_NET_SCH_FQ=y
+CONFIG_NET_SCH_DEFAULT=y
+CONFIG_DEFAULT_FQ=y
+
 # Traffic control, for netd's BPF programs on each interface.
 CONFIG_NET_SCHED=y
 CONFIG_NET_SCH_INGRESS=y
