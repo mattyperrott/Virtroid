@@ -35,7 +35,7 @@ sources are compiled under a different JDK major version.
 The resulting APK is a zip-compatible app-process payload. The sync task copies
 it to `../backend/cmd/virtnoded/assets/scrcpy-server.jar`; then run the backend
 and Android test suites. The tracked asset's pinned SHA-256 digest is
-`ebfb4ed8426b8884461cb20f5a221bdb827996c1013cf5f543d90c0687c212d1`.
+`325f2124d38bfe87ebd84a45e1cc949bea500824b38dde76d9eb652f04d494e0`.
 CI independently rebuilds the module and checks every decompressed ZIP member
 byte against the tracked asset. This ignores container-level APK ordering and
 compression metadata, which Android build tools may vary between platforms,

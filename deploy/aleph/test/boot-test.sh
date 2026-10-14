@@ -171,7 +171,7 @@ echo "boot-test: starting the viewer as virtnoded does"
 \$B timeout 60 C /bin/docker exec smoke /system/bin/sh -c "setprop virtroid.viewer.client_ip 127.0.0.1; setprop virtroid.viewer.max_size 1280; setprop virtroid.viewer.bit_rate 4000000; setprop virtroid.viewer.audio_enabled false; setprop ctl.start virtroid_viewer"
 listening=""
 for i in \$(\$B seq 1 30); do
-  listening=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "ss -ltn 2>/dev/null | grep -E ':(7007|7017) '" 2>/dev/null)
+  listening=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "[ -S /data/local/tmp/virtroid-viewer/viewer.sock ] && [ -S /data/local/tmp/virtroid-viewer/scrcpy.sock ] && echo sockets" 2>/dev/null)
   [ -n "\$listening" ] && break
   \$B sleep 1
 done
@@ -194,14 +194,21 @@ if [ -z "\$listening" ]; then
       \$B timeout 5 \$B cat \$t/stack 2>/dev/null | \$B head -6 | \$B sed 's/^/boot-test:     /'
     done | \$B head -80
   done
-  fail "the viewer never listened on 7007/7017"
+  fail "the viewer's sockets never opened"
 fi
-echo "boot-test: viewer listening: \$(echo \$listening | \$B tr -s ' ')"
+echo "boot-test: viewer listening on its private sockets"
+# Apps share the runtime's network, so no viewer hop may be a TCP port, and the
+# sockets' directory must be the viewer's (system) alone.
+tcp=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "ss -ltn 2>/dev/null | grep -E ':(7007|7017) '" 2>/dev/null)
+[ -z "\$tcp" ] || fail "the viewer still listens on a TCP port: \$tcp"
+perms=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "stat -c '%a %U' /data/local/tmp/virtroid-viewer" 2>/dev/null | \$B tr -d '\r')
+echo "boot-test: viewer socket directory: \$perms"
+[ "\$perms" = "700 system" ] || fail "the viewer socket directory is open to others: \$perms"
 # Pull video as a viewer would, straight from the streaming server (the
 # encryption proxy dials it the same way for each client), for 12 seconds:
 # a working stream does not end on its own. The screen size alone is 8
 # bytes; a working encoder sends at least a key frame.
-\$B timeout 40 C /bin/docker exec smoke /system/bin/sh -c "(sleep 20) | timeout 12 toybox nc ::1 7007 | wc -c" >/run/streamed 2>/dev/null &
+\$B timeout 40 C /bin/docker exec smoke /system/bin/sh -c "(sleep 20) | timeout 12 toybox nc -U /data/local/tmp/virtroid-viewer/scrcpy.sock | wc -c" >/run/streamed 2>/dev/null &
 stream_pid=\$!
 # While it streams, the capture display must be secure: windows apps mark
 # as secure are drawn only on secure displays, and are black otherwise.

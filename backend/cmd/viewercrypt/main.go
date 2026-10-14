@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -55,7 +56,7 @@ func main() {
 		}
 	}
 
-	listener, err := net.Listen("tcp", *listenAddr)
+	listener, err := listen(*listenAddr)
 	if err != nil {
 		log.Fatalf("listen %s: %v", *listenAddr, err)
 	}
@@ -86,6 +87,36 @@ func main() {
 	}
 }
 
+// splitAddress reads "unix:/path" as a Unix socket and anything else as TCP.
+func splitAddress(address string) (string, string) {
+	if path, ok := strings.CutPrefix(address, "unix:"); ok {
+		return "unix", path
+	}
+	return "tcp", address
+}
+
+// listen opens the encrypted listener. A Unix socket replaces any stale one
+// and is made readable by its owner only: apps in the runtime share its
+// network, so only the node, which reaches it as root, may connect.
+func listen(address string) (net.Listener, error) {
+	network, path := splitAddress(address)
+	if network != "unix" {
+		return net.Listen(network, path)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	return listener, nil
+}
+
 func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.PrivateKey) {
 	defer rawClient.Close()
 
@@ -104,7 +135,8 @@ func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.
 		return
 	}
 
-	upstream, err := net.DialTimeout("tcp", upstreamAddr, upstreamDialTimeout)
+	network, address := splitAddress(upstreamAddr)
+	upstream, err := net.DialTimeout(network, address, upstreamDialTimeout)
 	if err != nil {
 		log.Printf("dial upstream: %v", err)
 		return

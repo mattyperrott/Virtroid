@@ -1,7 +1,9 @@
 package org.server.scrcpy;
 
 
-import android.util.Log;
+import android.net.LocalServerSocket;
+import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
 
 import org.server.scrcpy.model.ByteUtils;
 import org.server.scrcpy.model.CommandPacket;
@@ -11,6 +13,7 @@ import org.server.scrcpy.model.MediaPacket;
 import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.EOFException;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -21,54 +24,84 @@ import java.net.Socket;
 
 public final class DroidConnection implements Closeable {
 
+    /**
+     * Set by the viewer service: the Unix socket the encryption proxy reaches
+     * this server on, in a directory only the system user can open. Apps in
+     * the runtime share its network, so a loopback port would let any of them
+     * read the unencrypted screen and inject input.
+     */
+    private static final String SOCKET_ENV = "VIRTROID_VIEWER_SOCKET";
 
-    private static Socket socket = null;
+    private final Closeable socket;
+    private final Runnable shutdown;
     private OutputStream outputStream;
     private DataInputStream inputStream;
 
-    private DroidConnection(Socket socket) throws IOException {
+    private DroidConnection(Closeable socket, Runnable shutdown, InputStream input, OutputStream output) {
         this.socket = socket;
-
-        inputStream = new DataInputStream(socket.getInputStream());
-        outputStream = socket.getOutputStream();
+        this.shutdown = shutdown;
+        inputStream = new DataInputStream(input);
+        outputStream = output;
     }
 
+    private static DroidConnection acceptUnix(String path) throws IOException {
+        File file = new File(path);
+        if (file.exists() && !file.delete()) {
+            throw new IOException("cannot replace " + path);
+        }
+        LocalSocket bound = new LocalSocket(LocalSocket.SOCKET_STREAM);
+        bound.bind(new LocalSocketAddress(path, LocalSocketAddress.Namespace.FILESYSTEM));
+        LocalServerSocket server = new LocalServerSocket(bound.getFileDescriptor());
+        try {
+            LocalSocket client = server.accept();
+            return new DroidConnection(client, () -> {
+                try {
+                    client.shutdownInput();
+                    client.shutdownOutput();
+                } catch (IOException ignored) {
+                    // Closing below is what matters.
+                }
+            }, client.getInputStream(), client.getOutputStream());
+        } finally {
+            // Both wrap the same descriptor; closing it twice is a no-op.
+            server.close();
+            bound.close();
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+    }
 
-    private static Socket listenAndAccept() throws IOException {
-        // This plaintext hop is strictly loopback-only inside the guest; the
-        // colocated viewercrypt process terminates the authenticated encrypted
-        // viewer protocol before any traffic leaves the runtime container.
+    private static DroidConnection acceptLoopback() throws IOException {
+        // Only for development builds started over adb, without the viewer
+        // service: any process in the runtime can reach this port.
         ServerSocket serverSocket = new ServerSocket(); // nosemgrep: java.lang.security.audit.crypto.unencrypted-socket.unencrypted-socket
         serverSocket.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 7007), 1);
-        Socket sock = null;
         try {
-            sock = serverSocket.accept();
+            Socket sock = serverSocket.accept();
+            return new DroidConnection(sock, () -> {
+                try {
+                    sock.shutdownInput();
+                    sock.shutdownOutput();
+                } catch (IOException ignored) {
+                    // Closing below is what matters.
+                }
+            }, sock.getInputStream(), sock.getOutputStream());
         } finally {
             serverSocket.close();
         }
-        return sock;
     }
 
     public static DroidConnection open(String ip) throws IOException {
-
-        socket = listenAndAccept();
-        DroidConnection connection = null;
-//        if (socket.getInetAddress().toString().equals(ip)) {
-//            connection = new DroidConnection(socket);
-//        }
-        if (!socket.getInetAddress().toString().equals(ip)) {
-            Ln.w("socket connect address != " + ip);
+        String path = System.getenv(SOCKET_ENV);
+        if (path != null && !path.isEmpty()) {
+            return acceptUnix(path);
         }
-        // 判断 socket 有一个正确的地址
-        if (!socket.getInetAddress().toString().isEmpty()) {
-            connection = new DroidConnection(socket);
-        }
-        return connection;
+        Ln.w("no " + SOCKET_ENV + "; serving the unencrypted viewer on loopback");
+        return acceptLoopback();
     }
 
     public void close() throws IOException {
-        socket.shutdownInput();
-        socket.shutdownOutput();
+        shutdown.run();
         socket.close();
     }
 

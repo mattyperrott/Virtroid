@@ -320,13 +320,24 @@ func TestNormalizeViewerPrepareParamsRejectsOutOfRangeValues(t *testing.T) {
 
 func TestViewerServiceReuseRequiresEncryptedAndPlaintextListeners(t *testing.T) {
 	condition := viewerServiceReuseListenerCondition()
-	for _, port := range []int{encryptedViewerPort, scrcpyPlainPort} {
-		if !strings.Contains(condition, fmt.Sprintf("grep -q ':%d'", port)) {
-			t.Fatalf("viewer reuse condition %q does not require listener %d", condition, port)
+	for _, socket := range []string{encryptedViewerSocketPath, scrcpySocketPath} {
+		if !strings.Contains(condition, "[ -S "+socket+" ]") {
+			t.Fatalf("viewer reuse condition %q does not require socket %s", condition, socket)
 		}
 	}
-	if count := strings.Count(condition, "ss -ltn"); count != 2 {
-		t.Fatalf("viewer reuse condition checks %d listeners, want 2: %q", count, condition)
+}
+
+func TestViewerUsesPrivateSocketsNotLoopbackPorts(t *testing.T) {
+	// Apps share the runtime's network: no viewer hop may be a TCP port.
+	for _, forbidden := range []string{"127.0.0.1:70", "[::1]:70", ":7007", ":7017"} {
+		if strings.Contains(viewerScriptContent, forbidden) {
+			t.Fatalf("viewer script still uses a loopback port (%s)", forbidden)
+		}
+	}
+	for _, want := range []string{"mkdir -m 0700", "VIRTROID_VIEWER_SOCKET=", "-listen \"unix:", "-upstream \"unix:"} {
+		if !strings.Contains(viewerScriptContent, want) {
+			t.Fatalf("viewer script lacks %q", want)
+		}
 	}
 }
 
@@ -339,15 +350,6 @@ func TestAndroidInteractiveProbeAcceptsFocusedSecondaryDisplay(t *testing.T) {
 	}
 	if count := strings.Count(androidInteractiveProbeScript, `grep -m 1 "mAwake=true"`); count != 2 {
 		t.Fatalf("interactive probe performs %d awake-display checks, want 2", count)
-	}
-}
-
-func TestViewerScriptUsesGuestScrcpyIPv6Loopback(t *testing.T) {
-	if !strings.Contains(viewerScriptContent, `-upstream "[::1]:7007"`) {
-		t.Fatal("viewer script must use the IPv6 loopback address exposed by the pinned ReDroid scrcpy listener")
-	}
-	if strings.Contains(viewerScriptContent, `-upstream "127.0.0.1:7007"`) {
-		t.Fatal("viewer script must not use IPv4 for the pinned ReDroid scrcpy listener")
 	}
 }
 

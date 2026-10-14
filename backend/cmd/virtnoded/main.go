@@ -92,9 +92,14 @@ const (
 	notificationAgentVersion  = 1
 )
 
+// The viewer's two hops are Unix sockets in a directory only Android's system
+// user (the viewer) can open. Apps share the runtime's network, so loopback
+// ports would let any of them read the screen or inject input; the node
+// reaches the encrypted socket as root through docker exec.
 const (
-	scrcpyPlainPort     = 7007
-	encryptedViewerPort = 7017
+	viewerSocketDir           = "/data/local/tmp/virtroid-viewer"
+	scrcpySocketPath          = viewerSocketDir + "/scrcpy.sock"
+	encryptedViewerSocketPath = viewerSocketDir + "/viewer.sock"
 )
 
 const viewerScriptContent = `#!/system/bin/sh
@@ -106,6 +111,9 @@ DST=/data/local/tmp/scrcpy-server.jar
 LOG=/data/local/tmp/virtroid-viewer.log
 VIEWERCRYPT=/opt/virtroid/virtroid-viewercrypt
 PUBLIC_KEY=/data/local/tmp/virtroid-viewer-public-key
+SOCKETS='/data/local/tmp/virtroid-viewer'
+SCRCPY_SOCKET="$SOCKETS/scrcpy.sock"
+VIEWER_SOCKET="$SOCKETS/viewer.sock"
 IP=$(getprop virtroid.viewer.client_ip)
 SIZE=$(getprop virtroid.viewer.max_size)
 BITRATE=$(getprop virtroid.viewer.bit_rate)
@@ -135,21 +143,28 @@ cp "$SRC" "$DST"
 chown shell:shell "$DST" || true
 chmod 0644 "$DST" || true
 restorecon "$DST" >/dev/null 2>&1 || true
-env CLASSPATH="$DST" PATH="$PATH" app_process / org.server.scrcpy.Server "/$IP" "$SIZE" "$BITRATE" false "$AUDIO" &
+# A fresh directory only this user can open, for both sockets.
+rm -rf "$SOCKETS"
+mkdir -m 0700 "$SOCKETS"
+if [ "$(stat -c %u "$SOCKETS")" != "$(id -u)" ]; then
+  echo "viewer socket directory is not ours"
+  exit 1
+fi
+env CLASSPATH="$DST" PATH="$PATH" VIRTROID_VIEWER_SOCKET="$SCRCPY_SOCKET" app_process / org.server.scrcpy.Server "/$IP" "$SIZE" "$BITRATE" false "$AUDIO" &
 SERVER_PID=$!
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  if ss -ltn 2>/dev/null | grep -q ':7007'; then
+  if [ -S "$SCRCPY_SOCKET" ]; then
     break
   fi
   sleep 1
 done
-if ! ss -ltn 2>/dev/null | grep -q ':7007'; then
-  echo "scrcpy plaintext listener did not open"
+if [ ! -S "$SCRCPY_SOCKET" ]; then
+  echo "scrcpy socket did not open"
   kill "$SERVER_PID" >/dev/null 2>&1 || true
   exit 1
 fi
 chmod 0755 "$VIEWERCRYPT" >/dev/null 2>&1 || true
-"$VIEWERCRYPT" -listen "127.0.0.1:7017" -upstream "[::1]:7007" -public-key-file "$PUBLIC_KEY"
+"$VIEWERCRYPT" -listen "unix:$VIEWER_SOCKET" -upstream "unix:$SCRCPY_SOCKET" -public-key-file "$PUBLIC_KEY"
 STATUS=$?
 kill "$SERVER_PID" >/dev/null 2>&1 || true
 exit "$STATUS"
@@ -2957,7 +2972,7 @@ func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment
 		return "", err
 	}
 
-	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", fmt.Sprintf("Encrypted viewer proxy prepared on guest port %d.", encryptedViewerPort))
+	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Encrypted viewer proxy prepared on its private guest socket.")
 	return viewerPublicKey, nil
 }
 
@@ -4279,11 +4294,7 @@ func (n *nodeAgent) setContainerProp(ctx context.Context, containerName, key, va
 }
 
 func viewerServiceReuseListenerCondition() string {
-	return fmt.Sprintf(
-		"ss -ltn 2>/dev/null | grep -q ':%d' && ss -ltn 2>/dev/null | grep -q ':%d'",
-		encryptedViewerPort,
-		scrcpyPlainPort,
-	)
+	return fmt.Sprintf("[ -S %s ] && [ -S %s ]", encryptedViewerSocketPath, scrcpySocketPath)
 }
 
 func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clientIP string, maxSize, bitRate int, audioEnabled bool) error {
@@ -4315,11 +4326,11 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 			"setprop ctl.start virtroid_viewer; "+
 			"for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do "+
 			"svc=$(getprop init.svc.virtroid_viewer); "+
-			"if [ \"$svc\" = \"running\" ] && ss -ltn 2>/dev/null | grep -q ':%d'; then exit 0; fi; "+
+			"if [ \"$svc\" = \"running\" ] && [ -S %s ]; then exit 0; fi; "+
 			"sleep 1; "+
 			"done; "+
 			"echo \"service=$svc\"; "+
-			"ss -ltn 2>/dev/null || true; "+
+			"ls -la %s 2>/dev/null || true; "+
 			"cat /data/local/tmp/virtroid-viewer.log 2>/dev/null || true; "+
 			"exit 1",
 		shellEscape(clientIP),
@@ -4332,7 +4343,8 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 		maxSize,
 		bitRate,
 		audioEnabled,
-		encryptedViewerPort,
+		encryptedViewerSocketPath,
+		viewerSocketDir,
 	)
 	output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
 		{"/system/bin/sh", "-c", shellCmd},
@@ -4595,7 +4607,7 @@ func (n *nodeAgent) openViewerTunnel(ctx context.Context, containerName string) 
 		true,
 		false,
 		false,
-		[]string{"/system/bin/sh", "-c", fmt.Sprintf("toybox nc 127.0.0.1 %[1]d || /system/bin/toybox nc 127.0.0.1 %[1]d || nc 127.0.0.1 %[1]d", encryptedViewerPort)},
+		[]string{"/system/bin/sh", "-c", fmt.Sprintf("toybox nc -U %[1]s || /system/bin/toybox nc -U %[1]s", encryptedViewerSocketPath)},
 	)
 	if err != nil {
 		return nil, err
@@ -4895,16 +4907,10 @@ func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssign
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
-			{"ss", "-ltn"},
-			{"/system/bin/ss", "-ltn"},
-			{"/bin/ss", "-ltn"},
-			{"toybox", "ss", "-ltn"},
-			{"/system/bin/toybox", "ss", "-ltn"},
-			{"netstat", "-ltn"},
-			{"toybox", "netstat", "-ltn"},
-			{"/system/bin/toybox", "netstat", "-ltn"},
+			{"/system/bin/sh", "-c", fmt.Sprintf("[ -S %s ] && echo ready", encryptedViewerSocketPath)},
+			{"sh", "-c", fmt.Sprintf("[ -S %s ] && echo ready", encryptedViewerSocketPath)},
 		})
-		if err == nil && strings.Contains(output, fmt.Sprintf(":%d", encryptedViewerPort)) {
+		if err == nil && strings.Contains(output, "ready") {
 			return nil
 		}
 		if err != nil {
@@ -4942,12 +4948,12 @@ func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssign
 		diagnostics = append(diagnostics, "logcat: "+summarizeLogOutput(logOutput))
 	}
 	if len(diagnostics) > 0 {
-		return fmt.Errorf("encrypted viewer port %d did not open after %d seconds: %s", encryptedViewerPort, attempts, strings.Join(diagnostics, " | "))
+		return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds: %s", encryptedViewerSocketPath, attempts, strings.Join(diagnostics, " | "))
 	}
 	if lastErr != nil {
-		return fmt.Errorf("encrypted viewer port %d did not open after %d seconds: %w", encryptedViewerPort, attempts, lastErr)
+		return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds: %w", encryptedViewerSocketPath, attempts, lastErr)
 	}
-	return fmt.Errorf("encrypted viewer port %d did not open after %d seconds", encryptedViewerPort, attempts)
+	return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds", encryptedViewerSocketPath, attempts)
 }
 
 func (n *nodeAgent) androidBootCompleted(ctx context.Context, containerName string) (bool, error) {
