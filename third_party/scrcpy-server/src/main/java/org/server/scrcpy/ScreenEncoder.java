@@ -42,7 +42,8 @@ public class ScreenEncoder implements Device.RotationListener {
     private int currentBitRate;
     private long lastBitRateChangeMs;
     private long calmSinceMs;
-    private int congestedWrites;
+    private long windowStartMs;
+    private long blockedInWindowMs;
     private static final int MIN_BIT_RATE = 500_000;
     private int frameRate;
     private int iFrameInterval;
@@ -242,24 +243,38 @@ public class ScreenEncoder implements Device.RotationListener {
     }
 
     /**
-     * Sends less when the viewer's connection falls behind. A write that
-     * blocks for more than twice the time its video lasts at the current
-     * bitrate, three times running, means the path is full: the bitrate
-     * drops by 30%. After five seconds of writes that keep up it rises by
-     * 15% at a time, back towards the bitrate the viewer asked for.
+     * Sends less when the viewer's connection falls behind. Writes block when
+     * the path is full; once they take more than half of a second, the
+     * bitrate drops by 30%. After five seconds in which writes take under a
+     * tenth of the time it rises by 15% at a time, back towards the bitrate
+     * the viewer asked for. Small frames slip through between long blocks,
+     * so the share of time blocked, not single writes, is the signal.
      */
-    private void adaptBitRate(MediaCodec codec, int bytes, long blockedMs) {
+    private void adaptBitRate(MediaCodec codec, long blockedMs) {
         long now = SystemClock.uptimeMillis();
-        long lastsMs = (long) bytes * 8_000L / Math.max(currentBitRate, 1);
-        if (blockedMs > Math.max(50L, 2 * lastsMs)) {
+        if (windowStartMs == 0) {
+            windowStartMs = now;
+        }
+        blockedInWindowMs += blockedMs;
+        long elapsed = now - windowStartMs;
+        if (elapsed < 1_000) {
+            return;
+        }
+        boolean congested = blockedInWindowMs * 2 > elapsed;
+        boolean free = blockedInWindowMs * 10 < elapsed;
+        windowStartMs = now;
+        blockedInWindowMs = 0;
+        if (congested) {
             calmSinceMs = now;
-            congestedWrites++;
-            if (congestedWrites >= 3 && now - lastBitRateChangeMs > 500 && currentBitRate > MIN_BIT_RATE) {
+            if (currentBitRate > MIN_BIT_RATE && now - lastBitRateChangeMs > 1_000) {
                 setBitRate(codec, Math.max(MIN_BIT_RATE, currentBitRate * 7 / 10), now);
             }
             return;
         }
-        congestedWrites = 0;
+        if (!free) {
+            calmSinceMs = now;
+            return;
+        }
         if (currentBitRate < bitRate && now - calmSinceMs > 5_000 && now - lastBitRateChangeMs > 2_000) {
             setBitRate(codec, Math.min(bitRate, currentBitRate * 115 / 100), now);
         }
@@ -276,7 +291,6 @@ public class ScreenEncoder implements Device.RotationListener {
             Ln.w("Cannot change the video bitrate: " + e.getMessage());
         }
         lastBitRateChangeMs = now;
-        congestedWrites = 0;
     }
 
     @SuppressLint("NewApi")
@@ -324,7 +338,7 @@ public class ScreenEncoder implements Device.RotationListener {
                         byte[] bytes = packet.toByteArray();
                         long writeStart = SystemClock.uptimeMillis();
                         outputStream.write(bytes);
-                        adaptBitRate(codec, bytes.length, SystemClock.uptimeMillis() - writeStart);
+                        adaptBitRate(codec, SystemClock.uptimeMillis() - writeStart);
                     }
 
                 }

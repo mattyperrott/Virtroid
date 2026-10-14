@@ -239,7 +239,8 @@ if [ -z "\$secure" ]; then
   \$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "tail -20 /data/local/tmp/virtroid-viewer.log" 2>&1 | \$B sed 's/^/boot-test:   /'
   fail "the viewer's capture display is not secure, so protected windows would be black"
 fi
-# A congested viewer: read the stream at about 40 KB/s for 30 seconds. The
+# A congested viewer: while the screen keeps changing (an idle screen sends
+# only about 14 KB/s), read the stream at about 512 kbps for 40 seconds. The
 # encoder must lower its bitrate rather than let video queue on the way.
 echo "boot-test: reading the stream slowly, as a congested viewer would"
 \$B timeout 60 C /bin/docker exec -e VIRTROID_VIEWER_AUTH_KEY=WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo= smoke /system/bin/sh -c '(umask 077; echo "\$VIRTROID_VIEWER_AUTH_KEY" > /data/local/tmp/virtroid-viewer-auth.key) && chown 1000:1000 /data/local/tmp/virtroid-viewer-auth.key'
@@ -248,11 +249,16 @@ for i in \$(\$B seq 1 30); do
   \$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "[ -S /data/local/tmp/virtroid-viewer/scrcpy.sock ]" 2>/dev/null && break
   \$B sleep 1
 done
-\$B timeout 50 C /bin/docker exec smoke /system/bin/sh -c "(sleep 40) | toybox timeout 30 toybox nc -U /data/local/tmp/virtroid-viewer/scrcpy.sock | (i=0; while [ \\\$i -lt 300 ]; do toybox dd bs=4096 count=1 of=/dev/null 2>/dev/null; sleep 0.1; i=\\\$((i+1)); done)" >/dev/null 2>&1
+\$B timeout 60 C /bin/docker exec -d smoke /system/bin/sh -c "i=0; while [ \\\$i -lt 60 ]; do am start -W -a android.settings.SETTINGS >/dev/null 2>&1; sleep 0.7; input keyevent 3; sleep 0.7; i=\\\$((i+1)); done"
+\$B timeout 60 C /bin/docker exec smoke /system/bin/sh -c "(sleep 50) | toybox timeout 40 toybox nc -U /data/local/tmp/virtroid-viewer/scrcpy.sock | (i=0; n=0; while [ \\\$i -lt 160 ]; do c=\\\$(toybox dd bs=16384 count=1 2>/dev/null | toybox wc -c); n=\\\$((n+c)); sleep 0.25; i=\\\$((i+1)); done; echo \\\$n > /data/local/tmp/slow-read.count)" >/dev/null 2>&1
+slow=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "cat /data/local/tmp/slow-read.count 2>/dev/null" | \$B tr -dc '0-9')
 adapted=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "grep -E 'Video bitrate|Cannot change the video bitrate' /data/local/tmp/virtroid-viewer.log | tail -4" 2>/dev/null | \$B tr -d '\r')
-echo "boot-test: bitrate under a slow viewer:"
+echo "boot-test: the slow viewer read \${slow:-0} bytes; bitrate:"
 echo "\${adapted:-  unchanged}" | \$B sed 's/^/boot-test:   /'
-echo "\$adapted" | \$B grep -q "Video bitrate" || fail "the encoder did not lower its bitrate for a slow viewer"
+if ! echo "\$adapted" | \$B grep -q "Video bitrate"; then
+  \$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "tail -25 /data/local/tmp/virtroid-viewer.log" 2>&1 | \$B sed 's/^/boot-test:   /'
+  fail "the encoder did not lower its bitrate for a slow viewer"
+fi
 echo "boot-test: cpu.max \$(C /bin/bash -c 'cat /sys/fs/cgroup/docker/*/cpu.max' 2>&1 | \$B head -1)"
 echo "boot-test: lmkd \$(C /bin/adb -s 127.0.0.1:15555 shell getprop init.svc.lmkd | \$B tr -d '\r'), docker exec: \$(C /bin/docker exec smoke /system/bin/getprop sys.boot_completed)"
 echo "boot-test: --- virtnoded log ---"
