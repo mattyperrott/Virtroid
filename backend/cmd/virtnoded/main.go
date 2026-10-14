@@ -360,6 +360,9 @@ type nodeAgent struct {
 	tlsSPKIPin string
 	// tlsSigner is the public TLS key; it signs viewer keys for phones.
 	tlsSigner crypto.Signer
+	// blobSealKey receives blob keys from phones that checked this VM's
+	// attestation; it never leaves memory.
+	blobSealKey *blobSealKey
 	// snpAttestation proves tlsSigner lives in an SEV-SNP VM, when it does.
 	snpAttestation      *snpAttestation
 	blobPreflightMu     sync.Mutex
@@ -491,6 +494,13 @@ func main() {
 		// Before the first heartbeat, so the control plane never sees this
 		// node without its attestation.
 		node.attestNode(ctx, publicSPKI)
+		if node.snpAttestation != nil {
+			sealKey, err := newBlobSealKey(node.tlsSigner, cfg.NodeID)
+			if err != nil {
+				log.Fatalf("blob seal key: %v", err)
+			}
+			node.blobSealKey = sealKey
+		}
 	}
 	go node.heartbeatLoop(ctx)
 	go node.reconcileLoop(ctx)
@@ -888,6 +898,9 @@ func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map
 	}
 	if n.snpAttestation != nil {
 		capabilities["snp_attestation"] = n.snpAttestation
+		if n.blobSealKey != nil {
+			capabilities["blob_seal_key"] = n.blobSealKey
+		}
 	}
 	if !includePreflight {
 		return capabilities

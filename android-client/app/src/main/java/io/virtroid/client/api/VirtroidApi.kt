@@ -309,6 +309,17 @@ class VirtroidApi(
     private val deviceIdentityStore: DeviceIdentityStore = DeviceIdentityStore(),
     private val runtimeCapabilityStore: RuntimeCapabilityStore = RuntimeCapabilityStore(),
 ) {
+    object BlobSeal {
+        /**
+         * Verifies a blob-key lease's VM and says whether to seal to its own
+         * key; the app sets it. It runs on the IO thread that seals the key.
+         */
+        @Volatile
+        var check: ((baseUrl: String, lease: BlobKeyLease) -> Boolean)? = null
+    }
+
+    private val blobSealCheck get() = BlobSeal.check
+
     fun clearLocalRuntimeCapabilities(context: Context) {
         RuntimeCapabilityStore.clearAllRegistered(context)
         synchronized(registeredRuntimeCapabilities) {
@@ -928,7 +939,7 @@ class VirtroidApi(
     ): SessionLaunch = withContext(Dispatchers.IO) {
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "session", blobKeyVerifier)
-        val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
+        val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("max_size", maxSize)
             .put("bit_rate", bitRate)
@@ -1240,7 +1251,7 @@ class VirtroidApi(
     ): RuntimeSummary = withContext(Dispatchers.IO) {
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "stop", blobKeyVerifier)
-        val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
+        val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("blob_key_verifier", blobKeyVerifier)
             .put("blob_key_envelope", envelope)
@@ -1272,6 +1283,22 @@ class VirtroidApi(
                 runtimeId = runtimeId,
             ),
         )
+    }
+
+    /**
+     * Seals the blob key for the lease's VM, to the VM's own key when the
+     * app's check verified it. Without that check, nothing is sent to a VM
+     * that must be attested.
+     */
+    private fun sealBlobAccessKey(baseUrl: String, blobAccessKey: String, lease: BlobKeyLease): JSONObject {
+        val check = blobSealCheck
+        val sealed = when {
+            check != null -> check(baseUrl, lease)
+            lease.confidentialRuntime || lease.nodeAttestationJson.isNotBlank() ->
+                throw IOException("this runtime's VM must be verified before it receives the key")
+            else -> false
+        }
+        return BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease, sealed)
     }
 
     private fun requestBlobKeyLease(
@@ -1332,6 +1359,11 @@ class VirtroidApi(
             operation = payload.getString("operation"),
             algorithm = payload.getString("algorithm"),
             nodePublicKey = payload.getString("node_public_key"),
+            sealedAlgorithm = payload.optString("sealed_algorithm"),
+            sealPublicKey = payload.optJSONObject("blob_seal_key")?.optString("public_key").orEmpty(),
+            sealKeySignature = payload.optJSONObject("blob_seal_key")?.optString("signature").orEmpty(),
+            nodeAttestationJson = payload.optJSONObject("node_attestation")?.toString().orEmpty(),
+            confidentialRuntime = payload.optBoolean("confidential_runtime", false),
         )
     }
 
@@ -1404,7 +1436,7 @@ class VirtroidApi(
     ): RuntimeSummary = withContext(Dispatchers.IO) {
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, action, blobKeyVerifier)
-        val envelope = BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease)
+        val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("blob_key_verifier", blobKeyVerifier)
             .put("blob_key_envelope", envelope)

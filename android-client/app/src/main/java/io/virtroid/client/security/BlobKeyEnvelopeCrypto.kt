@@ -22,23 +22,42 @@ data class BlobKeyLease(
     val operation: String,
     val algorithm: String,
     val nodePublicKey: String,
+    // The VM's own seal key, signed by its attested TLS key, and the
+    // attestation that proves it; empty for a node that has none.
+    val sealedAlgorithm: String = "",
+    val sealPublicKey: String = "",
+    val sealKeySignature: String = "",
+    val nodeAttestationJson: String = "",
+    val confidentialRuntime: Boolean = false,
 )
 
 object BlobKeyEnvelopeCrypto {
     const val ALGORITHM = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
+    const val SEALED_ALGORITHM = "P256_ECDH_HKDF_SHA256_AESGCM_V2_SEALED"
+    private const val SEALED_HKDF_INFO = "virtroid-blob-key-envelope-v2"
     private const val AAD_CONTEXT = "VIRTROID-BLOB-KEY-ENVELOPE-V1"
     private const val HKDF_INFO = "virtroid-blob-key-envelope-v1"
     private const val GCM_TAG_BITS = 128
     private const val B64_STD_FLAGS = Base64.NO_WRAP
     private const val B64_URL_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
 
-    fun encryptBlobAccessKey(blobAccessKey: String, lease: BlobKeyLease): JSONObject {
-        require(lease.algorithm == ALGORITHM) { "unsupported blob-key lease algorithm" }
+    /**
+     * Seals [blobAccessKey] for the VM in [lease]. [sealed] seals it to the
+     * VM's own in-memory key, which the caller must have verified against the
+     * VM's attestation; otherwise to the node key, for nodes without one.
+     */
+    fun encryptBlobAccessKey(blobAccessKey: String, lease: BlobKeyLease, sealed: Boolean): JSONObject {
+        val algorithm = if (sealed) SEALED_ALGORITHM else ALGORITHM
+        if (sealed) {
+            require(lease.sealedAlgorithm == SEALED_ALGORITHM) { "unsupported sealed blob-key algorithm" }
+        } else {
+            require(lease.algorithm == ALGORITHM) { "unsupported blob-key lease algorithm" }
+        }
 
         val plaintextKey = Base64.decode(blobAccessKey.trim(), B64_URL_FLAGS)
         require(plaintextKey.size == 32) { "invalid blob access key length" }
 
-        val nodePublicKey = parseNodePublicKey(lease.nodePublicKey)
+        val nodePublicKey = parseNodePublicKey(if (sealed) lease.sealPublicKey else lease.nodePublicKey)
         val keyPairGenerator = KeyPairGenerator.getInstance("EC")
         keyPairGenerator.initialize(ECGenParameterSpec("secp256r1"), SecureRandom())
         val keyPair = keyPairGenerator.generateKeyPair()
@@ -50,7 +69,8 @@ object BlobKeyEnvelopeCrypto {
 
         val aad = envelopeAad(lease)
         val salt = MessageDigest.getInstance("SHA-256").digest(aad)
-        val wrappingKey = hkdfSha256(sharedSecret, salt, HKDF_INFO.toByteArray(Charsets.UTF_8), 32)
+        val info = if (sealed) SEALED_HKDF_INFO else HKDF_INFO
+        val wrappingKey = hkdfSha256(sharedSecret, salt, info.toByteArray(Charsets.UTF_8), 32)
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
 
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -60,7 +80,7 @@ object BlobKeyEnvelopeCrypto {
 
         return JSONObject()
             .put("version", 1)
-            .put("algorithm", ALGORITHM)
+            .put("algorithm", algorithm)
             .put("lease_id", lease.leaseId)
             .put("operation", lease.operation)
             .put("runtime_id", lease.runtimeId)

@@ -43,17 +43,27 @@ func (n *nodeAgent) decryptBlobKeyEnvelope(envelope blobKeyEnvelopePayload, expe
 	if envelope.Version != 1 {
 		return nil, errors.New("unsupported blob key envelope version")
 	}
-	if strings.TrimSpace(envelope.Algorithm) != blobKeyEnvelopeAlgorithm {
+	var sharedSecret []byte
+	var info string
+	var err error
+	switch strings.TrimSpace(envelope.Algorithm) {
+	case blobKeyEnvelopeAlgorithmSealed:
+		// Sealed to this VM's own key, after the phone checked its attestation.
+		sharedSecret, err = n.blobSealKey.sharedSecret(envelope.EphemeralPublicKey)
+		info = blobSealKeyHKDFInfo
+	case blobKeyEnvelopeAlgorithm:
+		// From an app that predates seal keys: sealed to the injected node key.
+		sharedSecret, err = n.blobKeyEnvelopeSharedSecret(envelope.EphemeralPublicKey)
+		info = "virtroid-blob-key-envelope-v1"
+	default:
 		return nil, errors.New("unsupported blob key envelope algorithm")
 	}
-
-	sharedSecret, err := n.blobKeyEnvelopeSharedSecret(envelope.EphemeralPublicKey)
 	if err != nil {
 		return nil, err
 	}
 	aad := blobKeyEnvelopeAAD(envelope)
 	salt := sha256.Sum256(aad)
-	key := hkdfSHA256(sharedSecret, salt[:], []byte("virtroid-blob-key-envelope-v1"), 32)
+	key := hkdfSHA256(sharedSecret, salt[:], []byte(info), 32)
 
 	iv, err := decodeEnvelopeBase64(envelope.IV)
 	if err != nil {

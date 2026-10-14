@@ -55,6 +55,48 @@ class ConfidentialRuntimeGuard(
             )
             verified = node.product to measurement
         }
+        verifyRefreshingList(verify, fetchMeasurementList)
+        attested.edit().putBoolean(runtimeId, true).apply()
+        verified?.let { (product, measurement) ->
+            AppLogStore.get(context).security(
+                "Confidential server verified: AMD SEV-SNP report from a $product chip, signed by AMD; " +
+                    "launch measurement ${measurement.take(16)}… is approved; the stream is bound to the attested VM's key.",
+                "attestation",
+            )
+        }
+    }
+
+    /**
+     * Decides where [lease] seals the blob key. A runtime that must be attested
+     * seals only to the VM's own seal key, after its attestation verifies and
+     * the attested TLS key is shown to have signed the seal key: the node key
+     * is also known to the control plane. Returns false only for a runtime that
+     * needs no attestation, which seals to its node key as before.
+     */
+    suspend fun checkBlobSealKey(lease: BlobKeyLease, fetchMeasurementList: suspend () -> String?): Boolean {
+        val required = lease.confidentialRuntime ||
+            lease.nodeAttestationJson.isNotBlank() ||
+            attested.getBoolean(lease.runtimeId, false)
+        if (!required) {
+            return false
+        }
+        val verify = {
+            if (lease.nodeAttestationJson.isBlank()) {
+                throw SnpAttestationException("the server sent no attestation for a confidential runtime")
+            }
+            if (lease.sealPublicKey.isBlank() || lease.sealKeySignature.isBlank()) {
+                throw SnpAttestationException("the server offered no key that only the VM holds")
+            }
+            val node = NodeAttestation.parse(lease.nodeAttestationJson)
+            SnpAttestationVerifier.verifyAmdSignature(node)
+            SnpAttestationVerifier.checkReport(node.report, node.tlsSpki, approvedMeasurements())
+            SnpAttestationVerifier.verifySealKey(node.tlsSpki, lease.hostId, lease.sealPublicKey, lease.sealKeySignature)
+        }
+        verifyRefreshingList(verify, fetchMeasurementList)
+        return true
+    }
+
+    private suspend fun verifyRefreshingList(verify: () -> Unit, fetchMeasurementList: suspend () -> String?) {
         try {
             try {
                 verify()
@@ -74,14 +116,6 @@ class ConfidentialRuntimeGuard(
             throw ConfidentialRuntimeException(
                 context.getString(R.string.confidential_runtime_unverified, error.message.orEmpty()),
                 error,
-            )
-        }
-        attested.edit().putBoolean(runtimeId, true).apply()
-        verified?.let { (product, measurement) ->
-            AppLogStore.get(context).security(
-                "Confidential server verified: AMD SEV-SNP report from a $product chip, signed by AMD; " +
-                    "launch measurement ${measurement.take(16)}… is approved; the stream is bound to the attested VM's key.",
-                "attestation",
             )
         }
     }

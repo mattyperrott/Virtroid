@@ -120,6 +120,23 @@ class SnpAttestationVerifierTest {
     }
 
     @Test
+    fun sealKeySignedByTheGoNodeVerifies() {
+        // Signed by virtnoded's seal-key construction with a fresh TLS key.
+        val goSpki = Base64.getDecoder().decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5xNJGdy0TTG77H175bft8Mf8P8DVsf2SnRGXHaS3NiFq+L0L3oikVGayg+6Use6cjL1kE10r26D1ybNw3J3Hpw==")
+        val goSignature = "MEUCIGBSqTKS+F1S/9ZIbAFsp1DTlByZ2KCCCWDrXJnvfHc8AiEAnWDP6w3WHuxJ5RbWooW2BiC5yn67iDgUBEXhXw/UNXw="
+        SnpAttestationVerifier.verifySealKey(goSpki, "node-1", "seal-key", goSignature)
+        assertThrows(SnpAttestationException::class.java) {
+            SnpAttestationVerifier.verifySealKey(goSpki, "node-2", "seal-key", goSignature)
+        }
+        assertThrows(SnpAttestationException::class.java) {
+            SnpAttestationVerifier.verifySealKey(goSpki, "node-1", "other-seal-key", goSignature)
+        }
+        assertThrows(SnpAttestationException::class.java) {
+            SnpAttestationVerifier.verifySealKey(goSpki, "node-1", "seal-key", "")
+        }
+    }
+
+    @Test
     fun viewerKeyFromAnotherNodeIsRejected() {
         val keys = KeyPairGenerator.getInstance("EC").apply { initialize(256) }
         val nodeKey = keys.generateKeyPair()

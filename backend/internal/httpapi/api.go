@@ -116,6 +116,10 @@ const defaultBootstrapMaxBodyBytes = 32 * 1024
 const viewerPrepareProxyTimeout = 90 * time.Second
 const viewerReconnectBitRate = 4_000_000
 const blobKeyEnvelopeAlgorithm = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
+
+// blobKeyEnvelopeAlgorithmSealed is sealed to the VM's in-memory seal key,
+// after the phone checked the VM's attestation; this server can't open it.
+const blobKeyEnvelopeAlgorithmSealed = "P256_ECDH_HKDF_SHA256_AESGCM_V2_SEALED"
 const maxAPIRequestBodyBytes int64 = 2 << 20
 const maxRuntimeFileImportBytes int64 = 32 << 20
 const maxRuntimePhotoImportBytes int64 = 16 << 20
@@ -1694,7 +1698,7 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	response := map[string]any{
 		"lease_id":        leaseID,
 		"runtime_id":      runtime.ID,
 		"host_id":         host.ID,
@@ -1703,7 +1707,19 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 		"node_public_key": host.PublicKey,
 		"expires_at":      expiresAt,
 		"runtime":         runtime,
-	})
+	}
+	// What a phone needs to seal the key to the VM itself: the VM's
+	// attestation, and its seal key signed by the attested TLS key.
+	sealFields, err := a.blobSealFields(r.Context(), host.ID)
+	if err != nil {
+		a.activeBlobKeys.clear(runtime.ID)
+		writeInternalAPIError(w, "blob_key_lease_seal_key_failed", err)
+		return
+	}
+	for key, value := range sealFields {
+		response[key] = value
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
@@ -2610,6 +2626,7 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TLSSPKISHA256          string          `json:"tls_spki_sha256"`
 		Region                 string          `json:"region"`
 		SNPAttestation         json.RawMessage `json:"snp_attestation"`
+		BlobSealKey            json.RawMessage `json:"blob_seal_key"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2710,6 +2727,15 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.store.SetHostSNPAttestation(r.Context(), host.ID, attestation); err != nil {
 		writeInternalAPIError(w, "node_attestation_store_failed", err)
+		return
+	}
+	sealKey, err := nodeBlobSealKeyJSON(req.BlobSealKey, attestation)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "node_seal_key_rejected", err.Error())
+		return
+	}
+	if err := a.store.SetHostBlobSealKey(r.Context(), host.ID, sealKey); err != nil {
+		writeInternalAPIError(w, "node_seal_key_store_failed", err)
 		return
 	}
 	if isProvisionedVM {
@@ -3111,7 +3137,9 @@ func validateBlobKeyEnvelope(envelope blobKeyEnvelope, entry activeBlobKeyEntry)
 	if envelope.Version != 1 {
 		return errors.New("unsupported blob-key envelope version")
 	}
-	if strings.TrimSpace(envelope.Algorithm) != blobKeyEnvelopeAlgorithm {
+	switch strings.TrimSpace(envelope.Algorithm) {
+	case blobKeyEnvelopeAlgorithm, blobKeyEnvelopeAlgorithmSealed:
+	default:
 		return errors.New("unsupported blob-key envelope algorithm")
 	}
 	if strings.TrimSpace(envelope.LeaseID) != entry.leaseID ||

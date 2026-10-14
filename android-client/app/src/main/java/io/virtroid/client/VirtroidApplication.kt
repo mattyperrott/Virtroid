@@ -4,12 +4,15 @@ import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.os.Bundle
+import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.security.AppLockStore
+import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.RuntimeCapabilityStore
 import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.push.NotificationRelayManager
+import kotlinx.coroutines.runBlocking
 
 class VirtroidApplication : Application(), Application.ActivityLifecycleCallbacks {
     private var startedActivities = 0
@@ -18,6 +21,14 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
     override fun onCreate() {
         super.onCreate()
         RuntimeCapabilityStore.initialize(this)
+        // A runtime's blob key is sealed only to a VM this phone has verified.
+        VirtroidApi.BlobSeal.check = { baseUrl, lease ->
+            runBlocking {
+                ConfidentialRuntimeGuard(this@VirtroidApplication).checkBlobSealKey(lease) {
+                    VirtroidApi().fetchSnpMeasurements(baseUrl)
+                }
+            }
+        }
         NotificationRelayManager(this).ensureRegistered()
         registerActivityLifecycleCallbacks(this)
         AppLogStore.get(this).info("App startup", "lifecycle")

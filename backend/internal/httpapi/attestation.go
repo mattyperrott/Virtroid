@@ -69,6 +69,72 @@ func nodeAttestationJSON(raw json.RawMessage, tlsPin string) (string, error) {
 	return compact.String(), nil
 }
 
+const maxBlobSealKeyBytes = 2 << 10
+
+// nodeBlobSealKeyJSON checks the shape of the seal key a node reports with
+// its attestation and returns it compacted, or "" when absent. Phones check
+// its signature against the attested TLS key; this server only relays it.
+func nodeBlobSealKeyJSON(raw json.RawMessage, attestation string) (string, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	if attestation == "" {
+		return "", errors.New("blob_seal_key requires an attestation")
+	}
+	if len(raw) > maxBlobSealKeyBytes {
+		return "", errors.New("blob_seal_key is too large")
+	}
+	var key struct {
+		PublicKey string `json:"public_key"`
+		Signature string `json:"signature"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&key); err != nil {
+		return "", errors.New("blob_seal_key is not valid")
+	}
+	for _, field := range []string{key.PublicKey, key.Signature} {
+		if decoded, err := base64.StdEncoding.DecodeString(field); err != nil || len(decoded) == 0 {
+			return "", errors.New("blob_seal_key fields must be base64")
+		}
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		return "", err
+	}
+	return compact.String(), nil
+}
+
+// blobSealFields are the blob-key lease fields that let a phone seal the key
+// to the VM itself: its attestation, its signed seal key, and whether it is
+// a provisioned confidential VM, in which case the phone requires them.
+func (a *API) blobSealFields(ctx context.Context, hostID string) (map[string]any, error) {
+	fields := map[string]any{}
+	attestation, err := a.store.HostSNPAttestation(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	if attestation == "" {
+		return fields, nil
+	}
+	fields["node_attestation"] = json.RawMessage(attestation)
+	sealKey, err := a.store.HostBlobSealKey(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	if sealKey != "" {
+		fields["blob_seal_key"] = json.RawMessage(sealKey)
+		fields["sealed_algorithm"] = blobKeyEnvelopeAlgorithmSealed
+	}
+	if _, provisioned, err := a.store.LiveProvisionedVM(ctx, hostID); err != nil {
+		return nil, err
+	} else if provisioned {
+		fields["confidential_runtime"] = true
+	}
+	return fields, nil
+}
+
 // viewerConfidentiality returns the session fields a phone uses to verify the
 // runtime's VM: the node's attestation, its signature over the viewer key,
 // and whether the runtime is a provisioned confidential VM, in which case

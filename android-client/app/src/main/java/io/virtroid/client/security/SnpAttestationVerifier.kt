@@ -90,6 +90,7 @@ object SnpAttestationVerifier {
 
     private val NODE_TLS_KEY_DOMAIN = "virtroid-node-tls-key-v1\u0000".toByteArray(Charsets.US_ASCII)
     private const val VIEWER_KEY_DOMAIN = "virtroid-viewer-key-v1\n"
+    private const val SEAL_KEY_DOMAIN = "virtroid-blob-seal-key-v1\n"
 
     /**
      * SHA-256 of AMD's root key certificate (ARK) for each EPYC generation, as
@@ -195,6 +196,31 @@ object SnpAttestationVerifier {
         val measurement = measurementHex(report)
         if (measurement !in allowedMeasurements) {
             throw UnapprovedMeasurementException(measurement)
+        }
+    }
+
+    /** The VM's seal key was signed by its attested TLS key, for this node. */
+    fun verifySealKey(tlsSpki: ByteArray, nodeId: String, sealPublicKey: String, signature: String) {
+        val signatureBytes = try {
+            Base64.getDecoder().decode(signature.trim())
+        } catch (error: IllegalArgumentException) {
+            throw SnpAttestationException("seal key signature is not base64")
+        }
+        val tlsKey: PublicKey = try {
+            KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(tlsSpki))
+        } catch (error: Exception) {
+            throw SnpAttestationException("attested node key is not an EC public key")
+        }
+        val verifier = Signature.getInstance("SHA256withECDSA")
+        verifier.initVerify(tlsKey)
+        verifier.update("$SEAL_KEY_DOMAIN$nodeId\n$sealPublicKey".toByteArray(Charsets.UTF_8))
+        val valid = signatureBytes.isNotEmpty() && try {
+            verifier.verify(signatureBytes)
+        } catch (error: Exception) {
+            false
+        }
+        if (!valid) {
+            throw SnpAttestationException("seal key is not signed by the attested node")
         }
     }
 
