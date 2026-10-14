@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // App selections belong to a runtime: the catalog apps its node installs when
@@ -242,8 +243,17 @@ func validRuntimeAppSelectionsTX(ctx context.Context, tx *sql.Tx, packageNames [
 	return normalized, nil
 }
 
+// writeRuntimeAppSelectionsTX keeps when each still-selected app was first
+// selected: a node reinstalls an app the user removed only for a newer one.
 func writeRuntimeAppSelectionsTX(ctx context.Context, tx *sql.Tx, runtimeID string, packageNames []string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_app_selections WHERE runtime_id = $1`, runtimeID); err != nil {
+	if packageNames == nil {
+		packageNames = []string{} // NULL would match nothing and keep every row
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM runtime_app_selections WHERE runtime_id = $1 AND NOT (package_name = ANY($2))`,
+		runtimeID,
+		packageNames,
+	); err != nil {
 		return err
 	}
 	for _, packageName := range packageNames {
@@ -265,7 +275,7 @@ func selectedAppsForRuntime(ctx context.Context, q queryContexter, runtimeID str
 		`SELECT c.package_name, c.source, c.display_name, c.summary, c.icon_url,
 		        c.version_name, c.version_code, c.apk_url, c.apk_sha256, c.apk_size_bytes,
 		        c.min_sdk, c.native_code, c.license, c.categories_json, c.anti_features_json,
-		        c.recommended, c.catalog_updated_at, TRUE AS selected
+		        c.recommended, c.catalog_updated_at, s.selected_at
 		   FROM runtime_app_selections s
 		   JOIN app_catalog c ON c.package_name = s.package_name
 		  WHERE s.runtime_id = $1
@@ -279,11 +289,23 @@ func selectedAppsForRuntime(ctx context.Context, q queryContexter, runtimeID str
 		return nil, err
 	}
 	defer rows.Close()
-	entries, err := scanAppCatalogRows(rows)
-	if entries == nil && err == nil {
-		entries = []AppCatalogEntry{}
+	entries := []AppCatalogEntry{}
+	for rows.Next() {
+		var entry AppCatalogEntry
+		var selectedAt time.Time
+		if err := rows.Scan(
+			&entry.PackageName, &entry.Source, &entry.DisplayName, &entry.Summary, &entry.IconURL,
+			&entry.VersionName, &entry.VersionCode, &entry.APKURL, &entry.APKSHA256, &entry.APKSizeBytes,
+			&entry.MinSDK, &entry.NativeCode, &entry.License, &entry.CategoriesJSON, &entry.AntiFeaturesJSON,
+			&entry.Recommended, &entry.CatalogUpdatedAt, &selectedAt,
+		); err != nil {
+			return nil, err
+		}
+		entry.Selected = true
+		entry.SelectedAt = &selectedAt
+		entries = append(entries, entry)
 	}
-	return entries, err
+	return entries, rows.Err()
 }
 
 func attachSelectedAppsToRuntimesTX(ctx context.Context, tx *sql.Tx, runtimes []Runtime) error {

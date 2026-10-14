@@ -79,6 +79,36 @@ func TestPostgresRuntimeAppSelectionsIntegration(t *testing.T) {
 	if apps, err := st.ReplaceRuntimeAppSelections(ctx, accountID, second.ID, []string{newpipe}); err != nil || len(apps) != 1 || apps[0].PackageName != newpipe {
 		t.Fatalf("replace second runtime apps = %v err=%v, want NewPipe", apps, err)
 	}
+
+	// An app kept selected keeps when it was selected; one selected again
+	// gets a newer time, which tells the node to install it again.
+	selectedAt := func(runtimeID, packageName string) time.Time {
+		t.Helper()
+		apps, err := st.RuntimeAppSelections(ctx, accountID, runtimeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, app := range apps {
+			if app.PackageName == packageName && app.SelectedAt != nil {
+				return *app.SelectedAt
+			}
+		}
+		t.Fatalf("%s is not selected on %s with a time", packageName, runtimeID)
+		return time.Time{}
+	}
+	vlcSince := selectedAt(first.ID, vlc)
+	if _, err := st.ReplaceRuntimeAppSelections(ctx, accountID, first.ID, []string{vlc}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ReplaceRuntimeAppSelections(ctx, accountID, first.ID, []string{vlc, aegis}); err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedAt(first.ID, vlc); !got.Equal(vlcSince) {
+		t.Fatalf("VLC selected at %v after saving it unchanged, want %v", got, vlcSince)
+	}
+	if got := selectedAt(first.ID, aegis); !got.After(vlcSince) {
+		t.Fatalf("Aegis selected again at %v, want after %v", got, vlcSince)
+	}
 	if _, err := st.RuntimeAppSelections(ctx, uuid.NewString(), first.ID); !errors.Is(err, ErrRuntimeNotFound) {
 		t.Fatalf("another account read the runtime's apps: err=%v", err)
 	}

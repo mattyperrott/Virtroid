@@ -66,11 +66,12 @@ const (
 
 var builtInTrustedAppCatalog = map[string]runtimeApp{
 	"org.fdroid.basic": {
-		PackageName:  "org.fdroid.basic",
-		DisplayName:  "F-Droid Basic",
-		APKURL:       "https://f-droid.org/repo/org.fdroid.basic_2000009.apk",
-		APKSHA256:    "1aa1931bf61e11382c2b225581d4adcd2d9803697a144a84c6eb4db04f67cafb",
-		APKSizeBytes: 11391212,
+		PackageName:   "org.fdroid.basic",
+		DisplayName:   "F-Droid Basic",
+		APKURL:        "https://f-droid.org/repo/org.fdroid.basic_2000009.apk",
+		APKSHA256:     "1aa1931bf61e11382c2b225581d4adcd2d9803697a144a84c6eb4db04f67cafb",
+		APKSizeBytes:  11391212,
+		AllowInstalls: true,
 	},
 }
 
@@ -249,10 +250,16 @@ type runtimeApp struct {
 	APKURL       string `json:"apk_url"`
 	APKSHA256    string `json:"apk_sha256"`
 	APKSizeBytes int64  `json:"apk_size_bytes"`
-	Artifact     string `json:"-"`
-	InstallMode  string `json:"-"`
-	SetAsHome    bool   `json:"-"`
-	HomeActivity string `json:"-"`
+	// SelectedAt is when the runtime's owner selected the app; zero for
+	// apps every runtime gets.
+	SelectedAt   time.Time `json:"selected_at"`
+	Artifact     string    `json:"-"`
+	InstallMode  string    `json:"-"`
+	SetAsHome    bool      `json:"-"`
+	HomeActivity string    `json:"-"`
+	// AllowInstalls lets an app store install apps without the user first
+	// allowing it in Android's settings. Only trusted entries set it.
+	AllowInstalls bool `json:"-"`
 }
 
 type appInstallManifest struct {
@@ -272,6 +279,8 @@ type appManifestEntry struct {
 	Default      bool   `json:"default"`
 	SetAsHome    bool   `json:"set_as_home"`
 	HomeActivity string `json:"home_activity"`
+	// AllowInstalls marks an app store allowed to install apps.
+	AllowInstalls bool `json:"allow_installs"`
 }
 
 type trustedAppCatalog struct {
@@ -3318,6 +3327,15 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 
 	installed := 0
 	var failures []error
+	record := n.loadInstalledAppRecord(runtime.ID)
+	recordChanged := false
+	defer func() {
+		if recordChanged {
+			if err := n.saveInstalledAppRecord(runtime.ID, record); err != nil {
+				_ = n.appendRuntimeLog(context.WithoutCancel(ctx), runtime.ID, "node", "warn", fmt.Sprintf("Record installed apps failed: %v.", err))
+			}
+		}
+	}()
 	for _, app := range apps {
 		packageName := strings.TrimSpace(app.PackageName)
 		if !appPackageNamePattern.MatchString(packageName) {
@@ -3325,6 +3343,9 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 			continue
 		}
 		if n.androidPackageInstalled(ctx, serial, packageName) {
+			if record.note(packageName, app.SelectedAt, time.Now()) {
+				recordChanged = true
+			}
 			if applyExistingPolicy {
 				if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
 					message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
@@ -3332,6 +3353,10 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 					failures = append(failures, fmt.Errorf("%s policy: %w", packageName, err))
 				}
 			}
+			continue
+		}
+		if record.removedByUser(packageName, app.SelectedAt) {
+			// Installed once and since uninstalled in Android: leave it.
 			continue
 		}
 		if err := n.installRuntimeApp(ctx, serial, app); err != nil {
@@ -3346,6 +3371,9 @@ func (n *nodeAgent) ensureSelectedAppsInstalled(ctx context.Context, runtime run
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "error", message)
 			failures = append(failures, identityErr)
 			continue
+		}
+		if record.note(packageName, app.SelectedAt, time.Now()) {
+			recordChanged = true
 		}
 		if err := n.applyRuntimeAppPolicy(ctx, serial, app); err != nil {
 			message := fmt.Sprintf("Apply selected app policy %s failed: %v.", packageName, err)
@@ -3379,6 +3407,7 @@ func runtimeAppInstallFingerprint(apps []runtimeApp) string {
 		_, _ = io.WriteString(hash, strings.TrimSpace(app.InstallMode)+"\x00")
 		_, _ = io.WriteString(hash, strconv.FormatBool(app.SetAsHome)+"\x00")
 		_, _ = io.WriteString(hash, strings.TrimSpace(app.HomeActivity)+"\x00")
+		_, _ = io.WriteString(hash, app.SelectedAt.UTC().Format(time.RFC3339Nano)+"\x00")
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
@@ -3417,6 +3446,13 @@ func (n *nodeAgent) finishRuntimeAppInstallCheck(runtimeID, fingerprint string, 
 }
 
 func (n *nodeAgent) applyRuntimeAppPolicy(ctx context.Context, serial string, app runtimeApp) error {
+	if app.AllowInstalls {
+		// Otherwise Android stops the store's first install at its "install
+		// unknown apps" setting; each install still asks the user to confirm.
+		if _, err := n.adbShellCapture(ctx, serial, fmt.Sprintf("appops set %s REQUEST_INSTALL_PACKAGES allow", shellQuote(app.PackageName))); err != nil {
+			return fmt.Errorf("allow %s to install apps: %w", app.PackageName, err)
+		}
+	}
 	if !app.SetAsHome {
 		return nil
 	}
@@ -3483,6 +3519,9 @@ func mergeRuntimeApp(selection runtimeApp, trusted runtimeApp) runtimeApp {
 	}
 	if strings.TrimSpace(trusted.HomeActivity) != "" {
 		selection.HomeActivity = trusted.HomeActivity
+	}
+	if trusted.AllowInstalls {
+		selection.AllowInstalls = true
 	}
 	return selection
 }
@@ -3558,14 +3597,15 @@ func runtimeAppFromManifestEntry(entry appManifestEntry) (runtimeApp, error) {
 		return runtimeApp{}, fmt.Errorf("%s: %w", packageName, err)
 	}
 	return runtimeApp{
-		PackageName:  packageName,
-		DisplayName:  displayName,
-		Artifact:     artifact,
-		InstallMode:  mode,
-		APKSHA256:    pin,
-		APKSizeBytes: entry.APKSizeBytes,
-		SetAsHome:    entry.SetAsHome,
-		HomeActivity: homeActivity,
+		PackageName:   packageName,
+		DisplayName:   displayName,
+		Artifact:      artifact,
+		InstallMode:   mode,
+		APKSHA256:     pin,
+		APKSizeBytes:  entry.APKSizeBytes,
+		SetAsHome:     entry.SetAsHome,
+		HomeActivity:  homeActivity,
+		AllowInstalls: entry.AllowInstalls,
 	}, nil
 }
 

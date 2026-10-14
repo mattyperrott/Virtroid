@@ -271,6 +271,9 @@ type AppCatalogEntry struct {
 	Recommended      bool      `json:"recommended"`
 	Selected         bool      `json:"selected"`
 	CatalogUpdatedAt time.Time `json:"catalog_updated_at"`
+	// SelectedAt is when a runtime's selection of the app was made; a node
+	// installs an app again only for a newer selection.
+	SelectedAt *time.Time `json:"selected_at,omitempty"`
 }
 
 type Device struct {
