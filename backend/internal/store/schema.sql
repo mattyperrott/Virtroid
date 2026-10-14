@@ -482,6 +482,9 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS operation_generation BIGINT NOT NU
 -- generation, which only rises, so they accept the fresh start but never an
 -- older snapshot.
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_generation_floor BIGINT NOT NULL DEFAULT 0;
+-- How long the runtime keeps running with no viewer open before it is stopped
+-- and saved; its owner picks one of the periods the control plane offers.
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS idle_timeout_seconds INTEGER NOT NULL DEFAULT 1800;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE runtimes ALTER COLUMN android_image SET DEFAULT 'redroid/redroid:14.0.0_64only-latest';

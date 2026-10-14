@@ -126,7 +126,7 @@ func sessionReaperLoop(ctx context.Context, pg *store.Store, cfg config.ServerCo
 
 	runReaper := func() {
 		runBackgroundIteration("session reaper", func() {
-			result, err := pg.ReapStaleSessions(ctx, cfg.ActiveSessionTimeout, cfg.RuntimeIdleTimeout)
+			result, err := pg.ReapStaleSessions(ctx, cfg.ActiveSessionTimeout)
 			if err != nil {
 				log.Printf("session reaper failed: %v", err)
 				return

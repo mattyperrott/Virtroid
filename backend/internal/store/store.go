@@ -26,14 +26,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at, blob_generation_floor`
+const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at, blob_generation_floor, idle_timeout_seconds`
 
 const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101402
-	schemaVersionLabel               = "runtime app selections 2026-10-14"
+	currentSchemaVersion       int64 = 2026101403
+	schemaVersionLabel               = "runtime inactivity periods 2026-10-14"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -51,6 +51,21 @@ const (
 	sessionAttachTTL           = 2 * time.Minute
 	runtimeCapabilityTTL       = 24 * time.Hour
 	idleRuntimeLastActivitySQL = "GREATEST(COALESCE(ls.last_session_at, r.started_at, r.created_at), COALESCE(r.started_at, r.created_at))"
+	// idleStopAtSQL is when ReapStaleSessions stops runtime r: its last
+	// viewer activity plus its inactivity period, while it runs and no viewer
+	// has heartbeated in the last two minutes; otherwise NULL.
+	idleStopAtSQL = `CASE WHEN r.desired_state = 'running'
+	                   AND r.status IN ('starting', 'running', 'error')
+	                   AND NOT EXISTS (
+	                       SELECT 1 FROM sessions viewer
+	                        WHERE viewer.runtime_id = r.id
+	                          AND ((viewer.status = 'pending' AND viewer.expires_at > NOW())
+	                               OR (viewer.status = 'active' AND viewer.expires_at > NOW()
+	                                   AND COALESCE(viewer.last_client_heartbeat_at, viewer.updated_at, viewer.created_at) >= NOW() - INTERVAL '2 minutes')))
+	              THEN GREATEST(COALESCE((SELECT MAX(viewed.updated_at) FROM sessions viewed WHERE viewed.runtime_id = r.id), r.started_at, r.created_at),
+	                            COALESCE(r.started_at, r.created_at))
+	                   + make_interval(secs => r.idle_timeout_seconds)
+	         END`
 	// Keep this aligned with the Android client's MAX_CATALOG_ITEMS bound so a
 	// valid server response is never rejected solely because of cardinality.
 	catalogResponseLimit        = 250
@@ -90,6 +105,7 @@ var (
 	ErrRuntimeStorageQuota        = errors.New("runtime storage quota exceeded")
 	ErrRuntimeSnapshotRollback    = errors.New("runtime snapshot generation is not monotonic")
 	ErrRuntimeProfile             = errors.New("runtime profile is not allowed")
+	ErrRuntimeIdleTimeout         = errors.New("runtime inactivity period is not one of the offered choices")
 	ErrSecurityEventRateLimit     = errors.New("security event rate limit exceeded")
 	ErrAccountNotFound            = errors.New("account not found")
 	ErrRuntimeBlobOwner           = errors.New("runtime local snapshot owner is unknown")
@@ -352,7 +368,10 @@ type Runtime struct {
 	// BlobGenerationFloor counts the snapshot generations this runtime lost
 	// (with a deleted VM, or wiped). Snapshot numbering restarts at 1 after
 	// a loss; floor + generation keeps rising, so phones compare that.
-	BlobGenerationFloor int64             `json:"blob_generation_floor"`
+	BlobGenerationFloor int64 `json:"blob_generation_floor"`
+	// IdleTimeoutSeconds is how long the runtime keeps running with no viewer
+	// open before it is stopped and saved.
+	IdleTimeoutSeconds  int               `json:"idle_timeout_seconds"`
 	StorageBytesLimit   *int64            `json:"storage_bytes_limit,omitempty"`
 	StorageBytesUsed    *int64            `json:"storage_bytes_used,omitempty"`
 	StartedAt           *time.Time        `json:"started_at,omitempty"`
@@ -418,6 +437,8 @@ type CreateRuntimeInput struct {
 	BlobRetainDays   int
 	// AppPackages are catalog apps to install on the runtime's first start.
 	AppPackages []string
+	// IdleTimeoutSeconds is one of RuntimeIdleTimeouts; zero means the default.
+	IdleTimeoutSeconds int
 }
 
 type UpdateRuntimeInput struct {
@@ -432,6 +453,8 @@ type UpdateRuntimeInput struct {
 	FileMode         *string
 	BlobAutoSnapshot *bool
 	BlobRetainDays   *int
+	// IdleTimeoutSeconds, when set, must be one of RuntimeIdleTimeouts.
+	IdleTimeoutSeconds *int
 }
 
 type UpdateAccountStorageInput struct {
@@ -718,19 +741,22 @@ type SessionState struct {
 }
 
 type RuntimeState struct {
-	Runtime                 Runtime `json:"runtime"`
-	CurrentDeviceSessionID  *string `json:"current_device_session_id,omitempty"`
-	EffectiveState          string  `json:"effective_state"`
-	RuntimeReady            bool    `json:"runtime_ready"`
-	HasActiveSession        bool    `json:"has_active_session"`
-	HasCurrentDeviceSession bool    `json:"has_current_device_session"`
-	CanConnect              bool    `json:"can_connect"`
-	CanStart                bool    `json:"can_start"`
-	CanStop                 bool    `json:"can_stop"`
-	CanWipe                 bool    `json:"can_wipe"`
-	CanDelete               bool    `json:"can_delete"`
-	IsBusy                  bool    `json:"is_busy"`
-	BlockedReason           string  `json:"blocked_reason,omitempty"`
+	Runtime Runtime `json:"runtime"`
+	// IdleStopAt is when the runtime is stopped for inactivity if no viewer
+	// opens it first; nil while a viewer is open or the runtime is not running.
+	IdleStopAt              *time.Time `json:"idle_stop_at,omitempty"`
+	CurrentDeviceSessionID  *string    `json:"current_device_session_id,omitempty"`
+	EffectiveState          string     `json:"effective_state"`
+	RuntimeReady            bool       `json:"runtime_ready"`
+	HasActiveSession        bool       `json:"has_active_session"`
+	HasCurrentDeviceSession bool       `json:"has_current_device_session"`
+	CanConnect              bool       `json:"can_connect"`
+	CanStart                bool       `json:"can_start"`
+	CanStop                 bool       `json:"can_stop"`
+	CanWipe                 bool       `json:"can_wipe"`
+	CanDelete               bool       `json:"can_delete"`
+	IsBusy                  bool       `json:"is_busy"`
+	BlockedReason           string     `json:"blocked_reason,omitempty"`
 }
 
 type SessionRelayTarget struct {
@@ -1483,8 +1509,9 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 	if err := tx.QueryRowContext(ctx,
 		fmt.Sprintf(`INSERT INTO runtimes (
 			id, account_id, name, status, desired_state, connection_status, android_image, android_version,
-			width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days
-		) VALUES ($1, $2, $3, 'stopped', 'stopped', 'offline', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days,
+			idle_timeout_seconds
+		) VALUES ($1, $2, $3, 'stopped', 'stopped', 'offline', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING %s`, runtimeColumns),
 		runtimeID,
 		accountID,
@@ -1499,6 +1526,7 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		input.FileMode,
 		input.BlobAutoSnapshot,
 		input.BlobRetainDays,
+		input.IdleTimeoutSeconds,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		return Runtime{}, err
 	}
@@ -1575,7 +1603,8 @@ func (s *Store) ListRuntimeStates(ctx context.Context, accountID, deviceID strin
 		                WHERE live.runtime_id = r.id
 		                  AND live.status IN ('pending', 'active')
 		                  AND live.expires_at > NOW()
-		           ) AS has_active_session
+		           ) AS has_active_session,
+		           `+idleStopAtSQL+` AS idle_stop_at
 		      FROM runtimes AS r
 		     WHERE r.account_id = $1
 		       AND r.deleted_at IS NULL
@@ -1593,12 +1622,13 @@ func (s *Store) ListRuntimeStates(ctx context.Context, accountID, deviceID strin
 		var runtime Runtime
 		var currentDeviceSessionID sql.NullString
 		var hasActiveSession bool
+		var idleStopAt sql.NullTime
 		dest := scanRuntimeDest(&runtime)
-		dest = append(dest, &currentDeviceSessionID, &hasActiveSession)
+		dest = append(dest, &currentDeviceSessionID, &hasActiveSession, &idleStopAt)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
-		states = append(states, buildRuntimeState(runtime, hasActiveSession, currentDeviceSessionID))
+		states = append(states, buildRuntimeState(runtime, hasActiveSession, currentDeviceSessionID, idleStopAt))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1663,20 +1693,23 @@ func (s *Store) GetRuntimeState(ctx context.Context, accountID, deviceID, runtim
 	}
 
 	var hasActiveSession bool
+	var idleStopAt sql.NullTime
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS (
 		     SELECT 1
 		       FROM sessions
-		      WHERE runtime_id = $1
+		      WHERE runtime_id = r.id
 		        AND status IN ('pending', 'active')
 		        AND expires_at > NOW()
-		 )`,
+		 ), `+idleStopAtSQL+`
+		   FROM runtimes AS r
+		  WHERE r.id = $1`,
 		runtimeID,
-	).Scan(&hasActiveSession); err != nil {
+	).Scan(&hasActiveSession, &idleStopAt); err != nil {
 		return RuntimeState{}, err
 	}
 
-	state := buildRuntimeState(runtime, hasActiveSession, currentDeviceSessionID)
+	state := buildRuntimeState(runtime, hasActiveSession, currentDeviceSessionID, idleStopAt)
 	return state, nil
 }
 
@@ -1730,6 +1763,12 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 	if input.BlobRetainDays != nil && *input.BlobRetainDays > 0 {
 		current.BlobRetainDays = *input.BlobRetainDays
 	}
+	if input.IdleTimeoutSeconds != nil {
+		if !validRuntimeIdleTimeout(*input.IdleTimeoutSeconds) {
+			return Runtime{}, ErrRuntimeIdleTimeout
+		}
+		current.IdleTimeoutSeconds = *input.IdleTimeoutSeconds
+	}
 	if err := validateRuntimeProfile(CreateRuntimeInput{
 		Name:             current.Name,
 		AndroidImage:     current.AndroidImage,
@@ -1766,6 +1805,7 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		     file_mode = $11,
 		     blob_auto_snapshot = $12,
 		     blob_retain_days = $13,
+		     idle_timeout_seconds = $14,
 		     updated_at = NOW()
 		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
 		 RETURNING %s`, runtimeColumns),
@@ -1782,6 +1822,7 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		current.FileMode,
 		current.BlobAutoSnapshot,
 		current.BlobRetainDays,
+		current.IdleTimeoutSeconds,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
@@ -6174,12 +6215,11 @@ func (s *Store) HeartbeatSessionWithCapability(ctx context.Context, accountID, c
 	return session, nil
 }
 
-func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, runtimeIdleTimeout time.Duration) (SessionReapResult, error) {
+// ReapStaleSessions ends sessions whose client stopped heartbeating, and
+// stops runtimes left with no viewer for their own inactivity period.
+func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout time.Duration) (SessionReapResult, error) {
 	if activeSessionTimeout <= 0 {
 		activeSessionTimeout = 2 * time.Minute
-	}
-	if runtimeIdleTimeout <= 0 {
-		runtimeIdleTimeout = 3 * time.Minute
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -6233,7 +6273,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		      WHERE r.deleted_at IS NULL
 		        AND r.desired_state = 'running'
 		        AND r.status IN ('starting', 'running', 'error')
-		        AND `+idleRuntimeLastActivitySQL+` < NOW() - $2::interval
+		        AND `+idleRuntimeLastActivitySQL+` < NOW() - make_interval(secs => r.idle_timeout_seconds)
 		        AND NOT EXISTS (
 		            SELECT 1
 		              FROM sessions live
@@ -6263,7 +6303,6 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 		 )
 		 SELECT id FROM updated`,
 		postgresInterval(activeSessionTimeout),
-		postgresInterval(runtimeIdleTimeout),
 	)
 	if err != nil {
 		return SessionReapResult{}, err
@@ -6271,7 +6310,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout, run
 
 	revokedStoppedRuntimeCapabilities := 0
 	for _, runtimeID := range stoppedRuntimeIDs {
-		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "warn", "Runtime stop queued because no active client session is heartbeating."); err != nil {
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "info", "Runtime stopped and saved after its inactivity period with no viewer open."); err != nil {
 			return SessionReapResult{}, err
 		}
 	}
@@ -7911,6 +7950,7 @@ func scanRuntimeDest(runtime *Runtime) []any {
 		&runtime.CreatedAt,
 		&runtime.UpdatedAt,
 		&runtime.BlobGenerationFloor,
+		&runtime.IdleTimeoutSeconds,
 	}
 }
 
@@ -7934,6 +7974,12 @@ func scanAccountStorageDest(storage *AccountStorage) []any {
 func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		input.Name = "My runtime"
+	}
+	if input.IdleTimeoutSeconds == 0 {
+		input.IdleTimeoutSeconds = DefaultRuntimeIdleTimeout
+	}
+	if !validRuntimeIdleTimeout(input.IdleTimeoutSeconds) {
+		return CreateRuntimeInput{}, ErrRuntimeIdleTimeout
 	}
 	androidImage, err := normalizeAndroidImage(input.AndroidImage)
 	if err != nil {
@@ -8193,7 +8239,7 @@ func effectiveSessionStatus(session Session, now time.Time) (string, bool) {
 	return status, false
 }
 
-func buildRuntimeState(runtime Runtime, hasActiveSession bool, currentDeviceSessionID sql.NullString) RuntimeState {
+func buildRuntimeState(runtime Runtime, hasActiveSession bool, currentDeviceSessionID sql.NullString, idleStopAt sql.NullTime) RuntimeState {
 	effectiveState := effectiveRuntimeState(runtime)
 	runtimeReady := runtimeReadyForSession(runtime)
 	isBusy := effectiveState == "starting" ||
@@ -8237,8 +8283,15 @@ func buildRuntimeState(runtime Runtime, hasActiveSession bool, currentDeviceSess
 		sessionID = &value
 	}
 
+	var stopAt *time.Time
+	if idleStopAt.Valid {
+		value := idleStopAt.Time.UTC()
+		stopAt = &value
+	}
+
 	return RuntimeState{
 		Runtime:                 runtime,
+		IdleStopAt:              stopAt,
 		CurrentDeviceSessionID:  sessionID,
 		EffectiveState:          effectiveState,
 		RuntimeReady:            runtimeReady,

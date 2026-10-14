@@ -31,7 +31,6 @@ type ServerConfig struct {
 	RuntimeLogRetention             time.Duration
 	SessionReaperInterval           time.Duration
 	ActiveSessionTimeout            time.Duration
-	RuntimeIdleTimeout              time.Duration
 	// AppCatalogSyncEnabled follows F-Droid's signed index (on by default).
 	AppCatalogSyncEnabled           bool
 	AppCatalogSyncInterval          time.Duration
@@ -176,7 +175,6 @@ func LoadServer() ServerConfig {
 	runtimeLogRetention := parseEnvDuration("RUNTIME_LOG_RETENTION", 30*24*time.Hour)
 	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
 	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
-	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 15*time.Minute)
 	appCatalogSyncInterval := parseEnvDuration("APP_CATALOG_SYNC_INTERVAL", time.Hour)
 	appCatalogSyncMaxApps, err := parseEnvInt("APP_CATALOG_SYNC_MAX_APPS", 10000)
 	if err != nil {
@@ -245,7 +243,6 @@ func LoadServer() ServerConfig {
 		RuntimeLogRetention:              runtimeLogRetention,
 		SessionReaperInterval:            sessionReaperInterval,
 		ActiveSessionTimeout:             activeSessionTimeout,
-		RuntimeIdleTimeout:               runtimeIdleTimeout,
 		AppCatalogSyncEnabled:            parseEnvBool("APP_CATALOG_SYNC_ENABLED", true),
 		AppCatalogSyncInterval:           appCatalogSyncInterval,
 		AppCatalogSyncMaxApps:            appCatalogSyncMaxApps,

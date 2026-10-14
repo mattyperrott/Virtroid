@@ -2663,7 +2663,7 @@ func TestGetRuntimeStateReportsConnectableRuntimeAndCurrentSession(t *testing.T)
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(sessionID))
 	mock.ExpectQuery("SELECT EXISTS").
 		WithArgs(runtimeID).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+		WillReturnRows(sqlmock.NewRows([]string{"exists", "idle_stop_at"}).AddRow(true, nil))
 
 	state, err := st.GetRuntimeState(context.Background(), accountID, deviceID, runtimeID)
 	if err != nil {
@@ -2692,7 +2692,7 @@ func TestBuildRuntimeStateBlocksStartUntilFailedRuntimeCleanupFinishes(t *testin
 		ConnectionStatus: "offline",
 		HostID:           &hostID,
 		LastError:        &lastError,
-	}, false, sql.NullString{})
+	}, false, sql.NullString{}, sql.NullTime{})
 	if assigned.CanStart || !assigned.CanStop || assigned.EffectiveState != "error" {
 		t.Fatalf("assigned failed runtime state = %+v, want recovery stop only", assigned)
 	}
@@ -2701,7 +2701,7 @@ func TestBuildRuntimeStateBlocksStartUntilFailedRuntimeCleanupFinishes(t *testin
 		Status:           "stopped",
 		DesiredState:     "stopped",
 		ConnectionStatus: "offline",
-	}, false, sql.NullString{})
+	}, false, sql.NullString{}, sql.NullTime{})
 	if !cleaned.CanStart || cleaned.CanStop || cleaned.EffectiveState != "stopped" {
 		t.Fatalf("cleaned stopped runtime state = %+v, want start only", cleaned)
 	}
@@ -2712,7 +2712,7 @@ func TestBuildRuntimeStateBlocksStartUntilFailedRuntimeCleanupFinishes(t *testin
 		ConnectionStatus: "offline",
 		HostID:           &hostID,
 		CleanupPending:   true,
-	}, false, sql.NullString{})
+	}, false, sql.NullString{}, sql.NullTime{})
 	if pending.CanStart || pending.CanDelete || !pending.IsBusy || pending.BlockedReason != ErrRuntimeCleanupPending.Error() {
 		t.Fatalf("cleanup-pending runtime state = %+v, want busy with lifecycle actions blocked", pending)
 	}
@@ -2740,7 +2740,7 @@ func TestGetRuntimeStateReportsDeletingRuntimeAsBusy(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery("SELECT EXISTS").
 		WithArgs(runtimeID).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+		WillReturnRows(sqlmock.NewRows([]string{"exists", "idle_stop_at"}).AddRow(false, nil))
 
 	state, err := st.GetRuntimeState(context.Background(), accountID, deviceID, runtimeID)
 	if err != nil {
@@ -3860,15 +3860,15 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).
 			AddRow("22222222-2222-2222-2222-222222222222"))
 	mock.ExpectQuery("WITH latest_session").
-		WithArgs("120 seconds", "180 seconds").
+		WithArgs("120 seconds").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).
 			AddRow(runtimeID))
 	mock.ExpectExec("INSERT INTO runtime_logs").
 		WithArgs(
 			runtimeID,
 			"system",
-			"warn",
-			"Runtime stop queued because no active client session is heartbeating.",
+			"info",
+			"Runtime stopped and saved after its inactivity period with no viewer open.",
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE runtime_capabilities").
@@ -3884,7 +3884,7 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	mock.ExpectCommit()
 
-	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute, 3*time.Minute)
+	result, err := st.ReapStaleSessions(context.Background(), 2*time.Minute)
 	if err != nil {
 		t.Fatalf("ReapStaleSessions returned error: %v", err)
 	}
@@ -3980,7 +3980,7 @@ func runtimeRowsWithBlob(
 }
 
 func runtimeStateListRows() *sqlmock.Rows {
-	columns := append(runtimeColumnNames(), "current_device_session_id", "has_active_session")
+	columns := append(runtimeColumnNames(), "current_device_session_id", "has_active_session", "idle_stop_at")
 	return sqlmock.NewRows(columns)
 }
 
@@ -4006,7 +4006,7 @@ func runtimeStateListRowValues(
 		hostID,
 		viewerPort,
 	)
-	values = append(values, currentDeviceSessionID, hasActiveSession)
+	values = append(values, currentDeviceSessionID, hasActiveSession, nil)
 	return values
 }
 
@@ -4048,6 +4048,7 @@ func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, person
 		now,
 		now,
 		int64(0),
+		DefaultRuntimeIdleTimeout,
 	)
 }
 
@@ -4152,6 +4153,7 @@ func runtimeRowValues(
 		now,
 		now,
 		int64(0),
+		DefaultRuntimeIdleTimeout,
 	}
 }
 
@@ -4282,5 +4284,6 @@ func runtimeColumnNames() []string {
 		"created_at",
 		"updated_at",
 		"blob_generation_floor",
+		"idle_timeout_seconds",
 	}
 }

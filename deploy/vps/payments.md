@@ -36,9 +36,10 @@ are never charged.
 
 - Runtime time: `RUNTIME_PRICE_PER_HOUR_MICRO` (millionths of a USDT, default
   100000, i.e. 0.10 USDT) per hour a runtime is running, charged every minute
-  into one ledger entry per runtime and hour. Runtimes keep running for
-  `RUNTIME_IDLE_TIMEOUT` after the app disconnects unless the user stops them,
-  and that time counts towards the trial hour and is charged too.
+  into one ledger entry per runtime and hour. A runtime keeps running after
+  its viewer closes for the inactivity period its owner chose (30 minutes to a
+  week) unless they stop it, and that time counts towards the trial hour and
+  is charged too.
 - Storage: `STORAGE_PRICE_PER_GIB_MONTH_MICRO` (default 50000, i.e. 0.05 USDT)
   per GiB of stored runtime data, local or on Sia, per 30 days, charged once a
   day.

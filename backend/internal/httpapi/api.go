@@ -1483,6 +1483,8 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		BlobRetainDays   int    `json:"blob_retain_days"`
 		// AppPackages are catalog apps to install on the runtime.
 		AppPackages []string `json:"app_packages"`
+		// IdleTimeoutSeconds is how long it keeps running with no viewer open.
+		IdleTimeoutSeconds int `json:"idle_timeout_seconds"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1499,19 +1501,20 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		audioEnabled = *req.AudioEnabled
 	}
 	runtime, err := a.store.CreateRuntime(r.Context(), accountID, store.CreateRuntimeInput{
-		Name:             req.Name,
-		AndroidImage:     req.AndroidImage,
-		AndroidVersion:   req.AndroidVersion,
-		WidthPx:          req.WidthPx,
-		HeightPx:         req.HeightPx,
-		DensityDpi:       req.DensityDpi,
-		AudioEnabled:     audioEnabled,
-		AudioEnabledSet:  req.AudioEnabled != nil,
-		CameraMode:       req.CameraMode,
-		FileMode:         req.FileMode,
-		BlobAutoSnapshot: req.BlobAutoSnapshot,
-		BlobRetainDays:   req.BlobRetainDays,
-		AppPackages:      req.AppPackages,
+		Name:               req.Name,
+		AndroidImage:       req.AndroidImage,
+		AndroidVersion:     req.AndroidVersion,
+		WidthPx:            req.WidthPx,
+		HeightPx:           req.HeightPx,
+		DensityDpi:         req.DensityDpi,
+		AudioEnabled:       audioEnabled,
+		AudioEnabledSet:    req.AudioEnabled != nil,
+		CameraMode:         req.CameraMode,
+		FileMode:           req.FileMode,
+		BlobAutoSnapshot:   req.BlobAutoSnapshot,
+		BlobRetainDays:     req.BlobRetainDays,
+		AppPackages:        req.AppPackages,
+		IdleTimeoutSeconds: req.IdleTimeoutSeconds,
 	})
 	if err != nil {
 		writeRuntimeMutationError(w, err)
@@ -1540,6 +1543,8 @@ func (a *API) updateMyRuntime(w http.ResponseWriter, r *http.Request) {
 		FileMode         *string `json:"file_mode"`
 		BlobAutoSnapshot *bool   `json:"blob_auto_snapshot"`
 		BlobRetainDays   *int    `json:"blob_retain_days"`
+		// IdleTimeoutSeconds can change while the runtime runs; it takes effect at once.
+		IdleTimeoutSeconds *int `json:"idle_timeout_seconds"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1552,17 +1557,18 @@ func (a *API) updateMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtime, err := a.store.UpdateRuntimeSettings(r.Context(), accountID, r.PathValue("id"), store.UpdateRuntimeInput{
-		Name:             req.Name,
-		AndroidImage:     req.AndroidImage,
-		AndroidVersion:   req.AndroidVersion,
-		WidthPx:          req.WidthPx,
-		HeightPx:         req.HeightPx,
-		DensityDpi:       req.DensityDpi,
-		AudioEnabled:     req.AudioEnabled,
-		CameraMode:       req.CameraMode,
-		FileMode:         req.FileMode,
-		BlobAutoSnapshot: req.BlobAutoSnapshot,
-		BlobRetainDays:   req.BlobRetainDays,
+		Name:               req.Name,
+		AndroidImage:       req.AndroidImage,
+		AndroidVersion:     req.AndroidVersion,
+		WidthPx:            req.WidthPx,
+		HeightPx:           req.HeightPx,
+		DensityDpi:         req.DensityDpi,
+		AudioEnabled:       req.AudioEnabled,
+		CameraMode:         req.CameraMode,
+		FileMode:           req.FileMode,
+		BlobAutoSnapshot:   req.BlobAutoSnapshot,
+		BlobRetainDays:     req.BlobRetainDays,
+		IdleTimeoutSeconds: req.IdleTimeoutSeconds,
 	})
 	if err != nil {
 		if err == store.ErrRuntimeNotFound {
@@ -3826,6 +3832,8 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusPaymentRequired, store.RuntimeBalanceInsufficientCode, err.Error())
 	case store.ErrRuntimeProfile:
 		writeAPIError(w, http.StatusBadRequest, store.RuntimeProfileNotAllowedCode, err.Error())
+	case store.ErrRuntimeIdleTimeout:
+		writeAPIError(w, http.StatusBadRequest, "runtime_idle_timeout_invalid", err.Error())
 	default:
 		writeInternalAPIError(w, "runtime_mutation_failed", err)
 	}
