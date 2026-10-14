@@ -61,6 +61,9 @@ type ProvisionedVM struct {
 	ReadyAt        *time.Time `json:"ready_at,omitempty"`
 	LastUsedAt     time.Time  `json:"last_used_at"`
 	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
+	// NodeSeenAt is the VM's node's last heartbeat, in the provisioner's
+	// work only: a ready VM whose node stopped reporting may have restarted.
+	NodeSeenAt *time.Time `json:"node_seen_at,omitempty"`
 }
 
 // ProvisioningPolicy bounds what the control plane asks the provisioner for.
@@ -264,10 +267,41 @@ func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, p
 // ProvisionerWork lists every VM the provisioner still has to act on or
 // watch: everything that is not yet deleted.
 func (s *Store) ProvisionerWork(ctx context.Context) ([]ProvisionedVM, error) {
-	return s.queryProvisionedVMs(ctx,
+	vms, err := s.queryProvisionedVMs(ctx,
 		`SELECT `+provisionedVMColumns+` FROM provisioned_vms
 		  WHERE state <> 'deleted'
 		  ORDER BY requested_at`)
+	if err != nil || len(vms) == 0 {
+		return vms, err
+	}
+	ids := make([]string, 0, len(vms))
+	for _, vm := range vms {
+		ids = append(ids, vm.ID)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, last_heartbeat_at FROM hosts WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		seen[id] = at
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range vms {
+		if at, ok := seen[vms[i].ID]; ok {
+			vms[i].NodeSeenAt = &at
+		}
+	}
+	return vms, nil
 }
 
 // ListProvisionedVMs lists VMs for operators, newest first.
@@ -356,7 +390,21 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 
 	var nodePublicKey string
 	switch report.State {
-	case "", ProvisionedVMDeleted:
+	case "":
+	case ProvisionedVMDeleted:
+		// Revoke the node's key before recording the deletion: once deleted,
+		// a VM is never reported on again, so a revocation that failed after
+		// it would never be retried. A failure here fails the report, which
+		// the provisioner repeats.
+		if current.NodePublicKey != "" {
+			if _, err := s.RevokeNode(ctx, RevokeNodeInput{
+				NodeID: id,
+				Actor:  "provisioner",
+				Reason: "provisioned runtime VM deleted",
+			}); err != nil && !errors.Is(err, ErrApprovedNodeNotFound) && !errors.Is(err, ErrApprovedNodeRevoked) {
+				return ProvisionedVM{}, fmt.Errorf("revoke the deleted VM's node key: %w", err)
+			}
+		}
 	case ProvisionedVMCreating:
 		if !validItemHash(report.ItemHash) {
 			return ProvisionedVM{}, errors.New("item_hash must be a 64-character hex item hash")
@@ -435,15 +483,6 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 	}
 	if err != nil {
 		return ProvisionedVM{}, err
-	}
-	if report.State == ProvisionedVMDeleted && vm.NodePublicKey != "" {
-		if _, err := s.RevokeNode(ctx, RevokeNodeInput{
-			NodeID: id,
-			Actor:  "provisioner",
-			Reason: "provisioned runtime VM deleted",
-		}); err != nil && !errors.Is(err, ErrApprovedNodeNotFound) && !errors.Is(err, ErrApprovedNodeRevoked) {
-			return ProvisionedVM{}, err
-		}
 	}
 	return vm, nil
 }
