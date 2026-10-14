@@ -461,22 +461,22 @@ As of 14 October 2026.
 | Restart from Sia on a new VM | ✅ Live | Done on a real phone: after the old VM was deleted, a new one restored the runtime and Android was up 27 seconds after the start began, with the viewer open about 1 minute 40 seconds after the VM was created |
 | Runtime lifecycle | ✅ Live | Create, start, stop, restore, a fresh persona on every start, factory reset, deletion, and lost-snapshot handling |
 | Keep running when closed | ✅ Live | Per-runtime period from 30 minutes to a week, set with a slider, with a countdown and Stop and save now (app 0.4.0) |
-| Notifications | ✅ Live | Metadata-only and delivered while the phone is locked (app 0.3.8 and later). Today the control plane sees each notification's app and title and encrypts them for the phone; encryption inside the VM, so the control plane sees only ciphertext, is in progress |
+| Notifications | ✅ Live | Metadata-only and delivered while the phone is locked (app 0.3.8 and later). On image 11 the control plane sees each notification's app and title and encrypts them for the phone; image 12 encrypts them inside the VM, so it sees only ciphertext |
 | Apps | ✅ Live | Per-runtime selection from about 4,400 F-Droid apps, a paged catalogue that follows F-Droid's signed index, installs that happen once, and F-Droid allowed to install |
 | Remote viewer | ✅ Live | Encrypted live control, audio, on-demand microphone, camera import, and direct streaming over pinned TLS with an edge fallback |
 | Wallet and billing | ✅ Live | USDT (TRC20) deposits, a trial, and charges of 0.25 USDT per running hour and 0.05 USDT per GB-month stored |
 | Operator console | ✅ Live | The Observatory: fleet, runtime VMs, payments, Sia, security, and release telemetry |
 | Control-plane hardening | ✅ Live | Falco, Suricata, firewalling, AppArmor, and protected releases |
+| Database backups | ✅ Live | Every night the control plane's and indexd's databases are sealed with a key from the indexd recovery phrase and stored on Aleph; [restoring](deploy/vps/indexd.md#backups) needs only the phrase |
 
 ### What's left
 
 | Area | Status | Notes |
 | :--- | :---: | :--- |
-| Protected screens in the viewer | 🟡 Next | Apps that block screenshots, such as SimpleX Chat, show black in the viewer: capture runs as Android's `shell` user, which can't see protected windows. Capturing as the `system` user is planned for image 12 |
-| Security review fixes | 🟡 In progress | An independent review (14 October 2026) found 18 issues. The release blockers: the viewer's unencrypted stream inside Android is open to other apps on the runtime; the snapshot key is sealed before the VM is verified and is the whole account key; a new install trusts the server's word that a runtime isn't confidential; and phones still accept Milan chips, whose attestation key can be extracted in software |
-| Attested key handoff | ⏳ Not built | The phone seals the snapshot key to the VM key the control plane names, and checks that VM's attestation only when the stream starts. It should check before sealing, so a compromised control plane can't substitute its own key |
+| Image 12 and app 0.4.2 | 🟡 Built, not switched | Image 12 is published and approved, and new VMs move to it with app 0.4.2. It brings: capture as Android's `system` user, so apps that block screenshots (SimpleX Chat) show in the viewer; the viewer's hops inside Android on private sockets; snapshot keys sealed only to a VM that has just proved itself, and only that runtime's keys; notifications encrypted inside the VM; viewers that must prove they hold the runtime's key, so the control plane cannot watch or control a runtime; photos and files sealed for the VM, so it cannot read or plant them; and a Docker store rebuilt from the measured image at every boot |
+| Security review fixes | 🟡 Mostly done | Two reviews (14 October 2026) found 18 and 28 issues. Fixed on the server: crash-safe VM creation and deletion, node keys revoked before a deletion is recorded, standard key derivation for snapshots, a fresh database that initialises, and the backups above. Fixed in image 12 and app 0.4.2: the items in the row above, Milan chips refused, and attestation required by release builds. Still open: an expiring signed image list, rollback protection that does not trust the server's floor, migrating older device keys, and finer TCB checks on the phone |
 | South-East Asia region | ⏳ Not built | Europe only today. From Bangkok a Europe VM is about 230 ms away per round trip; a Singapore server would be about 30–50 ms |
-| QUIC streaming | ⏳ Not built | Streams use TLS over TCP today |
+| QUIC streaming | ⏳ Not built | Streams use TLS over TCP today. QUIC would shorten connecting and recover from lost packets without stalling input behind video, but not the 230 ms round trip from Bangkok, which only a closer region removes |
 | Custom AOSP image | ⏳ Not built | Runtimes use the stock ReDroid 14 image; F-Droid is installed at first start |
 | Tetragon in the VM | ⏳ Not built | |
 | Deposit conversion | 🧪 Dry run | Treasury sweeps and SimpleSwap swaps into Siacoin, ETH for Aleph credits, and TRX for fees are built and log what they would do; Siacoin and Aleph credits are topped up by hand until they are switched to live |
