@@ -26,7 +26,7 @@
       "id": "created",
       "type": "start",
       "label": "Created",
-      "sublabel": "name · period · apps",
+      "sublabel": "name \u00b7 period \u00b7 apps",
       "lane": "main",
       "col": 0,
       "step": "01"
@@ -35,7 +35,7 @@
       "id": "starting",
       "type": "active",
       "label": "Starting",
-      "sublabel": "fresh SEV-SNP VM · restore",
+      "sublabel": "fresh SEV-SNP VM \u00b7 restore",
       "lane": "main",
       "col": 1,
       "step": "02",
@@ -64,7 +64,7 @@
       "id": "stopping",
       "type": "active",
       "label": "Stopping",
-      "sublabel": "encrypt · 30 shards",
+      "sublabel": "encrypt \u00b7 30 shards",
       "lane": "main",
       "col": 4,
       "step": "05"
@@ -73,7 +73,7 @@
       "id": "stopped",
       "type": "waiting",
       "label": "Stopped",
-      "sublabel": "VM destroyed · data on Sia",
+      "sublabel": "VM destroyed \u00b7 data on Sia",
       "lane": "rest",
       "col": 1,
       "step": "06"
@@ -108,7 +108,9 @@
       "from": "closed",
       "to": "viewing",
       "label": "reopen",
-      "route": "top-channel"
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top"
     },
     {
       "from": "closed",

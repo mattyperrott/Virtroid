@@ -14,7 +14,7 @@
       "label": "Sia indexer",
       "sublabel": "per-account keys \u00b7 pays SC",
       "pos": [
-        360,
+        400,
         80
       ],
       "size": [
@@ -28,7 +28,7 @@
       "label": "PostgreSQL",
       "sublabel": "accounts \u00b7 ledger \u00b7 lifecycle",
       "pos": [
-        640,
+        720,
         80
       ],
       "size": [
@@ -43,7 +43,7 @@
       "sublabel": "Keystore keys \u00b7 no user data",
       "pos": [
         36,
-        240
+        260
       ],
       "size": [
         170,
@@ -56,8 +56,8 @@
       "label": "Edge",
       "sublabel": "HAProxy \u00b7 only public entry",
       "pos": [
-        360,
-        240
+        400,
+        260
       ],
       "size": [
         170,
@@ -70,8 +70,8 @@
       "label": "virtroidd",
       "sublabel": "accounts \u00b7 billing \u00b7 sessions",
       "pos": [
-        640,
-        240
+        720,
+        260
       ],
       "size": [
         170,
@@ -84,8 +84,8 @@
       "label": "Provisioner",
       "sublabel": "attests VMs \u00b7 releases keys",
       "pos": [
-        640,
-        400
+        720,
+        440
       ],
       "size": [
         170,
@@ -95,11 +95,11 @@
     {
       "id": "cvm",
       "type": "backend",
-      "label": "Your runtime VM",
+      "label": "Your own runtime VM",
       "sublabel": "SEV-SNP \u00b7 measured \u00b7 Android",
       "pos": [
-        360,
-        580
+        400,
+        640
       ],
       "size": [
         170,
@@ -112,8 +112,8 @@
       "label": "Aleph Cloud",
       "sublabel": "SEV-SNP hosts \u00b7 credits",
       "pos": [
-        640,
-        580
+        720,
+        640
       ],
       "size": [
         170,
@@ -126,8 +126,8 @@
       "label": "Sia hosts",
       "sublabel": "30 shards \u00b7 any 10 rebuild",
       "pos": [
-        360,
-        740
+        400,
+        820
       ],
       "size": [
         170,
@@ -160,36 +160,6 @@
       "wraps": [
         "cvm",
         "alephapi"
-      ]
-    },
-    {
-      "kind": "security-group",
-      "label": "Public edge",
-      "wraps": [
-        "edge"
-      ]
-    },
-    {
-      "kind": "security-group",
-      "label": "Control",
-      "wraps": [
-        "postgres",
-        "virtroidd",
-        "provisioner"
-      ]
-    },
-    {
-      "kind": "security-group",
-      "label": "Storage",
-      "wraps": [
-        "indexd"
-      ]
-    },
-    {
-      "kind": "security-group",
-      "label": "SEV-SNP VM \u00b7 one per account",
-      "wraps": [
-        "cvm"
       ]
     }
   ],
@@ -240,7 +210,7 @@
       "via": [
         [
           121,
-          612
+          672
         ]
       ]
     },
@@ -256,7 +226,11 @@
       "from": "cvm",
       "to": "edge",
       "label": "objects \u00b7 notifications",
-      "variant": "security"
+      "variant": "security",
+      "labelAt": [
+        552,
+        430
+      ]
     },
     {
       "id": "edge-to-indexd",
