@@ -28,6 +28,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.VirtroidSheet
 
 class PrivacySecurityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPrivacySecurityBinding
@@ -67,6 +68,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
             startActivity(PermissionsActivity.createIntent(this, settingsMode = true))
         }
         binding.forceClearCacheButton.setOnClickListener { forceClearCache() }
+        binding.operatorVisibilityRow.setOnClickListener { showOperatorVisibility() }
 
         binding.requirePinSwitch.contentDescription = getString(R.string.privacy_require_pin_biometric)
         binding.biometricUnlockSwitch.contentDescription = getString(R.string.privacy_biometric_vault_unlock)
@@ -341,6 +343,20 @@ class PrivacySecurityActivity : AppCompatActivity() {
                 dialog.dismiss()
                 renderSettings()
             }
+            .show()
+    }
+
+    /** What the people running Virtroid can and can't see, today. */
+    private fun showOperatorVisibility() {
+        VirtroidSheet(this)
+            .title(getString(R.string.privacy_operator_visibility_title))
+            .row(R.drawable.ic_eye_off, getString(R.string.operator_visibility_screen_title), getString(R.string.operator_visibility_screen_body))
+            .row(R.drawable.ic_lock, getString(R.string.operator_visibility_memory_title), getString(R.string.operator_visibility_memory_body))
+            .row(R.drawable.ic_hexagon, getString(R.string.operator_visibility_storage_title), getString(R.string.operator_visibility_storage_body))
+            .row(R.drawable.ic_key, getString(R.string.operator_visibility_key_title), getString(R.string.operator_visibility_key_body))
+            .row(R.drawable.ic_account, getString(R.string.operator_visibility_metadata_title), getString(R.string.operator_visibility_metadata_body))
+            .note(getString(R.string.operator_visibility_note))
+            .primary(getString(R.string.storage_info_close)) {}
             .show()
     }
 

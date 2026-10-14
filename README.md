@@ -473,6 +473,7 @@ As of 14 October 2026.
 | Area | Status | Notes |
 | :--- | :---: | :--- |
 | Protected screens in the viewer | 🟡 Next | Apps that block screenshots, such as SimpleX Chat, show black in the viewer: capture runs as Android's `shell` user, which can't see protected windows. Capturing as the `system` user is planned for image 12 |
+| Attested key handoff | ⏳ Not built | The phone seals the snapshot key to the VM key the control plane names, and checks that VM's attestation only when the stream starts. It should check before sealing, so a compromised control plane can't substitute its own key |
 | South-East Asia region | ⏳ Not built | Europe only today. From Bangkok a Europe VM is about 230 ms away per round trip; a Singapore server would be about 30–50 ms |
 | QUIC streaming | ⏳ Not built | Streams use TLS over TCP today |
 | Custom AOSP image | ⏳ Not built | Runtimes use the stock ReDroid 14 image; F-Droid is installed at first start |
