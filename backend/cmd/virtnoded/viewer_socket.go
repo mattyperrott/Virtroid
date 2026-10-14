@@ -14,6 +14,10 @@ import (
 // instead of piling up in buffers where every new frame queues behind it.
 const viewerSocketBuffer = 64 << 10
 
+// oPath is O_PATH, which Go's syscall package defines on arm64 but not on
+// amd64; the value is the same on both.
+const oPath = 0x200000
+
 // tcpNotSentLowat (TCP_NOTSENT_LOWAT) caps unsent data in a TCP socket's
 // buffer, which otherwise grows to megabytes on a long path.
 const (
@@ -27,19 +31,19 @@ const (
 // belongs to the guest, so each directory is opened without following links
 // and the socket is connected through the descriptor that pinned it.
 func dialViewerSocket(dataDir string) (*net.UnixConn, error) {
-	dir, err := syscall.Open(dataDir, syscall.O_PATH|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	dir, err := syscall.Open(dataDir, oPath|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open runtime data: %w", err)
 	}
 	for _, name := range []string{"local", "tmp", "virtroid-viewer"} {
-		next, err := syscall.Openat(dir, name, syscall.O_PATH|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+		next, err := syscall.Openat(dir, name, oPath|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 		_ = syscall.Close(dir)
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", name, err)
 		}
 		dir = next
 	}
-	socket, err := syscall.Openat(dir, "viewer.sock", syscall.O_PATH|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	socket, err := syscall.Openat(dir, "viewer.sock", oPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	_ = syscall.Close(dir)
 	if err != nil {
 		return nil, fmt.Errorf("open viewer socket: %w", err)
