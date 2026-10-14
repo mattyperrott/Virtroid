@@ -55,7 +55,7 @@ Users pay for what they use from a USDT balance.
 | Runtime lifecycle | ✅ Deployed | Create, start, stop, restore, persona restart, factory reset, idle cleanup, and permanent deletion |
 | Remote viewer | ✅ Deployed | Encrypted live control, reconnect handling, runtime audio, demand-activated physical microphone input, and 30 fps runtimes (about 0.3 s tap-to-screen on the VPS) |
 | Camera and media | ✅ Deployed | Explicit physical-camera photo and video capture followed by guest media import |
-| Applications | ✅ Deployed | Pinned F-Droid catalog entries with hash, package, size, transport, and compatibility validation |
+| Applications | ✅ Deployed | Each runtime's own F-Droid apps, chosen when it is created or later from its controls, from a paged and searchable catalog of pinned entries; the node installs them once, and F-Droid on the runtime can install more |
 | Notifications | ✅ Deployed | Encrypted forwarding of package, app label, timestamp, and title only; no message body or preview |
 | Client protection | ✅ Deployed | Android Keystore, encrypted local state, application lock, biometric unlock, and secure-window handling |
 | Wallet and billing | ✅ Deployed | USDT (TRC20) deposits to a per-account address, balance and activity in the app, a free trial of one runtime and one hour of running time, then per-minute runtime and daily storage charges |
