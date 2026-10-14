@@ -336,6 +336,57 @@
                         android:layout_marginStart="8dp" />
                 </LinearLayout>
                 <LinearLayout
+                    android:id="@+id/runtimeAppsRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_surface_24"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:padding="16dp"
+                    android:layout_marginBottom="12dp">
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="13dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_download"
+                        app:tint="@color/v_text_primary"
+                        android:background="@drawable/bg_surface_light_circle" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="16dp">
+                        <TextView
+                            android:id="@+id/runtimeAppsTitle"
+                            style="@style/VirtroidText.CardTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/controls_apps_title" />
+                        <TextView
+                            android:id="@+id/runtimeAppsSubtitle"
+                            style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/controls_apps_subtitle"
+                            android:layout_marginTop="4dp" />
+                    </LinearLayout>
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:importantForAccessibility="no"
+                        android:text="&gt;"
+                        android:textColor="@color/v_text_muted"
+                        android:textSize="18sp"
+                        android:fontFamily="sans"
+                        android:includeFontPadding="false"
+                        android:layout_marginStart="8dp" />
+                </LinearLayout>
+                <LinearLayout
                     android:id="@+id/cameraPassthroughRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

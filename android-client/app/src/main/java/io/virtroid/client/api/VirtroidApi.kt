@@ -257,6 +257,12 @@ data class EntitlementSummary(
     val startRuntimeBlockedReason: String?,
 )
 
+data class AppCatalogPage(
+    val items: List<AppCatalogEntry>,
+    /** Where the next page starts, or null after the last one. */
+    val nextOffset: Int?,
+)
+
 data class AppCatalogEntry(
     val packageName: String,
     val source: String,
@@ -581,51 +587,76 @@ class VirtroidApi(
             payload.toEntitlementSummary()
         }
 
-    suspend fun listAppCatalog(
+    /** One page of the public app catalog; [search] matches on the server. */
+    suspend fun listAppCatalogPage(
         baseUrl: String,
-        accountId: String,
-        deviceId: String,
         search: String = "",
-    ): List<AppCatalogEntry> =
+        offset: Int = 0,
+        limit: Int = CATALOG_PAGE_SIZE,
+    ): AppCatalogPage =
         withContext(Dispatchers.IO) {
             val query = buildString {
-                append("account_id=").append(accountId)
-                append("&device_id=").append(deviceId)
+                append("limit=").append(limit)
+                append("&offset=").append(offset)
                 if (search.isNotBlank()) {
                     append("&search=").append(java.net.URLEncoder.encode(search, "UTF-8"))
                 }
             }
             val payload = executeJson(
+                Request.Builder()
+                    .url(normalizeBaseUrl(baseUrl) + "/api/v1/apps/catalog?$query")
+                    .get()
+                    .build(),
+            )
+            AppCatalogPage(
+                items = payload.toAppCatalogEntries(),
+                nextOffset = payload.optInt("next_offset", -1).takeIf { !payload.isNull("next_offset") && it >= 0 },
+            )
+        }
+
+    /** The apps selected for one runtime. */
+    suspend fun getRuntimeApps(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+    ): List<AppCatalogEntry> =
+        withContext(Dispatchers.IO) {
+            executeJson(
                 signedJsonRequest(
                     baseUrl = baseUrl,
-                    pathAndQuery = "/api/v1/me/apps/catalog?$query",
+                    pathAndQuery = "/api/v1/me/runtimes/$runtimeId/apps",
                     method = "GET",
                     accountId = accountId,
                     deviceId = deviceId,
                 ),
-            )
-
-            payload.toAppCatalogEntries()
+            ).toAppCatalogEntries()
         }
 
-    suspend fun listPublicAppCatalog(
+    /** Sets the apps selected for one runtime. */
+    suspend fun updateRuntimeApps(
         baseUrl: String,
-        search: String = "",
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        packageNames: Collection<String>,
     ): List<AppCatalogEntry> =
         withContext(Dispatchers.IO) {
-            val path = if (search.isBlank()) {
-                "/api/v1/apps/catalog"
-            } else {
-                "/api/v1/apps/catalog?search=${java.net.URLEncoder.encode(search, "UTF-8")}"
-            }
-            val payload = executeJson(
-                Request.Builder()
-                    .url(normalizeBaseUrl(baseUrl) + path)
-                    .get()
-                    .build(),
-            )
-
-            payload.toAppCatalogEntries()
+            val body = JSONObject()
+                .put("account_id", accountId)
+                .put("device_id", deviceId)
+                .put("package_names", JSONArray(packageNames.toList()))
+                .toString()
+            executeJson(
+                signedJsonRequest(
+                    baseUrl = baseUrl,
+                    pathAndQuery = "/api/v1/me/runtimes/$runtimeId/apps",
+                    method = "PUT",
+                    accountId = accountId,
+                    deviceId = deviceId,
+                    body = body,
+                ),
+            ).toAppCatalogEntries()
         }
 
     /**
@@ -701,6 +732,7 @@ class VirtroidApi(
         fileMode: String,
         blobAutoSnapshot: Boolean,
         blobRetainDays: Int,
+        appPackages: Collection<String> = emptyList(),
     ): RuntimeSummary =
         withContext(Dispatchers.IO) {
             val requestBody = JSONObject()
@@ -715,6 +747,7 @@ class VirtroidApi(
                 .put("file_mode", fileMode)
                 .put("blob_auto_snapshot", blobAutoSnapshot)
                 .put("blob_retain_days", blobRetainDays)
+                .put("app_packages", JSONArray(appPackages.toList()))
                 .toString()
 
             val payload = executeJson(
@@ -1727,6 +1760,7 @@ class VirtroidApi(
     }
 
     private companion object {
+        const val CATALOG_PAGE_SIZE = 30
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         const val MAX_JSON_RESPONSE_BYTES = 2L * 1024L * 1024L
         const val MAX_ERROR_MESSAGE_CHARS = 2_048

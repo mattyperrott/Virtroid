@@ -59,16 +59,20 @@
     <string name="account_revoke_device_confirm">Revoke</string>
     <string name="account_revoke_device_done">Device revoked</string>
     <string name="account_revoke_last_device_blocked">Add and verify another device before revoking the last active device.</string>
-    <string name="account_apps_title">Install Apps</string>
-    <string name="account_apps_subtitle">Choose F-Droid apps for this account</string>
-    <plurals name="account_apps_selected_count">
-        <item quantity="one">%1$d app selected</item>
-        <item quantity="other">%1$d apps selected</item>
-    </plurals>
-    <string name="account_apps_selected_none">No apps selected</string>
     <string name="account_apps_catalog_unavailable">App catalog unavailable</string>
-    <string name="app_install_title">Install Apps</string>
+    <string name="app_install_title">Runtime Apps</string>
     <string name="app_install_subtitle">Choose applications</string>
+    <string name="app_install_subtitle_new">Installed when the runtime first starts</string>
+    <string name="app_install_subtitle_runtime">Kept installed on %1$s</string>
+    <string name="app_install_selected_header">SELECTED</string>
+    <string name="app_install_selected_count">%1$d of %2$d</string>
+    <string name="app_install_load_more">Load more</string>
+    <string name="app_install_loading_more">Loading…</string>
+    <string name="app_install_limit_reached">A runtime can have up to %1$d apps selected.</string>
+    <plurals name="app_install_count_more">
+        <item quantity="one">%1$d+ app</item>
+        <item quantity="other">%1$d+ apps</item>
+    </plurals>
     <string name="app_install_search_hint">Search applications...</string>
     <string name="app_install_recommended">RECOMMENDED</string>
     <string name="app_install_all_available">ALL AVAILABLE</string>
@@ -546,6 +550,12 @@
     <string name="privacy_telemetry_never">Never</string>
     <string name="accessibility_setting_value">%1$s, %2$s</string>
 
+    <string name="controls_apps_title">Apps</string>
+    <string name="controls_apps_subtitle">Choose F-Droid apps to keep installed</string>
+    <string name="new_runtime_apps_heading">APPS</string>
+    <string name="new_runtime_apps_title">Pre-install apps</string>
+    <string name="new_runtime_apps_none">None selected · browse F-Droid apps</string>
+    <string name="new_runtime_apps_selected">%1$d selected · %2$s</string>
     <string name="new_runtime_storage_behavior">STORAGE BEHAVIOR</string>
     <string name="new_runtime_persistent_title">Encrypted storage on Sia</string>
     <string name="new_runtime_persistent_body">When a session stops, the runtime\'s apps, accounts and files are encrypted with your account key and saved to Sia, split across 30 storage hosts so any 10 can restore them. They\'re kept when your private server is replaced, billed per GB each month, and removed only by Wipe Runtime or deleting the runtime.</string>

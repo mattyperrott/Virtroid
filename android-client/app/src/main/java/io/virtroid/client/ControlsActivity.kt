@@ -89,6 +89,11 @@ class ControlsActivity : AppCompatActivity() {
         binding.controlsBackButton.setOnClickListener { finish() }
         binding.buttonEditRuntime.setOnClickListener { showRenameDialog() }
         binding.displayOutputRow.setOnClickListener { showDisplayDialog() }
+        binding.runtimeAppsRow.setOnClickListener {
+            startActivity(
+                AppInstallActivity.runtimeIntent(this, runtimeId, runtime?.name?.let(::runtimeDisplayName).orEmpty()),
+            )
+        }
         binding.consoleLogsRow.setOnClickListener { toggleLogs() }
         binding.restartPersonaRow.setOnClickListener { confirmRestartPersona() }
         binding.wipeRow.setOnClickListener { confirmWipe() }
@@ -121,9 +126,30 @@ class ControlsActivity : AppCompatActivity() {
                 runtimeState = loaded.runtimeState
                 entitlement = loaded.entitlement
                 bindRuntime(loaded.runtime, loaded.runtimeState)
+                loadRuntimeApps(accountId, deviceId)
             }.onFailure {
                 toast(it.virtroidDisplayMessage(this@ControlsActivity))
                 finish()
+            }
+        }
+    }
+
+    /** Names the apps selected for this runtime on its Apps row. */
+    private fun loadRuntimeApps(accountId: String, deviceId: String) {
+        lifecycleScope.launch {
+            runCatching {
+                api.getRuntimeApps(sessionStore.baseUrl, accountId, deviceId, runtimeId)
+            }.onSuccess { apps ->
+                binding.runtimeAppsSubtitle.text = if (apps.isEmpty()) {
+                    getString(R.string.controls_apps_subtitle)
+                } else {
+                    getString(R.string.new_runtime_apps_selected, apps.size, apps.joinToString(", ") { it.displayName })
+                }
+                binding.runtimeAppsRow.contentDescription = getString(
+                    R.string.accessibility_setting_value,
+                    binding.runtimeAppsTitle.text,
+                    binding.runtimeAppsSubtitle.text,
+                )
             }
         }
     }

@@ -135,6 +135,50 @@
                     android:background="@drawable/bg_surface_stroke_32">
 
                     <LinearLayout
+                        android:id="@+id/selected_header"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="22dp"
+                        android:paddingEnd="22dp"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/app_install_selected_header"
+                            android:textColor="@color/v_accent"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans"
+                            android:letterSpacing="0.12"
+                            android:includeFontPadding="false" />
+
+                        <TextView
+                            android:id="@+id/selected_count"
+                            android:layout_width="wrap_content"
+                            android:layout_height="34dp"
+                            android:gravity="center"
+                            android:background="@drawable/bg_chip_dark"
+                            android:paddingStart="14dp"
+                            android:paddingEnd="14dp"
+                            android:text="@string/app_install_count_placeholder"
+                            android:textColor="@color/v_text_muted"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans"
+                            android:includeFontPadding="false" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/selected_list"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+
+                    <LinearLayout
                         android:id="@+id/recommended_header"
                         android:layout_width="match_parent"
                         android:layout_height="52dp"
@@ -220,6 +264,19 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="vertical" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/load_more_button"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="52dp"
+                        android:layout_marginStart="22dp"
+                        android:layout_marginTop="12dp"
+                        android:layout_marginEnd="22dp"
+                        android:layout_marginBottom="16dp"
+                        android:text="@string/app_install_load_more"
+                        android:visibility="gone" />
 
                     <TextView
                         android:id="@+id/app_empty_text"

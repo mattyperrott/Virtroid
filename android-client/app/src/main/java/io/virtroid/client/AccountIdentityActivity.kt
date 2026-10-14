@@ -101,9 +101,6 @@ class AccountIdentityActivity : AppCompatActivity() {
         binding.itemLinkedDevices.setOnClickListener {
             showLinkedDevices()
         }
-        binding.itemInstallApps.setOnClickListener {
-            openAppInstaller()
-        }
         binding.itemWallet.setOnClickListener {
             startActivity(WalletActivity.createIntent(this))
         }
@@ -115,13 +112,11 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
 
         renderIdentity()
-        refreshAppSelections()
     }
 
     override fun onResume() {
         super.onResume()
         if (::binding.isInitialized) {
-            refreshAppSelections()
             refreshWallet()
             refreshLinkedDeviceCount()
         }
@@ -167,11 +162,6 @@ class AccountIdentityActivity : AppCompatActivity() {
         } else {
             getString(R.string.account_identity_not_linked)
         }
-        binding.itemInstallAppsSubtitle.text = if (hasLinkedIdentity) {
-            getString(R.string.account_apps_subtitle)
-        } else {
-            getString(R.string.account_identity_not_linked)
-        }
         binding.identityCreatedValue.text = if (hasLinkedIdentity) {
             getString(R.string.account_identity_created)
         } else {
@@ -199,7 +189,6 @@ class AccountIdentityActivity : AppCompatActivity() {
             binding.itemLinkedDevicesTitle.text,
             binding.itemLinkedDevicesSubtitle.text,
         )
-        updateAppInstallerAccessibility()
         binding.itemWipeUserData.contentDescription = accessibilityLabel(
             binding.wipeUserDataTitle.text,
             binding.wipeUserDataDescription.text,
@@ -266,53 +255,8 @@ class AccountIdentityActivity : AppCompatActivity() {
         }
     }
 
-    private fun refreshAppSelections() {
-        val accountId = sessionStore.accountId.orEmpty()
-        val deviceId = sessionStore.deviceId.orEmpty()
-        if (accountId.isBlank() || deviceId.isBlank()) {
-            binding.itemInstallAppsSubtitle.text = getString(R.string.account_identity_not_linked)
-            return
-        }
-
-        lifecycleScope.launch {
-            runCatching {
-                api.listAppCatalog(sessionStore.baseUrl, accountId, deviceId)
-            }.onSuccess { apps ->
-                val selectedCount = apps.count { it.selected }
-                binding.itemInstallAppsSubtitle.text = if (selectedCount > 0) {
-                    resources.getQuantityString(
-                        R.plurals.account_apps_selected_count,
-                        selectedCount,
-                        selectedCount,
-                    )
-                } else {
-                    getString(R.string.account_apps_selected_none)
-                }
-                updateAppInstallerAccessibility()
-            }.onFailure {
-                binding.itemInstallAppsSubtitle.text = getString(R.string.account_apps_catalog_unavailable)
-                updateAppInstallerAccessibility()
-            }
-        }
-    }
-
-    private fun updateAppInstallerAccessibility() {
-        binding.itemInstallApps.contentDescription = accessibilityLabel(
-            binding.itemInstallAppsTitle.text,
-            binding.itemInstallAppsSubtitle.text,
-        )
-    }
-
     private fun accessibilityLabel(title: CharSequence, detail: CharSequence): String {
         return getString(R.string.accessibility_setting_value, title, detail)
-    }
-
-    private fun openAppInstaller() {
-        if (sessionStore.accountId.isNullOrBlank() || sessionStore.deviceId.isNullOrBlank()) {
-            toast(getString(R.string.account_identity_not_linked))
-            return
-        }
-        startActivity(AppInstallActivity.createIntent(this))
     }
 
     private fun showLinkedDevices() {

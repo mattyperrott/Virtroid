@@ -46,8 +46,8 @@ android {
         applicationId = "io.virtroid.client"
         minSdk = 28
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.3.8"
+        versionCode = 13
+        versionName = "0.3.9"
         buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(defaultControlPlaneUrl))
         manifestPlaceholders["usesCleartextTraffic"] = defaultControlPlaneUsesCleartext
     }

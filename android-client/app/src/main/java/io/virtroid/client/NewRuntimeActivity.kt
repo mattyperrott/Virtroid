@@ -3,6 +3,7 @@ package io.virtroid.client
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -10,6 +11,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import io.virtroid.client.api.AppCatalogEntry
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.VirtroidApi
@@ -31,6 +33,13 @@ class NewRuntimeActivity : AppCompatActivity() {
     private var entitlement: EntitlementSummary? = null
     private var latestProvisionRuntimeLogs: List<String> = emptyList()
     private var provisionJob: Job? = null
+    private var appPicks: List<AppCatalogEntry> = emptyList()
+    private val pickApps = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            appPicks = AppInstallActivity.decodePicks(result.data?.getStringExtra(AppInstallActivity.EXTRA_PICKS))
+            renderAppPicks()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,7 +64,25 @@ class NewRuntimeActivity : AppCompatActivity() {
         binding.cameraPassthroughSwitch.isEnabled = true
         binding.cameraPassthroughSwitch.isChecked = true
         binding.switchCameraPassthroughLabel.text = getString(R.string.new_runtime_camera_passthrough)
+        binding.newRuntimeAppsRow.setOnClickListener {
+            pickApps.launch(AppInstallActivity.pickIntent(this, appPicks))
+        }
+        appPicks = AppInstallActivity.decodePicks(savedInstanceState?.getString(STATE_APP_PICKS))
+        renderAppPicks()
         loadEntitlement()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_APP_PICKS, AppInstallActivity.encodePicks(appPicks))
+    }
+
+    private fun renderAppPicks() {
+        binding.newRuntimeAppsSubtitle.text = if (appPicks.isEmpty()) {
+            getString(R.string.new_runtime_apps_none)
+        } else {
+            getString(R.string.new_runtime_apps_selected, appPicks.size, appPicks.joinToString(", ") { it.displayName })
+        }
     }
 
     override fun onDestroy() {
@@ -125,6 +152,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                         fileMode = "upload-only",
                         blobAutoSnapshot = true,
                         blobRetainDays = 7,
+                        appPackages = appPicks.map { it.packageName },
                     )
                     waitForRuntimeProvisioned(baseUrl, accountId, deviceId, runtime.id)
                 }.onSuccess {
@@ -281,6 +309,7 @@ class NewRuntimeActivity : AppCompatActivity() {
 
     companion object {
         private const val PROVISION_WAIT_MAX_MS = 5 * 60 * 1_000L
+        private const val STATE_APP_PICKS = "app_picks"
 
         fun createIntent(context: Context): Intent = Intent(context, NewRuntimeActivity::class.java)
     }

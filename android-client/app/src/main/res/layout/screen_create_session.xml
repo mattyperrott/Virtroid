@@ -94,6 +94,62 @@
                         android:singleLine="true" />
                 </LinearLayout>
                 <TextView
+                    android:id="@+id/label_apps"
+                    style="@style/VirtroidText.SectionHeading"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/new_runtime_apps_heading"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="0dp"
+                    android:layout_marginBottom="12dp" />
+                <LinearLayout
+                    android:id="@+id/new_runtime_apps_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_surface_stroke_24"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:padding="16dp"
+                    android:layout_marginBottom="32dp">
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="13dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_download"
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_accent_soft_circle" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="16dp">
+                        <TextView
+                            style="@style/VirtroidText.CardTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/new_runtime_apps_title" />
+                        <TextView
+                            android:id="@+id/new_runtime_apps_subtitle"
+                            style="@style/VirtroidText.Body.Compact"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/new_runtime_apps_none"
+                            android:layout_marginTop="4dp" />
+                    </LinearLayout>
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
+                </LinearLayout>
+                <TextView
                     android:id="@+id/label_threat_model"
                     style="@style/VirtroidText.SectionHeading"
                     android:layout_width="wrap_content"
