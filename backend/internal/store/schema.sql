@@ -503,6 +503,17 @@ WHERE status = 'stopped'
   AND desired_state <> 'running'
   AND host_id IS NOT NULL;
 
+-- Created before the backfill below reads it; a fresh database has no
+-- runtime logs yet.
+CREATE TABLE IF NOT EXISTS runtime_logs (
+    id BIGSERIAL PRIMARY KEY,
+    runtime_id UUID NOT NULL REFERENCES runtimes(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Runtimes whose VM was deleted with their data before the floor existed:
 -- the lost generation was not recorded, so skip far past any it could have
 -- reached.
@@ -623,15 +634,6 @@ CREATE TABLE IF NOT EXISTS node_request_nonces (
 );
 
 CREATE INDEX IF NOT EXISTS idx_node_request_nonces_expires_at ON node_request_nonces (expires_at);
-
-CREATE TABLE IF NOT EXISTS runtime_logs (
-    id BIGSERIAL PRIMARY KEY,
-    runtime_id UUID NOT NULL REFERENCES runtimes(id) ON DELETE CASCADE,
-    source TEXT NOT NULL,
-    level TEXT NOT NULL,
-    message TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
 CREATE TABLE IF NOT EXISTS runtime_notification_agents (
     runtime_id UUID PRIMARY KEY REFERENCES runtimes(id) ON DELETE CASCADE,
