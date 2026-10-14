@@ -46,12 +46,16 @@ type fakeAleph struct {
 	unlocked  []unlockSpec
 	deleted   []string
 	unlockErr error
+	createErr error
 }
 
 func (f *fakeAleph) List(context.Context) ([]alephInstance, error) { return f.instances, nil }
 
 func (f *fakeAleph) Create(_ context.Context, spec createSpec) (string, error) {
 	f.created = append(f.created, spec)
+	if f.createErr != nil {
+		return "", f.createErr
+	}
 	return strings.Repeat("e", 64), nil
 }
 
@@ -128,6 +132,97 @@ func TestRequestedVMAdoptsAnInstanceCreatedBeforeARestart(t *testing.T) {
 	}
 	if got := cp.last(t); got.State != vmStateCreating || got.ItemHash != hash {
 		t.Fatalf("report = %+v", got)
+	}
+}
+
+func TestRestartAfterCreateAdoptsTheInstanceBeforeItIsListed(t *testing.T) {
+	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: vmStateRequested, Desired: "present"}}}
+	aleph := &fakeAleph{}
+	r := testReconciler(t, cp, aleph)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The process stops before its report lands; Aleph does not list the
+	// instance yet. The restarted provisioner must not create another.
+	cp.reports = nil
+	restarted := newReconciler(r.cfg, cp, aleph)
+	if err := restarted.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.created) != 1 {
+		t.Fatalf("created %d instances across a restart, want 1", len(aleph.created))
+	}
+	if got := cp.last(t); got.State != vmStateCreating || got.ItemHash != strings.Repeat("e", 64) || got.CRNHash != crnA {
+		t.Fatalf("report = %+v", got)
+	}
+}
+
+func TestCreateWithUnknownOutcomeWaitsForTheListing(t *testing.T) {
+	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: vmStateRequested, Desired: "present"}}}
+	// The CLI fails after it may already have submitted the message.
+	aleph := &fakeAleph{createErr: errors.New("aleph instance create: exit status 1: allocation timed out")}
+	r := testReconciler(t, cp, aleph)
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	aleph.createErr = nil
+	restarted := newReconciler(r.cfg, cp, aleph)
+	restarted.now = func() time.Time { return now.Add(createSettles - time.Second) }
+	if err := restarted.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.created) != 1 {
+		t.Fatalf("created again %d times while the first create could still appear", len(aleph.created)-1)
+	}
+
+	// It appears under the VM's name: adopted, not created again.
+	aleph.instances = []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}
+	if err := restarted.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := cp.last(t); len(aleph.created) != 1 || got.State != vmStateCreating || got.ItemHash != hash {
+		t.Fatalf("created=%d report=%+v", len(aleph.created), got)
+	}
+}
+
+func TestCreateThatNeverAppearsIsRetriedAfterItSettles(t *testing.T) {
+	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: vmStateRequested, Desired: "present"}}}
+	aleph := &fakeAleph{createErr: errors.New("aleph instance create: exit status 1: insufficient credits")}
+	r := testReconciler(t, cp, aleph)
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	aleph.createErr = nil
+	now = now.Add(createSettles)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := cp.last(t); len(aleph.created) != 2 || got.State != vmStateCreating || got.ItemHash != strings.Repeat("e", 64) {
+		t.Fatalf("created=%d report=%+v", len(aleph.created), got)
+	}
+}
+
+func TestSecondInstanceUnderAVMsNameIsDeleted(t *testing.T) {
+	duplicate := strings.Repeat("8", 64)
+	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: vmStateCreating, Desired: "present", ItemHash: hash, CRNHash: crnA}}}
+	aleph := &fakeAleph{instances: []alephInstance{
+		{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA},
+		{ItemHash: duplicate, Name: "virtroid-pvm-1", NodeHash: crnB, IPv6: "2001:db8:3100:1781::99"},
+	}}
+	if err := testReconciler(t, cp, aleph).runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.deleted) != 1 || aleph.deleted[0] != duplicate {
+		t.Fatalf("deleted = %v, want only the duplicate", aleph.deleted)
+	}
+	if len(cp.reports) != 0 {
+		t.Fatalf("took the duplicate's address for the VM: %+v", cp.reports)
 	}
 }
 
@@ -240,6 +335,9 @@ func TestRetiredVMIsDeletedAndItsKeyRemoved(t *testing.T) {
 	if _, err := r.dataKey("pvm-1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := r.saveCreate("pvm-1", createRecord{CRNHash: crnA, SubmittedAt: time.Now(), ItemHash: hash}); err != nil {
+		t.Fatal(err)
+	}
 	if err := r.runOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +352,9 @@ func TestRetiredVMIsDeletedAndItsKeyRemoved(t *testing.T) {
 	}
 	if _, err := os.Stat(r.dataKeyPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("data key still on disk: %v", err)
+	}
+	if _, err := os.Stat(r.createPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("create record still on disk: %v", err)
 	}
 }
 

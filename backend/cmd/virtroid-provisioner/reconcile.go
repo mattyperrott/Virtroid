@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -39,6 +40,11 @@ const (
 	// forgetSettles is how long a deleted instance may still be listed
 	// before it is deleted again.
 	forgetSettles = 10 * time.Minute
+	// createSettles is how long a create whose outcome is unknown (the
+	// provisioner stopped, or the CLI failed, after it may have submitted the
+	// INSTANCE message) is given to appear in the listing before the VM is
+	// created again. Setup times out after 30 minutes by default.
+	createSettles = 5 * time.Minute
 )
 
 type crnTarget struct {
@@ -65,9 +71,6 @@ type reconciler struct {
 	aleph        alephDriver
 	now          func() time.Time
 	lastUnlock   map[string]time.Time
-	// created remembers instances this process submitted, in case the
-	// network's listing lags behind a create whose report did not land.
-	created map[string]alephInstance
 	// progress, when set, reads what a VM coming up is doing so the waiting
 	// user can see it; lastProgress avoids repeating unchanged notes.
 	progress     progressReader
@@ -88,7 +91,6 @@ func newReconciler(cfg provisionerConfig, cp controlPlane, aleph alephDriver) *r
 		aleph:         aleph,
 		now:           time.Now,
 		lastUnlock:    map[string]time.Time{},
-		created:       map[string]alephInstance{},
 		lastProgress:  map[string]string{},
 		lastBootCheck: map[string]time.Time{},
 		seenBoot:      map[string]string{},
@@ -131,33 +133,63 @@ func (r *reconciler) runOnce(ctx context.Context) error {
 	}
 
 	wanted := map[string]bool{}
+	// claimed is the instance each VM's name belongs to, when known.
+	claimed := map[string]string{}
 	for _, vm := range vms {
-		wanted[instanceName(vm.ID)] = true
-		instance, found := byHash[strings.ToLower(vm.ItemHash)]
-		if !found {
-			instance, found = byName[instanceName(vm.ID)]
+		name := instanceName(vm.ID)
+		wanted[name] = true
+		known := strings.ToLower(vm.ItemHash)
+		instance, found := byHash[known]
+		if !found && known == "" {
+			instance, found = r.adopt(vm.ID, byHash, byName)
 		}
-		if !found {
-			instance, found = r.created[vm.ID]
+		if known != "" {
+			claimed[name] = known
+		} else if found {
+			claimed[name] = instance.ItemHash
 		}
 		if err := r.step(ctx, vm, instance, found, instances); err != nil {
 			log.Printf("provisioner: vm=%s state=%s desired=%s: %v", vm.ID, vm.State, vm.Desired, err)
 		}
 	}
 
-	// An instance named like ours that no live VM claims is a leak: delete it.
+	// An instance named like ours that no live VM claims is a leak, and so is
+	// a second instance under a VM's name: delete them.
 	for _, instance := range instances {
-		if strings.HasPrefix(instance.Name, instanceNamePrefix+"pvm-") && !wanted[instance.Name] {
-			if r.recentlyForgotten(instance.ItemHash) {
-				continue
-			}
-			log.Printf("provisioner: deleting orphan instance %s (%s)", instance.ItemHash, instance.Name)
-			if err := r.delete(ctx, instance.ItemHash); err != nil {
-				log.Printf("provisioner: delete orphan %s: %v", instance.ItemHash, err)
-			}
+		if !strings.HasPrefix(instance.Name, instanceNamePrefix+"pvm-") {
+			continue
+		}
+		owner, isClaimed := claimed[instance.Name]
+		if wanted[instance.Name] && (!isClaimed || owner == instance.ItemHash) {
+			continue
+		}
+		if r.recentlyForgotten(instance.ItemHash) {
+			continue
+		}
+		kind := "orphan"
+		if wanted[instance.Name] {
+			kind = "duplicate"
+		}
+		log.Printf("provisioner: deleting %s instance %s (%s)", kind, instance.ItemHash, instance.Name)
+		if err := r.delete(ctx, instance.ItemHash); err != nil {
+			log.Printf("provisioner: delete %s %s: %v", kind, instance.ItemHash, err)
 		}
 	}
 	return nil
+}
+
+// adopt finds the instance of a VM whose create the control plane has not
+// recorded: the one this provisioner wrote down submitting, even before the
+// listing shows it, else one carrying the VM's name.
+func (r *reconciler) adopt(vmID string, byHash, byName map[string]alephInstance) (alephInstance, bool) {
+	if record, err := r.loadCreate(vmID); err == nil && record.ItemHash != "" {
+		if instance, ok := byHash[record.ItemHash]; ok {
+			return instance, true
+		}
+		return alephInstance{ItemHash: record.ItemHash, Name: instanceName(vmID), NodeHash: record.CRNHash}, true
+	}
+	instance, ok := byName[instanceName(vmID)]
+	return instance, ok
 }
 
 func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephInstance, found bool, all []alephInstance) error {
@@ -170,9 +202,24 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			// Created before a restart; record it instead of creating another.
 			return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateCreating, ItemHash: instance.ItemHash, CRNHash: instance.NodeHash})
 		}
+		pending, err := r.loadCreate(vm.ID)
+		if err != nil {
+			// Not knowing what was submitted, creating another could double it.
+			return fmt.Errorf("read create record: %w", err)
+		}
+		if !pending.SubmittedAt.IsZero() && r.now().Sub(pending.SubmittedAt) < createSettles {
+			// A create may have gone out before a restart or a failed CLI run:
+			// wait for the listing to show it rather than create a second one.
+			r.noteProgress(ctx, vm.ID, "Waiting for Aleph to confirm the server request")
+			return nil
+		}
 		target, ok := r.pickCRN(vm.Region, all)
 		if !ok {
 			return r.controlPlane.Report(ctx, vm.ID, vmReport{Failure: "no compute node is configured for region " + vm.Region})
+		}
+		record := createRecord{CRNHash: target.Hash, SubmittedAt: r.now().UTC()}
+		if err := r.saveCreate(vm.ID, record); err != nil {
+			return fmt.Errorf("record create before submitting it: %w", err)
 		}
 		itemHash, err := r.aleph.Create(ctx, createSpec{
 			Name:       instanceName(vm.ID),
@@ -188,7 +235,10 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 		if err != nil {
 			return err
 		}
-		r.created[vm.ID] = alephInstance{ItemHash: itemHash, Name: instanceName(vm.ID), NodeHash: target.Hash}
+		record.ItemHash = itemHash
+		if err := r.saveCreate(vm.ID, record); err != nil {
+			log.Printf("provisioner: vm=%s record created instance %s: %v", vm.ID, itemHash, err)
+		}
 		log.Printf("provisioner: vm=%s created instance %s on %s", vm.ID, itemHash, target.Hash)
 		return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateCreating, ItemHash: itemHash, CRNHash: target.Hash})
 
@@ -356,6 +406,80 @@ func (r *reconciler) saveUnlockedBoot(vmID, identity string) error {
 	return os.WriteFile(path, []byte(identity+"\n"), 0o600)
 }
 
+// createRecord is what the provisioner knows about a VM's create, written to
+// disk before the INSTANCE message is submitted so that a restart neither
+// loses an instance nor creates a second one.
+type createRecord struct {
+	CRNHash     string    `json:"crn_hash"`
+	SubmittedAt time.Time `json:"submitted_at"`
+	// ItemHash is set once the CLI returned the submitted message.
+	ItemHash string `json:"item_hash,omitempty"`
+}
+
+func (r *reconciler) createPath(vmID string) string {
+	return filepath.Join(r.cfg.StateDir, "node-keys", filepath.Base(vmID)+".create")
+}
+
+// loadCreate reads a VM's create record; a VM never submitted has none.
+func (r *reconciler) loadCreate(vmID string) (createRecord, error) {
+	var record createRecord
+	data, err := os.ReadFile(r.createPath(vmID))
+	if errors.Is(err, os.ErrNotExist) {
+		return record, nil
+	}
+	if err != nil {
+		return record, err
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		return record, fmt.Errorf("create record for %s is unreadable: %w", vmID, err)
+	}
+	record.ItemHash = strings.ToLower(record.ItemHash)
+	return record, nil
+}
+
+func (r *reconciler) saveCreate(vmID string, record createRecord) error {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return writeFileDurably(r.createPath(vmID), append(data, '\n'))
+}
+
+// writeFileDurably replaces path with data so that after a crash it holds
+// either the old or the new contents, and the new ones once this returns.
+func writeFileDurably(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
+}
+
 func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alephInstance, found bool) error {
 	itemHash := instance.ItemHash
 	if !found {
@@ -367,12 +491,11 @@ func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alep
 		}
 	}
 	delete(r.lastUnlock, vm.ID)
-	delete(r.created, vm.ID)
 	delete(r.lastProgress, vm.ID)
 	delete(r.lastBootCheck, vm.ID)
 	delete(r.seenBoot, vm.ID)
 	delete(r.restarts, vm.ID)
-	for _, path := range []string{r.nodeKeyPath(vm.ID), r.dataKeyPath(vm.ID), r.bootPath(vm.ID)} {
+	for _, path := range []string{r.nodeKeyPath(vm.ID), r.dataKeyPath(vm.ID), r.bootPath(vm.ID), r.createPath(vm.ID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
