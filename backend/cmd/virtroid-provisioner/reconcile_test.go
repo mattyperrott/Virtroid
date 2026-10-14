@@ -47,6 +47,7 @@ type fakeAleph struct {
 	deleted   []string
 	unlockErr error
 	createErr error
+	deleteErr error
 }
 
 func (f *fakeAleph) List(context.Context) ([]alephInstance, error) { return f.instances, nil }
@@ -66,7 +67,7 @@ func (f *fakeAleph) Unlock(_ context.Context, spec unlockSpec) error {
 
 func (f *fakeAleph) Delete(_ context.Context, itemHash string) error {
 	f.deleted = append(f.deleted, itemHash)
-	return nil
+	return f.deleteErr
 }
 
 var (
@@ -226,6 +227,28 @@ func TestSecondInstanceUnderAVMsNameIsDeleted(t *testing.T) {
 	}
 }
 
+func TestFailedDeleteIsNotReportedDone(t *testing.T) {
+	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: "ready", Desired: "absent", ItemHash: hash, CRNHash: crnA}}}
+	aleph := &fakeAleph{
+		instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}},
+		deleteErr: errors.New("aleph message forget: exit status 1: network unreachable"),
+	}
+	r := testReconciler(t, cp, aleph)
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(cp.reports) != 0 {
+		t.Fatalf("reported a failed delete: %+v", cp.reports)
+	}
+	aleph.deleteErr = nil
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.deleted) != 2 {
+		t.Fatalf("did not retry the delete: %v", aleph.deleted)
+	}
+}
+
 func TestRegionWithoutNodesFailsTheVM(t *testing.T) {
 	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-us", State: vmStateRequested, Desired: "present"}}}
 	aleph := &fakeAleph{}
@@ -343,6 +366,27 @@ func TestRetiredVMIsDeletedAndItsKeyRemoved(t *testing.T) {
 	}
 	if len(aleph.deleted) != 1 || aleph.deleted[0] != hash {
 		t.Fatalf("deleted = %v", aleph.deleted)
+	}
+	// Still listed: not reported deleted, keys kept, no second FORGET yet.
+	if len(cp.reports) != 0 {
+		t.Fatalf("reported before the instance left the listing: %+v", cp.reports)
+	}
+	if _, err := os.Stat(r.nodeKeyPath("pvm-1")); err != nil {
+		t.Fatalf("node key removed while the instance is still listed: %v", err)
+	}
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.deleted) != 1 || len(cp.reports) != 0 {
+		t.Fatalf("second pass deleted=%v reports=%+v", aleph.deleted, cp.reports)
+	}
+
+	aleph.instances = nil
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.deleted) != 1 {
+		t.Fatalf("forgot again an instance that just left the listing: %v", aleph.deleted)
 	}
 	if got := cp.last(t); got.State != vmStateDeleted {
 		t.Fatalf("report = %+v", got)
@@ -696,12 +740,31 @@ func TestReadyVMWithoutARecordedBootIsNotUnlockedAgain(t *testing.T) {
 	cp := bootingVM(vmStateReady)
 	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
 	r := testReconciler(t, cp, aleph)
+	seen := r.now().Add(-30 * time.Second)
+	cp.vms[0].NodeSeenAt = &seen
 	r.boots = &fakeBoots{current: "boot-1"}
 	if err := r.runOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if recorded, _ := r.unlockedBoot("pvm-1"); recorded != "boot-1" || len(aleph.unlocked) != 0 {
 		t.Fatalf("recorded %q, unlocked %d times", recorded, len(aleph.unlocked))
+	}
+}
+
+// The provisioner lost its boot record, and the ready VM's node has gone
+// quiet: it may have restarted and be waiting, so it is unlocked again.
+func TestQuietReadyVMWithoutARecordedBootIsUnlockedAgain(t *testing.T) {
+	cp := bootingVM(vmStateReady)
+	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
+	r := testReconciler(t, cp, aleph)
+	seen := r.now().Add(-10 * time.Minute)
+	cp.vms[0].NodeSeenAt = &seen
+	r.boots = &fakeBoots{current: "boot-2"}
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aleph.unlocked) != 1 {
+		t.Fatalf("unlocked %d times, want 1", len(aleph.unlocked))
 	}
 }
 

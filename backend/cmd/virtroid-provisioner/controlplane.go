@@ -32,6 +32,8 @@ type provisionedVM struct {
 	CRNHash       string  `json:"crn_hash"`
 	PublicIP      string  `json:"public_ip"`
 	NodePublicKey string  `json:"node_public_key"`
+	// NodeSeenAt is the node's last heartbeat, when it ever sent one.
+	NodeSeenAt *time.Time `json:"node_seen_at"`
 }
 
 type vmReport struct {

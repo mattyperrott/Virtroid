@@ -37,6 +37,9 @@ const (
 	// A VM that restarts this many times after being unlocked, before its
 	// node ever comes up, is failing to boot and is retired.
 	maxRestartsBeforeReady = 3
+	// nodeServingWithin is how recent a node's heartbeat must be for its VM
+	// to count as serving (nodes report every 30 seconds by default).
+	nodeServingWithin = 2 * time.Minute
 	// forgetSettles is how long a deleted instance may still be listed
 	// before it is deleted again.
 	forgetSettles = 10 * time.Minute
@@ -344,8 +347,10 @@ func (r *reconciler) watchBoot(ctx context.Context, vm provisionedVM) error {
 	if err != nil || recorded == current {
 		return err
 	}
-	if recorded == "" && vm.State == vmStateReady {
-		// Unlocked before its boot was recorded, and serving: this is that boot.
+	if recorded == "" && vm.State == vmStateReady && vm.NodeSeenAt != nil && r.now().Sub(*vm.NodeSeenAt) < nodeServingWithin {
+		// Unlocked before its boot was recorded, and its node is reporting
+		// in: this is that boot. A ready VM whose node has gone quiet may be
+		// waiting after a restart, so it is unlocked again below.
 		r.seenBoot[vm.ID] = current
 		return r.saveUnlockedBoot(vm.ID, current)
 	}
@@ -481,13 +486,24 @@ func writeFileDurably(path string, data []byte) error {
 }
 
 func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alephInstance, found bool) error {
-	itemHash := instance.ItemHash
-	if !found {
-		itemHash = vm.ItemHash
+	if found {
+		// Still listed: ask Aleph to forget it (again once an earlier request
+		// has had time to settle), and report the VM deleted only when the
+		// listing no longer shows it. A submitted FORGET is not the VM gone.
+		if !r.recentlyForgotten(instance.ItemHash) {
+			if err := r.delete(ctx, instance.ItemHash); err != nil {
+				return fmt.Errorf("delete instance %s: %w", instance.ItemHash, err)
+			}
+			log.Printf("provisioner: vm=%s asked Aleph to delete instance %s", vm.ID, instance.ItemHash)
+		}
+		return nil
 	}
-	if itemHash != "" && !r.recentlyForgotten(itemHash) {
-		if err := r.delete(ctx, itemHash); err != nil && found {
-			return fmt.Errorf("delete instance %s: %w", itemHash, err)
+	// Not listed. An instance the listing has not caught up with yet is
+	// forgotten too; if it shows up later, no live VM claims its name and it
+	// is deleted as an orphan.
+	if itemHash := strings.ToLower(vm.ItemHash); itemHash != "" && !r.recentlyForgotten(itemHash) {
+		if err := r.delete(ctx, itemHash); err != nil {
+			log.Printf("provisioner: vm=%s instance %s is not listed and did not take a FORGET: %v", vm.ID, itemHash, err)
 		}
 	}
 	delete(r.lastUnlock, vm.ID)
