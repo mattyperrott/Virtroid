@@ -401,6 +401,7 @@ func (t *treasury) siaNeed(ctx context.Context) (swapNeed, bool) {
 		return swapNeed{}, false
 	}
 	have := new(big.Rat).SetFrac(hastings, new(big.Int).Exp(big.NewInt(10), big.NewInt(24), nil))
+	t.logf("treasury: indexd's wallet %s holds %s SC; target %d SC", destination, have.FloatString(0), t.cfg.SiaTargetSC)
 	target := new(big.Rat).SetInt64(t.cfg.SiaTargetSC)
 	short := new(big.Rat).Sub(target, have)
 	if short.Cmp(new(big.Rat).Mul(target, big.NewRat(int64(refillShare*100), 100))) < 0 {
@@ -455,6 +456,9 @@ func (t *treasury) alephNeed(ctx context.Context) (swapNeed, bool) {
 	waiting := new(big.Rat).Mul(new(big.Rat).SetFrac(spare, big.NewInt(1e18)), usdPerETH)
 	waiting.Mul(waiting, big.NewRat(1_000_000, 1))
 	target := new(big.Rat).SetInt64(perDay * int64(t.cfg.AlephDays))
+	t.logf("treasury: %s spends %d Aleph credits a day; %s holds %d credits and %s ETH, %s days of the %d wanted",
+		spender, perDay, t.cfg.AlephFundAddress, have, new(big.Rat).SetFrac(wei, big.NewInt(1e18)).FloatString(6),
+		daysCovered(have, waiting, perDay), t.cfg.AlephDays)
 	short := new(big.Rat).Sub(target, new(big.Rat).Add(new(big.Rat).SetInt64(have), waiting))
 	if target.Sign() == 0 || short.Cmp(new(big.Rat).Mul(target, big.NewRat(int64(refillShare*100), 100))) < 0 {
 		return swapNeed{}, false

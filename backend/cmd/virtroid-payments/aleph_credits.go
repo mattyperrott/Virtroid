@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -43,7 +44,9 @@ func (a alephAPI) dailySpend(ctx context.Context, address string, days int, now 
 			} `json:"credit_history"`
 		}
 		route := fmt.Sprintf("/api/v0/addresses/%s/credit_history?pagination=200&page=%d", url.PathEscape(address), page)
-		if err := a.get(ctx, route, &response); err != nil {
+		if err := a.get(ctx, route, &response); errors.Is(err, errAlephNotFound) {
+			break // past the last page, or no history at all
+		} else if err != nil {
 			return 0, err
 		}
 		if len(response.History) == 0 {
@@ -70,12 +73,25 @@ func (a alephAPI) dailySpend(ctx context.Context, address string, days int, now 
 	return spent / int64(days), nil
 }
 
+var errAlephNotFound = errors.New("not found on Aleph")
+
 func (a alephAPI) get(ctx context.Context, route string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(a.baseURL, "/")+route, nil)
 	if err != nil {
 		return err
 	}
-	return doJSON(a.client, req, out)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return errAlephNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: status %d", req.URL.Path, resp.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, maxAPIResponse)).Decode(out)
 }
 
 // ethereumRPC reads ETH balances from an Ethereum JSON-RPC node.

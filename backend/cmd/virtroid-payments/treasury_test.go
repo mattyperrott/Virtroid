@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -330,5 +332,22 @@ func TestDecimalToMicroRounds(t *testing.T) {
 		if got, err := decimalToMicro(tc.in, tc.up); err != nil || got != tc.want {
 			t.Fatalf("decimalToMicro(%q, %v) = %d, %v", tc.in, tc.up, got, err)
 		}
+	}
+}
+
+func TestDailySpendStopsAtAlephsLastPage(t *testing.T) {
+	now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "1" {
+			http.Error(w, "No credit history found for this address", http.StatusNotFound)
+			return
+		}
+		fmt.Fprintf(w, `{"credit_history":[{"amount":-7000000,"payment_method":"credit_expense","message_timestamp":%q},{"amount":5000000,"payment_method":"credit_purchase","message_timestamp":%q}]}`,
+			now.Add(-time.Hour).Format(time.RFC3339Nano), now.Add(-2*time.Hour).Format(time.RFC3339Nano))
+	}))
+	defer server.Close()
+	perDay, err := alephAPI{baseURL: server.URL, client: server.Client()}.dailySpend(context.Background(), "0x4631b0613fF21cd5715f1b1572b4CD5bc0916c4C", 7, now)
+	if err != nil || perDay != 1_000_000 {
+		t.Fatalf("dailySpend = %d, %v; want 1,000,000", perDay, err)
 	}
 }
