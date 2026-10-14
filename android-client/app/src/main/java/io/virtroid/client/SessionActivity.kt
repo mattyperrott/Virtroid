@@ -28,20 +28,16 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionViewerBinding
-import io.virtroid.client.security.IdentityKeyManager
-import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.SnapshotRollbackException
 import io.virtroid.client.security.enableSecureWindow
-import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.viewer.ScrcpySessionHost
 import io.virtroid.client.viewer.RelayLatencyProbe
@@ -52,7 +48,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.IOException
 import io.virtroid.client.ui.Notice
 
 class SessionActivity : AppCompatActivity() {
@@ -80,8 +75,6 @@ class SessionActivity : AppCompatActivity() {
     private var fileMode: String = "upload-only"
     private var endingSession = false
     private var viewerSurface: Surface? = null
-    private lateinit var identityPasswordStore: IdentityPasswordStore
-    private lateinit var identityKeyManager: IdentityKeyManager
     private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private val confidentialRuntimeGuard by lazy { ConfidentialRuntimeGuard(this) }
     private lateinit var activeSessionStore: ActiveSessionStore
@@ -234,8 +227,6 @@ class SessionActivity : AppCompatActivity() {
         if (baseUrl.isBlank()) {
             baseUrl = sessionStore.baseUrl
         }
-        identityPasswordStore = IdentityPasswordStore(this)
-        identityKeyManager = IdentityKeyManager(this, api)
         snapshotRollbackGuard = SnapshotRollbackGuard(this)
         activeSessionStore = ActiveSessionStore(this)
         appSettings = AppSettingsStore(this)
@@ -599,95 +590,28 @@ class SessionActivity : AppCompatActivity() {
         }
     }
 
-    private fun endSessionAndFinish(reason: String) {
+    /**
+     * Closes the viewer after the screen-idle time in Privacy & Security. The
+     * runtime keeps running for its own inactivity period, counted from now,
+     * so its apps keep receiving messages.
+     */
+    private fun closeViewerForInactivity() {
         if (endingSession) {
             return
         }
-
         endingSession = true
-        appLogs.info("Session shutdown requested: $reason", "session")
-
-        binding.sessionSubtitleText.text = getString(R.string.session_secure_saving)
-        binding.sessionStreamStatusText.text = getString(R.string.session_shutdown_status)
-        binding.sessionStreamProgress.isVisible = true
-        binding.sessionStreamStatusOverlay.isVisible = true
-        binding.sessionRetryButton.isVisible = false
-        setSessionActionsEnabled(false)
-
-        val missingContext = missingShutdownContext()
-        if (missingContext != null) {
-            endingSession = false
-            setSessionActionsEnabled(true)
-            showEndingError(IOException(missingContext))
-            return
-        }
-
-        lifecycleScope.launch {
-            runCatching {
-                val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                queueRuntimeStop(blobAccessKey)
-                identityPasswordStore.saveConfigured(accountId, deviceId)
-            }.onSuccess {
-                appSettings.recordSessionEnd(reason)
-                disconnectViewer()
-                activeSessionStore.clear()
-                if (appSettings.autoClearClipboard) {
-                    appSettings.clearClipboard()
-                    appLogs.info("Clipboard cleared after session end", "privacy")
-                }
-                appLogs.info("Session shutdown queued: $reason", "session")
-                toast(getString(R.string.session_stop_pending))
-                finishToRuntimeList(markRuntimeStopping = true)
-            }.onFailure { error ->
-                endingSession = false
-                startSessionHeartbeat()
-                startInactivityWatch()
-                setSessionActionsEnabled(true)
-                showEndingError(error)
-            }
-        }
-    }
-
-    private fun missingShutdownContext(): String? {
-        val missing = buildList {
-            if (runtimeId.isBlank()) add("runtime")
-            if (accountId.isBlank()) add("account")
-            if (deviceId.isBlank()) add("device")
-            if (baseUrl.isBlank()) add("server")
-        }
-        if (missing.isEmpty()) {
-            return null
-        }
-        return getString(R.string.session_shutdown_missing_context, missing.joinToString(", "))
-    }
-
-    private suspend fun queueRuntimeStop(blobAccessKey: String) {
-        var needsDirectStop = true
-        if (sessionId.isNotBlank()) {
-            val endResult = runCatching {
-                api.endSession(baseUrl, accountId, deviceId, runtimeId, sessionId, blobAccessKey)
-            }
-            endResult.onSuccess { runtime ->
-                needsDirectStop = !runtime.isRuntimeStopQueued()
-                if (needsDirectStop) {
-                    appLogs.warn(
-                        "Session end did not queue runtime stop (${runtime.status}/${runtime.desiredState}/${runtime.connectionStatus}); queueing direct stop",
-                        "session",
-                    )
-                }
-            }
-            endResult.onFailure { error ->
-                if (!error.isGoneSessionResponse()) {
-                    throw error
-                }
-                appLogs.warn("Session was already gone; queueing runtime stop directly", "session")
-            }
-        }
-
-        if (needsDirectStop) {
-            api.stopRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
-        }
+        heartbeatJob?.cancel()
+        appSettings.recordSessionEnd(AppSettingsStore.SESSION_END_INACTIVITY)
+        disconnectViewer()
+        activeSessionStore.clear()
         relayToken = ""
+        if (appSettings.autoClearClipboard) {
+            appSettings.clearClipboard()
+            appLogs.info("Clipboard cleared after the viewer closed", "privacy")
+        }
+        appLogs.info("Viewer closed after screen inactivity; the runtime keeps running", "session")
+        toast(getString(R.string.session_closed_inactive))
+        finishToRuntimeList(markRuntimeStopping = false)
     }
 
     private fun finishToRuntimeList(markRuntimeStopping: Boolean) {
@@ -770,18 +694,6 @@ class SessionActivity : AppCompatActivity() {
 
     private fun toast(message: String) {
         Notice.show(this, message)
-    }
-
-    private fun showEndingError(error: Throwable) {
-        val message = error.virtroidDisplayMessage(this)
-        binding.sessionSubtitleText.text = message
-        toast(message)
-    }
-
-    private fun setSessionActionsEnabled(isEnabled: Boolean) {
-        binding.sessionBackToAppButton.isEnabled = isEnabled
-        binding.sessionControlsButton.isEnabled = isEnabled
-        binding.sessionCameraButton.isEnabled = isEnabled
     }
 
     private fun persistActiveSession() {
@@ -933,44 +845,11 @@ class SessionActivity : AppCompatActivity() {
                 val timeoutMs = appSettings.uiInactivityTimeoutMs
                 if (System.currentTimeMillis() - lastInteractionAtMs >= timeoutMs) {
                     appLogs.warn("Session inactivity timeout reached", "session")
-                    endSessionAndFinish(AppSettingsStore.SESSION_END_INACTIVITY)
+                    closeViewerForInactivity()
                     return@launch
                 }
             }
         }
-    }
-
-    private suspend fun requireBlobAccessKey(accountId: String, deviceId: String): String {
-        identityPasswordStore.unlockedBlobAccessKey(accountId, deviceId)?.let { return it }
-        val password = promptIdentityPassword(
-            title = getString(R.string.identity_unlock_title),
-            hint = getString(R.string.identity_password_prompt),
-        )?.trim().orEmpty()
-        if (password.isBlank()) {
-            throw IOException(getString(R.string.identity_password_required))
-        }
-        return identityKeyManager.unlockOrMigrate(baseUrl, accountId, deviceId, password)
-    }
-
-    private fun RuntimeSummary.isRuntimeStopQueued(): Boolean {
-        val desiredStopped = desiredState.equals("stopped", ignoreCase = true)
-        val lifecycleStopping = status.equals("stopping", ignoreCase = true) ||
-            status.equals("stopped", ignoreCase = true) ||
-            status.equals("provisioned", ignoreCase = true)
-        val connectivityStopping = connectionStatus.equals("disconnecting", ignoreCase = true) ||
-            connectionStatus.equals("offline", ignoreCase = true) ||
-            connectionStatus.equals("disconnected", ignoreCase = true) ||
-            connectionStatus.isBlank()
-        return desiredStopped && (lifecycleStopping || connectivityStopping || isStoppedForSession())
-    }
-
-    private fun RuntimeSummary.isStoppedForSession(): Boolean {
-        val stopped = status.equals("stopped", ignoreCase = true)
-        val desiredStopped = desiredState.equals("stopped", ignoreCase = true)
-        val offline = connectionStatus.isBlank() ||
-            connectionStatus.equals("offline", ignoreCase = true) ||
-            connectionStatus.equals("disconnected", ignoreCase = true)
-        return stopped && desiredStopped && offline
     }
 
     companion object {

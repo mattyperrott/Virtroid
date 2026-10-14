@@ -48,6 +48,8 @@ data class RuntimeSummary(
     val blobSnapshotGeneration: Long,
     /** The newest generation the server says was lost with a deleted VM. */
     val blobGenerationFloor: Long,
+    /** How long it keeps running with no viewer open before it stops and saves. */
+    val idleTimeoutSeconds: Int,
     val startedAt: String?,
     val loadAverage: Double?,
     val adbPort: Int?,
@@ -144,6 +146,8 @@ data class RuntimeState(
     val canDelete: Boolean,
     val isBusy: Boolean,
     val blockedReason: String?,
+    /** When it stops for inactivity unless a viewer opens it; null while one is open or it is not running. */
+    val idleStopAtMs: Long?,
 ) {
     fun canConnectRuntime(expectedRuntimeId: String): Boolean {
         return canConnect && runtimeReady && runtime.id == expectedRuntimeId
@@ -733,6 +737,7 @@ class VirtroidApi(
         blobAutoSnapshot: Boolean,
         blobRetainDays: Int,
         appPackages: Collection<String> = emptyList(),
+        idleTimeoutSeconds: Int = RuntimeIdlePeriods.DEFAULT_SECONDS,
     ): RuntimeSummary =
         withContext(Dispatchers.IO) {
             val requestBody = JSONObject()
@@ -748,6 +753,7 @@ class VirtroidApi(
                 .put("blob_auto_snapshot", blobAutoSnapshot)
                 .put("blob_retain_days", blobRetainDays)
                 .put("app_packages", JSONArray(appPackages.toList()))
+                .put("idle_timeout_seconds", idleTimeoutSeconds)
                 .toString()
 
             val payload = executeJson(
@@ -799,6 +805,31 @@ class VirtroidApi(
         )
 
         payload.toRuntimeSummary()
+    }
+
+    /** Changes only how long the runtime keeps running with no viewer open. */
+    suspend fun updateRuntimeIdleTimeout(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        idleTimeoutSeconds: Int,
+    ): RuntimeSummary = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject()
+            .put("account_id", accountId)
+            .put("device_id", deviceId)
+            .put("idle_timeout_seconds", idleTimeoutSeconds)
+            .toString()
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId",
+                method = "PATCH",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = requestBody,
+            ),
+        ).toRuntimeSummary()
     }
 
     suspend fun startRuntime(
@@ -1602,6 +1633,7 @@ class VirtroidApi(
             blobSnapshotId = blobManifest?.nullableString("snapshot_id"),
             blobSnapshotGeneration = blobManifest?.optLong("generation", 0L) ?: 0L,
             blobGenerationFloor = optLong("blob_generation_floor", 0L),
+            idleTimeoutSeconds = optInt("idle_timeout_seconds", RuntimeIdlePeriods.DEFAULT_SECONDS),
             startedAt = nullableString("started_at"),
             loadAverage = if (has("load_average") && !isNull("load_average")) optDouble("load_average") else null,
             adbPort = optInt("adb_port").takeIf { has("adb_port") && !isNull("adb_port") },
@@ -1647,6 +1679,7 @@ class VirtroidApi(
             canDelete = optBoolean("can_delete", false),
             isBusy = optBoolean("is_busy", false),
             blockedReason = nullableString("blocked_reason"),
+            idleStopAtMs = nullableString("idle_stop_at")?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() },
         )
     }
 

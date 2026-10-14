@@ -13,6 +13,7 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtroid.client.api.AppCatalogEntry
 import io.virtroid.client.api.EntitlementSummary
+import io.virtroid.client.api.RuntimeIdlePeriods
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.AppLogStore
@@ -34,6 +35,7 @@ class NewRuntimeActivity : AppCompatActivity() {
     private var latestProvisionRuntimeLogs: List<String> = emptyList()
     private var provisionJob: Job? = null
     private var appPicks: List<AppCatalogEntry> = emptyList()
+    private var idleTimeoutSeconds = RuntimeIdlePeriods.DEFAULT_SECONDS
     private val pickApps = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             appPicks = AppInstallActivity.decodePicks(result.data?.getStringExtra(AppInstallActivity.EXTRA_PICKS))
@@ -69,12 +71,25 @@ class NewRuntimeActivity : AppCompatActivity() {
         }
         appPicks = AppInstallActivity.decodePicks(savedInstanceState?.getString(STATE_APP_PICKS))
         renderAppPicks()
+        idleTimeoutSeconds = savedInstanceState?.getInt(STATE_IDLE_TIMEOUT, idleTimeoutSeconds) ?: idleTimeoutSeconds
+        binding.newRuntimeIdleRow.setOnClickListener {
+            showIdlePeriodPicker(idleTimeoutSeconds) { seconds ->
+                idleTimeoutSeconds = seconds
+                renderIdlePeriod()
+            }
+        }
+        renderIdlePeriod()
         loadEntitlement()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_APP_PICKS, AppInstallActivity.encodePicks(appPicks))
+        outState.putInt(STATE_IDLE_TIMEOUT, idleTimeoutSeconds)
+    }
+
+    private fun renderIdlePeriod() {
+        binding.newRuntimeIdleSubtitle.text = getString(R.string.new_runtime_idle_subtitle, idlePeriodLabel(idleTimeoutSeconds))
     }
 
     private fun renderAppPicks() {
@@ -153,6 +168,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                         blobAutoSnapshot = true,
                         blobRetainDays = 7,
                         appPackages = appPicks.map { it.packageName },
+                        idleTimeoutSeconds = idleTimeoutSeconds,
                     )
                     waitForRuntimeProvisioned(baseUrl, accountId, deviceId, runtime.id)
                 }.onSuccess {
@@ -310,6 +326,7 @@ class NewRuntimeActivity : AppCompatActivity() {
     companion object {
         private const val PROVISION_WAIT_MAX_MS = 5 * 60 * 1_000L
         private const val STATE_APP_PICKS = "app_picks"
+        private const val STATE_IDLE_TIMEOUT = "idle_timeout_seconds"
 
         fun createIntent(context: Context): Intent = Intent(context, NewRuntimeActivity::class.java)
     }

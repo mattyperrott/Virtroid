@@ -63,7 +63,7 @@
     <string name="app_install_title">Runtime Apps</string>
     <string name="app_install_subtitle">Choose applications</string>
     <string name="app_install_subtitle_new">Installed when the runtime first starts</string>
-    <string name="app_install_subtitle_runtime">Kept installed on %1$s</string>
+    <string name="app_install_subtitle_runtime">Installed once on %1$s</string>
     <string name="app_install_selected_header">SELECTED</string>
     <string name="app_install_selected_count">%1$d of %2$d</string>
     <string name="app_install_load_more">Load more</string>
@@ -384,8 +384,6 @@
     <string name="session_failed_message">Disconnected: %1$s</string>
     <string name="session_failed_message_inline">Disconnected • %1$s</string>
     <string name="session_ended">Session ended</string>
-    <string name="session_stop_pending">Session close requested. Runtime is still saving state.</string>
-    <string name="session_shutdown_missing_context">Cannot shut down runtime because session context is missing: %1$s.</string>
     <string name="session_missing_endpoint">Viewer session details are missing.</string>
     <string name="session_prepare_failed_title">Viewer not ready yet</string>
     <string name="session_prepare_retry_message">The runtime is online, but the viewer bridge is still preparing. Try connecting again.</string>
@@ -399,7 +397,6 @@
     <string name="session_drawer_info">Endpoint: %1$s</string>
     <string name="session_drawer_status">Status: %1$s</string>
     <string name="session_secure_saving">Saving state…</string>
-    <string name="session_shutdown_status">Stopping runtime and saving state…</string>
     <string name="session_back">Back</string>
     <string name="session_home">Home</string>
     <string name="session_apps">Apps</string>
@@ -528,7 +525,7 @@
     <string name="privacy_block_screen_capture">Block Screen Capture</string>
     <string name="privacy_block_screen_capture_body">Prevents screenshots and OS preview leakage.</string>
     <string name="privacy_session_safety">Session Safety</string>
-    <string name="privacy_ui_inactivity_timeout">UI Inactivity Timeout</string>
+    <string name="privacy_ui_inactivity_timeout">Close Viewer When Idle</string>
     <string name="privacy_data_cache_hygiene">Data &amp; Cache Hygiene</string>
     <string name="privacy_auto_clear_clipboard">Auto-clear Clipboard</string>
     <string name="privacy_auto_clear_clipboard_body">Wipe local clipboard after session ends</string>
@@ -551,7 +548,47 @@
     <string name="accessibility_setting_value">%1$s, %2$s</string>
 
     <string name="controls_apps_title">Apps</string>
-    <string name="controls_apps_subtitle">Choose F-Droid apps to keep installed</string>
+    <string name="controls_apps_subtitle">Choose F-Droid apps to install</string>
+    <string name="new_runtime_idle_heading">WHEN CLOSED</string>
+    <string name="new_runtime_idle_title">Keep running</string>
+    <string name="new_runtime_idle_subtitle">%1$s after you close the viewer</string>
+    <string name="controls_idle_title">Keep running when closed</string>
+    <string name="controls_idle_viewer_open">%1$s · viewer open</string>
+    <string name="controls_idle_counting">%1$s · stops in %2$s</string>
+    <string name="controls_idle_stopping">%1$s · stopping now</string>
+    <string name="controls_idle_not_running">%1$s · not running</string>
+    <string name="controls_idle_updated">Keeps running %1$s after the viewer closes</string>
+    <string name="controls_stop_now">Stop and save now</string>
+    <string name="controls_stop_now_subtitle">Shuts Android down and saves its data to Sia</string>
+    <string name="controls_stop_now_confirm_title">Stop this runtime now?</string>
+    <string name="controls_stop_now_confirm_body">Android shuts down and the runtime\'s data is encrypted and saved to Sia. Apps stop receiving messages until you start it again.</string>
+    <string name="controls_stop_now_confirm">Stop</string>
+    <string name="controls_stop_now_queued">Stopping and saving to Sia</string>
+    <string name="idle_period_title">Keep running when closed</string>
+    <string name="idle_period_body">How long the runtime keeps running after you close the viewer. While it runs, apps keep receiving messages and you get their notifications.</string>
+    <string name="idle_period_note">Then Android shuts down and its data is encrypted and saved to Sia; starting again takes a few minutes. Running time is billed while it runs. The viewer also closes itself after the idle time set in Privacy &amp; Security.</string>
+    <string name="idle_period_current">Current</string>
+    <plurals name="idle_period_minutes">
+        <item quantity="one">%1$d minute</item>
+        <item quantity="other">%1$d minutes</item>
+    </plurals>
+    <plurals name="idle_period_hours">
+        <item quantity="one">%1$d hour</item>
+        <item quantity="other">%1$d hours</item>
+    </plurals>
+    <plurals name="idle_period_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <plurals name="idle_period_weeks">
+        <item quantity="one">%1$d week</item>
+        <item quantity="other">%1$d weeks</item>
+    </plurals>
+    <string name="idle_countdown_under_minute">under a minute</string>
+    <string name="idle_countdown_minutes">%1$dm</string>
+    <string name="idle_countdown_hours_minutes">%1$dh %2$dm</string>
+    <string name="idle_countdown_days_hours">%1$dd %2$dh</string>
+    <string name="session_closed_inactive">Viewer closed after inactivity; the runtime keeps running</string>
     <string name="new_runtime_apps_heading">APPS</string>
     <string name="new_runtime_apps_title">Pre-install apps</string>
     <string name="new_runtime_apps_none">None selected · browse F-Droid apps</string>

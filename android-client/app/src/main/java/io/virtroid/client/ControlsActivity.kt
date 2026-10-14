@@ -51,6 +51,7 @@ class ControlsActivity : AppCompatActivity() {
     private var runtime: RuntimeSummary? = null
     private var runtimeState: RuntimeState? = null
     private var entitlement: EntitlementSummary? = null
+    private var idleCountdownJob: Job? = null
     private var connectOrStartJob: Job? = null
     private var logsExpanded = false
     private val displayBodyText by lazy { findViewById<android.widget.TextView>(R.id.controlsDisplayBodyText) }
@@ -89,6 +90,7 @@ class ControlsActivity : AppCompatActivity() {
         binding.controlsBackButton.setOnClickListener { finish() }
         binding.buttonEditRuntime.setOnClickListener { showRenameDialog() }
         binding.displayOutputRow.setOnClickListener { showDisplayDialog() }
+        binding.runtimeIdleRow.setOnClickListener { showIdleSettings() }
         binding.runtimeAppsRow.setOnClickListener {
             startActivity(
                 AppInstallActivity.runtimeIntent(this, runtimeId, runtime?.name?.let(::runtimeDisplayName).orEmpty()),
@@ -105,6 +107,12 @@ class ControlsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         loadRuntime()
+        startIdleCountdown()
+    }
+
+    override fun onPause() {
+        idleCountdownJob?.cancel()
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -155,6 +163,7 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private fun bindRuntime(runtime: RuntimeSummary, state: RuntimeState? = runtimeState) {
+        renderIdle(runtime, state)
         binding.controlsRuntimeNameText.text = runtimeDisplayName(runtime.name)
         binding.controlsRuntimeSubtitleText.text = getString(R.string.controls_runtime_subtitle, runtime.id)
         binding.controlsStateValue.text = runtime.lifecycleLabel()
@@ -549,6 +558,93 @@ class ControlsActivity : AppCompatActivity() {
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         )
         finish()
+    }
+
+    /** The period, and what it means now: viewer open, the countdown, or not running. */
+    private fun renderIdle(runtime: RuntimeSummary, state: RuntimeState?) {
+        val period = idlePeriodLabel(runtime.idleTimeoutSeconds)
+        val stopAt = state?.idleStopAtMs
+        binding.runtimeIdleSubtitle.text = when {
+            stopAt != null && stopAt > System.currentTimeMillis() ->
+                getString(R.string.controls_idle_counting, period, idleCountdown(stopAt - System.currentTimeMillis()))
+            stopAt != null -> getString(R.string.controls_idle_stopping, period)
+            runtime.isReadyForSession() -> getString(R.string.controls_idle_viewer_open, period)
+            else -> getString(R.string.controls_idle_not_running, period)
+        }
+        binding.runtimeIdleRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            binding.runtimeIdleTitle.text,
+            binding.runtimeIdleSubtitle.text,
+        )
+    }
+
+    /** Ticks the countdown each 30 seconds, and reloads now and then to follow the viewer. */
+    private fun startIdleCountdown() {
+        idleCountdownJob?.cancel()
+        idleCountdownJob = lifecycleScope.launch {
+            var ticks = 0
+            while (true) {
+                delay(30_000L)
+                ticks++
+                if (ticks % 4 == 0) loadRuntime() else runtime?.let { renderIdle(it, runtimeState) }
+            }
+        }
+    }
+
+    private fun showIdleSettings() {
+        val current = runtime ?: return
+        val canStopNow = runtimeState?.canStop == true
+        showIdlePeriodPicker(
+            selectedSeconds = current.idleTimeoutSeconds,
+            extra = { sheet ->
+                if (canStopNow) {
+                    sheet.row(
+                        icon = R.drawable.ic_stop,
+                        title = getString(R.string.controls_stop_now),
+                        subtitle = getString(R.string.controls_stop_now_subtitle),
+                    ) { confirmStopNow() }
+                }
+            },
+        ) { seconds -> updateIdlePeriod(seconds) }
+    }
+
+    private fun updateIdlePeriod(seconds: Int) {
+        val accountId = sessionStore.accountId ?: return
+        val deviceId = sessionStore.deviceId ?: return
+        lifecycleScope.launch {
+            runCatching {
+                api.updateRuntimeIdleTimeout(sessionStore.baseUrl, accountId, deviceId, runtimeId, seconds)
+            }.onSuccess {
+                toast(getString(R.string.controls_idle_updated, idlePeriodLabel(seconds)))
+                loadRuntime()
+            }.onFailure {
+                toast(it.virtroidDisplayMessage(this@ControlsActivity))
+            }
+        }
+    }
+
+    private fun confirmStopNow() {
+        showConfirmation(
+            title = getString(R.string.controls_stop_now_confirm_title),
+            message = getString(R.string.controls_stop_now_confirm_body),
+            confirmLabel = getString(R.string.controls_stop_now_confirm),
+        ) {
+            val accountId = sessionStore.accountId ?: return@showConfirmation
+            val deviceId = sessionStore.deviceId ?: return@showConfirmation
+            lifecycleScope.launch {
+                runCatching {
+                    val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
+                    api.stopRuntime(sessionStore.baseUrl, accountId, deviceId, runtimeId, blobAccessKey)
+                    activeSessionStore.loadForRuntime(runtimeId)?.let { activeSessionStore.clear() }
+                }.onSuccess {
+                    appLogs.info("Runtime stop requested from its controls", "runtime")
+                    toast(getString(R.string.controls_stop_now_queued))
+                    loadRuntime()
+                }.onFailure {
+                    toast(it.virtroidDisplayMessage(this@ControlsActivity))
+                }
+            }
+        }
     }
 
     private suspend fun requireBlobAccessKey(accountId: String, deviceId: String): String {
