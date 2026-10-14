@@ -136,13 +136,13 @@ func TestValidateRuntimeImportContentRejectsExcessiveZipEntries(t *testing.T) {
 }
 
 func TestNodeCallbackBodyLimitIsRouteSpecific(t *testing.T) {
-	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/files"); got != maxRuntimeFileImportBytes {
+	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/files"); got != maxRuntimeFileImportBytes+sealedImportOverhead {
 		t.Fatalf("file callback limit = %d", got)
 	}
-	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/photos"); got != maxRuntimePhotoImportBytes {
+	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/photos"); got != maxRuntimePhotoImportBytes+sealedImportOverhead {
 		t.Fatalf("photo callback limit = %d", got)
 	}
-	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/videos"); got != maxRuntimeVideoImportBytes {
+	if got := nodeCallbackBodyLimit("/api/v1/internal/runtimes/id/videos"); got != maxRuntimeVideoImportBytes+sealedImportOverhead {
 		t.Fatalf("video callback limit = %d", got)
 	}
 	if got := nodeCallbackBodyLimit("/api/v1/internal/viewer/prepare"); got != 2<<20 {

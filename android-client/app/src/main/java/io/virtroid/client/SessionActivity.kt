@@ -50,6 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import io.virtroid.client.ui.Notice
+import org.client.scrcpy.crypto.ViewerEncryption
 
 class SessionActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionViewerBinding
@@ -490,6 +491,7 @@ class SessionActivity : AppCompatActivity() {
                         sessionId = sessionId,
                         fileName = name,
                         mp4 = bytes,
+                        viewerKey = importViewerKey(),
                     )
                 } else {
                     api.importRuntimePhoto(
@@ -500,6 +502,7 @@ class SessionActivity : AppCompatActivity() {
                         sessionId = sessionId,
                         fileName = name,
                         jpeg = bytes,
+                        viewerKey = importViewerKey(),
                     )
                 }
             }.onSuccess { result ->
@@ -712,6 +715,10 @@ class SessionActivity : AppCompatActivity() {
     private fun toast(message: String) {
         Notice.show(this, message)
     }
+
+    /** The viewer key to seal imports with, for nodes that only take sealed ones. */
+    private fun importViewerKey(): ByteArray? =
+        if (viewerProtocol >= 2) ViewerEncryption.decodeViewerKey(viewerKey) else null
 
     private fun persistActiveSession() {
         if (runtimeId.isBlank() || relayToken.isBlank()) {

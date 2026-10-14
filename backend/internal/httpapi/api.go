@@ -2067,6 +2067,10 @@ func (a *API) importMyRuntimeFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if r.URL.Query().Get("sealed") == "1" {
+		a.forwardSealedRuntimeImport(w, r, actor, runtimeID, "file", "files", maxRuntimeFileImportBytes)
+		return
+	}
 	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_file_name", err.Error())
@@ -2109,6 +2113,10 @@ func (a *API) importMyRuntimePhoto(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if r.URL.Query().Get("sealed") == "1" {
+		a.forwardSealedRuntimeImport(w, r, actor, runtimeID, "photo", "photos", maxRuntimePhotoImportBytes)
+		return
+	}
 	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_photo_name", err.Error())
@@ -2143,6 +2151,10 @@ func (a *API) importMyRuntimeVideo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if r.URL.Query().Get("sealed") == "1" {
+		a.forwardSealedRuntimeImport(w, r, actor, runtimeID, "video", "videos", maxRuntimeVideoImportBytes)
+		return
+	}
 	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_video_name", err.Error())
@@ -2169,6 +2181,35 @@ func (a *API) importMyRuntimeVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/videos?name=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString([]byte(filename)))
 	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": "video/mp4"})
+}
+
+// sealedImportOverhead bounds what a phone's seal adds to an imported file.
+const sealedImportOverhead int64 = 512
+
+// forwardSealedRuntimeImport passes on an import the phone sealed for the
+// runtime's VM. This server can read neither its name nor its contents, so
+// the node opens and checks it.
+func (a *API) forwardSealedRuntimeImport(w http.ResponseWriter, r *http.Request, actor runtimeActor, runtimeID, kind, route string, maxBytes int64) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, kind+"_too_large", "sealed "+kind+" is too large")
+			return
+		}
+		writeAPIError(w, http.StatusBadRequest, kind+"_read_failed", "could not read sealed "+kind)
+		return
+	}
+	if len(body) == 0 || int64(len(body)) > maxBytes+sealedImportOverhead {
+		writeAPIError(w, http.StatusRequestEntityTooLarge, kind+"_too_large", "sealed "+kind+" is empty or too large")
+		return
+	}
+	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, kind)
+	if !ok {
+		return
+	}
+	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/" + route + "?sealed=1"
+	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": "application/octet-stream"})
 }
 
 func validateRuntimePhoto(filename string, body []byte) error {
@@ -3908,13 +3949,13 @@ func withJSON(next http.Handler) http.Handler {
 
 func apiRequestBodyLimit(path string) int64 {
 	if strings.HasSuffix(path, "/files") {
-		return maxRuntimeFileImportBytes
+		return maxRuntimeFileImportBytes + sealedImportOverhead
 	}
 	if strings.HasSuffix(path, "/photos") {
-		return maxRuntimePhotoImportBytes
+		return maxRuntimePhotoImportBytes + sealedImportOverhead
 	}
 	if strings.HasSuffix(path, "/videos") {
-		return maxRuntimeVideoImportBytes
+		return maxRuntimeVideoImportBytes + sealedImportOverhead
 	}
 	return maxAPIRequestBodyBytes
 }

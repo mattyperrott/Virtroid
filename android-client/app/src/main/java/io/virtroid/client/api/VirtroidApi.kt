@@ -12,6 +12,7 @@ import io.virtroid.client.security.AccountRecoveryCredential
 import io.virtroid.client.security.DeviceIdentityStore
 import io.virtroid.client.security.IdentityCrypto
 import io.virtroid.client.security.RuntimeCapabilityStore
+import io.virtroid.client.security.RuntimeImportSeal
 import io.virtroid.client.security.TlsPins
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -1006,24 +1007,15 @@ class VirtroidApi(
         fileName: String,
         contentType: String,
         body: ByteArray,
+        viewerKey: ByteArray? = null,
     ): RuntimeFileImport = withContext(Dispatchers.IO) {
         require(body.isNotEmpty() && body.size <= MAX_RUNTIME_FILE_IMPORT_BYTES) {
             "file must be between 1 byte and 32 MiB"
         }
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
-        val encodedFileName = Base64.encodeToString(
-            fileName.toByteArray(Charsets.UTF_8),
-            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-        )
         val payload = executeJson(
-            capabilityBinaryRequest(
-                baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/files?session_id=$sessionId&name=$encodedFileName",
-                method = "POST",
-                runtimeId = runtimeId,
-                body = body,
-                contentType = contentType.ifBlank { "application/octet-stream" },
-            ),
+            runtimeImportRequest(baseUrl, runtimeId, sessionId, "file", "files", fileName, body,
+                contentType.ifBlank { "application/octet-stream" }, viewerKey),
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1041,24 +1033,14 @@ class VirtroidApi(
         sessionId: String,
         fileName: String,
         jpeg: ByteArray,
+        viewerKey: ByteArray? = null,
     ): RuntimeFileImport = withContext(Dispatchers.IO) {
         require(jpeg.size in 4..MAX_RUNTIME_PHOTO_IMPORT_BYTES) {
             "photo must be a JPEG no larger than 16 MiB"
         }
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
-        val encodedFileName = Base64.encodeToString(
-            fileName.toByteArray(Charsets.UTF_8),
-            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-        )
         val payload = executeJson(
-            capabilityBinaryRequest(
-                baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/photos?session_id=$sessionId&name=$encodedFileName",
-                method = "POST",
-                runtimeId = runtimeId,
-                body = jpeg,
-                contentType = "image/jpeg",
-            ),
+            runtimeImportRequest(baseUrl, runtimeId, sessionId, "photo", "photos", fileName, jpeg, "image/jpeg", viewerKey),
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1076,30 +1058,60 @@ class VirtroidApi(
         sessionId: String,
         fileName: String,
         mp4: ByteArray,
+        viewerKey: ByteArray? = null,
     ): RuntimeFileImport = withContext(Dispatchers.IO) {
         require(mp4.size in 12..MAX_RUNTIME_VIDEO_IMPORT_BYTES) {
             "video must be an MP4 no larger than 32 MiB"
         }
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
-        val encodedFileName = Base64.encodeToString(
-            fileName.toByteArray(Charsets.UTF_8),
-            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-        )
         val payload = executeJson(
-            capabilityBinaryRequest(
-                baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/videos?session_id=$sessionId&name=$encodedFileName",
-                method = "POST",
-                runtimeId = runtimeId,
-                body = mp4,
-                contentType = "video/mp4",
-            ),
+            runtimeImportRequest(baseUrl, runtimeId, sessionId, "video", "videos", fileName, mp4, "video/mp4", viewerKey),
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
             bytes = payload.getLong("bytes"),
             sha256 = payload.getString("sha256"),
             runtimePath = payload.getString("runtime_path"),
+        )
+    }
+
+    /**
+     * An import request. With the runtime's viewer key, the name and contents
+     * are sealed for its VM, so the control plane relays only ciphertext;
+     * nodes speaking viewer protocol 2 accept nothing else.
+     */
+    private fun runtimeImportRequest(
+        baseUrl: String,
+        runtimeId: String,
+        sessionId: String,
+        kind: String,
+        route: String,
+        fileName: String,
+        content: ByteArray,
+        contentType: String,
+        viewerKey: ByteArray?,
+    ): Request {
+        if (viewerKey != null) {
+            return capabilityBinaryRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/$route?session_id=$sessionId&sealed=1",
+                method = "POST",
+                runtimeId = runtimeId,
+                body = RuntimeImportSeal.seal(viewerKey, runtimeId, kind, fileName, content),
+                contentType = "application/octet-stream",
+            )
+        }
+        val encodedFileName = Base64.encodeToString(
+            fileName.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+        )
+        return capabilityBinaryRequest(
+            baseUrl = baseUrl,
+            pathAndQuery = "/api/v1/me/runtimes/$runtimeId/$route?session_id=$sessionId&name=$encodedFileName",
+            method = "POST",
+            runtimeId = runtimeId,
+            body = content,
+            contentType = contentType,
         )
     }
 

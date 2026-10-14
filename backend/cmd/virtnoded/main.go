@@ -1070,13 +1070,13 @@ func (n *nodeAgent) requireControlPlaneCallback(w http.ResponseWriter, r *http.R
 
 func nodeCallbackBodyLimit(path string) int64 {
 	if strings.HasSuffix(path, "/files") {
-		return maxRuntimeFileImportBytes
+		return maxRuntimeFileImportBytes + sealedImportOverhead
 	}
 	if strings.HasSuffix(path, "/photos") {
-		return maxRuntimePhotoImportBytes
+		return maxRuntimePhotoImportBytes + sealedImportOverhead
 	}
 	if strings.HasSuffix(path, "/videos") {
-		return maxRuntimeVideoImportBytes
+		return maxRuntimeVideoImportBytes + sealedImportOverhead
 	}
 	return 2 << 20
 }
@@ -1161,7 +1161,7 @@ func (n *nodeAgent) handleRuntimeFileImport(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	runtimeID := strings.TrimSpace(r.PathValue("id"))
-	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	filename, body, err := n.readRuntimeImport(r.Context(), r, runtimeID, "file", maxRuntimeFileImportBytes)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -1171,8 +1171,7 @@ func (n *nodeAgent) handleRuntimeFileImport(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil || len(body) == 0 || int64(len(body)) > maxRuntimeFileImportBytes {
+	if len(body) == 0 || int64(len(body)) > maxRuntimeFileImportBytes {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "imported file must be between 1 byte and 32 MiB"})
 		return
 	}
@@ -1221,7 +1220,7 @@ func (n *nodeAgent) handleRuntimePhotoImport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	runtimeID := strings.TrimSpace(r.PathValue("id"))
-	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	filename, body, err := n.readRuntimeImport(r.Context(), r, runtimeID, "photo", maxRuntimePhotoImportBytes)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -1231,8 +1230,7 @@ func (n *nodeAgent) handleRuntimePhotoImport(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil || len(body) == 0 || int64(len(body)) > maxRuntimePhotoImportBytes {
+	if len(body) == 0 || int64(len(body)) > maxRuntimePhotoImportBytes {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "photo must be a JPEG no larger than 16 MiB"})
 		return
 	}
@@ -1282,7 +1280,7 @@ func (n *nodeAgent) handleRuntimeVideoImport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	runtimeID := strings.TrimSpace(r.PathValue("id"))
-	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
+	filename, body, err := n.readRuntimeImport(r.Context(), r, runtimeID, "video", maxRuntimeVideoImportBytes)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -1292,8 +1290,7 @@ func (n *nodeAgent) handleRuntimeVideoImport(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil || len(body) == 0 || int64(len(body)) > maxRuntimeVideoImportBytes {
+	if len(body) == 0 || int64(len(body)) > maxRuntimeVideoImportBytes {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "video must be an MP4 no larger than 32 MiB"})
 		return
 	}
@@ -1401,12 +1398,11 @@ func (n *nodeAgent) assignedRuntime(ctx context.Context, runtimeID string) (runt
 	return runtimeAssignment{}, errors.New("runtime is not assigned to this node")
 }
 
-func decodeRuntimeMediaName(encoded string) (string, error) {
-	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
-	if err != nil || len(decoded) == 0 || len(decoded) > 255 || !utf8.Valid(decoded) {
+func checkRuntimeMediaName(raw string) (string, error) {
+	if len(raw) == 0 || len(raw) > 255 || !utf8.ValidString(raw) {
 		return "", errors.New("invalid file name encoding")
 	}
-	name := strings.TrimSpace(string(decoded))
+	name := strings.TrimSpace(raw)
 	if name == "" || strings.ContainsRune(name, 0) || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
 		return "", errors.New("invalid file name")
 	}

@@ -128,13 +128,13 @@ func TestAPIRequestBodyLimitRejectsDeclaredOversizeBeforeHandler(t *testing.T) {
 }
 
 func TestAPIRequestBodyLimitAllowsOnlyBoundedMediaRoutes(t *testing.T) {
-	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/files"); got != maxRuntimeFileImportBytes {
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/files"); got != maxRuntimeFileImportBytes+sealedImportOverhead {
 		t.Fatalf("file limit = %d", got)
 	}
-	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/photos"); got != maxRuntimePhotoImportBytes {
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/photos"); got != maxRuntimePhotoImportBytes+sealedImportOverhead {
 		t.Fatalf("photo limit = %d", got)
 	}
-	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/videos"); got != maxRuntimeVideoImportBytes {
+	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/videos"); got != maxRuntimeVideoImportBytes+sealedImportOverhead {
 		t.Fatalf("video limit = %d", got)
 	}
 	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/session"); got != maxAPIRequestBodyBytes {
