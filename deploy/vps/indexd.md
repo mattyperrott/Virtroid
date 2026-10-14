@@ -63,18 +63,21 @@ including snapshots saved since the copy.
 
 ### Restoring on a new server
 
-1. Find the newest copy. List the STORE messages of the address that stored
-   it (the owner's address, or the provisioner's when it pays itself), newest
-   first:
+1. Find the newest copy. The provisioner's address
+   (`0x4631b0613fF21cd5715f1b1572b4CD5bc0916c4C`) sends every copy, also when
+   it pays on the owner's behalf, so list its STORE messages, newest first:
 
    ```sh
-   curl -s "https://api2.aleph.im/api/v0/messages.json?addresses=<address>&msgTypes=STORE&pagination=20" |
+   curl -s "https://api2.aleph.im/api/v0/messages.json?addresses=0x4631b0613fF21cd5715f1b1572b4CD5bc0916c4C&msgTypes=STORE&pagination=50" |
      jq -r '.messages[] | "\(.time) \(.content.item_hash)"'
    ```
 
-   Download one with
-   `curl -o copy.vbak https://api2.aleph.im/api/v0/storage/raw/<content item hash>`.
-   A Virtroid copy starts with the line `VRTBAK1`.
+   The list also holds the runtime images. Download a candidate with
+   `curl -o copy.vbak https://api2.aleph.im/api/v0/storage/raw/<content item hash>`;
+   a database copy starts with the line `VRTBAK1`, and its SHA-256 is that
+   hash. If the old server's disk survives,
+   `/var/lib/virtroid-db-backup/aleph-copies` lists each copy's time and
+   message.
 2. Put the recovery phrase in a file only you can read (not on a command
    line), open the copy, and unpack it:
 

@@ -110,6 +110,7 @@ install -d -o 10071 -g 10071 -m 0700 "${upload_dir}"
 install -o 10071 -g 10071 -m 0400 "${copy}" "${upload_dir}/"
 aleph() {
   docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges --user 10071:10071 \
+    --group-add "$(stat -c %g "${aleph_password_file}")" \
     -e HOME=/var/lib/virtroid-provisioner -e ALEPH_CONFIG_HOME=/var/lib/virtroid-provisioner/aleph \
     -v virtroid_provisioner-state:/var/lib/virtroid-provisioner \
     -v "${aleph_password_file}:/run/secrets/aleph-password:ro" \
