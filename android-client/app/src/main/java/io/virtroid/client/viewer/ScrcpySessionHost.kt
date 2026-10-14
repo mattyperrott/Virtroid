@@ -107,6 +107,9 @@ class ScrcpySessionHost(
     }
 
     /** Where the stream is connected, once it is. */
+    /** How far the picture is behind, in ms, or null before any frame. */
+    internal fun streamBehindMs(): Long? = scrcpy?.streamBehindMs()?.takeIf { it >= 0 }
+
     internal fun streamEndpoint(): StreamEndpoint? {
         val service = scrcpy ?: return null
         val host = service.activeEndpointHost()

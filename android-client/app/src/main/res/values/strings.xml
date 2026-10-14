@@ -379,6 +379,7 @@
     <string name="session_connecting_endpoint">Connecting to %1$s…</string>
     <string name="session_connected">Connected</string>
     <string name="session_latency">· %1$d ms</string>
+    <string name="session_latency_behind">· %1$d ms · %2$d ms behind</string>
     <string name="session_connected_details">Connected: %1$dx%2$d</string>
     <string name="session_failed">Session disconnected</string>
     <string name="session_failed_message">Disconnected: %1$s</string>

@@ -764,7 +764,7 @@ class SessionActivity : AppCompatActivity() {
                 while (true) {
                     val endpoint = sessionHost?.streamEndpoint()
                     val roundTripMs = endpoint?.let { withContext(Dispatchers.IO) { RelayLatencyProbe.measure(it) } }
-                    showLatency(roundTripMs)
+                    showLatency(roundTripMs, sessionHost?.streamBehindMs())
                     delay(LATENCY_PROBE_INTERVAL_MS)
                 }
             }
@@ -777,17 +777,27 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionLatencyText.isVisible = false
     }
 
-    private fun showLatency(roundTripMs: Long?) {
+    /**
+     * Shows the round trip, and how far the picture is behind when video is
+     * queueing on the way.
+     */
+    private fun showLatency(roundTripMs: Long?, behindMs: Long?) {
         if (roundTripMs == null) {
             binding.sessionLatencyText.isVisible = false
             return
         }
-        binding.sessionLatencyText.text = getString(R.string.session_latency, roundTripMs)
+        val queued = behindMs?.takeIf { it >= STREAM_BEHIND_SHOWN_MS }
+        binding.sessionLatencyText.text = if (queued != null) {
+            getString(R.string.session_latency_behind, roundTripMs, queued)
+        } else {
+            getString(R.string.session_latency, roundTripMs)
+        }
+        val delay = roundTripMs + (queued ?: 0L)
         binding.sessionLatencyText.setTextColor(
             getColor(
                 when {
-                    roundTripMs <= LATENCY_FINE_MS -> R.color.v_text_muted
-                    roundTripMs <= LATENCY_HIGH_MS -> R.color.v_amber
+                    delay <= LATENCY_FINE_MS -> R.color.v_text_muted
+                    delay <= LATENCY_HIGH_MS -> R.color.v_amber
                     else -> R.color.v_danger
                 },
             ),
@@ -925,6 +935,8 @@ class SessionActivity : AppCompatActivity() {
         // Round trips up to these read as fine (grey), then high (amber),
         // then very high (red) for an interactive stream.
         private const val LATENCY_FINE_MS = 120L
+        // Below this, frames are only jittering, not queueing.
+        private const val STREAM_BEHIND_SHOWN_MS = 150L
         private const val LATENCY_HIGH_MS = 250L
 
         fun createIntent(

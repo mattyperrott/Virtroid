@@ -87,6 +87,11 @@ public class Scrcpy extends Service {
     private final FirstFrameGate firstVideoFrameGate = new FirstFrameGate();
     private final IBinder mBinder = new MyServiceBinder();
     private boolean first_time = true;
+    // How far the picture is behind the quickest frame seen this session:
+    // the time video spends queued on the way, or -1 before any frame.
+    private volatile long streamBehindMs = -1;
+    // A key frame further behind than this is skipped for a fresher one.
+    private static final long LATE_KEY_FRAME_MS = 750;
 
     private final AtomicBoolean LetServceRunning = new AtomicBoolean(true);
     private ServiceCallbacks serviceCallbacks;
@@ -451,6 +456,11 @@ public class Scrcpy extends Service {
         return activeEndpointHost;
     }
 
+    /** How far the picture is behind, in ms, or -1 before any frame. */
+    public long streamBehindMs() {
+        return streamBehindMs;
+    }
+
     public int activeEndpointPort() {
         return activeEndpointPort;
     }
@@ -732,7 +742,11 @@ public class Scrcpy extends Service {
         byte[] packetSize = new byte[4];
 
         // 由于网络传输存在延迟，丢弃数据包计数
-        long lastVideoOffset = 0;
+        // The lowest arrival-minus-capture time seen: frames that met no queue.
+        // It creeps up 10 ms a minute so the two devices' clocks may drift.
+        long lastVideoOffset = Long.MAX_VALUE;
+        long offsetRaisedAt = System.currentTimeMillis();
+        streamBehindMs = -1;
         long lastAudioOffset = 0;
 
         boolean waitKeyFrame = false;
@@ -795,14 +809,22 @@ public class Scrcpy extends Service {
                         } else {
                             // Log.e("Scrcpy", "videoPacket presentationTimeStamp ... " + videoPacket.presentationTimeStamp);
                             // 帧在 100 ms 以内
-                            if (lastVideoOffset == 0) {
-                                lastVideoOffset = System.currentTimeMillis() - (videoPacket.presentationTimeStamp / 1000);
+                            long now = System.currentTimeMillis();
+                            long offset = now - (videoPacket.presentationTimeStamp / 1000);
+                            if (offset < lastVideoOffset) {
+                                lastVideoOffset = offset;
+                                offsetRaisedAt = now;
+                            } else if (now - offsetRaisedAt >= 60_000) {
+                                lastVideoOffset += 10;
+                                offsetRaisedAt = now;
                             }
+                            long behind = offset - lastVideoOffset;
+                            streamBehindMs = streamBehindMs < 0 ? behind : (streamBehindMs * 7 + behind) / 8;
                             boolean attempted = false;
                             boolean decoded = false;
                             boolean keyFrameLate = false;
                             if (videoPacket.flag == VideoPacket.Flag.KEY_FRAME) {
-                                if (System.currentTimeMillis() - (lastVideoOffset + (videoPacket.presentationTimeStamp / 1000)) < delay) {
+                                if (behind < Math.max(delay, LATE_KEY_FRAME_MS)) {
                                     attempted = true;
                                     decoded = videoDecoder.decodeSample(packet, videoPacket.headLength(), packet.length - videoPacket.headLength(),
                                             0, videoPacket.flag.getFlag());
