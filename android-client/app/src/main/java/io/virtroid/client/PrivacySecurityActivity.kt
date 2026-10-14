@@ -24,6 +24,7 @@ import io.virtroid.client.security.promptPinCode
 import io.virtroid.client.security.showConfirmation
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import io.virtroid.client.ui.Notice
@@ -36,6 +37,8 @@ class PrivacySecurityActivity : AppCompatActivity() {
     private lateinit var appLogs: AppLogStore
     private var bindingSettings = false
     private val unlockFormatter = DateTimeFormatter.ofPattern("hh:mm a (z)")
+        .withZone(ZoneId.systemDefault())
+    private val olderTimeFormatter = DateTimeFormatter.ofPattern("d MMM, hh:mm a")
         .withZone(ZoneId.systemDefault())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -172,13 +175,16 @@ class PrivacySecurityActivity : AppCompatActivity() {
         } else {
             getString(R.string.privacy_telemetry_unlinked)
         }
-        val lastUnlock = appLockStore.lastUnlockAtMs()
-        binding.lastUnlockValue.text = if (lastUnlock > 0L) {
-            unlockFormatter.format(Instant.ofEpochMilli(lastUnlock))
-        } else {
-            getString(R.string.privacy_telemetry_never)
-        }
-        binding.lastSessionEndValue.text = appSettings.lastSessionEndReason
+        binding.lastUnlockValue.text = telemetryTime(appLockStore.lastUnlockAtMs())
+        binding.lastSessionEndValue.text = telemetryTime(appSettings.lastSessionEndAtMs())
+    }
+
+    /** A recorded time: today's as a time of day, older ones with their date. */
+    private fun telemetryTime(epochMs: Long): String {
+        if (epochMs <= 0L) return getString(R.string.privacy_telemetry_never)
+        val time = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault())
+        val formatter = if (time.toLocalDate() == LocalDate.now()) unlockFormatter else olderTimeFormatter
+        return formatter.format(time)
     }
 
     private suspend fun setAppLockEnabled(enabled: Boolean) {

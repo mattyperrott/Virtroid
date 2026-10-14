@@ -24,6 +24,7 @@ import io.virtroid.client.api.RuntimeUpdate
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.ActiveSessionStore
 import io.virtroid.client.data.AppLogStore
+import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.RuntimeCardBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
@@ -61,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var snapshotRollbackGuard: SnapshotRollbackGuard
     private val confidentialRuntimeGuard by lazy { ConfidentialRuntimeGuard(this) }
     private lateinit var appLogs: AppLogStore
+    private lateinit var appSettings: AppSettingsStore
     private val timestampFormatter = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.US)
     private var runtimePollJob: Job? = null
     private var refreshJob: Job? = null
@@ -90,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         identityKeyManager = IdentityKeyManager(this, api)
         snapshotRollbackGuard = SnapshotRollbackGuard(this)
         appLogs = AppLogStore.get(this)
+        appSettings = AppSettingsStore(this)
         NotificationRelayManager(this).ensureRegistered()
         if (sessionStore.baseUrl.isBlank()) {
             sessionStore.baseUrl = DEFAULT_CONTROL_PLANE_URL
@@ -237,11 +240,13 @@ class MainActivity : AppCompatActivity() {
             if (it.canResumeRuntime(activeSession.runtimeId)) {
                 activeSessionStore.touch(activeSession.sessionId)
             } else {
+                appSettings.recordSessionEnd(AppSettingsStore.SESSION_END_SERVER)
                 activeSessionStore.clear()
                 appLogs.warn("Cleared active session because backend state is ${it.effectiveStatus}", "session")
             }
         }.onFailure { error ->
             if (error.isGoneSessionResponse()) {
+                appSettings.recordSessionEnd(AppSettingsStore.SESSION_END_SERVER)
                 activeSessionStore.clear()
                 appLogs.warn("Cleared stale active session after backend reported it gone: ${error.message}", "session")
             } else {

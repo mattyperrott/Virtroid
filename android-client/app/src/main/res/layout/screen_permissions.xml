@@ -13,11 +13,13 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="76dp"
+            android:layout_height="112dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp">
+            android:paddingStart="24dp"
+            android:paddingTop="48dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="16dp">
 
             <ImageButton
                 android:id="@+id/permissionsBackButton"

@@ -536,9 +536,9 @@
     <string name="privacy_disable_app_lock_body">This exports protected local state back to legacy app storage and removes the encrypted local vault. Runtime blob encryption is not changed.</string>
     <string name="privacy_disable_app_lock_confirm">Disable</string>
     <string name="privacy_app_lock_setup_failed">Could not enable app lock on this device.</string>
-    <string name="privacy_telemetry_secured">Encrypted</string>
-    <string name="privacy_telemetry_disabled">Disabled</string>
-    <string name="privacy_telemetry_setup_needed">Setup Needed</string>
+    <string name="privacy_telemetry_secured">ENCRYPTED</string>
+    <string name="privacy_telemetry_disabled">DISABLED</string>
+    <string name="privacy_telemetry_setup_needed">SETUP NEEDED</string>
     <string name="privacy_telemetry_active">ACTIVE</string>
     <string name="privacy_telemetry_off">OFF</string>
     <string name="privacy_telemetry_verified">LINKED</string>
@@ -547,8 +547,8 @@
     <string name="accessibility_setting_value">%1$s, %2$s</string>
 
     <string name="new_runtime_storage_behavior">STORAGE BEHAVIOR</string>
-    <string name="new_runtime_persistent_title">Persistent runtime data</string>
-    <string name="new_runtime_persistent_body">Runtime /data is retained between sessions in encrypted snapshots. Disconnecting does not erase apps, accounts, or local data; use Wipe Runtime when you need to remove stored state.</string>
+    <string name="new_runtime_persistent_title">Encrypted storage on Sia</string>
+    <string name="new_runtime_persistent_body">When a session stops, the runtime\'s apps, accounts and files are encrypted with your account key and saved to Sia, split across 30 storage hosts so any 10 can restore them. They\'re kept when your private server is replaced, billed per GB each month, and removed only by Wipe Runtime or deleting the runtime.</string>
     <string name="account_storage_operator_managed">Operator managed</string>
     <string name="session_microphone_permission_denied">Phone microphone access was denied. Runtime microphone passthrough is disabled for this session.</string>
     <string name="session_microphone_runtime_unavailable">This runtime image could not activate microphone passthrough.</string>

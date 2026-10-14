@@ -571,6 +571,7 @@ class SessionActivity : AppCompatActivity() {
                     markHeartbeatHealthy()
                 } else {
                     appLogs.warn("Session stream disconnected and backend state is ${it.effectiveStatus}", "session")
+                    appSettings.recordSessionEnd(AppSettingsStore.SESSION_END_SERVER)
                     activeSessionStore.clear()
                     relayToken = ""
                     markSessionUnavailable()
@@ -586,6 +587,7 @@ class SessionActivity : AppCompatActivity() {
                     toast(error.virtroidDisplayMessage(this@SessionActivity))
                 } else if (error.isGoneSessionResponse()) {
                     appLogs.warn("Session stream disconnected and backend session is gone: ${error.message}", "session")
+                    appSettings.recordSessionEnd(AppSettingsStore.SESSION_END_SERVER)
                     activeSessionStore.clear()
                     relayToken = ""
                     markSessionUnavailable()
@@ -626,7 +628,7 @@ class SessionActivity : AppCompatActivity() {
                 queueRuntimeStop(blobAccessKey)
                 identityPasswordStore.saveConfigured(accountId, deviceId)
             }.onSuccess {
-                appSettings.lastSessionEndReason = reason
+                appSettings.recordSessionEnd(reason)
                 disconnectViewer()
                 activeSessionStore.clear()
                 if (appSettings.autoClearClipboard) {

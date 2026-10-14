@@ -48,6 +48,16 @@ class AppSettingsStore(private val context: Context) {
         get() = protectedString(KEY_LAST_SESSION_END_REASON, SESSION_END_NEVER).orEmpty()
         set(value) = putProtectedString(KEY_LAST_SESSION_END_REASON, value.ifBlank { SESSION_END_NEVER })
 
+    /** Records that a runtime session ended now, and why. */
+    fun recordSessionEnd(reason: String) {
+        lastSessionEndReason = "${System.currentTimeMillis()}|$reason"
+    }
+
+    /** When the last session ended, or 0 if none has been recorded with a time. */
+    fun lastSessionEndAtMs(): Long {
+        return lastSessionEndReason.substringBefore('|', "").toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+    }
+
     fun autoLockLabel(): String = when (autoLockTimeoutMs) {
         AUTO_LOCK_IMMEDIATE_MS -> "Immediately"
         30_000L -> "30 seconds"
@@ -198,6 +208,7 @@ class AppSettingsStore(private val context: Context) {
         const val SESSION_END_USER = "User Shutdown"
         const val SESSION_END_BACKGROUND = "Backgrounded"
         const val SESSION_END_INACTIVITY = "Inactivity Timeout"
+        const val SESSION_END_SERVER = "Ended by Server"
 
         val AUTO_LOCK_OPTIONS = listOf(
             "Immediately" to AUTO_LOCK_IMMEDIATE_MS,
