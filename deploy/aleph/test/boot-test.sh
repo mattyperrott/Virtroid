@@ -239,6 +239,20 @@ if [ -z "\$secure" ]; then
   \$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "tail -20 /data/local/tmp/virtroid-viewer.log" 2>&1 | \$B sed 's/^/boot-test:   /'
   fail "the viewer's capture display is not secure, so protected windows would be black"
 fi
+# A congested viewer: read the stream at about 40 KB/s for 30 seconds. The
+# encoder must lower its bitrate rather than let video queue on the way.
+echo "boot-test: reading the stream slowly, as a congested viewer would"
+\$B timeout 60 C /bin/docker exec -e VIRTROID_VIEWER_AUTH_KEY=WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo= smoke /system/bin/sh -c '(umask 077; echo "\$VIRTROID_VIEWER_AUTH_KEY" > /data/local/tmp/virtroid-viewer-auth.key) && chown 1000:1000 /data/local/tmp/virtroid-viewer-auth.key'
+\$B timeout 60 C /bin/docker exec smoke /system/bin/sh -c "setprop ctl.stop virtroid_viewer; sleep 3; setprop ctl.start virtroid_viewer"
+for i in \$(\$B seq 1 30); do
+  \$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "[ -S /data/local/tmp/virtroid-viewer/scrcpy.sock ]" 2>/dev/null && break
+  \$B sleep 1
+done
+\$B timeout 50 C /bin/docker exec smoke /system/bin/sh -c "(sleep 40) | toybox timeout 30 toybox nc -U /data/local/tmp/virtroid-viewer/scrcpy.sock | (i=0; while [ \\\$i -lt 300 ]; do toybox dd bs=4096 count=1 of=/dev/null 2>/dev/null; sleep 0.1; i=\\\$((i+1)); done)" >/dev/null 2>&1
+adapted=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "grep -E 'Video bitrate|Cannot change the video bitrate' /data/local/tmp/virtroid-viewer.log | tail -4" 2>/dev/null | \$B tr -d '\r')
+echo "boot-test: bitrate under a slow viewer:"
+echo "\${adapted:-  unchanged}" | \$B sed 's/^/boot-test:   /'
+echo "\$adapted" | \$B grep -q "Video bitrate" || fail "the encoder did not lower its bitrate for a slow viewer"
 echo "boot-test: cpu.max \$(C /bin/bash -c 'cat /sys/fs/cgroup/docker/*/cpu.max' 2>&1 | \$B head -1)"
 echo "boot-test: lmkd \$(C /bin/adb -s 127.0.0.1:15555 shell getprop init.svc.lmkd | \$B tr -d '\r'), docker exec: \$(C /bin/docker exec smoke /system/bin/getprop sys.boot_completed)"
 echo "boot-test: --- virtnoded log ---"

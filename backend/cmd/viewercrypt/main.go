@@ -39,7 +39,23 @@ const (
 	handshakeTimeout     = 10 * time.Second
 	upstreamDialTimeout  = 10 * time.Second
 	maxSessionDuration   = time.Hour
+	// socketBuffer bounds what each socket holds, so video the network
+	// cannot carry waits in the encoder, which then skips frames, instead of
+	// queueing here behind newer frames.
+	socketBuffer = 64 << 10
 )
+
+type bufferSizer interface {
+	SetReadBuffer(bytes int) error
+	SetWriteBuffer(bytes int) error
+}
+
+func limitBuffers(conn net.Conn) {
+	if sizer, ok := conn.(bufferSizer); ok {
+		_ = sizer.SetReadBuffer(socketBuffer)
+		_ = sizer.SetWriteBuffer(socketBuffer)
+	}
+}
 
 func main() {
 	listenAddr := flag.String("listen", "127.0.0.1:7017", "encrypted listener address")
@@ -151,6 +167,7 @@ func readAuthKeyFile(path string) ([]byte, error) {
 
 func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.PrivateKey, authKey []byte) {
 	defer rawClient.Close()
+	limitBuffers(rawClient)
 
 	if err := rawClient.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
 		log.Printf("set handshake deadline: %v", err)
@@ -180,6 +197,7 @@ func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.
 		return
 	}
 	defer upstream.Close()
+	limitBuffers(upstream)
 	if err := upstream.SetDeadline(sessionDeadline); err != nil {
 		log.Printf("set upstream session deadline: %v", err)
 		return

@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
@@ -1542,7 +1543,7 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstream, err := n.openViewerTunnel(ctx, containerNameForRuntime(target.RuntimeID))
+	upstream, err := n.openViewerUpstream(ctx, target.RuntimeID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("open viewer tunnel: %v", err), http.StatusBadGateway)
 		return
@@ -1576,6 +1577,11 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if secure, ok := clientConn.(*tls.Conn); ok {
+		limitUnsentData(secure.NetConn())
+	} else {
+		limitUnsentData(clientConn)
+	}
 	deadline := time.Now().Add(maxRelaySessionDuration)
 	_ = clientConn.SetDeadline(deadline)
 	_ = upstream.SetDeadline(deadline)
@@ -4652,6 +4658,19 @@ func (c *dockerAttachConn) Read(p []byte) (int, error) {
 		}
 	}
 	return c.buf.Read(p)
+}
+
+// openViewerUpstream connects to a runtime's encrypted viewer: straight to
+// its socket when the node can, else through docker exec.
+func (n *nodeAgent) openViewerUpstream(ctx context.Context, runtimeID string) (net.Conn, error) {
+	conn, err := dialViewerSocket(filepath.Join(n.cfg.RuntimeRoot, runtimeID, "data"))
+	if err == nil {
+		return conn, nil
+	}
+	if !errors.Is(err, errors.ErrUnsupported) {
+		log.Printf("viewer socket for runtime %s: %v; using docker exec", runtimeID, err)
+	}
+	return n.openViewerTunnel(ctx, containerNameForRuntime(runtimeID))
 }
 
 func (n *nodeAgent) openViewerTunnel(ctx context.Context, containerName string) (net.Conn, error) {

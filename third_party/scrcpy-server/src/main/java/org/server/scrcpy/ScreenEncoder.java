@@ -8,6 +8,7 @@ import android.media.MediaFormat;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
 
@@ -37,6 +38,12 @@ public class ScreenEncoder implements Device.RotationListener {
     private final AtomicBoolean requestKeyFrame = new AtomicBoolean(false);
 
     private int bitRate;
+    // The bitrate in use, adapted to what the viewer's connection carries.
+    private int currentBitRate;
+    private long lastBitRateChangeMs;
+    private long calmSinceMs;
+    private int congestedWrites;
+    private static final int MIN_BIT_RATE = 500_000;
     private int frameRate;
     private int iFrameInterval;
 
@@ -61,6 +68,9 @@ public class ScreenEncoder implements Device.RotationListener {
         format.setInteger(MediaFormat.KEY_FRAME_RATE, frameRate);
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
         format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, iFrameInterval);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            format.setInteger(MediaFormat.KEY_PRIORITY, 0); // realtime
+        }
 
         // display the very first frame, and recover from bad quality when no new frames
         format.setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, MICROSECONDS_IN_ONE_SECOND * REPEAT_FRAME_DELAY / frameRate); // µs
@@ -166,6 +176,11 @@ public class ScreenEncoder implements Device.RotationListener {
 //                Rect deviceRect = device.getScreenInfo().getDeviceSize().toRect();
                 Rect videoRect = device.getScreenInfo().getVideoSize().toRect();
                 setSize(format, videoRect.width(), videoRect.height());
+                if (currentBitRate == 0) {
+                    currentBitRate = bitRate;
+                }
+                format.setInteger(MediaFormat.KEY_BIT_RATE, currentBitRate);
+                calmSinceMs = SystemClock.uptimeMillis();
                 configure(codec, format);
                 Surface surface = null;
 
@@ -226,6 +241,44 @@ public class ScreenEncoder implements Device.RotationListener {
         return builder.toString();
     }
 
+    /**
+     * Sends less when the viewer's connection falls behind. A write that
+     * blocks for more than twice the time its video lasts at the current
+     * bitrate, three times running, means the path is full: the bitrate
+     * drops by 30%. After five seconds of writes that keep up it rises by
+     * 15% at a time, back towards the bitrate the viewer asked for.
+     */
+    private void adaptBitRate(MediaCodec codec, int bytes, long blockedMs) {
+        long now = SystemClock.uptimeMillis();
+        long lastsMs = (long) bytes * 8_000L / Math.max(currentBitRate, 1);
+        if (blockedMs > Math.max(50L, 2 * lastsMs)) {
+            calmSinceMs = now;
+            congestedWrites++;
+            if (congestedWrites >= 3 && now - lastBitRateChangeMs > 500 && currentBitRate > MIN_BIT_RATE) {
+                setBitRate(codec, Math.max(MIN_BIT_RATE, currentBitRate * 7 / 10), now);
+            }
+            return;
+        }
+        congestedWrites = 0;
+        if (currentBitRate < bitRate && now - calmSinceMs > 5_000 && now - lastBitRateChangeMs > 2_000) {
+            setBitRate(codec, Math.min(bitRate, currentBitRate * 115 / 100), now);
+        }
+    }
+
+    private void setBitRate(MediaCodec codec, int value, long now) {
+        Bundle parameters = new Bundle();
+        parameters.putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, value);
+        try {
+            codec.setParameters(parameters);
+            Ln.i("Video bitrate " + currentBitRate + " -> " + value);
+            currentBitRate = value;
+        } catch (IllegalStateException e) {
+            Ln.w("Cannot change the video bitrate: " + e.getMessage());
+        }
+        lastBitRateChangeMs = now;
+        congestedWrites = 0;
+    }
+
     @SuppressLint("NewApi")
     private boolean encode(MediaCodec codec, OutputStream outputStream) throws IOException {
         @SuppressWarnings("checkstyle:MagicNumber")
@@ -268,7 +321,10 @@ public class ScreenEncoder implements Device.RotationListener {
                             flag = VideoPacket.Flag.FRAME;
                         }
                         VideoPacket packet = new VideoPacket(type, flag, bufferInfo.presentationTimeUs, b);
-                        outputStream.write(packet.toByteArray());
+                        byte[] bytes = packet.toByteArray();
+                        long writeStart = SystemClock.uptimeMillis();
+                        outputStream.write(bytes);
+                        adaptBitRate(codec, bytes.length, SystemClock.uptimeMillis() - writeStart);
                     }
 
                 }

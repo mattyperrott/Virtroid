@@ -54,6 +54,9 @@ public final class DroidConnection implements Closeable {
         LocalServerSocket server = new LocalServerSocket(bound.getFileDescriptor());
         try {
             LocalSocket client = server.accept();
+            // Small, so video the network cannot carry waits in the encoder,
+            // which then skips frames, instead of queueing here.
+            client.setSendBufferSize(64 * 1024);
             return new DroidConnection(client, () -> {
                 try {
                     client.shutdownInput();
