@@ -2,19 +2,19 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Virtroid Target Architecture",
-    "output": ".archify/architecture-virtroid-target-architecture-20261011-184238/virtroid-target-architecture.html",
+    "title": "Virtroid Architecture",
+    "output": ".archify/virtroid-target.html",
     "locale": "en",
     "quality_profile": "showcase"
   },
   "components": [
     {
-      "id": "tron",
+      "id": "fdroid",
       "type": "external",
-      "label": "Tron network",
-      "sublabel": "USDT TRC20 deposits",
+      "label": "F-Droid",
+      "sublabel": "signed app index",
       "pos": [
-        960,
+        360,
         40
       ],
       "size": [
@@ -25,8 +25,8 @@
     {
       "id": "indexd",
       "type": "database",
-      "label": "indexd",
-      "sublabel": "Sia indexer \u00b7 pays in SC",
+      "label": "Sia indexer",
+      "sublabel": "per-account keys · pays SC",
       "pos": [
         360,
         200
@@ -40,9 +40,9 @@
       "id": "postgres",
       "type": "database",
       "label": "PostgreSQL",
-      "sublabel": "accounts \u00b7 credit ledger",
+      "sublabel": "accounts · ledger · lifecycle",
       "pos": [
-        660,
+        640,
         200
       ],
       "size": [
@@ -54,9 +54,9 @@
       "id": "phone",
       "type": "frontend",
       "label": "Android client",
-      "sublabel": "Keystore key \u00b7 verifier",
+      "sublabel": "Keystore keys · no user data",
       "pos": [
-        24,
+        36,
         360
       ],
       "size": [
@@ -67,8 +67,8 @@
     {
       "id": "edge",
       "type": "security",
-      "label": "User Auth Edge",
-      "sublabel": "only public entry",
+      "label": "Edge",
+      "sublabel": "HAProxy · only public entry",
       "pos": [
         360,
         360
@@ -82,9 +82,9 @@
       "id": "virtroidd",
       "type": "backend",
       "label": "virtroidd",
-      "sublabel": "credits \u00b7 provisioner \u00b7 keys",
+      "sublabel": "accounts · billing · sessions",
       "pos": [
-        660,
+        640,
         360
       ],
       "size": [
@@ -96,9 +96,9 @@
       "id": "payments",
       "type": "backend",
       "label": "Payments",
-      "sublabel": "deposit watcher",
+      "sublabel": "deposit seed · sweeps · swaps",
       "pos": [
-        960,
+        920,
         360
       ],
       "size": [
@@ -107,13 +107,41 @@
       ]
     },
     {
-      "id": "sensors",
-      "type": "security",
-      "label": "Host sensors",
-      "sublabel": "Falco \u00b7 Suricata \u00b7 auditd",
+      "id": "tron",
+      "type": "external",
+      "label": "TRON",
+      "sublabel": "USDT (TRC20) deposits",
       "pos": [
-        960,
+        920,
+        40
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "provisioner",
+      "type": "backend",
+      "label": "Provisioner",
+      "sublabel": "attests VMs · releases keys",
+      "pos": [
+        640,
         520
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "swaps",
+      "type": "external",
+      "label": "Swap services",
+      "sublabel": "SimpleSwap · ChangeNOW",
+      "pos": [
+        920,
+        700
       ],
       "size": [
         170,
@@ -123,8 +151,8 @@
     {
       "id": "cvm",
       "type": "backend",
-      "label": "User's runtime VM",
-      "sublabel": "SEV-SNP \u00b7 fresh ReDroid",
+      "label": "Your runtime VM",
+      "sublabel": "SEV-SNP · measured · Android",
       "pos": [
         360,
         700
@@ -137,10 +165,10 @@
     {
       "id": "alephapi",
       "type": "cloud",
-      "label": "Aleph API",
-      "sublabel": "SNP VMs \u00b7 per-hour credits",
+      "label": "Aleph Cloud",
+      "sublabel": "SEV-SNP hosts · credits",
       "pos": [
-        660,
+        640,
         700
       ],
       "size": [
@@ -151,24 +179,10 @@
     {
       "id": "sia",
       "type": "external",
-      "label": "Sia network",
-      "sublabel": "encrypted shards",
+      "label": "Sia hosts",
+      "sublabel": "30 shards · any 10 rebuild",
       "pos": [
         360,
-        860
-      ],
-      "size": [
-        170,
-        64
-      ]
-    },
-    {
-      "id": "logs",
-      "type": "external",
-      "label": "Log bucket",
-      "sublabel": "Object Lock \u00b7 off-host",
-      "pos": [
-        960,
         860
       ],
       "size": [
@@ -180,24 +194,22 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "User-owned phone",
+      "label": "Your phone",
       "wraps": [
         "phone"
-      ],
-      "pad": 16
+      ]
     },
     {
       "kind": "region",
-      "label": "Your VPS \u00b7 isolated services",
+      "label": "Control plane · isolated services",
       "wraps": [
         "indexd",
         "postgres",
         "edge",
         "virtroidd",
         "payments",
-        "sensors"
-      ],
-      "pad": 36
+        "provisioner"
+      ]
     },
     {
       "kind": "region",
@@ -205,49 +217,44 @@
       "wraps": [
         "cvm",
         "alephapi"
-      ],
-      "pad": 36
+      ]
     },
     {
       "kind": "security-group",
       "label": "Public edge",
       "wraps": [
         "edge"
-      ],
-      "pad": 12
+      ]
     },
     {
       "kind": "security-group",
       "label": "Control",
       "wraps": [
+        "postgres",
         "virtroidd",
-        "postgres"
-      ],
-      "pad": 12
+        "provisioner"
+      ]
     },
     {
       "kind": "security-group",
       "label": "Payments",
       "wraps": [
         "payments"
-      ],
-      "pad": 12
+      ]
     },
     {
       "kind": "security-group",
       "label": "Storage",
       "wraps": [
         "indexd"
-      ],
-      "pad": 12
+      ]
     },
     {
       "kind": "security-group",
-      "label": "SNP VM",
+      "label": "SEV-SNP VM · one per account",
       "wraps": [
         "cvm"
-      ],
-      "pad": 12
+      ]
     }
   ],
   "connections": [
@@ -255,70 +262,84 @@
       "id": "step1-start",
       "from": "phone",
       "to": "edge",
-      "label": "1 \u00b7 start",
+      "label": "1 · signed start",
       "variant": "emphasis"
     },
     {
       "id": "step2-verified",
       "from": "edge",
       "to": "virtroidd",
-      "label": "2 \u00b7 verified",
+      "label": "2 · verified",
       "variant": "emphasis"
     },
     {
-      "id": "step3-instance",
+      "id": "step3-vm",
       "from": "virtroidd",
-      "to": "alephapi",
-      "label": "3 \u00b7 VM + disk key",
+      "to": "provisioner",
+      "label": "3 · VM for account",
       "variant": "emphasis"
     },
     {
-      "id": "step4-boot",
+      "id": "step4-create",
+      "from": "provisioner",
+      "to": "alephapi",
+      "label": "4 · create · unlock",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step5-boot",
       "from": "alephapi",
       "to": "cvm",
-      "label": "4 \u00b7 measured boot",
+      "label": "5 · boot",
       "variant": "emphasis"
     },
     {
-      "id": "step5-attest",
+      "id": "step6-stream",
       "from": "phone",
       "to": "cvm",
-      "label": "5 \u00b7 attest, then QUIC",
+      "label": "6 · attest, then stream",
       "variant": "emphasis",
       "fromSide": "bottom",
       "toSide": "left",
       "via": [
         [
-          109,
+          121,
           732
         ]
       ]
     },
     {
-      "id": "step6-restore",
+      "id": "step7-shards",
       "from": "cvm",
       "to": "sia",
-      "label": "6 \u00b7 restore / save",
+      "label": "7 · encrypted shards",
       "variant": "emphasis"
     },
     {
-      "id": "agent-to-edge",
+      "id": "vm-to-edge",
       "from": "cvm",
       "to": "edge",
-      "label": "agent \u00b7 SDK API",
+      "label": "objects · notifications",
       "variant": "security"
     },
     {
       "id": "edge-to-indexd",
       "from": "edge",
       "to": "indexd",
-      "label": "SDK API"
+      "label": "app API"
     },
     {
-      "id": "virtroidd-to-postgres",
+      "id": "virtroidd-sql",
       "from": "virtroidd",
       "to": "postgres",
       "label": "SQL"
+    },
+    {
+      "id": "fdroid-catalogue",
+      "from": "fdroid",
+      "to": "virtroidd",
+      "label": "signed index",
+      "variant": "dashed"
     },
     {
       "id": "payments-credits",
@@ -327,16 +348,22 @@
       "label": "credits"
     },
     {
-      "id": "payments-tron",
-      "from": "payments",
-      "to": "tron",
-      "label": "watches USDT"
+      "id": "tron-deposits",
+      "from": "tron",
+      "to": "payments",
+      "label": "USDT deposits"
     },
     {
-      "id": "sensors-logs",
-      "from": "sensors",
-      "to": "logs",
-      "label": "write-only",
+      "id": "payments-swaps",
+      "from": "payments",
+      "to": "swaps",
+      "label": "USDT → SC · ETH"
+    },
+    {
+      "id": "swaps-aleph",
+      "from": "swaps",
+      "to": "alephapi",
+      "label": "credits",
       "variant": "dashed"
     }
   ],
@@ -345,64 +372,64 @@
       "dot": "cyan",
       "title": "Starting a session",
       "items": [
-        "1\u20132: the phone sends a signed start; the edge forwards it and virtroidd checks credits",
-        "3: the provisioner reuses the user's VM, takes a warm spare, or creates an SNP VM, and hands over the disk key only once the AMD measurement checks out",
-        "4: the VM boots the published, measured image; each session starts a fresh ReDroid container",
-        "5: the phone verifies the SNP report, then streams straight from the VM over QUIC, or through the edge if it has no direct route",
-        "6: /data is restored from Sia before Android boots; on stop, changed chunks go back"
+        "1–2: the phone sends a request signed with its Keystore key; the edge forwards it and virtroidd checks the account and its credit",
+        "3–4: the provisioner reuses the account's VM, takes a warm spare, or creates an SEV-SNP VM, and unlocks its disk only after its attestation matches an approved image",
+        "5: the VM boots the measured, read-only image; each session starts a fresh Android container",
+        "6: the phone verifies the attestation against AMD's root and the offline-signed image list, then streams straight from the VM over QUIC, or through the edge",
+        "7: data is restored from Sia before Android boots and saved back, encrypted, when it stops"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "When you close the viewer",
+      "items": [
+        "The runtime keeps running for the period you chose, 30 minutes to a week",
+        "Notifications reach your phone: app, time and title only, end-to-end encrypted",
+        "Then Android stops, its data is encrypted and sharded to Sia, and the VM is destroyed"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Your data",
+      "items": [
+        "Nothing on the phone: only non-exportable keys and an encrypted vault",
+        "Encrypted inside the VM with your account key, which your identity password unlocks",
+        "30 shards on independent Sia hosts; any 10 rebuild it; indexd sees only opaque metadata"
       ]
     },
     {
       "dot": "orange",
       "title": "Placement",
       "items": [
-        "Each account has a region; a user's VM is never shared",
-        "Near you: your own SEV-SNP server, for example in Singapore",
-        "Europe and the US: Aleph SNP nodes, paid per hour from credits"
-      ]
-    },
-    {
-      "dot": "rose",
-      "title": "Runtime lifecycle",
-      "items": [
-        "Hot: connected. Warm: kept for 15 minutes, instant reconnect. Cold: saved to Sia, container removed",
-        "The VM is destroyed after long inactivity, on image updates, or if compromise is suspected",
-        "The provisioner's Aleph account holds a capped credit balance"
+        "Each account has a region; its VM is never shared",
+        "Near you: a dedicated SEV-SNP server, for example in Singapore",
+        "Europe and the US: Aleph Cloud's SEV-SNP hosts, paid per hour in credits"
       ]
     },
     {
       "dot": "emerald",
-      "title": "Your VPS",
+      "title": "Control plane",
       "items": [
         "Edge, control, payments and storage are isolated from each other",
-        "Only the edge is public; nodes and runtime agents also come in through it",
-        "Sensors ship logs off-host to an append-only bucket"
-      ]
-    },
-    {
-      "dot": "amber",
-      "title": "User data",
-      "items": [
-        "Durable copy on Sia only, encrypted inside the VM before upload",
-        "indexd sees only opaque metadata and pays Sia hosts in SC",
-        "Optional: an encrypted local copy on the user's VM disk for faster restores"
+        "Only the edge is public; VMs and their agents also come in through it",
+        "Falco, Suricata and auditd ship events off-host to an append-only bucket"
       ]
     },
     {
       "dot": "violet",
       "title": "Money",
       "items": [
-        "Users deposit USDT TRC20 to their own deposit address",
-        "Deposits become credits, spent per runtime minute and per GB stored",
-        "Offline, you convert some USDT to SC for indexd and top up Aleph credits"
+        "Each account deposits USDT (TRC20) to its own address",
+        "The balance pays per hour a runtime runs and per GB stored",
+        "Payments sweeps deposits and swaps them: Siacoin for the indexer, ETH that buys Aleph credits"
       ]
     },
     {
       "dot": "slate",
-      "title": "Built so far",
+      "title": "Apps",
       "items": [
-        "Live: the VPS node plus a pilot Aleph node, region placement, direct IPv6 streaming with an edge fallback",
-        "Next: provisioner, SEV-SNP with phone-side attestation, QUIC, Sia, then payments"
+        "The catalogue follows F-Droid's signed index; every APK is pinned by SHA-256",
+        "Each runtime has its own apps, installed once; F-Droid on it can install more"
       ]
     }
   ]

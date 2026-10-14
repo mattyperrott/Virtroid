@@ -1,0 +1,179 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "A Virtroid Runtime's Life",
+    "output": ".archify/virtroid-lifecycle.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "In use"
+    },
+    {
+      "id": "rest",
+      "label": "At rest on Sia"
+    },
+    {
+      "id": "terminal",
+      "label": "Ends"
+    }
+  ],
+  "states": [
+    {
+      "id": "created",
+      "type": "start",
+      "label": "Created",
+      "sublabel": "name · period · apps",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "starting",
+      "type": "active",
+      "label": "Starting",
+      "sublabel": "fresh SEV-SNP VM · restore",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "attested"
+    },
+    {
+      "id": "viewing",
+      "type": "success",
+      "label": "Viewer open",
+      "sublabel": "encrypted stream",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "closed",
+      "type": "waiting",
+      "label": "Viewer closed",
+      "sublabel": "runs for your period",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "notifications"
+    },
+    {
+      "id": "stopping",
+      "type": "active",
+      "label": "Stopping",
+      "sublabel": "encrypt · 30 shards",
+      "lane": "main",
+      "col": 4,
+      "step": "05"
+    },
+    {
+      "id": "stopped",
+      "type": "waiting",
+      "label": "Stopped",
+      "sublabel": "VM destroyed · data on Sia",
+      "lane": "rest",
+      "col": 1,
+      "step": "06"
+    },
+    {
+      "id": "deleted",
+      "type": "failure",
+      "label": "Deleted",
+      "sublabel": "runtime and its Sia data",
+      "lane": "terminal",
+      "col": 1,
+      "tag": "terminal"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "created",
+      "to": "starting",
+      "label": "start"
+    },
+    {
+      "from": "starting",
+      "to": "viewing",
+      "label": "attested"
+    },
+    {
+      "from": "viewing",
+      "to": "closed",
+      "label": "close"
+    },
+    {
+      "from": "closed",
+      "to": "viewing",
+      "label": "reopen",
+      "route": "top-channel"
+    },
+    {
+      "from": "closed",
+      "to": "stopping",
+      "label": "period ends"
+    },
+    {
+      "from": "stopping",
+      "to": "stopped",
+      "label": "saved",
+      "variant": "emphasis"
+    },
+    {
+      "from": "stopped",
+      "to": "starting",
+      "label": "start again"
+    },
+    {
+      "from": "stopped",
+      "to": "created",
+      "label": "wipe",
+      "variant": "dashed"
+    },
+    {
+      "from": "stopped",
+      "to": "deleted",
+      "label": "delete",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Your period",
+      "items": [
+        "Chosen when the runtime is created: 30 minutes to a week",
+        "Change it any time; a countdown shows when it will stop",
+        "Stop and save now ends it straight away"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Each start",
+      "items": [
+        "A fresh SEV-SNP VM, unlocked only for an approved image",
+        "The phone verifies its attestation before streaming",
+        "Data restored from Sia and decrypted inside the VM"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "At rest",
+      "items": [
+        "Encrypted inside the VM with your account key",
+        "30 shards on independent Sia hosts; any 10 rebuild it",
+        "The VM and its encrypted disk are destroyed"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Wipe and delete",
+      "items": [
+        "Wipe clears the saved data; the next start is empty",
+        "Delete removes the runtime and its data from Sia"
+      ]
+    }
+  ]
+}
