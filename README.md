@@ -461,7 +461,7 @@ As of 14 October 2026.
 | Restart from Sia on a new VM | ✅ Live | Done on a real phone: after the old VM was deleted, a new one restored the runtime and Android was up 27 seconds after the start began, with the viewer open about 1 minute 40 seconds after the VM was created |
 | Runtime lifecycle | ✅ Live | Create, start, stop, restore, a fresh persona on every start, factory reset, deletion, and lost-snapshot handling |
 | Keep running when closed | ✅ Live | Per-runtime period from 30 minutes to a week, set with a slider, with a countdown and Stop and save now (app 0.4.0) |
-| Notifications | ✅ Live | Metadata-only, end-to-end encrypted, and delivered while the phone is locked (app 0.3.8 and later) |
+| Notifications | ✅ Live | Metadata-only and delivered while the phone is locked (app 0.3.8 and later). Today the control plane sees each notification's app and title and encrypts them for the phone; encryption inside the VM, so the control plane sees only ciphertext, is in progress |
 | Apps | ✅ Live | Per-runtime selection from about 4,400 F-Droid apps, a paged catalogue that follows F-Droid's signed index, installs that happen once, and F-Droid allowed to install |
 | Remote viewer | ✅ Live | Encrypted live control, audio, on-demand microphone, camera import, and direct streaming over pinned TLS with an edge fallback |
 | Wallet and billing | ✅ Live | USDT (TRC20) deposits, a trial, and charges of 0.25 USDT per running hour and 0.05 USDT per GB-month stored |
@@ -473,6 +473,7 @@ As of 14 October 2026.
 | Area | Status | Notes |
 | :--- | :---: | :--- |
 | Protected screens in the viewer | 🟡 Next | Apps that block screenshots, such as SimpleX Chat, show black in the viewer: capture runs as Android's `shell` user, which can't see protected windows. Capturing as the `system` user is planned for image 12 |
+| Security review fixes | 🟡 In progress | An independent review (14 October 2026) found 18 issues. The release blockers: the viewer's unencrypted stream inside Android is open to other apps on the runtime; the snapshot key is sealed before the VM is verified and is the whole account key; a new install trusts the server's word that a runtime isn't confidential; and phones still accept Milan chips, whose attestation key can be extracted in software |
 | Attested key handoff | ⏳ Not built | The phone seals the snapshot key to the VM key the control plane names, and checks that VM's attestation only when the stream starts. It should check before sealing, so a compromised control plane can't substitute its own key |
 | South-East Asia region | ⏳ Not built | Europe only today. From Bangkok a Europe VM is about 230 ms away per round trip; a Singapore server would be about 30–50 ms |
 | QUIC streaming | ⏳ Not built | Streams use TLS over TCP today |
