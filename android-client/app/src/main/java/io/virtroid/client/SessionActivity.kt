@@ -2,6 +2,7 @@ package io.virtroid.client
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -807,6 +808,13 @@ class SessionActivity : AppCompatActivity() {
         markHeartbeatPending()
         heartbeatJob = lifecycleScope.launch {
             while (isActive && !endingSession) {
+                // The device key signs only while the phone is unlocked. Locked
+                // for longer than the server waits, the viewer counts as
+                // closed and the runtime's keep-running period starts.
+                if (getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
+                    delay(SESSION_HEARTBEAT_INTERVAL_MS)
+                    continue
+                }
                 runCatching {
                     api.heartbeatSession(baseUrl, accountId, deviceId, runtimeId, sessionId)
                 }.onSuccess {
@@ -815,7 +823,7 @@ class SessionActivity : AppCompatActivity() {
                     markHeartbeatHealthy()
                 }.onFailure { error ->
                     if (error.isGoneSessionResponse()) {
-                        appLogs.warn("Active session heartbeat returned a stale session: ${error.message}", "session")
+                        appLogs.info("Viewer session ended while the app was away; the runtime keeps running", "session")
                         activeSessionStore.clear()
                         relayToken = ""
                         markSessionUnavailable()
@@ -844,7 +852,7 @@ class SessionActivity : AppCompatActivity() {
                 delay(5_000L)
                 val timeoutMs = appSettings.uiInactivityTimeoutMs
                 if (System.currentTimeMillis() - lastInteractionAtMs >= timeoutMs) {
-                    appLogs.warn("Session inactivity timeout reached", "session")
+                    appLogs.info("Viewer closed after ${appSettings.uiInactivityLabel()} without input", "session")
                     closeViewerForInactivity()
                     return@launch
                 }

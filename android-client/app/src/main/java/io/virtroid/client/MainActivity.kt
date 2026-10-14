@@ -1,5 +1,6 @@
 package io.virtroid.client
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -167,6 +168,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshRuntimes(showBusy: Boolean = true) {
         if (refreshJob?.isActive == true) {
+            return
+        }
+        // The device key signs only while the phone is unlocked; the list
+        // refreshes again when the screen comes back.
+        if (getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
             return
         }
         val accountId = sessionStore.accountId
@@ -919,7 +925,9 @@ class MainActivity : AppCompatActivity() {
                 it.isTransitioning() ||
                 it.id in locallyStoppingRuntimeIds
         }
-        if (!shouldPoll) {
+        // Only while the list is on screen: a refresh that finishes after
+        // the app leaves it must not start polling in the background.
+        if (!shouldPoll || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
             runtimePollJob?.cancel()
             runtimePollJob = null
             return
