@@ -210,6 +210,35 @@ func (r *Registry) ensureQuota(ctx context.Context) error {
 	return nil
 }
 
+// WalletState is the indexer's wallet: the address it receives Siacoin on
+// and its confirmed balance in hastings (10^-24 SC).
+type WalletState struct {
+	Address   string `json:"address"`
+	Confirmed string `json:"confirmed"`
+}
+
+// Wallet reads the indexer's wallet. It answers once the chain is scanned.
+func (r *Registry) Wallet(ctx context.Context) (WalletState, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.cfg.AdminURL+"/wallet", nil)
+	if err != nil {
+		return WalletState{}, err
+	}
+	req.SetBasicAuth("", r.cfg.AdminPassword)
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return WalletState{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return WalletState{}, fmt.Errorf("GET /wallet: status %d", resp.StatusCode)
+	}
+	var wallet WalletState
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&wallet); err != nil {
+		return WalletState{}, err
+	}
+	return wallet, nil
+}
+
 // admin calls the indexer's admin API. Statuses in tolerated count as success.
 func (r *Registry) admin(ctx context.Context, method, route string, body any, tolerated ...int) error {
 	var payload io.Reader

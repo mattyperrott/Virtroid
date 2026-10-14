@@ -246,6 +246,11 @@ services:
       VM_MEMORY_MIB: ${VM_MEMORY_MIB:-4096}
       VM_DISK_MIB: ${VM_DISK_MIB:-4096}
       VM_DATA_MIB: ${VM_DATA_MIB:-30720}
+      # Its own EVM address: ETH the payments treasury sends there becomes
+      # Aleph credits (PROVISIONER_CREDIT_BUY: off, dry-run or live).
+      PROVISIONER_ADDRESS: ${PROVISIONER_ADDRESS:-}
+      PROVISIONER_CREDIT_BUY: ${PROVISIONER_CREDIT_BUY:-dry-run}
+      ETH_RPC_URL: ${ETH_RPC_URL:-https://ethereum-rpc.publicnode.com}
     volumes:
       - provisioner-state:/var/lib/virtroid-provisioner
       - /etc/virtroid/secrets/provisioner-key:/run/secrets/provisioner-key:ro
@@ -296,9 +301,27 @@ services:
       PAYMENTS_PRIVATE_KEY_FILE: /run/secrets/payments-key
       TRONGRID_URL: ${TRONGRID_URL:-https://api.trongrid.io}
       TRON_VERIFY_URL: ${TRON_VERIFY_URL:-https://tron-rpc.publicnode.com}
+      # The treasury sweeps deposits and swaps USDT for Siacoin, ETH (for
+      # Aleph credits) and TRX (payments.md). Only "live" moves funds.
+      PAYMENTS_TREASURY: ${PAYMENTS_TREASURY:-dry-run}
+      PAYMENTS_TREASURY_INTERVAL: ${PAYMENTS_TREASURY_INTERVAL:-30m}
+      PAYMENTS_SIA_ADDRESS: ${PAYMENTS_SIA_ADDRESS:-}
+      PAYMENTS_SIA_TARGET_SC: ${PAYMENTS_SIA_TARGET_SC:-20000}
+      PAYMENTS_ALEPH_FUND_ADDRESS: ${PAYMENTS_ALEPH_FUND_ADDRESS:-}
+      PAYMENTS_ALEPH_SPEND_ADDRESS: ${PAYMENTS_ALEPH_SPEND_ADDRESS:-}
+      PAYMENTS_ALEPH_DAYS: ${PAYMENTS_ALEPH_DAYS:-7}
+      PAYMENTS_SWEEP_MIN_USDT: ${PAYMENTS_SWEEP_MIN_USDT:-20}
+      PAYMENTS_MIN_SWAP_USDT: ${PAYMENTS_MIN_SWAP_USDT:-25}
+      PAYMENTS_MAX_SWAP_USDT: ${PAYMENTS_MAX_SWAP_USDT:-200}
+      PAYMENTS_MAX_DAILY_USDT: ${PAYMENTS_MAX_DAILY_USDT:-500}
+      SIMPLESWAP_API_KEY_FILE: /run/secrets/simpleswap-api-key
+      ALEPH_API_URL: ${ALEPH_API_URL:-https://api2.aleph.im}
+      ETH_RPC_URL: ${ETH_RPC_URL:-https://ethereum-rpc.publicnode.com}
     volumes:
       - /etc/virtroid/secrets/payments-seed:/run/secrets/payments-seed:ro
       - /etc/virtroid/secrets/payments-key:/run/secrets/payments-key:ro
+      # /dev/null when unset: without a key the treasury quotes nothing.
+      - ${SIMPLESWAP_API_KEY_FILE:-/dev/null}:/run/secrets/simpleswap-api-key:ro
     mem_limit: "${PAYMENTS_MEMORY_LIMIT:-256m}"
     cpus: "${PAYMENTS_CPU_LIMIT:-0.5}"
     pids_limit: ${PAYMENTS_PIDS_LIMIT:-64}

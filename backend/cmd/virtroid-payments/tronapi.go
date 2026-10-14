@@ -184,7 +184,11 @@ func doJSON(client *http.Client, req *http.Request, out any) error {
 		return err
 	}
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: status %d", req.Method, req.URL.Path, resp.StatusCode)
+		detail := strings.TrimSpace(string(payload))
+		if len(detail) > 300 {
+			detail = detail[:300]
+		}
+		return fmt.Errorf("%s %s: status %d: %s", req.Method, req.URL.Path, resp.StatusCode, detail)
 	}
 	return json.Unmarshal(payload, out)
 }

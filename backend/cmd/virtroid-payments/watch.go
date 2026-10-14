@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -214,6 +215,19 @@ func (c httpControlPlane) watchList(ctx context.Context) ([]watchedAddress, erro
 		}
 	}
 	return response.Addresses, nil
+}
+
+func (c httpControlPlane) siaWallet(ctx context.Context) (siaWalletState, error) {
+	var response struct {
+		Sia *siaWalletState `json:"sia"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/internal/payments/treasury", nil, &response); err != nil {
+		return siaWalletState{}, err
+	}
+	if response.Sia == nil {
+		return siaWalletState{}, errors.New("the control plane has no indexd wallet")
+	}
+	return *response.Sia, nil
 }
 
 func (c httpControlPlane) reportDeposit(ctx context.Context, report depositReport) (bool, error) {

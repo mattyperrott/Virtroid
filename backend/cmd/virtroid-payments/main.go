@@ -158,15 +158,50 @@ func run() error {
 		}
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
+	control := httpControlPlane{baseURL: controlPlaneURL, privateKey: privateKey, client: client}
+	grid := tronGrid{baseURL: envOrDefault("TRONGRID_URL", "https://api.trongrid.io"), apiKey: apiKey, client: client}
 	w := newWatcher(
 		wallet,
-		httpControlPlane{baseURL: controlPlaneURL, privateKey: privateKey, client: client},
-		tronGrid{baseURL: envOrDefault("TRONGRID_URL", "https://api.trongrid.io"), apiKey: apiKey, client: client},
+		control,
+		grid,
 		tronNode{baseURL: envOrDefault("TRON_VERIFY_URL", "https://tron-rpc.publicnode.com"), client: client},
+	)
+	treasuryCfg, treasuryEvery, err := treasuryConfigFromEnv()
+	if err != nil {
+		return err
+	}
+	swapKey := ""
+	if path := strings.TrimSpace(os.Getenv("SIMPLESWAP_API_KEY_FILE")); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		swapKey = strings.TrimSpace(string(raw))
+	}
+	vault := newTreasury(treasuryCfg, wallet, control, grid,
+		simpleSwap{baseURL: envOrDefault("SIMPLESWAP_URL", "https://api.simpleswap.io"), apiKey: swapKey, client: client},
+		alephAPI{baseURL: envOrDefault("ALEPH_API_URL", "https://api2.aleph.im"), client: client},
+		ethereumRPC{url: envOrDefault("ETH_RPC_URL", "https://ethereum-rpc.publicnode.com"), client: client},
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if treasuryCfg.Mode != treasuryOff {
+		go func() {
+			ticker := time.NewTicker(treasuryEvery)
+			defer ticker.Stop()
+			for {
+				if err := vault.cycle(ctx); err != nil {
+					log.Printf("treasury: %v", err)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	log.Printf("virtroid-payments: watching deposits every %s", interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

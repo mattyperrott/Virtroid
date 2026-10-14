@@ -34,6 +34,21 @@ func main() {
 	r.progress = nodes
 	r.boots = agentBoots{nodes: nodes}
 	log.Printf("virtroid-provisioner: regions=%d runtime=%s image=%s", len(cfg.RegionCRNs), cfg.Runtime, cfg.Image)
+	if buyer, err := loadCreditBuyer(driver); err != nil {
+		log.Fatalf("virtroid-provisioner: %v", err)
+	} else if buyer != nil {
+		log.Printf("virtroid-provisioner: credit purchases %s for %s", buyer.mode, buyer.address)
+		go func() {
+			for {
+				buyer.runOnce(ctx)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(creditBuyEvery):
+				}
+			}
+		}()
+	}
 	for {
 		if err := r.runOnce(ctx); err != nil {
 			log.Printf("virtroid-provisioner: %v", err)
@@ -150,6 +165,31 @@ func load() (provisionerConfig, controlPlane, alephDriver, time.Duration, error)
 		client:     &http.Client{Timeout: 30 * time.Second},
 	}
 	return cfg, cp, driver, interval, nil
+}
+
+// loadCreditBuyer sets up turning ETH into Aleph credits on the provisioner's
+// own address (PROVISIONER_ADDRESS), or nil when that address is not set.
+func loadCreditBuyer(driver alephDriver) (*creditBuyer, error) {
+	address := strings.TrimSpace(os.Getenv("PROVISIONER_ADDRESS"))
+	if address == "" {
+		return nil, nil
+	}
+	if !isEVMAddress(address) {
+		return nil, errors.New("PROVISIONER_ADDRESS must be a 0x-prefixed EVM address")
+	}
+	mode := envOr("PROVISIONER_CREDIT_BUY", creditBuyDryRun)
+	switch mode {
+	case creditBuyOff:
+		return nil, nil
+	case creditBuyDryRun, creditBuyLive:
+	default:
+		return nil, fmt.Errorf("PROVISIONER_CREDIT_BUY must be off, dry-run or live, not %q", mode)
+	}
+	cli, ok := driver.(cliDriver)
+	if !ok {
+		return nil, errors.New("credit purchases need the aleph CLI driver")
+	}
+	return newCreditBuyer(mode, address, envOr("ETH_RPC_URL", "https://ethereum-rpc.publicnode.com"), cli), nil
 }
 
 // parseRegionCRNs reads "region=hash[@Product],hash;region2=hash" into the

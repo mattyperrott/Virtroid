@@ -479,7 +479,7 @@ As of 14 October 2026.
 | QUIC streaming | ⏳ Not built | Streams use TLS over TCP today |
 | Custom AOSP image | ⏳ Not built | Runtimes use the stock ReDroid 14 image; F-Droid is installed at first start |
 | Tetragon in the VM | ⏳ Not built | |
-| Deposit conversion | ⏳ Not built | Treasury sweeps and automatic swaps. SimpleSwap and ChangeNOW are chosen; Siacoin and Aleph credits are topped up by hand |
+| Deposit conversion | 🧪 Dry run | Treasury sweeps and SimpleSwap swaps into Siacoin, ETH for Aleph credits, and TRX for fees are built and log what they would do; Siacoin and Aleph credits are topped up by hand until they are switched to live |
 | Off-host append-only logs | ⏳ Not built | Sensor events stay on the control plane |
 
 > [!NOTE]

@@ -431,6 +431,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/sia-credentials", api.runtimeSiaCredentials)
 	mux.HandleFunc("GET /api/v1/internal/payments/watch", api.paymentsWatchList)
 	mux.HandleFunc("POST /api/v1/internal/payments/deposits", api.paymentsDeposit)
+	mux.HandleFunc("GET /api/v1/internal/payments/treasury", api.paymentsTreasury)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/status", api.runtimeStatusUpdate)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/logs", api.runtimeLogAppend)
 	mux.HandleFunc("PUT /api/v1/internal/runtimes/{id}/notification-agent", api.registerRuntimeNotificationAgent)

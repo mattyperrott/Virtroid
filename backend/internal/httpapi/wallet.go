@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -120,6 +121,25 @@ func (a *API) paymentsWatchList(w http.ResponseWriter, r *http.Request) {
 		addresses = append(addresses, entry{Index: watch.Index, Address: address, ViewedAt: watch.ViewedAt})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"addresses": addresses})
+}
+
+// paymentsTreasury tells the payments service's treasury what it cannot read
+// itself: the indexd wallet's balance (the indexer's API is not exposed to
+// it). The treasury swaps only to addresses set in its own configuration.
+func (a *API) paymentsTreasury(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.requirePaymentsRequest(w, r); !ok {
+		return
+	}
+	response := map[string]any{}
+	if a.sia != nil {
+		wallet, err := a.sia.Wallet(r.Context())
+		if err != nil {
+			log.Printf("payments treasury: indexd wallet: %v", err)
+		} else {
+			response["sia"] = map[string]string{"address": wallet.Address, "confirmed_hastings": wallet.Confirmed}
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // paymentsDeposit credits a confirmed USDT transfer the payments service

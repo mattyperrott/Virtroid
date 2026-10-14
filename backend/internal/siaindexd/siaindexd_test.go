@@ -224,3 +224,22 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestWalletReadsAddressAndConfirmedBalance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, password, _ := r.BasicAuth(); r.URL.Path != "/api/wallet" || password != "admin-secret" {
+			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"address":"` + strings.Repeat("a", 76) + `","confirmed":"42000000000000000000000000000","spendable":"1"}`))
+	}))
+	defer server.Close()
+	registry, err := New(testConfig(server.URL), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := registry.Wallet(context.Background())
+	if err != nil || wallet.Address != strings.Repeat("a", 76) || wallet.Confirmed != "42000000000000000000000000000" {
+		t.Fatalf("wallet = %+v, %v", wallet, err)
+	}
+}
