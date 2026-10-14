@@ -2,6 +2,7 @@ package io.virtroid.client.security
 
 import android.content.Context
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Base64
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
@@ -56,6 +57,7 @@ class AppLockStore(context: Context) {
             .putBoolean(KEY_ENABLED, true)
             .remove(KEY_FAILED_ATTEMPTS)
             .remove(KEY_LOCKED_UNTIL)
+            .remove(KEY_LOCKED_UNTIL_BOOT)
             .apply()
         biometricVaultKeyStore.clear()
         appSettings.biometricUnlockEnabled = false
@@ -150,7 +152,10 @@ class AppLockStore(context: Context) {
     }
 
     fun noteAppBackgrounded() {
-        prefs.edit().putLong(KEY_LAST_BACKGROUND_AT, SystemClock.elapsedRealtime()).apply()
+        prefs.edit()
+            .putLong(KEY_LAST_BACKGROUND_AT, SystemClock.elapsedRealtime())
+            .putInt(KEY_LAST_BACKGROUND_BOOT, bootCount())
+            .apply()
     }
 
     fun shouldLockAfterBackground(): Boolean {
@@ -164,13 +169,44 @@ class AppLockStore(context: Context) {
         if (lastBackground <= 0L) {
             return false
         }
+        // Uptime restarts at boot, so a time from an earlier boot says nothing
+        // about how long the app was away: lock.
+        if (prefs.getInt(KEY_LAST_BACKGROUND_BOOT, UNKNOWN_BOOT) != bootCount()) {
+            return true
+        }
         val elapsed = SystemClock.elapsedRealtime() - lastBackground
-        return elapsed >= appSettings.autoLockTimeoutMs
+        return elapsed < 0L || elapsed >= appSettings.autoLockTimeoutMs
     }
 
     fun lockoutRemainingMs(): Long {
-        return (prefs.getLong(KEY_LOCKED_UNTIL, 0L) - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+        return (lockedUntil() - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
     }
+
+    /**
+     * When the lockout ends, in uptime. A lockout set before a reboot ends
+     * LOCKOUT_MS after this boot's first look at it: a reboot neither lifts it
+     * nor stretches it to the old uptime.
+     */
+    private fun lockedUntil(): Long {
+        val until = prefs.getLong(KEY_LOCKED_UNTIL, 0L)
+        if (until <= 0L) {
+            return 0L
+        }
+        val boot = bootCount()
+        if (prefs.getInt(KEY_LOCKED_UNTIL_BOOT, UNKNOWN_BOOT) == boot) {
+            return until
+        }
+        val restarted = SystemClock.elapsedRealtime() + LOCKOUT_MS
+        prefs.edit()
+            .putLong(KEY_LOCKED_UNTIL, restarted)
+            .putInt(KEY_LOCKED_UNTIL_BOOT, boot)
+            .apply()
+        return restarted
+    }
+
+    private fun bootCount(): Int =
+        runCatching { Settings.Global.getInt(appContext.contentResolver, Settings.Global.BOOT_COUNT, UNKNOWN_BOOT) }
+            .getOrDefault(UNKNOWN_BOOT)
 
     fun lastUnlockAtMs(): Long {
         return prefs.getLong(KEY_LAST_UNLOCK_AT, 0L)
@@ -292,8 +328,7 @@ class AppLockStore(context: Context) {
     }
 
     private fun isTemporarilyLocked(): Boolean {
-        val lockedUntil = prefs.getLong(KEY_LOCKED_UNTIL, 0L)
-        return lockedUntil > SystemClock.elapsedRealtime()
+        return lockedUntil() > SystemClock.elapsedRealtime()
     }
 
     private fun recordFailure() {
@@ -304,6 +339,7 @@ class AppLockStore(context: Context) {
             editor
                 .putInt(KEY_FAILED_ATTEMPTS, 0)
                 .putLong(KEY_LOCKED_UNTIL, SystemClock.elapsedRealtime() + LOCKOUT_MS)
+                .putInt(KEY_LOCKED_UNTIL_BOOT, bootCount())
             appLogs.error("App lockout applied after failed unlock attempts", "auth")
         }
         editor.apply()
@@ -313,6 +349,7 @@ class AppLockStore(context: Context) {
         prefs.edit()
             .remove(KEY_FAILED_ATTEMPTS)
             .remove(KEY_LOCKED_UNTIL)
+            .remove(KEY_LOCKED_UNTIL_BOOT)
             .apply()
     }
 
@@ -335,6 +372,9 @@ class AppLockStore(context: Context) {
         private const val KEY_PIN_LENGTH = "lock_pin_length"
         private const val KEY_FAILED_ATTEMPTS = "lock_failed_attempts"
         private const val KEY_LOCKED_UNTIL = "lock_locked_until"
+        private const val KEY_LOCKED_UNTIL_BOOT = "lock_locked_until_boot"
+        private const val KEY_LAST_BACKGROUND_BOOT = "lock_last_background_boot"
+        private const val UNKNOWN_BOOT = -1
         private const val KEY_LAST_BACKGROUND_AT = "lock_last_background_at"
         private const val KEY_LAST_UNLOCK_AT = "lock_last_unlock_at"
         private const val KDF_VERSION = "pbkdf2-sha256-v1"
