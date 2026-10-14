@@ -1597,6 +1597,7 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 		AccountID       string          `json:"account_id"`
 		DeviceID        string          `json:"device_id"`
 		BlobKeyVerifier string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
 		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1607,7 +1608,7 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "delete", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "delete", req.BlobKeyVerifier, req.RuntimeKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1637,6 +1638,8 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 		DeviceID        string `json:"device_id"`
 		Operation       string `json:"operation"`
 		BlobKeyVerifier string `json:"blob_key_verifier"`
+		// SealNonce is the phone's challenge for the VM's fresh report.
+		SealNonce string `json:"seal_nonce"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -1708,12 +1711,12 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 		"expires_at":      expiresAt,
 		"runtime":         runtime,
 	}
-	// What a phone needs to seal the key to the VM itself: the VM's
-	// attestation, and its seal key signed by the attested TLS key.
-	sealFields, err := a.blobSealFields(r.Context(), host.ID)
+	// What a phone needs to seal the runtime's keys to the VM itself: a
+	// fresh report binding the VM's seal key to the phone's challenge.
+	sealFields, err := a.blobSealFields(r.Context(), host, req.SealNonce)
 	if err != nil {
 		a.activeBlobKeys.clear(runtime.ID)
-		writeInternalAPIError(w, "blob_key_lease_seal_key_failed", err)
+		writeAPIError(w, http.StatusBadGateway, "blob_key_lease_seal_attestation_failed", err.Error())
 		return
 	}
 	for key, value := range sealFields {
@@ -1733,6 +1736,7 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		AccountID       string          `json:"account_id"`
 		DeviceID        string          `json:"device_id"`
 		BlobKeyVerifier string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
 		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1743,7 +1747,7 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "start", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "start", req.BlobKeyVerifier, req.RuntimeKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1777,6 +1781,7 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		AccountID       string          `json:"account_id"`
 		DeviceID        string          `json:"device_id"`
 		BlobKeyVerifier string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
 		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1787,7 +1792,7 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "stop", req.BlobKeyVerifier, req.RuntimeKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1827,6 +1832,7 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		AccountID       string          `json:"account_id"`
 		DeviceID        string          `json:"device_id"`
 		BlobKeyVerifier string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
 		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1837,7 +1843,7 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "wipe", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "wipe", req.BlobKeyVerifier, req.RuntimeKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -1888,6 +1894,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		MaxSize         int             `json:"max_size"`
 		BitRate         int             `json:"bit_rate"`
 		BlobKeyVerifier string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
 		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 
@@ -1943,7 +1950,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "session", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "session", req.BlobKeyVerifier, req.RuntimeKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		abortPendingSession("blob-key handoff activation failed")
 		return
@@ -2298,6 +2305,7 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 		AccountID       string          `json:"account_id"`
 		DeviceID        string          `json:"device_id"`
 		BlobKeyVerifier string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
 		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2333,7 +2341,7 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "stop", req.BlobKeyVerifier, req.BlobKeyEnvelope)
+	lease, ok := a.activateRuntimeBlobKeyEnvelope(w, r, actor, runtimeID, "stop", req.BlobKeyVerifier, req.RuntimeKeyVerifier, req.BlobKeyEnvelope)
 	if !ok {
 		return
 	}
@@ -2626,7 +2634,6 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TLSSPKISHA256          string          `json:"tls_spki_sha256"`
 		Region                 string          `json:"region"`
 		SNPAttestation         json.RawMessage `json:"snp_attestation"`
-		BlobSealKey            json.RawMessage `json:"blob_seal_key"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2729,15 +2736,6 @@ func (a *API) hostHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeInternalAPIError(w, "node_attestation_store_failed", err)
 		return
 	}
-	sealKey, err := nodeBlobSealKeyJSON(req.BlobSealKey, attestation)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "node_seal_key_rejected", err.Error())
-		return
-	}
-	if err := a.store.SetHostBlobSealKey(r.Context(), host.ID, sealKey); err != nil {
-		writeInternalAPIError(w, "node_seal_key_store_failed", err)
-		return
-	}
 	if isProvisionedVM {
 		if err := a.store.MarkProvisionedVMReady(r.Context(), host.ID); err != nil {
 			writeInternalAPIError(w, "provisioned_vm_ready_failed", err)
@@ -2816,12 +2814,24 @@ func (a *API) activateRuntimeBlobKeyEnvelope(
 	runtimeID string,
 	operation string,
 	blobKeyVerifier string,
+	runtimeKeyVerifier string,
 	envelope blobKeyEnvelope,
 ) (activeBlobKeyEntry, bool) {
 	verifiedBlobKeyVerifier, err := a.verifiedActorBlobKeyVerifier(r.Context(), actor, blobKeyVerifier)
 	if err != nil {
 		writeIdentityAuthError(w, err)
 		return activeBlobKeyEntry{}, false
+	}
+	// A sealed envelope carries the runtime's own keys, not the account key
+	// the account verifier is for: the node checks them against the phone's
+	// runtime verifier instead.
+	if strings.TrimSpace(envelope.Algorithm) == blobKeyEnvelopeAlgorithmSealed {
+		decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(runtimeKeyVerifier))
+		if err != nil || len(decoded) != 32 {
+			writeAPIError(w, http.StatusBadRequest, "runtime_key_verifier_invalid", "a sealed envelope needs its runtime key verifier")
+			return activeBlobKeyEntry{}, false
+		}
+		verifiedBlobKeyVerifier = strings.TrimSpace(runtimeKeyVerifier)
 	}
 	handoff := activeBlobKeyHandoff{
 		AccountID:       actor.accountID,

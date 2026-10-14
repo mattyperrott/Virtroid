@@ -25,6 +25,42 @@ open class SnpAttestationException(message: String) : GeneralSecurityException(m
 class UnapprovedMeasurementException(val measurement: String) :
     SnpAttestationException("the VM runs an image this app does not approve ($measurement)")
 
+/** A VM's fresh report for its seal key, and the AMD certificates for it. */
+class SealAttestation(val chip: NodeAttestation, val sealPublicKey: ByteArray) {
+    companion object {
+        fun parse(json: String): SealAttestation {
+            val bundle = try {
+                JSONObject(json)
+            } catch (error: Exception) {
+                throw SnpAttestationException("seal attestation is not valid JSON")
+            }
+            if (bundle.optInt("version") != 1) {
+                throw SnpAttestationException("unsupported seal attestation version")
+            }
+            fun field(name: String): ByteArray = try {
+                Base64.getDecoder().decode(bundle.getString(name)).also {
+                    if (it.isEmpty()) throw SnpAttestationException("seal attestation $name is empty")
+                }
+            } catch (error: SnpAttestationException) {
+                throw error
+            } catch (error: Exception) {
+                throw SnpAttestationException("seal attestation $name is missing or not base64")
+            }
+            return SealAttestation(
+                chip = NodeAttestation(
+                    product = bundle.optString("product"),
+                    report = field("report"),
+                    tlsSpki = ByteArray(0),
+                    vcek = field("vcek"),
+                    ask = field("ask"),
+                    ark = field("ark"),
+                ),
+                sealPublicKey = field("seal_public_key"),
+            )
+        }
+    }
+}
+
 /** A runtime node's SEV-SNP attestation bundle, as the node built it. */
 class NodeAttestation(
     val product: String,
@@ -90,7 +126,15 @@ object SnpAttestationVerifier {
 
     private val NODE_TLS_KEY_DOMAIN = "virtroid-node-tls-key-v1\u0000".toByteArray(Charsets.US_ASCII)
     private const val VIEWER_KEY_DOMAIN = "virtroid-viewer-key-v1\n"
-    private const val SEAL_KEY_DOMAIN = "virtroid-blob-seal-key-v1\n"
+    private val SEAL_REPORT_DOMAIN = "virtroid-blob-seal-key-v2".toByteArray(Charsets.UTF_8) + byteArrayOf(0)
+    const val SEAL_NONCE_SIZE = 32
+
+    /**
+     * Chips whose attestation no longer proves anything: on EPYC Milan the
+     * root seed behind every VCEK can be extracted in software (arXiv
+     * 2605.12990, May 2026), so a Milan report can be forged.
+     */
+    private val UNTRUSTED_PRODUCTS = setOf("Milan")
 
     /**
      * SHA-256 of AMD's root key certificate (ARK) for each EPYC generation, as
@@ -167,8 +211,41 @@ object SnpAttestationVerifier {
         }
     }
 
+    /** Refuses chips whose attestation can be forged. */
+    fun checkPlatform(product: String) {
+        if (product in UNTRUSTED_PRODUCTS) {
+            throw SnpAttestationException("the VM runs on an AMD $product chip, whose attestation can be forged")
+        }
+    }
+
+    /**
+     * A fresh report for a seal key: its claims, and report data binding the
+     * VM's seal key to the challenge this phone sent.
+     */
+    fun checkSealReport(report: ByteArray, sealPublicKey: ByteArray, nonce: ByteArray, allowedMeasurements: Set<String>) {
+        if (nonce.size != SEAL_NONCE_SIZE) {
+            throw SnpAttestationException("seal challenge has the wrong size")
+        }
+        val expected = MessageDigest.getInstance("SHA-512").run {
+            update(SEAL_REPORT_DOMAIN)
+            update(sealPublicKey)
+            update(nonce)
+            digest()
+        }
+        checkReportClaims(report, expected, "attestation report does not bind the VM's seal key to this phone's challenge", allowedMeasurements)
+    }
+
     /** The report's own claims: the bound key, the image, and a safe policy. */
     fun checkReport(report: ByteArray, tlsSpki: ByteArray, allowedMeasurements: Set<String>) {
+        val expected = MessageDigest.getInstance("SHA-512").run {
+            update(NODE_TLS_KEY_DOMAIN)
+            update(tlsSpki)
+            digest()
+        }
+        checkReportClaims(report, expected, "attestation report does not bind the node's TLS key", allowedMeasurements)
+    }
+
+    private fun checkReportClaims(report: ByteArray, expectedReportData: ByteArray, bindingError: String, allowedMeasurements: Set<String>) {
         if (report.size < REPORT_SIZE) {
             throw SnpAttestationException("attestation report is truncated")
         }
@@ -185,42 +262,12 @@ object SnpAttestationVerifier {
         if (u32(report, VMPL_OFFSET) > MAX_VMPL) {
             throw SnpAttestationException("attestation report comes from an untrusted privilege level")
         }
-        val expectedReportData = MessageDigest.getInstance("SHA-512").run {
-            update(NODE_TLS_KEY_DOMAIN)
-            update(tlsSpki)
-            digest()
-        }
         if (!MessageDigest.isEqual(expectedReportData, report.copyOfRange(REPORT_DATA_OFFSET, REPORT_DATA_OFFSET + 64))) {
-            throw SnpAttestationException("attestation report does not bind the node's TLS key")
+            throw SnpAttestationException(bindingError)
         }
         val measurement = measurementHex(report)
         if (measurement !in allowedMeasurements) {
             throw UnapprovedMeasurementException(measurement)
-        }
-    }
-
-    /** The VM's seal key was signed by its attested TLS key, for this node. */
-    fun verifySealKey(tlsSpki: ByteArray, nodeId: String, sealPublicKey: String, signature: String) {
-        val signatureBytes = try {
-            Base64.getDecoder().decode(signature.trim())
-        } catch (error: IllegalArgumentException) {
-            throw SnpAttestationException("seal key signature is not base64")
-        }
-        val tlsKey: PublicKey = try {
-            KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(tlsSpki))
-        } catch (error: Exception) {
-            throw SnpAttestationException("attested node key is not an EC public key")
-        }
-        val verifier = Signature.getInstance("SHA256withECDSA")
-        verifier.initVerify(tlsKey)
-        verifier.update("$SEAL_KEY_DOMAIN$nodeId\n$sealPublicKey".toByteArray(Charsets.UTF_8))
-        val valid = signatureBytes.isNotEmpty() && try {
-            verifier.verify(signatureBytes)
-        } catch (error: Exception) {
-            false
-        }
-        if (!valid) {
-            throw SnpAttestationException("seal key is not signed by the attested node")
         }
     }
 

@@ -1,6 +1,7 @@
 package io.virtroid.client.security
 
 import android.content.Context
+import io.virtroid.client.BuildConfig
 import io.virtroid.client.R
 import io.virtroid.client.api.SessionAttestation
 import io.virtroid.client.data.AppLogStore
@@ -33,7 +34,8 @@ class ConfidentialRuntimeGuard(
         attestation: SessionAttestation,
         fetchMeasurementList: suspend () -> String?,
     ) {
-        val required = attestation.confidentialRuntime ||
+        val required = BuildConfig.REQUIRE_ATTESTATION ||
+            attestation.confidentialRuntime ||
             attestation.nodeAttestationJson.isNotBlank() ||
             attested.getBoolean(runtimeId, false)
         if (!required) {
@@ -45,6 +47,7 @@ class ConfidentialRuntimeGuard(
                 throw SnpAttestationException("the server sent no attestation for a confidential runtime")
             }
             val node = NodeAttestation.parse(attestation.nodeAttestationJson)
+            SnpAttestationVerifier.checkPlatform(node.product)
             val measurement = SnpAttestationVerifier.verify(
                 attestation = node,
                 expectedTlsPin = relayTlsPin,
@@ -67,33 +70,41 @@ class ConfidentialRuntimeGuard(
     }
 
     /**
-     * Decides where [lease] seals the blob key. A runtime that must be attested
-     * seals only to the VM's own seal key, after its attestation verifies and
-     * the attested TLS key is shown to have signed the seal key: the node key
-     * is also known to the control plane. Returns false only for a runtime that
-     * needs no attestation, which seals to its node key as before.
+     * Decides where [lease] seals the runtime's keys. A runtime that must be
+     * attested gets them only sealed to the VM's in-memory seal key, after a
+     * fresh report verifies: signed by AMD, from an approved image on a chip
+     * whose attestation can't be forged, and binding that key to the
+     * challenge this phone sent. Returns the seal key, or null only for a
+     * runtime that needs no attestation (a development build's local node),
+     * whose node key gets the account key as before.
      */
-    suspend fun checkBlobSealKey(lease: BlobKeyLease, fetchMeasurementList: suspend () -> String?): Boolean {
-        val required = lease.confidentialRuntime ||
-            lease.nodeAttestationJson.isNotBlank() ||
+    suspend fun checkBlobSealKey(lease: BlobKeyLease, fetchMeasurementList: suspend () -> String?): String? {
+        val required = BuildConfig.REQUIRE_ATTESTATION ||
+            lease.confidentialRuntime ||
+            lease.sealAttestationJson.isNotBlank() ||
             attested.getBoolean(lease.runtimeId, false)
         if (!required) {
-            return false
+            return null
         }
+        var sealKey: ByteArray? = null
         val verify = {
-            if (lease.nodeAttestationJson.isBlank()) {
-                throw SnpAttestationException("the server sent no attestation for a confidential runtime")
+            if (lease.sealAttestationJson.isBlank()) {
+                throw SnpAttestationException("the VM offered no fresh report for a key only it holds")
             }
-            if (lease.sealPublicKey.isBlank() || lease.sealKeySignature.isBlank()) {
-                throw SnpAttestationException("the server offered no key that only the VM holds")
+            val sealed = SealAttestation.parse(lease.sealAttestationJson)
+            val nonce = try {
+                java.util.Base64.getDecoder().decode(lease.sealNonce)
+            } catch (error: IllegalArgumentException) {
+                throw SnpAttestationException("seal challenge is not base64")
             }
-            val node = NodeAttestation.parse(lease.nodeAttestationJson)
-            SnpAttestationVerifier.verifyAmdSignature(node)
-            SnpAttestationVerifier.checkReport(node.report, node.tlsSpki, approvedMeasurements())
-            SnpAttestationVerifier.verifySealKey(node.tlsSpki, lease.hostId, lease.sealPublicKey, lease.sealKeySignature)
+            SnpAttestationVerifier.checkPlatform(sealed.chip.product)
+            SnpAttestationVerifier.verifyAmdSignature(sealed.chip)
+            SnpAttestationVerifier.checkSealReport(sealed.chip.report, sealed.sealPublicKey, nonce, approvedMeasurements())
+            sealKey = sealed.sealPublicKey
         }
         verifyRefreshingList(verify, fetchMeasurementList)
-        return true
+        attested.edit().putBoolean(lease.runtimeId, true).apply()
+        return java.util.Base64.getEncoder().encodeToString(sealKey ?: throw ConfidentialRuntimeException("seal key missing"))
     }
 
     private suspend fun verifyRefreshingList(verify: () -> Unit, fetchMeasurementList: suspend () -> String?) {

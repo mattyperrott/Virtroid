@@ -6,23 +6,28 @@ import (
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"testing"
 	"time"
 )
 
-// sealedTestEnvelope seals blobKey to a seal key the way the phone does.
-func sealedTestEnvelope(t *testing.T, sealPublicKey string, blobKey []byte) blobKeyEnvelopePayload {
+// phoneRuntimeKeys derives a runtime's keys the way the phone does.
+func phoneRuntimeKeys(master []byte, runtimeID string) []byte {
+	namespace, _ := hex.DecodeString(deriveRuntimeBlobNamespace(master, runtimeID))
+	keys := append([]byte(nil), deriveRuntimeSnapshotKey(master, runtimeID)...)
+	keys = append(keys, runtimeManifestMACKey(master, runtimeID)...)
+	return append(keys, namespace...)
+}
+
+// sealedTestEnvelope seals plaintext to a seal key the way the phone does.
+func sealedTestEnvelope(t *testing.T, sealPublicDER, plaintext []byte) blobKeyEnvelopePayload {
 	t.Helper()
-	der, err := base64.StdEncoding.DecodeString(sealPublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := x509.ParsePKIXPublicKey(der)
+	parsed, err := x509.ParsePKIXPublicKey(sealPublicDER)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,45 +68,68 @@ func sealedTestEnvelope(t *testing.T, sealPublicKey string, blobKey []byte) blob
 	}
 	envelope.EphemeralPublicKey = base64.StdEncoding.EncodeToString(ephemeralDER)
 	envelope.IV = base64.StdEncoding.EncodeToString(iv)
-	envelope.Ciphertext = base64.StdEncoding.EncodeToString(gcm.Seal(nil, iv, blobKey, aad))
+	envelope.Ciphertext = base64.StdEncoding.EncodeToString(gcm.Seal(nil, iv, plaintext, aad))
 	return envelope
 }
 
-func TestBlobSealKeyIsSignedAndOpensSealedEnvelopes(t *testing.T) {
-	tlsKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func TestRuntimeKeysMatchTheAccountKeyDerivations(t *testing.T) {
+	master := testBlobKey(4)
+	keys := phoneRuntimeKeys(master, "runtime-1")
+	if len(keys) != runtimeKeysSize {
+		t.Fatalf("runtime keys are %d bytes", len(keys))
+	}
+	// Whoever derives them, snapshots read and write the same.
+	if !bytes.Equal(deriveRuntimeSnapshotKey(keys, "runtime-1"), deriveRuntimeSnapshotKey(master, "runtime-1")) ||
+		!bytes.Equal(runtimeManifestMACKey(keys, "runtime-1"), runtimeManifestMACKey(master, "runtime-1")) ||
+		deriveRuntimeBlobNamespace(keys, "runtime-1") != deriveRuntimeBlobNamespace(master, "runtime-1") {
+		t.Fatal("runtime keys give different snapshot keys than the account key")
+	}
+	// They are one runtime's: another runtime's differ.
+	if bytes.Equal(phoneRuntimeKeys(master, "runtime-2"), keys) {
+		t.Fatal("two runtimes share keys")
+	}
+	if snapshotKeyForManifest(keys, "runtime-1", &blobManifest{Version: 1}) != nil {
+		t.Fatal("runtime keys stood in for the account key of a version 1 snapshot")
+	}
+}
+
+func TestSealedEnvelopesCarryRuntimeKeysToTheSealKey(t *testing.T) {
+	sealKey, err := newBlobSealKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealKey, err := newBlobSealKey(tlsKey, "node-1")
-	if err != nil {
-		t.Fatalf("newBlobSealKey: %v", err)
-	}
-
-	// The phone checks this signature with the attested TLS key.
-	signature, err := base64.StdEncoding.DecodeString(sealKey.Signature)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256([]byte(blobSealKeyDomain + "node-1\n" + sealKey.PublicKey))
-	if !ecdsa.VerifyASN1(&tlsKey.PublicKey, digest[:], signature) {
-		t.Fatal("seal key signature does not verify with the TLS key")
-	}
-	otherNode := sha256.Sum256([]byte(blobSealKeyDomain + "node-2\n" + sealKey.PublicKey))
-	if ecdsa.VerifyASN1(&tlsKey.PublicKey, otherNode[:], signature) {
-		t.Fatal("seal key signature verifies for another node")
-	}
-
-	blobKey := testBlobKey(9)
+	keys := phoneRuntimeKeys(testBlobKey(9), "runtime-1")
 	node := &nodeAgent{blobSealKey: sealKey}
-	plaintext, err := node.decryptBlobKeyEnvelope(sealedTestEnvelope(t, sealKey.PublicKey, blobKey),
-		blobKeyVerifierForPlaintext(blobKey), time.Now().Add(time.Minute))
-	if err != nil || !bytes.Equal(plaintext, blobKey) {
-		t.Fatalf("sealed envelope: plaintext=%x err=%v", plaintext, err)
+	plaintext, err := node.decryptBlobKeyEnvelope(sealedTestEnvelope(t, sealKey.publicDER, keys),
+		runtimeKeysVerifierForPlaintext(keys), time.Now().Add(time.Minute))
+	if err != nil || !bytes.Equal(plaintext, keys) {
+		t.Fatalf("sealed runtime keys: plaintext=%x err=%v", plaintext, err)
 	}
-
+	// Not the account key: a sealed envelope must carry runtime keys.
+	master := testBlobKey(9)
+	if _, err := node.decryptBlobKeyEnvelope(sealedTestEnvelope(t, sealKey.publicDER, master),
+		blobKeyVerifierForPlaintext(master), time.Now().Add(time.Minute)); err == nil {
+		t.Fatal("a sealed envelope carried the account key")
+	}
 	// A node without a seal key, such as one never attested, refuses them.
-	if _, err := (&nodeAgent{}).decryptBlobKeyEnvelope(sealedTestEnvelope(t, sealKey.PublicKey, blobKey),
-		blobKeyVerifierForPlaintext(blobKey), time.Now().Add(time.Minute)); err == nil {
+	if _, err := (&nodeAgent{}).decryptBlobKeyEnvelope(sealedTestEnvelope(t, sealKey.publicDER, keys),
+		runtimeKeysVerifierForPlaintext(keys), time.Now().Add(time.Minute)); err == nil {
 		t.Fatal("a node without a seal key opened a sealed envelope")
+	}
+}
+
+func TestSealReportBindsTheKeyToTheChallenge(t *testing.T) {
+	sealKey, err := newBlobSealKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := bytes.Repeat([]byte{7}, blobSealNonceSize)
+	want := sha512.Sum512(append(append([]byte(blobSealReportDomain), sealKey.publicDER...), nonce...))
+	if blobSealReportData(sealKey.publicDER, nonce) != want {
+		t.Fatal("seal report data is not SHA-512(domain || key || nonce)")
+	}
+	other := bytes.Repeat([]byte{8}, blobSealNonceSize)
+	if blobSealReportData(sealKey.publicDER, other) == want {
+		t.Fatal("seal report data ignores the challenge")
 	}
 }

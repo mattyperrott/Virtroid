@@ -49,6 +49,9 @@ android {
         versionCode = 15
         versionName = "0.4.1"
         buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(defaultControlPlaneUrl))
+        // Every runtime must prove it is a confidential VM: the server's word
+        // that one isn't is never enough.
+        buildConfigField("boolean", "REQUIRE_ATTESTATION", "true")
         manifestPlaceholders["usesCleartextTraffic"] = defaultControlPlaneUsesCleartext
     }
 
@@ -69,6 +72,9 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(debugControlPlaneUrl))
+            // A debug build against a local control plane talks to nodes
+            // that can't be attested; against production it can't skip it.
+            buildConfigField("boolean", "REQUIRE_ATTESTATION", (debugControlPlaneUrl == defaultControlPlaneUrl).toString())
             manifestPlaceholders["usesCleartextTraffic"] = debugControlPlaneUsesCleartext
         }
 

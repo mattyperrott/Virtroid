@@ -2422,7 +2422,20 @@ func deriveBlobKeys(masterKey, salt []byte) ([]byte, []byte) {
 	return encryptionMaterial[:], macMaterial[:]
 }
 
+// A runtime's key material is either the account key, from apps that
+// predate sealed handoffs, or this runtime's own keys, which phones derive
+// and seal to the VM so it never holds the account key: the snapshot key,
+// the manifest MAC key and the raw blob namespace, 32 bytes each.
+const runtimeKeysSize = 96
+
+func runtimeKeysOnly(material []byte) bool {
+	return len(material) == runtimeKeysSize
+}
+
 func deriveRuntimeSnapshotKey(masterKey []byte, runtimeID string) []byte {
+	if runtimeKeysOnly(masterKey) {
+		return append([]byte(nil), masterKey[:32]...)
+	}
 	mac := hmac.New(sha256.New, masterKey)
 	_, _ = mac.Write([]byte(runtimeSnapshotKeyContext))
 	_, _ = mac.Write([]byte{0})
@@ -2431,6 +2444,9 @@ func deriveRuntimeSnapshotKey(masterKey []byte, runtimeID string) []byte {
 }
 
 func deriveRuntimeBlobNamespace(masterKey []byte, runtimeID string) string {
+	if runtimeKeysOnly(masterKey) {
+		return hex.EncodeToString(masterKey[64:96])
+	}
 	mac := hmac.New(sha256.New, masterKey)
 	_, _ = mac.Write([]byte(runtimeBlobNamespaceCtx))
 	_, _ = mac.Write([]byte{0})
@@ -2439,6 +2455,9 @@ func deriveRuntimeBlobNamespace(masterKey []byte, runtimeID string) string {
 }
 
 func runtimeManifestMACKey(masterKey []byte, runtimeID string) []byte {
+	if runtimeKeysOnly(masterKey) {
+		return append([]byte(nil), masterKey[32:64]...)
+	}
 	mac := hmac.New(sha256.New, masterKey)
 	_, _ = mac.Write([]byte(runtimeManifestMACCtx))
 	_, _ = mac.Write([]byte{0})
@@ -2499,6 +2518,11 @@ func verifyBlobManifestAuthentication(manifest *blobManifest, masterKey []byte, 
 func snapshotKeyForManifest(masterKey []byte, runtimeID string, manifest *blobManifest) []byte {
 	if manifest != nil && manifest.Version >= 2 {
 		return deriveRuntimeSnapshotKey(masterKey, runtimeID)
+	}
+	if runtimeKeysOnly(masterKey) {
+		// A version 1 snapshot was encrypted with the account key itself,
+		// which runtime keys don't include; decryption then fails cleanly.
+		return nil
 	}
 	return append([]byte(nil), masterKey...)
 }

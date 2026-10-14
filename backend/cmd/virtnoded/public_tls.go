@@ -124,6 +124,7 @@ func publicNodeHandler(private *http.ServeMux) http.Handler {
 		"POST /api/v1/internal/runtimes/{id}/photos",
 		"POST /api/v1/internal/runtimes/{id}/videos",
 		"POST /api/v1/internal/blob-key/verify",
+		"POST /api/v1/internal/blob-seal/attest",
 		"CONNECT /api/v1/relay/{id}",
 		"GET /api/v1/relay/{id}",
 	} {

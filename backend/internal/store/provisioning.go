@@ -693,26 +693,6 @@ func (s *Store) SetHostSNPAttestation(ctx context.Context, hostID, attestation s
 	return err
 }
 
-// SetHostBlobSealKey records the seal key a node reported with its
-// attestation, or clears it.
-func (s *Store) SetHostBlobSealKey(ctx context.Context, hostID, sealKey string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE hosts SET blob_seal_key = $2 WHERE id = $1 AND blob_seal_key IS DISTINCT FROM $2`,
-		hostID, sealKey,
-	)
-	return err
-}
-
-// HostBlobSealKey returns a node's seal key, or "" when it has none.
-func (s *Store) HostBlobSealKey(ctx context.Context, hostID string) (string, error) {
-	var sealKey string
-	err := s.db.QueryRowContext(ctx, `SELECT blob_seal_key FROM hosts WHERE id = $1`, hostID).Scan(&sealKey)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	return sealKey, err
-}
-
 // HostSNPAttestation returns a node's attestation bundle, or "" when it has none.
 func (s *Store) HostSNPAttestation(ctx context.Context, hostID string) (string, error) {
 	var attestation string

@@ -85,14 +85,27 @@ func (n *nodeAgent) decryptBlobKeyEnvelope(envelope blobKeyEnvelopePayload, expe
 	if err != nil {
 		return nil, fmt.Errorf("decrypt blob key envelope: %w", err)
 	}
-	if len(plaintext) != 32 {
+	// Sealed envelopes carry this runtime's own keys; older ones the account key.
+	var actualVerifier string
+	switch {
+	case strings.TrimSpace(envelope.Algorithm) == blobKeyEnvelopeAlgorithmSealed && len(plaintext) == runtimeKeysSize:
+		actualVerifier = runtimeKeysVerifierForPlaintext(plaintext)
+	case strings.TrimSpace(envelope.Algorithm) == blobKeyEnvelopeAlgorithm && len(plaintext) == 32:
+		actualVerifier = blobKeyVerifierForPlaintext(plaintext)
+	default:
 		return nil, errors.New("blob key envelope plaintext has invalid length")
 	}
-	actualVerifier := blobKeyVerifierForPlaintext(plaintext)
 	if subtle.ConstantTimeCompare([]byte(actualVerifier), []byte(expectedVerifier)) != 1 {
 		return nil, errors.New("blob key envelope plaintext does not match expected verifier")
 	}
 	return plaintext, nil
+}
+
+// runtimeKeysVerifierForPlaintext is what the phone reports for the runtime
+// keys it seals, so the node can tell they arrived intact.
+func runtimeKeysVerifierForPlaintext(runtimeKeys []byte) string {
+	digest := sha256.Sum256(append([]byte("virtroid-runtime-keys-verifier-v1:"), runtimeKeys...))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func blobKeyVerifierForPlaintext(blobKey []byte) string {

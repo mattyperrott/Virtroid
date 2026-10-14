@@ -119,20 +119,63 @@ class SnpAttestationVerifierTest {
         }
     }
 
+    private fun sealReport(sealKey: ByteArray, nonce: ByteArray): ByteArray {
+        val report = report()
+        MessageDigest.getInstance("SHA-512").run {
+            update("virtroid-blob-seal-key-v2".toByteArray())
+            update(0)
+            update(sealKey)
+            update(nonce)
+            digest()
+        }.copyInto(report, 0x50)
+        return report
+    }
+
     @Test
-    fun sealKeySignedByTheGoNodeVerifies() {
-        // Signed by virtnoded's seal-key construction with a fresh TLS key.
-        val goSpki = Base64.getDecoder().decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5xNJGdy0TTG77H175bft8Mf8P8DVsf2SnRGXHaS3NiFq+L0L3oikVGayg+6Use6cjL1kE10r26D1ybNw3J3Hpw==")
-        val goSignature = "MEUCIGBSqTKS+F1S/9ZIbAFsp1DTlByZ2KCCCWDrXJnvfHc8AiEAnWDP6w3WHuxJ5RbWooW2BiC5yn67iDgUBEXhXw/UNXw="
-        SnpAttestationVerifier.verifySealKey(goSpki, "node-1", "seal-key", goSignature)
-        assertThrows(SnpAttestationException::class.java) {
-            SnpAttestationVerifier.verifySealKey(goSpki, "node-2", "seal-key", goSignature)
+    fun sealReportsMustBindTheKeyToThisChallenge() {
+        val allowed = setOf(measurementHex)
+        val sealKey = "seal key".toByteArray()
+        val nonce = ByteArray(32) { 7 }
+        SnpAttestationVerifier.checkSealReport(sealReport(sealKey, nonce), sealKey, nonce, allowed)
+        val failures = mapOf(
+            "a replayed challenge" to { SnpAttestationVerifier.checkSealReport(sealReport(sealKey, ByteArray(32) { 8 }), sealKey, nonce, allowed) },
+            "another seal key" to { SnpAttestationVerifier.checkSealReport(sealReport("other".toByteArray(), nonce), sealKey, nonce, allowed) },
+            "a TLS-key report" to { SnpAttestationVerifier.checkSealReport(report(), sealKey, nonce, allowed) },
+            "a short challenge" to { SnpAttestationVerifier.checkSealReport(sealReport(sealKey, nonce), sealKey, ByteArray(16), allowed) },
+            "an unapproved image" to { SnpAttestationVerifier.checkSealReport(sealReport(sealKey, nonce), sealKey, nonce, emptySet()) },
+        )
+        for ((name, check) in failures) {
+            try {
+                check()
+                throw AssertionError("$name was accepted")
+            } catch (expected: SnpAttestationException) {
+            }
         }
-        assertThrows(SnpAttestationException::class.java) {
-            SnpAttestationVerifier.verifySealKey(goSpki, "node-1", "other-seal-key", goSignature)
+    }
+
+    @Test
+    fun milanChipsAreNotTrusted() {
+        assertThrows(SnpAttestationException::class.java) { SnpAttestationVerifier.checkPlatform("Milan") }
+        SnpAttestationVerifier.checkPlatform("Genoa")
+        SnpAttestationVerifier.checkPlatform("Turin")
+    }
+
+    @Test
+    fun runtimeKeysMatchTheGoNode() {
+        // virtnoded's derivations from an account key of 32 bytes of 4, for runtime-1.
+        val keys = BlobKeyEnvelopeCrypto.runtimeKeys(ByteArray(32) { 4 }, "runtime-1")
+        val hex = keys.joinToString("") { "%02x".format(it) }
+        if (hex != "f02425137d04c6e3f692f2f95b35b667926396c2cebbac1be808cb82e99a8c05bffd4ec90e1fe5ca8bee5e1b9db23560dc49fea26fe532db7480b512f8623bb9b85cdaa671aeccd3630112d93a2f81417a37cf29bbd19e8ce10efbee2a3d5535") {
+            throw AssertionError("runtime keys differ from the node's: $hex")
         }
-        assertThrows(SnpAttestationException::class.java) {
-            SnpAttestationVerifier.verifySealKey(goSpki, "node-1", "seal-key", "")
+        val verifier = Base64.getUrlEncoder().withoutPadding().encodeToString(
+            MessageDigest.getInstance("SHA-256").digest("virtroid-runtime-keys-verifier-v1:".toByteArray() + keys),
+        )
+        if (verifier != "u6fge0EsM4_fYlmSpxoTTmPB46wJrr8KDvNEuV_XE04") {
+            throw AssertionError("runtime keys verifier differs from the node's: $verifier")
+        }
+        if (BlobKeyEnvelopeCrypto.runtimeKeys(ByteArray(32) { 4 }, "runtime-2").contentEquals(keys)) {
+            throw AssertionError("two runtimes share keys")
         }
     }
 

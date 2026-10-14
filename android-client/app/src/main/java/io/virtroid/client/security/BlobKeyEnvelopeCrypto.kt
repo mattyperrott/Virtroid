@@ -22,19 +22,24 @@ data class BlobKeyLease(
     val operation: String,
     val algorithm: String,
     val nodePublicKey: String,
-    // The VM's own seal key, signed by its attested TLS key, and the
-    // attestation that proves it; empty for a node that has none.
+    // The phone's challenge, and the VM's fresh report binding its in-memory
+    // seal key to it; empty for a node that isn't attested.
+    val sealNonce: String = "",
     val sealedAlgorithm: String = "",
-    val sealPublicKey: String = "",
-    val sealKeySignature: String = "",
-    val nodeAttestationJson: String = "",
+    val sealAttestationJson: String = "",
     val confidentialRuntime: Boolean = false,
 )
+
+/** An envelope to send, and for sealed ones the runtime keys' verifier. */
+data class SealedBlobKey(val envelope: JSONObject, val runtimeKeyVerifier: String?)
 
 object BlobKeyEnvelopeCrypto {
     const val ALGORITHM = "P256_ECDH_HKDF_SHA256_AESGCM_V1"
     const val SEALED_ALGORITHM = "P256_ECDH_HKDF_SHA256_AESGCM_V2_SEALED"
     private const val SEALED_HKDF_INFO = "virtroid-blob-key-envelope-v2"
+    private const val SNAPSHOT_KEY_CONTEXT = "VIRTROID-RUNTIME-SNAPSHOT-KEY-V2"
+    private const val MANIFEST_MAC_CONTEXT = "VIRTROID-RUNTIME-MANIFEST-MAC-V3"
+    private const val NAMESPACE_CONTEXT = "VIRTROID-RUNTIME-BLOB-NAMESPACE-V3"
     private const val AAD_CONTEXT = "VIRTROID-BLOB-KEY-ENVELOPE-V1"
     private const val HKDF_INFO = "virtroid-blob-key-envelope-v1"
     private const val GCM_TAG_BITS = 128
@@ -42,11 +47,14 @@ object BlobKeyEnvelopeCrypto {
     private const val B64_URL_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
 
     /**
-     * Seals [blobAccessKey] for the VM in [lease]. [sealed] seals it to the
-     * VM's own in-memory key, which the caller must have verified against the
-     * VM's attestation; otherwise to the node key, for nodes without one.
+     * Seals keys for the VM in [lease]. Given [sealPublicKey], the VM's own
+     * in-memory key that the caller verified against a fresh report, it seals
+     * only this runtime's keys, so the VM never holds the account key.
+     * Otherwise it seals the account key to the node key, for nodes that
+     * aren't attested.
      */
-    fun encryptBlobAccessKey(blobAccessKey: String, lease: BlobKeyLease, sealed: Boolean): JSONObject {
+    fun encryptBlobAccessKey(blobAccessKey: String, lease: BlobKeyLease, sealPublicKey: String?): SealedBlobKey {
+        val sealed = sealPublicKey != null
         val algorithm = if (sealed) SEALED_ALGORITHM else ALGORITHM
         if (sealed) {
             require(lease.sealedAlgorithm == SEALED_ALGORITHM) { "unsupported sealed blob-key algorithm" }
@@ -54,10 +62,11 @@ object BlobKeyEnvelopeCrypto {
             require(lease.algorithm == ALGORITHM) { "unsupported blob-key lease algorithm" }
         }
 
-        val plaintextKey = Base64.decode(blobAccessKey.trim(), B64_URL_FLAGS)
-        require(plaintextKey.size == 32) { "invalid blob access key length" }
+        val accountKey = Base64.decode(blobAccessKey.trim(), B64_URL_FLAGS)
+        require(accountKey.size == 32) { "invalid blob access key length" }
+        val plaintextKey = if (sealed) runtimeKeys(accountKey, lease.runtimeId) else accountKey
 
-        val nodePublicKey = parseNodePublicKey(if (sealed) lease.sealPublicKey else lease.nodePublicKey)
+        val nodePublicKey = parseNodePublicKey(sealPublicKey ?: lease.nodePublicKey)
         val keyPairGenerator = KeyPairGenerator.getInstance("EC")
         keyPairGenerator.initialize(ECGenParameterSpec("secp256r1"), SecureRandom())
         val keyPair = keyPairGenerator.generateKeyPair()
@@ -78,7 +87,7 @@ object BlobKeyEnvelopeCrypto {
         cipher.updateAAD(aad)
         val ciphertext = cipher.doFinal(plaintextKey)
 
-        return JSONObject()
+        val envelope = JSONObject()
             .put("version", 1)
             .put("algorithm", algorithm)
             .put("lease_id", lease.leaseId)
@@ -88,7 +97,25 @@ object BlobKeyEnvelopeCrypto {
             .put("ephemeral_public_key", Base64.encodeToString(keyPair.public.encoded, B64_STD_FLAGS))
             .put("iv", Base64.encodeToString(iv, B64_STD_FLAGS))
             .put("ciphertext", Base64.encodeToString(ciphertext, B64_STD_FLAGS))
+        return SealedBlobKey(envelope, if (sealed) runtimeKeysVerifier(plaintextKey) else null)
     }
+
+    /**
+     * One runtime's keys, derived from the account key exactly as the VM
+     * derives them: its snapshot key, manifest MAC key and blob namespace.
+     */
+    fun runtimeKeys(accountKey: ByteArray, runtimeId: String): ByteArray {
+        val id = runtimeId.trim().toByteArray(Charsets.UTF_8)
+        fun derive(context: String) = hmacSha256(accountKey, context.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + id)
+        return derive(SNAPSHOT_KEY_CONTEXT) + derive(MANIFEST_MAC_CONTEXT) + derive(NAMESPACE_CONTEXT)
+    }
+
+    /** What the VM checks the runtime keys against once it opens them. */
+    fun runtimeKeysVerifier(runtimeKeys: ByteArray): String =
+        Base64.encodeToString(
+            MessageDigest.getInstance("SHA-256").digest("virtroid-runtime-keys-verifier-v1:".toByteArray(Charsets.UTF_8) + runtimeKeys),
+            B64_URL_FLAGS,
+        )
 
     private fun parseNodePublicKey(publicKeyB64: String): ECPublicKey {
         val publicKeyDer = Base64.decode(publicKeyB64.trim(), B64_STD_FLAGS)

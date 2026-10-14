@@ -7,8 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strings"
+	"time"
+	"virtroid/backend/internal/store"
 
 	"virtroid/backend/internal/measurements"
 )
@@ -69,69 +74,70 @@ func nodeAttestationJSON(raw json.RawMessage, tlsPin string) (string, error) {
 	return compact.String(), nil
 }
 
-const maxBlobSealKeyBytes = 2 << 10
+const (
+	blobSealNonceSize    = 32
+	maxSealAttestation   = 32 << 10
+	sealAttestationLimit = 30 * time.Second
+)
 
-// nodeBlobSealKeyJSON checks the shape of the seal key a node reports with
-// its attestation and returns it compacted, or "" when absent. Phones check
-// its signature against the attested TLS key; this server only relays it.
-func nodeBlobSealKeyJSON(raw json.RawMessage, attestation string) (string, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || string(raw) == "null" {
-		return "", nil
-	}
-	if attestation == "" {
-		return "", errors.New("blob_seal_key requires an attestation")
-	}
-	if len(raw) > maxBlobSealKeyBytes {
-		return "", errors.New("blob_seal_key is too large")
-	}
-	var key struct {
-		PublicKey string `json:"public_key"`
-		Signature string `json:"signature"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&key); err != nil {
-		return "", errors.New("blob_seal_key is not valid")
-	}
-	for _, field := range []string{key.PublicKey, key.Signature} {
-		if decoded, err := base64.StdEncoding.DecodeString(field); err != nil || len(decoded) == 0 {
-			return "", errors.New("blob_seal_key fields must be base64")
-		}
-	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
-		return "", err
-	}
-	return compact.String(), nil
-}
-
-// blobSealFields are the blob-key lease fields that let a phone seal the key
-// to the VM itself: its attestation, its signed seal key, and whether it is
-// a provisioned confidential VM, in which case the phone requires them.
-func (a *API) blobSealFields(ctx context.Context, hostID string) (map[string]any, error) {
+// blobSealFields are the blob-key lease fields that let a phone seal a
+// runtime's keys to the VM itself: a fresh report from the VM binding its
+// in-memory seal key to the phone's challenge, and whether the runtime is a
+// provisioned confidential VM, in which case the phone requires it. This
+// server only relays the report; phones verify AMD's signatures.
+func (a *API) blobSealFields(ctx context.Context, host store.Host, nonce string) (map[string]any, error) {
 	fields := map[string]any{}
-	attestation, err := a.store.HostSNPAttestation(ctx, hostID)
+	_, provisioned, err := a.store.LiveProvisionedVM(ctx, host.ID)
 	if err != nil {
 		return nil, err
 	}
-	if attestation == "" {
-		return fields, nil
-	}
-	fields["node_attestation"] = json.RawMessage(attestation)
-	sealKey, err := a.store.HostBlobSealKey(ctx, hostID)
-	if err != nil {
-		return nil, err
-	}
-	if sealKey != "" {
-		fields["blob_seal_key"] = json.RawMessage(sealKey)
-		fields["sealed_algorithm"] = blobKeyEnvelopeAlgorithmSealed
-	}
-	if _, provisioned, err := a.store.LiveProvisionedVM(ctx, hostID); err != nil {
-		return nil, err
-	} else if provisioned {
+	if provisioned {
 		fields["confidential_runtime"] = true
 	}
+	attestation, err := a.store.HostSNPAttestation(ctx, host.ID)
+	if err != nil {
+		return nil, err
+	}
+	nonce = strings.TrimSpace(nonce)
+	if attestation == "" || nonce == "" {
+		// An app that predates sealing, or a node that isn't attested.
+		return fields, nil
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(nonce); err != nil || len(decoded) != blobSealNonceSize {
+		return nil, errors.New("seal_nonce must be 32 bytes of base64")
+	}
+	baseURL, client, err := a.nodeCallbackTarget(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(map[string]string{"nonce": nonce})
+	if err != nil {
+		return nil, err
+	}
+	attestCtx, cancel := context.WithTimeout(ctx, sealAttestationLimit)
+	defer cancel()
+	req, err := http.NewRequestWithContext(attestCtx, http.MethodPost, baseURL+"/api/v1/internal/blob-seal/attest", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := a.signNodeCallback(req, body); err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("the VM did not answer the seal challenge: %w", err)
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, maxSealAttestation+1))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK || len(payload) > maxSealAttestation || !json.Valid(payload) {
+		return nil, fmt.Errorf("the VM refused the seal challenge: status=%d", resp.StatusCode)
+	}
+	fields["seal_attestation"] = json.RawMessage(payload)
+	fields["sealed_algorithm"] = blobKeyEnvelopeAlgorithmSealed
 	return fields, nil
 }
 

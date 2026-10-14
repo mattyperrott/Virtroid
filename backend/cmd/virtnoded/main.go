@@ -375,9 +375,11 @@ type nodeAgent struct {
 	tlsSPKIPin string
 	// tlsSigner is the public TLS key; it signs viewer keys for phones.
 	tlsSigner crypto.Signer
-	// blobSealKey receives blob keys from phones that checked this VM's
+	// blobSealKey receives runtime keys from phones that checked this VM's
 	// attestation; it never leaves memory.
 	blobSealKey *blobSealKey
+	// snpSource makes fresh reports, for seal-key challenges.
+	snpSource *attestationSource
 	// snpAttestation proves tlsSigner lives in an SEV-SNP VM, when it does.
 	snpAttestation      *snpAttestation
 	blobPreflightMu     sync.Mutex
@@ -472,6 +474,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/photos", node.handleRuntimePhotoImport)
 	mux.HandleFunc("POST /api/v1/internal/runtimes/{id}/videos", node.handleRuntimeVideoImport)
 	mux.HandleFunc("POST /api/v1/internal/blob-key/verify", node.handleVerifyBlobKeyEnvelope)
+	mux.HandleFunc("POST /api/v1/internal/blob-seal/attest", node.handleBlobSealAttestation)
 	mux.HandleFunc("CONNECT /api/v1/relay/{id}", node.handleRelaySession)
 	mux.HandleFunc("GET /api/v1/relay/{id}", node.handleRelaySession)
 
@@ -510,7 +513,7 @@ func main() {
 		// node without its attestation.
 		node.attestNode(ctx, publicSPKI)
 		if node.snpAttestation != nil {
-			sealKey, err := newBlobSealKey(node.tlsSigner, cfg.NodeID)
+			sealKey, err := newBlobSealKey()
 			if err != nil {
 				log.Fatalf("blob seal key: %v", err)
 			}
@@ -913,9 +916,6 @@ func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map
 	}
 	if n.snpAttestation != nil {
 		capabilities["snp_attestation"] = n.snpAttestation
-		if n.blobSealKey != nil {
-			capabilities["blob_seal_key"] = n.blobSealKey
-		}
 	}
 	if !includePreflight {
 		return capabilities

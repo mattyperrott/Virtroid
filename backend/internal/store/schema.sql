@@ -121,7 +121,6 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
 -- The node's SEV-SNP attestation bundle (JSON), relayed to phones as is; the
 -- phone verifies it, so the control plane never needs to.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS snp_attestation TEXT NOT NULL DEFAULT '';
-ALTER TABLE hosts ADD COLUMN IF NOT EXISTS blob_seal_key TEXT NOT NULL DEFAULT '';
 
 DO $$
 BEGIN

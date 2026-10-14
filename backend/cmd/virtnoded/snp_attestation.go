@@ -191,7 +191,18 @@ type attestationSource struct {
 
 // buildSNPAttestation produces the bundle for the node's TLS key.
 func buildSNPAttestation(ctx context.Context, source attestationSource, spkiDER []byte) (snpAttestation, error) {
-	report, err := source.report(nodeKeyReportData(spkiDER))
+	bundle, err := buildSNPReport(ctx, source, nodeKeyReportData(spkiDER))
+	if err != nil {
+		return snpAttestation{}, err
+	}
+	bundle.TLSSPKI = base64.StdEncoding.EncodeToString(spkiDER)
+	return bundle, nil
+}
+
+// buildSNPReport asks the chip for a report over reportData and adds the AMD
+// certificates that verify it.
+func buildSNPReport(ctx context.Context, source attestationSource, reportData [64]byte) (snpAttestation, error) {
+	report, err := source.report(reportData)
 	if err != nil {
 		return snpAttestation{}, err
 	}
@@ -243,7 +254,6 @@ func buildSNPAttestation(ctx context.Context, source attestationSource, spkiDER 
 		Version: 1,
 		Product: product,
 		Report:  encode(report),
-		TLSSPKI: encode(spkiDER),
 		VCEK:    encode(vcek),
 		ASK:     encode(chain[0]),
 		ARK:     encode(chain[1]),
@@ -279,6 +289,7 @@ func (n *nodeAgent) attestNode(ctx context.Context, spkiDER []byte) {
 		attestation, err := buildSNPAttestation(ctx, source, spkiDER)
 		if err == nil {
 			n.snpAttestation = &attestation
+			n.snpSource = &source
 			log.Printf("virtnoded SNP attestation ready: product=%s", attestation.Product)
 			return
 		}

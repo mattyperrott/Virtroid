@@ -6,6 +6,7 @@ import io.virtroid.client.BuildConfig
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.BlobKeyEnvelopeCrypto
 import io.virtroid.client.security.BlobKeyLease
+import io.virtroid.client.security.SealedBlobKey
 import io.virtroid.client.security.AccountRecoveryChallenge
 import io.virtroid.client.security.AccountRecoveryCredential
 import io.virtroid.client.security.DeviceIdentityStore
@@ -311,11 +312,12 @@ class VirtroidApi(
 ) {
     object BlobSeal {
         /**
-         * Verifies a blob-key lease's VM and says whether to seal to its own
-         * key; the app sets it. It runs on the IO thread that seals the key.
+         * Verifies a blob-key lease's VM and returns its seal key, or null for
+         * a node that needs no attestation; the app sets it. It runs on the IO
+         * thread that seals the keys.
          */
         @Volatile
-        var check: ((baseUrl: String, lease: BlobKeyLease) -> Boolean)? = null
+        var check: ((baseUrl: String, lease: BlobKeyLease) -> String?)? = null
     }
 
     private val blobSealCheck get() = BlobSeal.check
@@ -944,7 +946,8 @@ class VirtroidApi(
             .put("max_size", maxSize)
             .put("bit_rate", bitRate)
             .put("blob_key_verifier", blobKeyVerifier)
-            .put("blob_key_envelope", envelope)
+            .put("blob_key_envelope", envelope.envelope)
+            .apply { envelope.runtimeKeyVerifier?.let { put("runtime_key_verifier", it) } }
             .toString()
 
         val payload = executeJson(
@@ -1254,7 +1257,8 @@ class VirtroidApi(
         val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("blob_key_verifier", blobKeyVerifier)
-            .put("blob_key_envelope", envelope)
+            .put("blob_key_envelope", envelope.envelope)
+            .apply { envelope.runtimeKeyVerifier?.let { put("runtime_key_verifier", it) } }
             .toString()
 
         executeJson(
@@ -1290,15 +1294,10 @@ class VirtroidApi(
      * app's check verified it. Without that check, nothing is sent to a VM
      * that must be attested.
      */
-    private fun sealBlobAccessKey(baseUrl: String, blobAccessKey: String, lease: BlobKeyLease): JSONObject {
+    private fun sealBlobAccessKey(baseUrl: String, blobAccessKey: String, lease: BlobKeyLease): SealedBlobKey {
         val check = blobSealCheck
-        val sealed = when {
-            check != null -> check(baseUrl, lease)
-            lease.confidentialRuntime || lease.nodeAttestationJson.isNotBlank() ->
-                throw IOException("this runtime's VM must be verified before it receives the key")
-            else -> false
-        }
-        return BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease, sealed)
+            ?: throw IOException("this runtime's VM must be verified before it receives its keys")
+        return BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease, check(baseUrl, lease))
     }
 
     private fun requestBlobKeyLease(
@@ -1337,9 +1336,14 @@ class VirtroidApi(
         rotateCapability: Boolean = false,
     ): BlobKeyLease {
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId, rotateCapability = rotateCapability)
+        // A fresh challenge, so the VM's report can't be a replayed one.
+        val sealNonce = java.util.Base64.getEncoder().encodeToString(
+            ByteArray(32).also { java.security.SecureRandom().nextBytes(it) },
+        )
         val requestBody = JSONObject()
             .put("operation", operation)
             .put("blob_key_verifier", blobKeyVerifier)
+            .put("seal_nonce", sealNonce)
             .toString()
 
         val payload = executeJson(
@@ -1359,10 +1363,9 @@ class VirtroidApi(
             operation = payload.getString("operation"),
             algorithm = payload.getString("algorithm"),
             nodePublicKey = payload.getString("node_public_key"),
+            sealNonce = sealNonce,
             sealedAlgorithm = payload.optString("sealed_algorithm"),
-            sealPublicKey = payload.optJSONObject("blob_seal_key")?.optString("public_key").orEmpty(),
-            sealKeySignature = payload.optJSONObject("blob_seal_key")?.optString("signature").orEmpty(),
-            nodeAttestationJson = payload.optJSONObject("node_attestation")?.toString().orEmpty(),
+            sealAttestationJson = payload.optJSONObject("seal_attestation")?.toString().orEmpty(),
             confidentialRuntime = payload.optBoolean("confidential_runtime", false),
         )
     }
@@ -1439,7 +1442,8 @@ class VirtroidApi(
         val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("blob_key_verifier", blobKeyVerifier)
-            .put("blob_key_envelope", envelope)
+            .put("blob_key_envelope", envelope.envelope)
+            .apply { envelope.runtimeKeyVerifier?.let { put("runtime_key_verifier", it) } }
             .toString()
 
         val payload = executeJson(
