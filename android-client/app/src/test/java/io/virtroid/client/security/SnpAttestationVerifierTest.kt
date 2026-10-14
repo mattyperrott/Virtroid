@@ -180,6 +180,16 @@ class SnpAttestationVerifierTest {
     }
 
     @Test
+    fun viewerKeyMatchesTheGoNode() {
+        // virtnoded's TestRuntimeViewerKeyMatchesAcrossHandoffs.
+        val key = BlobKeyEnvelopeCrypto.runtimeViewerKey(ByteArray(32) { 0x42 }, "rt-viewer-vector")
+        val hex = key.joinToString("") { "%02x".format(it) }
+        if (hex != "b39725a7f60e32ebca2e9db9e8d9ff5c92a4eefb070fbc2229c78a6045b551f6") {
+            throw AssertionError("viewer key differs from the node's: $hex")
+        }
+    }
+
+    @Test
     fun viewerKeyFromAnotherNodeIsRejected() {
         val keys = KeyPairGenerator.getInstance("EC").apply { initialize(256) }
         val nodeKey = keys.generateKeyPair()

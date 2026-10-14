@@ -29,11 +29,94 @@ import javax.crypto.spec.SecretKeySpec;
 
 public final class ViewerEncryption {
     private static final byte[] MAGIC = new byte[]{'V', 'R', 'T', 'E', 'N', 'C', '1', '\n'};
+    // Protocol 2: each side proves the runtime's viewer key before the stream.
+    private static final byte[] MAGIC_V2 = new byte[]{'V', 'R', 'T', 'E', 'N', 'C', '2', '\n'};
+    private static final int VIEWER_KEY_SIZE = 32;
+    private static final int SERVER_NONCE_SIZE = 32;
+    private static final String PROOF_CLIENT = "virtroid-viewer-auth-v2 client\n";
+    private static final String PROOF_RUNTIME = "virtroid-viewer-auth-v2 runtime\n";
     private static final int MAX_PUBLIC_KEY = 2048;
     private static final int MAX_PLAIN_FRAME = 32 * 1024;
     private static final int MAX_CIPHER_FRAME = MAX_PLAIN_FRAME + 16;
 
     private ViewerEncryption() {
+    }
+
+    /** The base64 viewer key from the session store, or null when there is none. */
+    public static byte[] decodeViewerKey(String encoded) {
+        if (TextUtils.isEmpty(encoded)) {
+            return null;
+        }
+        try {
+            byte[] key = Base64.decode(encoded.trim(), Base64.DEFAULT);
+            return key.length == VIEWER_KEY_SIZE ? key : null;
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
+    }
+
+    public static Streams open(Socket socket, String expectedServerPublicKey, int protocol, byte[] viewerKey) throws IOException, GeneralSecurityException {
+        if (protocol < 2) {
+            return open(socket, expectedServerPublicKey);
+        }
+        if (viewerKey == null || viewerKey.length != VIEWER_KEY_SIZE) {
+            throw new GeneralSecurityException("this phone has no viewer key for the runtime");
+        }
+        InputStream input = socket.getInputStream();
+        OutputStream output = socket.getOutputStream();
+
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+        generator.initialize(new ECGenParameterSpec("secp256r1"));
+        KeyPair clientKeyPair = generator.generateKeyPair();
+        byte[] clientPublic = clientKeyPair.getPublic().getEncoded();
+
+        writeHandshake(output, MAGIC_V2, clientPublic);
+        byte[] serverPublic = readHandshake(input, MAGIC_V2);
+        verifyServerPublicKey(serverPublic, expectedServerPublicKey);
+        byte[] serverNonce = readFully(input, SERVER_NONCE_SIZE);
+
+        byte[] transcriptHash = transcriptV2(clientPublic, serverPublic, serverNonce);
+        output.write(proof(viewerKey, PROOF_CLIENT, transcriptHash));
+        output.flush();
+        byte[] runtimeProof = readFully(input, 32);
+        if (!MessageDigest.isEqual(runtimeProof, proof(viewerKey, PROOF_RUNTIME, transcriptHash))) {
+            throw new GeneralSecurityException("the runtime did not prove its viewer key");
+        }
+
+        PublicKey serverKey = KeyFactory.getInstance("EC")
+            .generatePublic(new X509EncodedKeySpec(serverPublic));
+        KeyAgreement agreement = KeyAgreement.getInstance("ECDH");
+        agreement.init(clientKeyPair.getPrivate());
+        agreement.doPhase(serverKey, true);
+        byte[] sharedSecret = agreement.generateSecret();
+
+        TrafficKeys keys = deriveKeysV2(sharedSecret, transcriptHash, viewerKey);
+        Arrays.fill(sharedSecret, (byte) 0);
+        return new Streams(
+            new EncryptedInputStream(input, keys.serverToClient),
+            new EncryptedOutputStream(output, keys.clientToServer)
+        );
+    }
+
+    static byte[] transcriptV2(byte[] clientPublic, byte[] serverPublic, byte[] serverNonce) throws GeneralSecurityException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        digest.update(MAGIC_V2);
+        digest.update(clientPublic);
+        digest.update(serverPublic);
+        digest.update(serverNonce);
+        return digest.digest();
+    }
+
+    static byte[] proof(byte[] viewerKey, String role, byte[] transcriptHash) throws GeneralSecurityException {
+        return hmacSha256(viewerKey, concat(role.getBytes(StandardCharsets.UTF_8), transcriptHash));
+    }
+
+    static TrafficKeys deriveKeysV2(byte[] sharedSecret, byte[] transcriptHash, byte[] viewerKey) throws GeneralSecurityException {
+        byte[] prk = hmacSha256(transcriptHash, concat(sharedSecret, viewerKey));
+        return new TrafficKeys(
+            hkdfExpand(prk, "virtroid-viewer-e2ee-v2 client-to-runtime".getBytes(StandardCharsets.UTF_8), 32),
+            hkdfExpand(prk, "virtroid-viewer-e2ee-v2 runtime-to-client".getBytes(StandardCharsets.UTF_8), 32)
+        );
     }
 
     public static Streams open(Socket socket, String expectedServerPublicKey) throws IOException, GeneralSecurityException {
@@ -88,8 +171,12 @@ public final class ViewerEncryption {
     }
 
     private static byte[] readHandshake(InputStream input) throws IOException {
-        byte[] magic = readFully(input, MAGIC.length);
-        if (!MessageDigest.isEqual(MAGIC, magic)) {
+        return readHandshake(input, MAGIC);
+    }
+
+    private static byte[] readHandshake(InputStream input, byte[] expectedMagic) throws IOException {
+        byte[] magic = readFully(input, expectedMagic.length);
+        if (!MessageDigest.isEqual(expectedMagic, magic)) {
             throw new IOException("invalid viewer encryption handshake");
         }
         byte[] lengthBytes = readFully(input, 2);
@@ -101,10 +188,14 @@ public final class ViewerEncryption {
     }
 
     private static void writeHandshake(OutputStream output, byte[] publicKey) throws IOException {
+        writeHandshake(output, MAGIC, publicKey);
+    }
+
+    private static void writeHandshake(OutputStream output, byte[] magic, byte[] publicKey) throws IOException {
         if (publicKey.length <= 0 || publicKey.length > MAX_PUBLIC_KEY) {
             throw new IOException("invalid viewer encryption public key length: " + publicKey.length);
         }
-        output.write(MAGIC);
+        output.write(magic);
         output.write((publicKey.length >>> 8) & 0xff);
         output.write(publicKey.length & 0xff);
         output.write(publicKey);
@@ -178,7 +269,7 @@ public final class ViewerEncryption {
         }
     }
 
-    private static final class TrafficKeys {
+    static final class TrafficKeys {
         final byte[] clientToServer;
         final byte[] serverToClient;
 

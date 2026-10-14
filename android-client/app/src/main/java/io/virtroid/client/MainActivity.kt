@@ -31,6 +31,7 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.RuntimeCardBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
+import io.virtroid.client.security.BlobKeyEnvelopeCrypto
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.ConfidentialRuntimeGuard
@@ -549,10 +550,13 @@ class MainActivity : AppCompatActivity() {
                     state to relayRefresh
                 }.onSuccess {
                     val (state, relayRefresh) = it
-                    if (state.canResumeRuntime(runtime.id) && relayRefresh != null) {
+                    if (state.canResumeRuntime(runtime.id) && relayRefresh != null &&
+                        session.hasViewerKeyFor(relayRefresh.viewerProtocol)
+                    ) {
                         val updatedSession = session.copy(
                             relayToken = relayRefresh.relayToken,
                             viewerPublicKey = relayRefresh.viewerPublicKey,
+                            viewerProtocol = relayRefresh.viewerProtocol,
                         )
                         activeSessionStore.save(updatedSession)
                         appLogs.info("Returning to active session for ${runtime.name}", "session")
@@ -603,8 +607,8 @@ class MainActivity : AppCompatActivity() {
                         api.fetchSnpMeasurements(baseUrl)
                     }
                     identityPasswordStore.saveConfigured(accountId, deviceId)
-                    Pair(session, readyRuntime)
-                }.onSuccess { (session, readyRuntime) ->
+                    Triple(session, readyRuntime, BlobKeyEnvelopeCrypto.runtimeViewerKey(blobAccessKey, readyRuntime.id))
+                }.onSuccess { (session, readyRuntime, viewerKey) ->
                     setBusy(false)
                     val activeSession = ActiveSessionStore.ActiveSession(
                         accountId = accountId,
@@ -620,6 +624,8 @@ class MainActivity : AppCompatActivity() {
                         relayToken = session.relayToken,
                         sessionId = session.sessionId,
                         viewerPublicKey = session.viewerPublicKey,
+                        viewerProtocol = session.viewerProtocol,
+                        viewerKey = viewerKey,
                         relayTlsPin = session.relayTlsPin,
                         relayFallbackHost = session.relayFallbackHost,
                         relayFallbackPort = session.relayFallbackPort,

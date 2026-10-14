@@ -65,6 +65,10 @@ class SessionActivity : AppCompatActivity() {
     private var relayFallbackPort: Int = 0
     private var relayToken: String = ""
     private var viewerPublicKey: String = ""
+    private var viewerProtocol: Int = 1
+    // Kept in the encrypted session store, not the intent, which Android may
+    // save with the task.
+    private var viewerKey: String = ""
     private var sessionId: String = ""
     private var runtimeName: String = ""
     private var runtimeId: String = ""
@@ -207,6 +211,7 @@ class SessionActivity : AppCompatActivity() {
         relayFallbackPort = intent.getIntExtra(EXTRA_RELAY_FALLBACK_PORT, 0)
         relayToken = intent.getStringExtra(EXTRA_RELAY_TOKEN).orEmpty()
         viewerPublicKey = intent.getStringExtra(EXTRA_VIEWER_PUBLIC_KEY).orEmpty()
+        viewerProtocol = intent.getIntExtra(EXTRA_VIEWER_PROTOCOL, 1)
         sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty()
         runtimeName = intent.getStringExtra(EXTRA_RUNTIME_NAME).orEmpty()
         runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID).orEmpty()
@@ -230,8 +235,16 @@ class SessionActivity : AppCompatActivity() {
         }
         snapshotRollbackGuard = SnapshotRollbackGuard(this)
         activeSessionStore = ActiveSessionStore(this)
+        viewerKey = activeSessionStore.loadForRuntime(runtimeId)?.viewerKey.orEmpty()
         appSettings = AppSettingsStore(this)
         appLogs = AppLogStore.get(this)
+        if (viewerProtocol >= 2 && viewerKey.isBlank()) {
+            // Opened before this phone kept viewer keys: a new session derives it.
+            activeSessionStore.clear()
+            toast(getString(R.string.session_viewer_key_missing))
+            finish()
+            return
+        }
         persistActiveSession()
 
         if (relayHost.isBlank() || relayPort <= 0 || !relayTls || relayPath.isBlank() || relayToken.isBlank() || viewerPublicKey.isBlank()) {
@@ -425,6 +438,8 @@ class SessionActivity : AppCompatActivity() {
             relayFallbackPort = relayFallbackPort,
             relayToken = relayToken,
             viewerPublicKey = viewerPublicKey,
+            viewerProtocol = viewerProtocol,
+            viewerKey = viewerKey,
             audioEnabled = audioEnabled,
             physicalMicrophoneEnabled = physicalMicrophoneEnabled,
             surface = surface,
@@ -528,6 +543,7 @@ class SessionActivity : AppCompatActivity() {
             }.onSuccess { refresh ->
                 relayToken = refresh.relayToken
                 viewerPublicKey = refresh.viewerPublicKey
+                viewerProtocol = refresh.viewerProtocol
                 persistActiveSession()
                 connectViewer(surface)
             }.onFailure { error ->
@@ -722,6 +738,8 @@ class SessionActivity : AppCompatActivity() {
                 audioEnabled = audioEnabled,
                 cameraMode = cameraMode,
                 fileMode = fileMode,
+                viewerProtocol = viewerProtocol,
+                viewerKey = viewerKey,
             ),
         )
     }
@@ -880,6 +898,7 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_RELAY_FALLBACK_PORT = "relay_fallback_port"
         private const val EXTRA_RELAY_TOKEN = "relay_token"
         private const val EXTRA_VIEWER_PUBLIC_KEY = "viewer_public_key"
+        private const val EXTRA_VIEWER_PROTOCOL = "viewer_protocol"
         private const val EXTRA_SESSION_ID = "session_id"
         private const val EXTRA_RUNTIME_ID = "runtime_id"
         private const val EXTRA_ACCOUNT_ID = "account_id"
@@ -922,6 +941,7 @@ class SessionActivity : AppCompatActivity() {
             audioEnabled: Boolean = false,
             cameraMode: String = "photo-import",
             fileMode: String = "upload-only",
+            viewerProtocol: Int = 1,
         ): Intent {
             return Intent(context, SessionActivity::class.java)
                 .putExtra(EXTRA_ACCOUNT_ID, accountId)
@@ -939,6 +959,7 @@ class SessionActivity : AppCompatActivity() {
                 .putExtra(EXTRA_RELAY_FALLBACK_PORT, relayFallbackPort)
                 .putExtra(EXTRA_RELAY_TOKEN, relayToken)
                 .putExtra(EXTRA_VIEWER_PUBLIC_KEY, viewerPublicKey)
+                .putExtra(EXTRA_VIEWER_PROTOCOL, viewerProtocol)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
                 .putExtra(EXTRA_AUDIO_ENABLED, audioEnabled)
                 .putExtra(EXTRA_CAMERA_MODE, cameraMode)
@@ -970,6 +991,7 @@ class SessionActivity : AppCompatActivity() {
                 audioEnabled = session.audioEnabled,
                 cameraMode = session.cameraMode,
                 fileMode = session.fileMode,
+                viewerProtocol = session.viewerProtocol,
             )
         }
     }

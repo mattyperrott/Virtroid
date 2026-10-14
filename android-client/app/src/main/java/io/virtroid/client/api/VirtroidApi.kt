@@ -72,6 +72,8 @@ data class SessionLaunch(
     val relayToken: String,
     val viewerPublicKey: String,
     val viewerAddress: String,
+    // The viewer handshake the node speaks; 2 needs the runtime's viewer key.
+    val viewerProtocol: Int = 1,
     // Set when the runtime streams straight from its node: the base64 SHA-256 of
     // the node's TLS public key, which replaces the edge's web certificate check.
     val relayTlsPin: String = "",
@@ -84,6 +86,7 @@ data class SessionLaunch(
 data class SessionRelayRefresh(
     val relayToken: String,
     val viewerPublicKey: String,
+    val viewerProtocol: Int = 1,
     val attestation: SessionAttestation = SessionAttestation(),
 )
 
@@ -986,6 +989,7 @@ class VirtroidApi(
             relayToken = payload.getJSONObject("session").getString("relay_token"),
             viewerPublicKey = viewerPublicKey,
             viewerAddress = payload.getString("viewer_address"),
+            viewerProtocol = payload.optInt("viewer_protocol", 1).coerceAtLeast(1),
             relayTlsPin = payload.optString("relay_tls_spki_sha256").trim(),
             relayFallbackHost = payload.optString("fallback_relay_host").trim(),
             relayFallbackPort = payload.optInt("fallback_relay_port"),
@@ -1244,6 +1248,7 @@ class VirtroidApi(
             viewerPublicKey = payload.optString("viewer_public_key").ifBlank {
                 throw IOException("viewer identity key is required")
             },
+            viewerProtocol = payload.optInt("viewer_protocol", 1).coerceAtLeast(1),
             attestation = payload.toSessionAttestation(),
         )
     }

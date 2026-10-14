@@ -72,6 +72,8 @@ public class Scrcpy extends Service {
     private int relayFallbackPort = 0;
     private String relayToken = "";
     private String viewerPublicKey = "";
+    private int viewerProtocol = 1;
+    private byte[] viewerKey = null;
     private boolean audioEnabled = false;
     private boolean physicalMicrophoneEnabled = false;
     private volatile boolean physicalMicrophoneActive = false;
@@ -166,7 +168,7 @@ public class Scrcpy extends Service {
         return decoder;
     }
 
-    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayFallbackHost, int relayFallbackPort, String relayToken, String viewerPublicKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
+    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayFallbackHost, int relayFallbackPort, String relayToken, String viewerPublicKey, int viewerProtocol, String viewerKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
         first_time = true;
@@ -183,6 +185,8 @@ public class Scrcpy extends Service {
         this.relayFallbackPort = relayFallbackPort;
         this.relayToken = relayToken;
         this.viewerPublicKey = viewerPublicKey;
+        this.viewerProtocol = viewerProtocol;
+        this.viewerKey = ViewerEncryption.decodeViewerKey(viewerKey);
         this.audioEnabled = audioEnabled;
         this.physicalMicrophoneEnabled = physicalMicrophoneEnabled;
         commandWriteFailureNotified.set(false);
@@ -511,7 +515,7 @@ public class Scrcpy extends Service {
                 performRelayHandshake(socket, ip, port);
                 relayTokenConsumed = true;
                 phase = "encrypted viewer handshake";
-                ViewerEncryption.Streams encryptedStreams = ViewerEncryption.open(socket, viewerPublicKey);
+                ViewerEncryption.Streams encryptedStreams = ViewerEncryption.open(socket, viewerPublicKey, viewerProtocol, viewerKey);
                 phase = "first stream header";
 
                 socket.setSoTimeout(10_000);

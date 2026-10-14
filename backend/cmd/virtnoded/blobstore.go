@@ -2474,6 +2474,20 @@ func runtimeNotificationKey(material []byte) []byte {
 	return append([]byte(nil), material[runtimeKeysSize:]...)
 }
 
+// runtimeViewerKeyContext names the key a viewer proves itself with. Phones
+// derive it from the runtime's snapshot key, which only they and the attested
+// VM hold, so the control plane relaying the stream cannot open a viewer of
+// its own.
+const runtimeViewerKeyContext = "VIRTROID-RUNTIME-VIEWER-KEY-V1"
+
+func runtimeViewerKey(material []byte, runtimeID string) []byte {
+	snapshotKey := deriveRuntimeSnapshotKey(material, runtimeID)
+	defer clearBytes(snapshotKey)
+	mac := hmac.New(sha256.New, snapshotKey)
+	_, _ = mac.Write([]byte(runtimeViewerKeyContext))
+	return mac.Sum(nil)
+}
+
 func deriveRuntimeSnapshotKey(masterKey []byte, runtimeID string) []byte {
 	if runtimeKeysOnly(masterKey) {
 		return append([]byte(nil), masterKey[:32]...)

@@ -385,6 +385,7 @@
     <string name="session_failed_message_inline">Disconnected • %1$s</string>
     <string name="session_ended">Session ended</string>
     <string name="session_missing_endpoint">Viewer session details are missing.</string>
+    <string name="session_viewer_key_missing">This session was opened before an update. Open the runtime again to reconnect.</string>
     <string name="session_prepare_failed_title">Viewer not ready yet</string>
     <string name="session_prepare_retry_message">The runtime is online, but the viewer bridge is still preparing. Try connecting again.</string>
     <string name="session_prepare_retry">Retry connect</string>

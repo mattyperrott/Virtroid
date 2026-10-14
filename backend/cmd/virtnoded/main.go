@@ -100,6 +100,12 @@ const (
 	viewerSocketDir           = "/data/local/tmp/virtroid-viewer"
 	scrcpySocketPath          = viewerSocketDir + "/scrcpy.sock"
 	encryptedViewerSocketPath = viewerSocketDir + "/viewer.sock"
+	// viewerAuthKeyPath holds the runtime's viewer key from when the node
+	// writes it until viewercrypt reads and removes it.
+	viewerAuthKeyPath = "/data/local/tmp/virtroid-viewer-auth.key"
+	// viewerProtocol is the encrypted viewer handshake this node's viewercrypt
+	// speaks: 2 makes each viewer prove it holds the runtime's viewer key.
+	viewerProtocol = 2
 )
 
 const viewerScriptContent = `#!/system/bin/sh
@@ -164,7 +170,7 @@ if [ ! -S "$SCRCPY_SOCKET" ]; then
   exit 1
 fi
 chmod 0755 "$VIEWERCRYPT" >/dev/null 2>&1 || true
-"$VIEWERCRYPT" -listen "unix:$VIEWER_SOCKET" -upstream "unix:$SCRCPY_SOCKET" -public-key-file "$PUBLIC_KEY"
+"$VIEWERCRYPT" -listen "unix:$VIEWER_SOCKET" -upstream "unix:$SCRCPY_SOCKET" -public-key-file "$PUBLIC_KEY" -auth-key-file /data/local/tmp/virtroid-viewer-auth.key
 STATUS=$?
 kill "$SERVER_PID" >/dev/null 2>&1 || true
 exit "$STATUS"
@@ -1137,6 +1143,7 @@ func (n *nodeAgent) handlePrepareViewer(w http.ResponseWriter, r *http.Request) 
 		"ok":                true,
 		"viewer_port":       runtime.ViewerPort,
 		"viewer_public_key": viewerPublicKey,
+		"viewer_protocol":   viewerProtocol,
 	}
 	if n.snpAttestation != nil && n.tlsSigner != nil {
 		signature, err := signViewerKey(n.tlsSigner, runtime.ID, viewerPublicKey)
@@ -1941,7 +1948,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 				prewarmMaxSize = viewerDefaultMaxSize
 			}
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Prewarming encrypted viewer bridge.")
-			if err := n.startViewerService(ctx, containerName, "127.0.0.1", prewarmMaxSize, viewerPrewarmBitRate, runtime.AudioEnabled); err != nil {
+			if err := n.startViewerService(ctx, runtime, containerName, "127.0.0.1", prewarmMaxSize, viewerPrewarmBitRate); err != nil {
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Viewer prewarm failed: %v.", err))
 			} else {
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Encrypted viewer bridge prewarmed.")
@@ -2961,7 +2968,7 @@ func (n *nodeAgent) prepareViewer(ctx context.Context, runtime runtimeAssignment
 
 	clientIP := "127.0.0.1"
 	_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "Preparing viewer via in-guest init service.")
-	if err := n.startViewerService(ctx, containerName, clientIP, maxSize, bitRate, runtime.AudioEnabled); err != nil {
+	if err := n.startViewerService(ctx, runtime, containerName, clientIP, maxSize, bitRate); err != nil {
 		return "", fmt.Errorf("start viewer service: %w", err)
 	}
 	if err := n.waitForViewerPort(ctx, runtime, containerName); err != nil {
@@ -4324,11 +4331,32 @@ func viewerServiceReuseListenerCondition() string {
 	return fmt.Sprintf("[ -S %s ] && [ -S %s ]", encryptedViewerSocketPath, scrcpySocketPath)
 }
 
-func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clientIP string, maxSize, bitRate int, audioEnabled bool) error {
+// viewerAuthKey is the runtime's viewer key, base64, for viewercrypt.
+func (n *nodeAgent) viewerAuthKey(ctx context.Context, runtime runtimeAssignment) (string, error) {
+	material, err := n.runtimeBlobKeyWithContext(ctx, runtime)
+	if err != nil {
+		return "", fmt.Errorf("the runtime's keys are not on this node: %w", err)
+	}
+	defer clearBytes(material)
+	key := runtimeViewerKey(material, runtime.ID)
+	defer clearBytes(key)
+	return base64.StdEncoding.EncodeToString(key), nil
+}
+
+func (n *nodeAgent) startViewerService(ctx context.Context, runtime runtimeAssignment, containerName, clientIP string, maxSize, bitRate int) error {
+	audioEnabled := runtime.AudioEnabled
 	clientIP = strings.TrimSpace(clientIP)
 	if clientIP == "" {
 		clientIP = "127.0.0.1"
 	}
+	authKey, err := n.viewerAuthKey(ctx, runtime)
+	if err != nil {
+		return err
+	}
+	// The key reaches the root shell through its environment, which apps in
+	// the runtime cannot read, and the shell's own echo writes it, so it is
+	// never a process argument.
+	env := []string{"VIRTROID_VIEWER_AUTH_KEY=" + authKey}
 	shellCmd := fmt.Sprintf(
 		"desired_ip=%s; desired_size=%d; desired_bitrate=%d; desired_audio=%t; public_key=%s; "+
 			"current_ip=$(getprop virtroid.viewer.client_ip); "+
@@ -4338,6 +4366,9 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 			"svc=$(getprop init.svc.virtroid_viewer); "+
 			"if [ \"$svc\" = \"running\" ] && [ \"$current_ip\" = \"$desired_ip\" ] && [ \"$current_size\" = \"$desired_size\" ] && [ \"$current_bitrate\" = \"$desired_bitrate\" ] && [ \"$current_audio\" = \"$desired_audio\" ] && [ -s \"$public_key\" ] && %s; then exit 0; fi; "+
 			"rm -f /data/local/tmp/virtroid-viewer.log \"$public_key\"; "+
+			"(umask 077; echo \"$VIRTROID_VIEWER_AUTH_KEY\" > %s) || exit 1; "+
+			"chown 1000:1000 %s || exit 1; "+
+			"unset VIRTROID_VIEWER_AUTH_KEY; "+
 			"setprop virtroid.viewer.client_ip %s; "+
 			"setprop virtroid.viewer.max_size %d; "+
 			"setprop virtroid.viewer.bit_rate %d; "+
@@ -4366,6 +4397,8 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 		audioEnabled,
 		shellEscape(viewerPublicKeyPath),
 		viewerServiceReuseListenerCondition(),
+		viewerAuthKeyPath,
+		viewerAuthKeyPath,
 		shellEscape(clientIP),
 		maxSize,
 		bitRate,
@@ -4373,7 +4406,7 @@ func (n *nodeAgent) startViewerService(ctx context.Context, containerName, clien
 		encryptedViewerSocketPath,
 		viewerSocketDir,
 	)
-	output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
+	output, err := n.execInContainerCaptureAny(ctx, containerName, "", env, [][]string{
 		{"/system/bin/sh", "-c", shellCmd},
 		{"sh", "-c", shellCmd},
 	})

@@ -41,6 +41,7 @@ object BlobKeyEnvelopeCrypto {
     private const val MANIFEST_MAC_CONTEXT = "VIRTROID-RUNTIME-MANIFEST-MAC-V3"
     private const val NAMESPACE_CONTEXT = "VIRTROID-RUNTIME-BLOB-NAMESPACE-V3"
     private const val NOTIFICATION_KEY_CONTEXT = "VIRTROID-RUNTIME-NOTIFICATION-KEY-V1"
+    private const val VIEWER_KEY_CONTEXT = "VIRTROID-RUNTIME-VIEWER-KEY-V1"
     private const val AAD_CONTEXT = "VIRTROID-BLOB-KEY-ENVELOPE-V1"
     private const val HKDF_INFO = "virtroid-blob-key-envelope-v1"
     private const val GCM_TAG_BITS = 128
@@ -123,6 +124,24 @@ object BlobKeyEnvelopeCrypto {
             accountKey,
             NOTIFICATION_KEY_CONTEXT.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + runtimeId.trim().toByteArray(Charsets.UTF_8),
         )
+
+    /**
+     * The key this phone proves to the runtime's viewer it may watch and
+     * control it. It comes from the runtime's snapshot key, which only the
+     * account's phones and the attested VM hold, never the control plane.
+     */
+    fun runtimeViewerKey(accountKey: ByteArray, runtimeId: String): ByteArray {
+        val snapshotKey = runtimeKeys(accountKey, runtimeId).copyOfRange(0, 32)
+        return hmacSha256(snapshotKey, VIEWER_KEY_CONTEXT.toByteArray(Charsets.UTF_8)).also { snapshotKey.fill(0) }
+    }
+
+    /** runtimeViewerKey from the blob access key, as base64 for the session store. */
+    fun runtimeViewerKey(blobAccessKey: String, runtimeId: String): String {
+        val accountKey = Base64.decode(blobAccessKey.trim(), B64_URL_FLAGS)
+        val key = runtimeViewerKey(accountKey, runtimeId)
+        accountKey.fill(0)
+        return Base64.encodeToString(key, Base64.NO_WRAP).also { key.fill(0) }
+    }
 
     /** What the VM checks the runtime keys against once it opens them. */
     fun runtimeKeysVerifier(runtimeKeys: ByteArray): String =

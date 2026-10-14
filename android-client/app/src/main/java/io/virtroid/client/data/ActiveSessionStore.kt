@@ -136,6 +136,8 @@ class ActiveSessionStore(context: Context) {
             .put(KEY_RELAY_TOKEN, session.relayToken)
             .put(KEY_SESSION_ID, session.sessionId)
             .put(KEY_VIEWER_PUBLIC_KEY, session.viewerPublicKey)
+            .put(KEY_VIEWER_PROTOCOL, session.viewerProtocol)
+            .put(KEY_VIEWER_KEY, session.viewerKey)
             .put(KEY_AUDIO_ENABLED, session.audioEnabled)
             .put(KEY_CAMERA_MODE, session.cameraMode)
             .put(KEY_FILE_MODE, session.fileMode)
@@ -163,6 +165,8 @@ class ActiveSessionStore(context: Context) {
                 relayToken = payload.optString(KEY_RELAY_TOKEN),
                 sessionId = payload.optString(KEY_SESSION_ID),
                 viewerPublicKey = payload.optString(KEY_VIEWER_PUBLIC_KEY),
+                viewerProtocol = payload.optInt(KEY_VIEWER_PROTOCOL, 1),
+                viewerKey = payload.optString(KEY_VIEWER_KEY),
                 audioEnabled = payload.optBoolean(KEY_AUDIO_ENABLED, false),
                 cameraMode = payload.optString(KEY_CAMERA_MODE, "photo-import"),
                 fileMode = payload.optString(KEY_FILE_MODE, "upload-only"),
@@ -214,7 +218,13 @@ class ActiveSessionStore(context: Context) {
         val cameraMode: String = "photo-import",
         val fileMode: String = "upload-only",
         val savedAtMs: Long = System.currentTimeMillis(),
+        val viewerProtocol: Int = 1,
+        // Base64 runtime viewer key, which protocol 2 viewers must prove.
+        val viewerKey: String = "",
     ) {
+        /** Whether this phone can still join the runtime's viewer. */
+        fun hasViewerKeyFor(protocol: Int): Boolean = protocol < 2 || viewerKey.isNotBlank()
+
         fun hasEndpoint(): Boolean {
             return accountId.isNotBlank() &&
                 deviceId.isNotBlank() &&
@@ -249,6 +259,8 @@ class ActiveSessionStore(context: Context) {
         const val KEY_RELAY_TOKEN = "relay_token"
         const val KEY_SESSION_ID = "session_id"
         const val KEY_VIEWER_PUBLIC_KEY = "viewer_public_key"
+        const val KEY_VIEWER_PROTOCOL = "viewer_protocol"
+        const val KEY_VIEWER_KEY = "viewer_key"
         const val KEY_AUDIO_ENABLED = "audio_enabled"
         const val KEY_CAMERA_MODE = "camera_mode"
         const val KEY_FILE_MODE = "file_mode"

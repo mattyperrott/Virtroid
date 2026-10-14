@@ -2041,6 +2041,7 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		"relay_tls":         relayEndpoint.TLS,
 		"relay_path":        "/api/v1/relay/" + session.ID,
 		"viewer_public_key": viewer.PublicKey,
+		"viewer_protocol":   viewer.Protocol,
 		"audio_enabled":     runtime.AudioEnabled,
 		"camera_mode":       runtime.CameraMode,
 		"file_mode":         runtime.FileMode,
@@ -2510,6 +2511,7 @@ func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{
 		"session":           session,
 		"viewer_public_key": viewer.PublicKey,
+		"viewer_protocol":   viewer.Protocol,
 	}
 	for key, value := range confidential {
 		response[key] = value
@@ -3741,6 +3743,9 @@ type preparedViewer struct {
 	PublicKey string
 	// Signature is the node's attested TLS key signing PublicKey.
 	Signature string
+	// Protocol is the viewer handshake the node speaks; 2 requires the
+	// runtime's viewer key, which the phone holds and this server does not.
+	Protocol int
 }
 
 func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID string, maxSize, bitRate int) (preparedViewer, error) {
@@ -3788,6 +3793,7 @@ func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID stri
 	var payload struct {
 		ViewerPublicKey    string `json:"viewer_public_key"`
 		ViewerKeySignature string `json:"viewer_key_signature"`
+		ViewerProtocol     int    `json:"viewer_protocol"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return preparedViewer{}, err
@@ -3796,7 +3802,11 @@ func (a *API) prepareViewer(ctx context.Context, host store.Host, runtimeID stri
 	if viewerPublicKey == "" {
 		return preparedViewer{}, errors.New("viewer prepare did not return a public key")
 	}
-	return preparedViewer{PublicKey: viewerPublicKey, Signature: strings.TrimSpace(payload.ViewerKeySignature)}, nil
+	protocol := payload.ViewerProtocol
+	if protocol < 1 {
+		protocol = 1
+	}
+	return preparedViewer{PublicKey: viewerPublicKey, Signature: strings.TrimSpace(payload.ViewerKeySignature), Protocol: protocol}, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

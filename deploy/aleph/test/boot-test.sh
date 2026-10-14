@@ -168,6 +168,9 @@ echo "\$resolved" | \$B grep -q "^PING dns.google (" || fail "Android cannot res
 # service, so it runs with Android's environment (app_process needs
 # ANDROID_ART_ROOT and friends, which docker exec does not pass).
 echo "boot-test: starting the viewer as virtnoded does"
+# The node leaves the runtime's viewer key for viewercrypt, which reads and
+# removes it; this test's key is a dummy.
+\$B timeout 60 C /bin/docker exec -e VIRTROID_VIEWER_AUTH_KEY=WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo= smoke /system/bin/sh -c '(umask 077; echo "\$VIRTROID_VIEWER_AUTH_KEY" > /data/local/tmp/virtroid-viewer-auth.key) && chown 1000:1000 /data/local/tmp/virtroid-viewer-auth.key'
 \$B timeout 60 C /bin/docker exec smoke /system/bin/sh -c "setprop virtroid.viewer.client_ip 127.0.0.1; setprop virtroid.viewer.max_size 1280; setprop virtroid.viewer.bit_rate 4000000; setprop virtroid.viewer.audio_enabled false; setprop ctl.start virtroid_viewer"
 listening=""
 for i in \$(\$B seq 1 30); do
@@ -204,6 +207,16 @@ tcp=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "ss -ltn 2>/dev
 perms=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "stat -c '%a %U' /data/local/tmp/virtroid-viewer" 2>/dev/null | \$B tr -d '\r')
 echo "boot-test: viewer socket directory: \$perms"
 [ "\$perms" = "700 system" ] || fail "the viewer socket directory is open to others: \$perms"
+leftover=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "ls /data/local/tmp/virtroid-viewer-auth.key 2>/dev/null")
+[ -z "\$leftover" ] || fail "viewercrypt left the viewer key on disk"
+# A viewer without the runtime's viewer key gets only viewercrypt's greeting
+# (magic, length, its 91-byte key, a 32-byte nonce: 133 bytes), never its
+# proof, and must not reach the streaming server, which accepts one client.
+unproven=\$(\$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "{ printf 'VRTENC2\\n\\000\\133'; echo MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYlO/iFyod1pk3kttzLxSC0rsI1hKh2mrC2lnpQ69pt+pY5Yrf3XjsHU2flyVEAIdeJwPTdrGTSBksXJRZg9JXg== | toybox base64 -d; toybox head -c 32 /dev/zero; sleep 3; } | toybox timeout 8 toybox nc -U /data/local/tmp/virtroid-viewer/viewer.sock | toybox wc -c" 2>/dev/null | \$B tr -dc '0-9')
+echo "boot-test: a viewer without the key received \${unproven:-0} bytes"
+[ "\${unproven:-0}" = 133 ] || fail "viewercrypt answered a viewer without the key with \${unproven:-0} bytes, not just its 133-byte greeting"
+still=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "[ -S /data/local/tmp/virtroid-viewer/scrcpy.sock ] && echo open")
+[ "\$still" = open ] || fail "a viewer without the key reached the streaming server"
 # Pull video as a viewer would, straight from the streaming server (the
 # encryption proxy dials it the same way for each client), for 12 seconds:
 # a working stream does not end on its own. The screen size alone is 8

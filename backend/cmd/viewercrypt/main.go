@@ -26,7 +26,12 @@ import (
 )
 
 const (
-	protocolMagic        = "VRTENC1\n"
+	protocolMagic = "VRTENC1\n"
+	// protocolMagicV2 is the handshake in which the viewer and viewercrypt
+	// each prove they hold the runtime's viewer key before any stream flows.
+	protocolMagicV2      = "VRTENC2\n"
+	viewerAuthKeySize    = 32
+	serverNonceSize      = 32
 	maxPublicKey         = 2048
 	maxPlainFrame        = 32 * 1024
 	maxCipherFrame       = maxPlainFrame + 16
@@ -40,7 +45,17 @@ func main() {
 	listenAddr := flag.String("listen", "127.0.0.1:7017", "encrypted listener address")
 	upstreamAddr := flag.String("upstream", "127.0.0.1:7007", "plaintext scrcpy upstream address")
 	publicKeyFile := flag.String("public-key-file", "", "optional path to write the base64 server ECDH public key")
+	authKeyFile := flag.String("auth-key-file", "", "file holding the runtime's base64 viewer key; read, then removed, and viewers must prove it")
 	flag.Parse()
+
+	var authKey []byte
+	if *authKeyFile != "" {
+		key, err := readAuthKeyFile(*authKeyFile)
+		if err != nil {
+			log.Fatalf("viewer key: %v", err)
+		}
+		authKey = key
+	}
 
 	serverPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -78,7 +93,7 @@ func main() {
 						log.Printf("client handler panic")
 					}
 				}()
-				handleClient(client, *upstreamAddr, serverPrivate)
+				handleClient(client, *upstreamAddr, serverPrivate, authKey)
 			}()
 		default:
 			log.Printf("rejecting viewer connection: capacity exhausted")
@@ -117,14 +132,37 @@ func listen(address string) (net.Listener, error) {
 	return listener, nil
 }
 
-func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.PrivateKey) {
+// readAuthKeyFile reads the viewer key the node left for this process and
+// removes it, so it stays only in this process's memory.
+func readAuthKeyFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(path); err != nil {
+		log.Printf("remove viewer key file: %v", err)
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil || len(key) != viewerAuthKeySize {
+		return nil, errors.New("viewer key file does not hold a 32-byte base64 key")
+	}
+	return key, nil
+}
+
+func handleClient(rawClient net.Conn, upstreamAddr string, serverPrivate *ecdsa.PrivateKey, authKey []byte) {
 	defer rawClient.Close()
 
 	if err := rawClient.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
 		log.Printf("set handshake deadline: %v", err)
 		return
 	}
-	client, err := serverHandshake(rawClient, serverPrivate)
+	var client *encryptedConn
+	var err error
+	if authKey != nil {
+		client, err = serverHandshakeV2(rawClient, serverPrivate, authKey)
+	} else {
+		client, err = serverHandshake(rawClient, serverPrivate)
+	}
 	if err != nil {
 		log.Printf("handshake: %v", err)
 		return
@@ -169,13 +207,9 @@ func serverHandshake(conn net.Conn, serverPrivate *ecdsa.PrivateKey) (*encrypted
 	if err != nil {
 		return nil, err
 	}
-	parsedClientPublic, err := x509.ParsePKIXPublicKey(clientPublicDER)
+	clientPublic, err := parseClientPublicKey(clientPublicDER)
 	if err != nil {
-		return nil, fmt.Errorf("parse client public key: %w", err)
-	}
-	clientPublic, ok := parsedClientPublic.(*ecdsa.PublicKey)
-	if !ok || clientPublic.Curve == nil || clientPublic.Curve.Params().Name != elliptic.P256().Params().Name {
-		return nil, errors.New("client public key must be P-256 ECDH")
+		return nil, err
 	}
 
 	serverPublicDER, err := x509.MarshalPKIXPublicKey(&serverPrivate.PublicKey)
@@ -186,13 +220,104 @@ func serverHandshake(conn net.Conn, serverPrivate *ecdsa.PrivateKey) (*encrypted
 		return nil, err
 	}
 
+	sharedSecret, err := ecdhSecret(clientPublic, serverPrivate)
+	if err != nil {
+		return nil, err
+	}
+	keys := deriveKeys(sharedSecret, append(bytes.Clone(clientPublicDER), serverPublicDER...))
+	return newEncryptedConn(conn, keys.clientToServer, keys.serverToClient), nil
+}
+
+// serverHandshakeV2 is serverHandshake for a runtime whose viewers must hold
+// its viewer key. The client proves the key over the whole handshake,
+// including a fresh nonce, before anything reaches the screen server; then
+// viewercrypt proves it back, and the key is mixed into the traffic keys.
+func serverHandshakeV2(conn net.Conn, serverPrivate *ecdsa.PrivateKey, authKey []byte) (*encryptedConn, error) {
+	if serverPrivate == nil || len(authKey) != viewerAuthKeySize {
+		return nil, errors.New("server private key and viewer key are required")
+	}
+	clientPublicDER, err := readHandshakeMagic(conn, protocolMagicV2)
+	if err != nil {
+		return nil, err
+	}
+	clientPublic, err := parseClientPublicKey(clientPublicDER)
+	if err != nil {
+		return nil, err
+	}
+	serverPublicDER, err := x509.MarshalPKIXPublicKey(&serverPrivate.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	serverNonce := make([]byte, serverNonceSize)
+	if _, err := rand.Read(serverNonce); err != nil {
+		return nil, err
+	}
+	if err := writeHandshakeMagic(conn, protocolMagicV2, serverPublicDER); err != nil {
+		return nil, err
+	}
+	if _, err := conn.Write(serverNonce); err != nil {
+		return nil, err
+	}
+
+	transcriptHash := handshakeTranscriptV2(clientPublicDER, serverPublicDER, serverNonce)
+	clientProof := make([]byte, sha256.Size)
+	if _, err := io.ReadFull(conn, clientProof); err != nil {
+		return nil, err
+	}
+	if !hmac.Equal(clientProof, viewerProof(authKey, viewerProofClient, transcriptHash)) {
+		return nil, errors.New("viewer did not prove the runtime's viewer key")
+	}
+	if _, err := conn.Write(viewerProof(authKey, viewerProofRuntime, transcriptHash)); err != nil {
+		return nil, err
+	}
+
+	sharedSecret, err := ecdhSecret(clientPublic, serverPrivate)
+	if err != nil {
+		return nil, err
+	}
+	keys := deriveKeysV2(sharedSecret, transcriptHash, authKey)
+	return newEncryptedConn(conn, keys.clientToServer, keys.serverToClient), nil
+}
+
+const (
+	viewerProofClient  = "virtroid-viewer-auth-v2 client\n"
+	viewerProofRuntime = "virtroid-viewer-auth-v2 runtime\n"
+)
+
+func viewerProof(authKey []byte, role string, transcriptHash []byte) []byte {
+	mac := hmac.New(sha256.New, authKey)
+	mac.Write([]byte(role))
+	mac.Write(transcriptHash)
+	return mac.Sum(nil)
+}
+
+func handshakeTranscriptV2(clientPublicDER, serverPublicDER, serverNonce []byte) []byte {
+	digest := sha256.New()
+	digest.Write([]byte(protocolMagicV2))
+	digest.Write(clientPublicDER)
+	digest.Write(serverPublicDER)
+	digest.Write(serverNonce)
+	return digest.Sum(nil)
+}
+
+func parseClientPublicKey(der []byte) (*ecdsa.PublicKey, error) {
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse client public key: %w", err)
+	}
+	clientPublic, ok := parsed.(*ecdsa.PublicKey)
+	if !ok || clientPublic.Curve == nil || clientPublic.Curve.Params().Name != elliptic.P256().Params().Name {
+		return nil, errors.New("client public key must be P-256 ECDH")
+	}
+	return clientPublic, nil
+}
+
+func ecdhSecret(clientPublic *ecdsa.PublicKey, serverPrivate *ecdsa.PrivateKey) ([]byte, error) {
 	sharedX, _ := clientPublic.Curve.ScalarMult(clientPublic.X, clientPublic.Y, serverPrivate.D.Bytes())
 	if sharedX == nil {
 		return nil, errors.New("derive shared secret")
 	}
-	sharedSecret := leftPad(sharedX.Bytes(), 32)
-	keys := deriveKeys(sharedSecret, append(bytes.Clone(clientPublicDER), serverPublicDER...))
-	return newEncryptedConn(conn, keys.clientToServer, keys.serverToClient), nil
+	return leftPad(sharedX.Bytes(), 32), nil
 }
 
 func writePublicKeyFile(path string, publicKeyDER []byte) error {
@@ -222,11 +347,15 @@ func writePublicKeyFile(path string, publicKeyDER []byte) error {
 }
 
 func readHandshake(r io.Reader) ([]byte, error) {
-	magic := make([]byte, len(protocolMagic))
+	return readHandshakeMagic(r, protocolMagic)
+}
+
+func readHandshakeMagic(r io.Reader, expected string) ([]byte, error) {
+	magic := make([]byte, len(expected))
 	if _, err := io.ReadFull(r, magic); err != nil {
 		return nil, err
 	}
-	if string(magic) != protocolMagic {
+	if string(magic) != expected {
 		return nil, errors.New("invalid encryption protocol magic")
 	}
 	var lengthBytes [2]byte
@@ -243,10 +372,14 @@ func readHandshake(r io.Reader) ([]byte, error) {
 }
 
 func writeHandshake(w io.Writer, publicKeyDER []byte) error {
+	return writeHandshakeMagic(w, protocolMagic, publicKeyDER)
+}
+
+func writeHandshakeMagic(w io.Writer, magic string, publicKeyDER []byte) error {
 	if len(publicKeyDER) <= 0 || len(publicKeyDER) > maxPublicKey {
 		return fmt.Errorf("invalid public key length %d", len(publicKeyDER))
 	}
-	if _, err := w.Write([]byte(protocolMagic)); err != nil {
+	if _, err := w.Write([]byte(magic)); err != nil {
 		return err
 	}
 	var lengthBytes [2]byte
@@ -269,6 +402,16 @@ func deriveKeys(sharedSecret, transcript []byte) trafficKeys {
 	return trafficKeys{
 		clientToServer: hkdfExpand(prk, []byte("virtroid-viewer-e2ee-v1 client-to-runtime"), 32),
 		serverToClient: hkdfExpand(prk, []byte("virtroid-viewer-e2ee-v1 runtime-to-client"), 32),
+	}
+}
+
+// deriveKeysV2 mixes the viewer key into the ECDH secret, so a party without
+// it ends up with different traffic keys even if a proof check were skipped.
+func deriveKeysV2(sharedSecret, transcriptHash, authKey []byte) trafficKeys {
+	prk := hmacSHA256(transcriptHash, append(bytes.Clone(sharedSecret), authKey...))
+	return trafficKeys{
+		clientToServer: hkdfExpand(prk, []byte("virtroid-viewer-e2ee-v2 client-to-runtime"), 32),
+		serverToClient: hkdfExpand(prk, []byte("virtroid-viewer-e2ee-v2 runtime-to-client"), 32),
 	}
 }
 

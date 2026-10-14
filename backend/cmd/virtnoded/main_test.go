@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -1147,5 +1148,62 @@ func TestRemoveRuntimeNetworkRefusesUnmanagedCollision(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("removeRuntimeNetwork made %d Docker requests after unmanaged collision, want inspect only", requests)
+	}
+}
+
+func TestViewerStartHandsTheViewerKeyOverOnlyThroughTheEnvironment(t *testing.T) {
+	node := &nodeAgent{}
+	runtime := runtimeAssignment{ID: "rt-viewer"}
+	accountKey := bytes.Repeat([]byte{0x42}, 32)
+	node.cacheRuntimeBlobKey(runtime.ID, accountKey)
+	want := base64.StdEncoding.EncodeToString(runtimeViewerKey(accountKey, runtime.ID))
+
+	var created map[string]any
+	requests := 0
+	node.docker = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		switch {
+		case strings.HasSuffix(req.URL.Path, "/exec") && req.Method == http.MethodPost:
+			if err := json.NewDecoder(req.Body).Decode(&created); err != nil {
+				t.Fatalf("decode exec create: %v", err)
+			}
+			return dockerTestResponse(http.StatusCreated, `{"Id":"exec-test"}`), nil
+		case strings.HasSuffix(req.URL.Path, "/start"):
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil)), Header: make(http.Header)}, nil
+		default:
+			return dockerTestResponse(http.StatusOK, `{"ExitCode":0,"Running":false}`), nil
+		}
+	})}
+
+	if err := node.startViewerService(context.Background(), runtime, "virtroid-runtime-test", "127.0.0.1", 1280, 4000000); err != nil {
+		t.Fatalf("startViewerService: %v", err)
+	}
+	env := fmt.Sprint(created["Env"])
+	if !strings.Contains(env, "VIRTROID_VIEWER_AUTH_KEY="+want) {
+		t.Fatal("exec environment does not carry the viewer key")
+	}
+	command := fmt.Sprint(created["Cmd"])
+	if strings.Contains(command, want) {
+		t.Fatal("the viewer key appears in the exec command")
+	}
+	for _, step := range []string{`> /data/local/tmp/virtroid-viewer-auth.key`, "chown 1000:1000 /data/local/tmp/virtroid-viewer-auth.key"} {
+		if !strings.Contains(command, step) {
+			t.Fatalf("viewer start command lacks %q: %s", step, command)
+		}
+	}
+}
+
+func TestViewerStartWithoutTheRuntimeKeysFails(t *testing.T) {
+	node := &nodeAgent{}
+	node.cfg.ControlPlaneURL = "https://control-plane.invalid"
+	node.controlPlane = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return dockerTestResponse(http.StatusNotFound, `{"error":"no active blob key"}`), nil
+	})}
+	node.docker = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("started the viewer without the runtime's keys: %s %s", req.Method, req.URL.Path)
+		return nil, nil
+	})}
+	if err := node.startViewerService(context.Background(), runtimeAssignment{ID: "rt-viewer"}, "virtroid-runtime-test", "127.0.0.1", 1280, 4000000); err == nil {
+		t.Fatal("startViewerService succeeded without the runtime's keys")
 	}
 }

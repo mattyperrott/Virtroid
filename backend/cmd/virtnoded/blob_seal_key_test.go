@@ -141,3 +141,23 @@ func TestSealReportBindsTheKeyToTheChallenge(t *testing.T) {
 		t.Fatal("seal report data ignores the challenge")
 	}
 }
+
+// The phone derives the same viewer key from the account key, and the node
+// from either the account key (older handoffs) or the sealed runtime keys.
+func TestRuntimeViewerKeyMatchesAcrossHandoffs(t *testing.T) {
+	accountKey := bytes.Repeat([]byte{0x42}, 32)
+	runtimeID := "rt-viewer-vector"
+	fromAccount := runtimeViewerKey(accountKey, runtimeID)
+	runtimeKeys := append(deriveRuntimeSnapshotKey(accountKey, runtimeID), runtimeManifestMACKey(accountKey, runtimeID)...)
+	namespace, err := hex.DecodeString(deriveRuntimeBlobNamespace(accountKey, runtimeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeKeys = append(runtimeKeys, namespace...)
+	if fromRuntimeKeys := runtimeViewerKey(runtimeKeys, runtimeID); !bytes.Equal(fromAccount, fromRuntimeKeys) {
+		t.Fatal("viewer key differs between account-key and runtime-key handoffs")
+	}
+	if got := hex.EncodeToString(fromAccount); got != "b39725a7f60e32ebca2e9db9e8d9ff5c92a4eefb070fbc2229c78a6045b551f6" {
+		t.Fatalf("viewer key vector = %s", got)
+	}
+}
