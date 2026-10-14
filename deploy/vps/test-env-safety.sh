@@ -213,13 +213,6 @@ if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/public-relay-bind.en
   exit 1
 fi
 
-cp "${tmp_dir}/.env" "${tmp_dir}/unpinned-catalog.env"
-printf '%s\n' 'APP_CATALOG_SYNC_ENABLED=true' 'APP_CATALOG_SYNC_SHA256=' >> "${tmp_dir}/unpinned-catalog.env"
-if PATH="${fake_bin}:${PATH}" VIRTROID_ENV_FILE="${tmp_dir}/unpinned-catalog.env" "${script_dir}/deploy.sh" validate >/dev/null 2>&1; then
-  echo "unpinned catalog sync was accepted" >&2
-  exit 1
-fi
-
 cat > "${tmp_dir}/malicious.env" <<EOF
 POSTGRES_PASSWORD=x
 NODE_SHARED_SECRET=x

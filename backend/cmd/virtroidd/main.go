@@ -86,16 +86,22 @@ func appCatalogSyncLoop(ctx context.Context, pg *store.Store, cfg config.ServerC
 		interval = 12 * time.Hour
 	}
 
+	// Each run checks F-Droid's small signed entry; the full index is fetched
+	// only when it changed.
+	var state appcatalog.SignedSyncState
 	runSync := func() {
 		runBackgroundIteration("app catalog sync", func() {
-			syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			syncCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 			defer cancel()
-			count, err := appcatalog.SyncFDroid(syncCtx, pg, cfg.AppCatalogSyncURL, cfg.AppCatalogSyncSHA256, cfg.AppCatalogSyncMaxApps)
+			count, next, err := appcatalog.SyncFDroidSigned(syncCtx, pg, state, cfg.AppCatalogSyncMaxApps)
 			if err != nil {
 				log.Printf("app catalog sync failed: %v", err)
 				return
 			}
-			log.Printf("app catalog sync: upserted=%d source=fdroid", count)
+			if next.IndexSHA256 != state.IndexSHA256 {
+				log.Printf("app catalog sync: upserted=%d source=fdroid index=%s", count, next.IndexSHA256[:12])
+			}
+			state = next
 		})
 	}
 

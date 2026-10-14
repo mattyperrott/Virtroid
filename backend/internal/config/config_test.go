@@ -112,20 +112,18 @@ func TestRuntimeLogRetentionDefaultsAndOverride(t *testing.T) {
 	}
 }
 
-func TestAppCatalogSyncIsFailClosedByDefaultAndLoadsExplicitPin(t *testing.T) {
+func TestAppCatalogSyncFollowsTheSignedIndexByDefault(t *testing.T) {
 	t.Setenv("APP_CATALOG_SYNC_ENABLED", "")
-	t.Setenv("APP_CATALOG_SYNC_SHA256", "  abc123  ")
+	t.Setenv("APP_CATALOG_SYNC_INTERVAL", "")
+	t.Setenv("APP_CATALOG_SYNC_MAX_APPS", "")
 	cfg := LoadServer()
-	if cfg.AppCatalogSyncEnabled {
-		t.Fatal("app catalog sync enabled without an explicit opt-in")
-	}
-	if cfg.AppCatalogSyncSHA256 != "abc123" {
-		t.Fatalf("AppCatalogSyncSHA256 = %q, want trimmed value", cfg.AppCatalogSyncSHA256)
+	if !cfg.AppCatalogSyncEnabled || cfg.AppCatalogSyncInterval != time.Hour || cfg.AppCatalogSyncMaxApps != 10000 {
+		t.Fatalf("sync enabled=%v interval=%s max=%d, want on, hourly, 10000", cfg.AppCatalogSyncEnabled, cfg.AppCatalogSyncInterval, cfg.AppCatalogSyncMaxApps)
 	}
 
-	t.Setenv("APP_CATALOG_SYNC_ENABLED", "true")
-	if cfg := LoadServer(); !cfg.AppCatalogSyncEnabled {
-		t.Fatal("app catalog sync did not honor explicit opt-in")
+	t.Setenv("APP_CATALOG_SYNC_ENABLED", "false")
+	if cfg := LoadServer(); cfg.AppCatalogSyncEnabled {
+		t.Fatal("app catalog sync ignored an explicit opt-out")
 	}
 }
 

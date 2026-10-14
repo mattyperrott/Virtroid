@@ -22,6 +22,9 @@ const (
 	repoBaseURL     = "https://f-droid.org/repo"
 	maxIndexBytes   = 256 << 20
 	runtimeMinSDK   = 34
+	// defaultMaxApps keeps every runtime-compatible F-Droid app; the app
+	// pages through the catalog.
+	defaultMaxApps = 10000
 )
 
 var recommendedPackages = map[string]struct{}{
@@ -37,68 +40,45 @@ type Store interface {
 	DisableAppCatalogSource(context.Context, string) (int, error)
 }
 
-func SyncFDroid(ctx context.Context, st Store, indexURL, expectedSHA256 string, maxApps int) (int, error) {
-	pinnedSHA256, err := normalizeSHA256(expectedSHA256)
-	if err != nil {
-		return 0, fmt.Errorf("fdroid index pin: %w", err)
-	}
-	indexURL, err = validateIndexURL(indexURL)
-	if err != nil {
-		return 0, err
-	}
-	if maxApps <= 0 {
-		maxApps = 1500
-	}
-
-	index, err := fetchPinnedIndex(ctx, fdroidHTTPClient(), indexURL, pinnedSHA256)
-	if err != nil {
-		return 0, err
-	}
-
-	return replaceFDroidIndex(ctx, st, index, maxApps)
-}
-
+// fdroidHTTPClient never follows redirects. Its requests end with their
+// context: the index is tens of megabytes, so it gets the sync's whole budget.
 func fdroidHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 90 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
 }
 
-func fetchPinnedIndex(ctx context.Context, client *http.Client, indexURL, pinnedSHA256 string) (fdroidIndex, error) {
+// fetchPinnedEntries downloads index-v2.json and returns its catalog
+// entries once the whole file matches the pinned SHA-256.
+func fetchPinnedEntries(ctx context.Context, client *http.Client, indexURL, pinnedSHA256 string) ([]store.AppCatalogEntry, error) {
 	if client == nil {
-		return fdroidIndex{}, errors.New("F-Droid HTTP client is required")
+		return nil, errors.New("F-Droid HTTP client is required")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
 	if err != nil {
-		return fdroidIndex{}, err
+		return nil, err
 	}
-	req.Header.Set("User-Agent", "virtroid-app-catalog/0.1")
+	req.Header.Set("User-Agent", "virtroid-app-catalog/0.2")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fdroidIndex{}, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fdroidIndex{}, fmt.Errorf("fdroid index returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("fdroid index returned HTTP %d", resp.StatusCode)
 	}
 	if resp.ContentLength > maxIndexBytes {
-		return fdroidIndex{}, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
+		return nil, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
 	}
-
-	index, err := decodePinnedIndex(resp.Body, pinnedSHA256)
-	if err != nil {
-		return fdroidIndex{}, err
-	}
-	return index, nil
+	return decodePinnedEntries(resp.Body, pinnedSHA256)
 }
 
-func replaceFDroidIndex(ctx context.Context, st Store, index fdroidIndex, maxApps int) (int, error) {
-	entries := buildEntries(index, maxApps)
+func replaceFDroidEntries(ctx context.Context, st Store, entries []store.AppCatalogEntry, maxApps int) (int, error) {
+	entries = sortAndCapEntries(entries, maxApps)
 	if len(entries) == 0 {
 		_, err := st.DisableAppCatalogSource(ctx, "fdroid")
 		return 0, err
@@ -106,53 +86,86 @@ func replaceFDroidIndex(ctx context.Context, st Store, index fdroidIndex, maxApp
 	return st.UpsertAppCatalogEntries(ctx, entries)
 }
 
-func validateIndexURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		raw = defaultIndexURL
-	}
-	parsed, err := url.ParseRequestURI(raw)
-	if err != nil || parsed.Scheme != "https" ||
-		!strings.EqualFold(parsed.Hostname(), "f-droid.org") || parsed.Port() != "" ||
-		parsed.User != nil || parsed.Path != "/repo/index-v2.json" ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("fdroid index URL must be exactly %s", defaultIndexURL)
-	}
-	return defaultIndexURL, nil
-}
-
-func decodePinnedIndex(reader io.Reader, expectedSHA256 string) (fdroidIndex, error) {
+// decodePinnedEntries streams index-v2.json one package at a time, keeping
+// only each package's catalog entry, so the large index never sits in memory
+// whole. Nothing is returned unless the bytes match expectedSHA256.
+func decodePinnedEntries(reader io.Reader, expectedSHA256 string) ([]store.AppCatalogEntry, error) {
 	expectedSHA256, err := normalizeSHA256(expectedSHA256)
 	if err != nil {
-		return fdroidIndex{}, fmt.Errorf("fdroid index pin: %w", err)
+		return nil, fmt.Errorf("fdroid index pin: %w", err)
 	}
 
 	limited := &io.LimitedReader{R: reader, N: maxIndexBytes + 1}
 	hash := sha256.New()
 	decoder := json.NewDecoder(io.TeeReader(limited, hash))
-	var index fdroidIndex
-	if err := decoder.Decode(&index); err != nil {
-		return fdroidIndex{}, fmt.Errorf("decode fdroid index: %w", err)
+	now := time.Now().UTC()
+	var entries []store.AppCatalogEntry
+	if err := expectDelim(decoder, '{'); err != nil {
+		return nil, err
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return fdroidIndex{}, fmt.Errorf("decode fdroid index: multiple JSON values")
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("decode fdroid index: %w", err)
 		}
-		return fdroidIndex{}, fmt.Errorf("decode fdroid index trailing data: %w", err)
+		if key != "packages" {
+			var skip json.RawMessage
+			if err := decoder.Decode(&skip); err != nil {
+				return nil, fmt.Errorf("decode fdroid index: %w", err)
+			}
+			continue
+		}
+		if err := expectDelim(decoder, '{'); err != nil {
+			return nil, err
+		}
+		for decoder.More() {
+			name, err := decoder.Token()
+			if err != nil {
+				return nil, fmt.Errorf("decode fdroid index: %w", err)
+			}
+			packageName, ok := name.(string)
+			if !ok {
+				return nil, errors.New("decode fdroid index: package name is not a string")
+			}
+			var pkg fdroidPackage
+			if err := decoder.Decode(&pkg); err != nil {
+				return nil, fmt.Errorf("decode fdroid package %s: %w", packageName, err)
+			}
+			if entry, ok := entryForPackage(packageName, pkg, now); ok {
+				entries = append(entries, entry)
+			}
+		}
+		if err := expectDelim(decoder, '}'); err != nil {
+			return nil, err
+		}
+	}
+	if err := expectDelim(decoder, '}'); err != nil {
+		return nil, err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, errors.New("decode fdroid index: trailing data")
 	}
 	if _, err := io.Copy(io.Discard, io.TeeReader(limited, hash)); err != nil {
-		return fdroidIndex{}, fmt.Errorf("read fdroid index: %w", err)
+		return nil, fmt.Errorf("read fdroid index: %w", err)
 	}
-	readBytes := maxIndexBytes + 1 - limited.N
-	if readBytes > maxIndexBytes {
-		return fdroidIndex{}, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
+	if maxIndexBytes+1-limited.N > maxIndexBytes {
+		return nil, fmt.Errorf("fdroid index exceeds %d-byte limit", maxIndexBytes)
 	}
-	actualSHA256 := fmt.Sprintf("%x", hash.Sum(nil))
-	if actualSHA256 != expectedSHA256 {
-		return fdroidIndex{}, fmt.Errorf("fdroid index SHA-256 mismatch")
+	if fmt.Sprintf("%x", hash.Sum(nil)) != expectedSHA256 {
+		return nil, fmt.Errorf("fdroid index SHA-256 mismatch")
 	}
-	return index, nil
+	return entries, nil
+}
+
+func expectDelim(decoder *json.Decoder, want json.Delim) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("decode fdroid index: %w", err)
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != want {
+		return fmt.Errorf("decode fdroid index: expected %q", want)
+	}
+	return nil
 }
 
 func normalizeSHA256(value string) (string, error) {
@@ -168,49 +181,53 @@ func normalizeSHA256(value string) (string, error) {
 	return value, nil
 }
 
-func buildEntries(index fdroidIndex, maxApps int) []store.AppCatalogEntry {
-	now := time.Now().UTC()
-	entries := make([]store.AppCatalogEntry, 0, min(len(index.Packages), maxApps))
-	for packageName, pkg := range index.Packages {
-		version, ok := latestCompatibleVersion(pkg)
-		if !ok {
-			continue
-		}
-
-		displayName := localizedString(pkg.Metadata.Name, packageName)
-		entry := store.AppCatalogEntry{
-			PackageName:      packageName,
-			Source:           "fdroid",
-			DisplayName:      displayName,
-			Summary:          localizedString(pkg.Metadata.Summary, ""),
-			IconURL:          repoURL(localizedFile(pkg.Metadata.Icon).Name),
-			VersionName:      strings.TrimSpace(version.Manifest.VersionName),
-			VersionCode:      version.Manifest.VersionCode,
-			APKURL:           repoURL(version.File.Name),
-			APKSHA256:        strings.TrimSpace(version.File.SHA256),
-			APKSizeBytes:     version.File.Size,
-			MinSDK:           version.Manifest.UsesSDK.MinSDKVersion,
-			NativeCode:       strings.Join(version.Manifest.NativeCode, ","),
-			License:          strings.TrimSpace(pkg.Metadata.License),
-			CategoriesJSON:   jsonString(pkg.Metadata.Categories),
-			AntiFeaturesJSON: jsonString(pkg.Metadata.AntiFeatures),
-			Recommended:      recommended(packageName),
-			CatalogUpdatedAt: now,
-		}
-		if entry.DisplayName == "" ||
-			entry.APKURL == "" ||
-			entry.APKSHA256 == "" ||
-			entry.APKSizeBytes <= 0 {
-			continue
-		}
-		entries = append(entries, entry)
+// entryForPackage is the catalog entry for a package's latest version the
+// runtime can run, if it has one.
+func entryForPackage(packageName string, pkg fdroidPackage, now time.Time) (store.AppCatalogEntry, bool) {
+	version, ok := latestCompatibleVersion(pkg)
+	if !ok {
+		return store.AppCatalogEntry{}, false
 	}
+	entry := store.AppCatalogEntry{
+		PackageName:      packageName,
+		Source:           "fdroid",
+		DisplayName:      localizedString(pkg.Metadata.Name, packageName),
+		Summary:          localizedString(pkg.Metadata.Summary, ""),
+		IconURL:          repoURL(localizedFile(pkg.Metadata.Icon).Name),
+		VersionName:      strings.TrimSpace(version.Manifest.VersionName),
+		VersionCode:      version.Manifest.VersionCode,
+		APKURL:           repoURL(version.File.Name),
+		APKSHA256:        strings.TrimSpace(version.File.SHA256),
+		APKSizeBytes:     version.File.Size,
+		MinSDK:           version.Manifest.UsesSDK.MinSDKVersion,
+		NativeCode:       strings.Join(version.Manifest.NativeCode, ","),
+		License:          strings.TrimSpace(pkg.Metadata.License),
+		CategoriesJSON:   jsonString(pkg.Metadata.Categories),
+		AntiFeaturesJSON: jsonString(pkg.Metadata.AntiFeatures),
+		Recommended:      recommended(packageName),
+		CatalogUpdatedAt: now,
+	}
+	if entry.DisplayName == "" || entry.APKURL == "" || entry.APKSHA256 == "" || entry.APKSizeBytes <= 0 {
+		return store.AppCatalogEntry{}, false
+	}
+	return entry, true
+}
 
+// sortAndCapEntries puts recommended apps first, then the rest by name, and
+// keeps at most maxApps.
+func sortAndCapEntries(entries []store.AppCatalogEntry, maxApps int) []store.AppCatalogEntry {
+	if maxApps <= 0 {
+		maxApps = defaultMaxApps
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Recommended != entries[j].Recommended {
 			return entries[i].Recommended
 		}
-		return strings.ToLower(entries[i].DisplayName) < strings.ToLower(entries[j].DisplayName)
+		left, right := strings.ToLower(entries[i].DisplayName), strings.ToLower(entries[j].DisplayName)
+		if left != right {
+			return left < right
+		}
+		return entries[i].PackageName < entries[j].PackageName
 	})
 	if len(entries) > maxApps {
 		entries = entries[:maxApps]
@@ -328,10 +345,6 @@ func jsonString(value any) string {
 		return "[]"
 	}
 	return string(data)
-}
-
-type fdroidIndex struct {
-	Packages map[string]fdroidPackage `json:"packages"`
 }
 
 type fdroidPackage struct {

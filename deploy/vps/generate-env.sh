@@ -158,11 +158,9 @@ write_env_var() {
   write_env_var SURICATA_INTERFACE eth0
   write_env_var NODE_MIN_FREE_DISK_PERCENT 5
 
-  write_env_var APP_CATALOG_SYNC_ENABLED false
-  write_env_var APP_CATALOG_SYNC_URL https://f-droid.org/repo/index-v2.json
-  write_env_var APP_CATALOG_SYNC_SHA256 ""
-  write_env_var APP_CATALOG_SYNC_INTERVAL 12h
-  write_env_var APP_CATALOG_SYNC_MAX_APPS 1500
+  write_env_var APP_CATALOG_SYNC_ENABLED true
+  write_env_var APP_CATALOG_SYNC_INTERVAL 1h
+  write_env_var APP_CATALOG_SYNC_MAX_APPS 10000
 
   write_env_var NODE_BLOB_STORE_KIND local-disk
   write_env_var NODE_SIA_RENTERD_WORKER_URL ""

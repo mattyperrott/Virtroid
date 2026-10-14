@@ -32,9 +32,8 @@ type ServerConfig struct {
 	SessionReaperInterval           time.Duration
 	ActiveSessionTimeout            time.Duration
 	RuntimeIdleTimeout              time.Duration
+	// AppCatalogSyncEnabled follows F-Droid's signed index (on by default).
 	AppCatalogSyncEnabled           bool
-	AppCatalogSyncURL               string
-	AppCatalogSyncSHA256            string
 	AppCatalogSyncInterval          time.Duration
 	AppCatalogSyncMaxApps           int
 	RuntimeNotificationRateLimit    int
@@ -178,10 +177,10 @@ func LoadServer() ServerConfig {
 	sessionReaperInterval := parseEnvDuration("SESSION_REAPER_INTERVAL", 30*time.Second)
 	activeSessionTimeout := parseEnvDuration("ACTIVE_SESSION_TIMEOUT", 2*time.Minute)
 	runtimeIdleTimeout := parseEnvDuration("RUNTIME_IDLE_TIMEOUT", 15*time.Minute)
-	appCatalogSyncInterval := parseEnvDuration("APP_CATALOG_SYNC_INTERVAL", 12*time.Hour)
-	appCatalogSyncMaxApps, err := parseEnvInt("APP_CATALOG_SYNC_MAX_APPS", 1500)
+	appCatalogSyncInterval := parseEnvDuration("APP_CATALOG_SYNC_INTERVAL", time.Hour)
+	appCatalogSyncMaxApps, err := parseEnvInt("APP_CATALOG_SYNC_MAX_APPS", 10000)
 	if err != nil {
-		appCatalogSyncMaxApps = 1500
+		appCatalogSyncMaxApps = 10000
 	}
 	operatorLoginRateLimit, err := parseEnvInt("OPERATOR_LOGIN_RATE_LIMIT_PER_MINUTE", 5)
 	if err != nil || operatorLoginRateLimit <= 0 {
@@ -247,9 +246,7 @@ func LoadServer() ServerConfig {
 		SessionReaperInterval:            sessionReaperInterval,
 		ActiveSessionTimeout:             activeSessionTimeout,
 		RuntimeIdleTimeout:               runtimeIdleTimeout,
-		AppCatalogSyncEnabled:            parseEnvBool("APP_CATALOG_SYNC_ENABLED", false),
-		AppCatalogSyncURL:                envOrDefault("APP_CATALOG_SYNC_URL", "https://f-droid.org/repo/index-v2.json"),
-		AppCatalogSyncSHA256:             strings.TrimSpace(os.Getenv("APP_CATALOG_SYNC_SHA256")),
+		AppCatalogSyncEnabled:            parseEnvBool("APP_CATALOG_SYNC_ENABLED", true),
 		AppCatalogSyncInterval:           appCatalogSyncInterval,
 		AppCatalogSyncMaxApps:            appCatalogSyncMaxApps,
 		RuntimeNotificationRateLimit:     runtimeNotificationRateLimit,

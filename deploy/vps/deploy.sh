@@ -637,11 +637,6 @@ validate_environment() {
       exit 1
       ;;
   esac
-
-  if [ "${APP_CATALOG_SYNC_ENABLED:-false}" = "true" ] && [ -z "${APP_CATALOG_SYNC_SHA256:-}" ]; then
-    echo "APP_CATALOG_SYNC_SHA256 is required when APP_CATALOG_SYNC_ENABLED=true" >&2
-    exit 1
-  fi
 }
 
 # The provisioner holds the Aleph account key and the runtime disk passphrase,

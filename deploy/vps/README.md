@@ -488,9 +488,15 @@ user grants Android microphone permission. Temporary client captures are
 removed after import. This does not require a VPS video device, V4L2 loopback
 module, `ffmpeg`, camera slot, or ReDroid camera HAL.
 
-Approved F-Droid selections are reconciled while a runtime is online, so a new
-selection does not require a runtime restart. Successful selections are
-rechecked periodically and failed installs use a bounded retry interval. APK
+Each runtime has its own F-Droid apps, chosen when it is created or from its
+controls. They are reconciled while the runtime is online, so a new selection
+does not require a restart. The node installs each app once and records it in
+the runtime's data: an app the user uninstalls stays uninstalled until it is
+selected again. F-Droid on the runtime may install apps without the user first
+allowing it in Android's settings. Failed installs use a bounded retry
+interval. The catalog follows F-Droid's signed index hourly
+(`APP_CATALOG_SYNC_*`): the sync checks `entry.jar` against F-Droid's pinned
+repository key, then the index against the signed digest. APK
 downloads reject redirects, non-success responses, size mismatches, hash
 mismatches, incompatible runtime metadata, and unexpected installed package
 identity.
