@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -56,6 +57,71 @@ func TestSnapshotRoundTrip(t *testing.T) {
 
 	assertFileContent(t, filepath.Join(restoreDir, "misc", "settings.db"), "settings")
 	assertFileContent(t, filepath.Join(restoreDir, "system", "users", "0.xml"), "<user />")
+}
+
+func TestSnapshotRestoresLegacyV1Format(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	restoreDir := filepath.Join(root, "restore")
+	snapshotPath := filepath.Join(root, "userdata.enc")
+	key := testBlobKey(2)
+
+	writeFile(t, filepath.Join(sourceDir, "misc", "settings.db"), "settings from before HKDF")
+
+	file, err := os.Create(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, writer, err := newEncryptedWriterFormat(file, key, snapshotMagicV1, deriveBlobKeysV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(header); err != nil {
+		t.Fatal(err)
+	}
+	gzipWriter := gzip.NewWriter(writer)
+	tarWriter := tar.NewWriter(gzipWriter)
+	if err := addDirectoryToTar(context.Background(), tarWriter, sourceDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, closer := range []io.Closer{tarWriter, gzipWriter, writer, file} {
+		if err := closer.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := restoreSnapshot(snapshotPath, restoreDir, key); err != nil {
+		t.Fatalf("restoreSnapshot(v1): %v", err)
+	}
+	assertFileContent(t, filepath.Join(restoreDir, "misc", "settings.db"), "settings from before HKDF")
+}
+
+func TestSnapshotWritesHKDFFormatThatCannotBeRelabelledV1(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	snapshotPath := filepath.Join(root, "userdata.enc")
+	key := testBlobKey(3)
+	writeFile(t, filepath.Join(sourceDir, "misc", "settings.db"), "settings")
+
+	if _, err := writeSnapshot(snapshotPath, sourceDir, key); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data[:len(snapshotMagic)]); got != "VRTBLOB2" {
+		t.Fatalf("magic = %q, want VRTBLOB2", got)
+	}
+
+	copy(data, snapshotMagicV1)
+	relabelled := filepath.Join(root, "relabelled.enc")
+	if err := os.WriteFile(relabelled, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreSnapshot(relabelled, filepath.Join(root, "restore"), key); err == nil {
+		t.Fatal("restoreSnapshot accepted a v2 snapshot relabelled as v1")
+	}
 }
 
 func TestSnapshotRestoreWrongKeyDoesNotTouchTarget(t *testing.T) {

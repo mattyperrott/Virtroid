@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -36,7 +37,11 @@ var errRuntimeStorageQuotaExceeded = errors.New("encrypted snapshot exceeds the 
 var errInsufficientDiskHeadroom = errors.New("insufficient host disk headroom")
 
 const (
-	snapshotMagic             = "VRTBLOB1"
+	// Snapshot files name how their keys were derived: VRTBLOB2 files use
+	// HKDF-SHA256 (RFC 5869); VRTBLOB1 files, written before it, a SHA-256 of
+	// the key and salt, and are still read.
+	snapshotMagic             = "VRTBLOB2"
+	snapshotMagicV1           = "VRTBLOB1"
 	runtimeSnapshotKeyContext = "VIRTROID-RUNTIME-SNAPSHOT-KEY-V2"
 	runtimeBlobNamespaceCtx   = "VIRTROID-RUNTIME-BLOB-NAMESPACE-V3"
 	runtimeManifestMACCtx     = "VIRTROID-RUNTIME-MANIFEST-MAC-V3"
@@ -2297,13 +2302,18 @@ func restoreSnapshot(snapshotPath, dataDir string, masterKey []byte) error {
 	if _, err := io.ReadFull(file, header); err != nil {
 		return err
 	}
-	if string(header[:len(snapshotMagic)]) != snapshotMagic {
+	magic := string(header[:len(snapshotMagic)])
+	if magic != snapshotMagic && magic != snapshotMagicV1 {
 		return fmt.Errorf("snapshot header mismatch")
 	}
 
 	salt := header[len(snapshotMagic) : len(snapshotMagic)+32]
 	nonce := header[len(snapshotMagic)+32:]
-	encryptionKey, macKey := deriveBlobKeys(masterKey, salt)
+	derive := deriveBlobKeys
+	if magic == snapshotMagicV1 {
+		derive = deriveBlobKeysV1
+	}
+	encryptionKey, macKey := derive(masterKey, salt)
 	defer clearBytes(encryptionKey)
 	defer clearBytes(macKey)
 	ciphertextLen := info.Size() - headerLen - snapshotTagSize
@@ -2375,6 +2385,10 @@ type hashState interface {
 }
 
 func newEncryptedWriter(file io.Writer, masterKey []byte) ([]byte, io.WriteCloser, error) {
+	return newEncryptedWriterFormat(file, masterKey, snapshotMagic, deriveBlobKeys)
+}
+
+func newEncryptedWriterFormat(file io.Writer, masterKey []byte, magic string, derive func(key, salt []byte) ([]byte, []byte)) ([]byte, io.WriteCloser, error) {
 	salt := make([]byte, 32)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, nil, err
@@ -2384,9 +2398,9 @@ func newEncryptedWriter(file io.Writer, masterKey []byte) ([]byte, io.WriteClose
 		return nil, nil, err
 	}
 
-	header := append([]byte(snapshotMagic), salt...)
+	header := append([]byte(magic), salt...)
 	header = append(header, nonce...)
-	encryptionKey, macKey := deriveBlobKeys(masterKey, salt)
+	encryptionKey, macKey := derive(masterKey, salt)
 	defer clearBytes(encryptionKey)
 	defer clearBytes(macKey)
 	block, err := aes.NewCipher(encryptionKey)
@@ -2416,7 +2430,22 @@ func (w *encryptedWriteCloser) Close() error {
 	return err
 }
 
+// deriveBlobKeys gives a snapshot's encryption and MAC keys from its key and
+// the file's random salt, with HKDF-SHA256.
 func deriveBlobKeys(masterKey, salt []byte) ([]byte, []byte) {
+	encryptionKey, err := hkdf.Key(sha256.New, masterKey, salt, "virtroid-snapshot-encryption-v2", 32)
+	if err != nil {
+		panic(err)
+	}
+	macKey, err := hkdf.Key(sha256.New, masterKey, salt, "virtroid-snapshot-mac-v2", 32)
+	if err != nil {
+		panic(err)
+	}
+	return encryptionKey, macKey
+}
+
+// deriveBlobKeysV1 is how VRTBLOB1 snapshots derived their keys.
+func deriveBlobKeysV1(masterKey, salt []byte) ([]byte, []byte) {
 	encryptionMaterial := sha256.Sum256(append(bytes.Clone(masterKey), salt...))
 	macMaterial := sha256.Sum256(append(bytes.Clone(salt), masterKey...))
 	return encryptionMaterial[:], macMaterial[:]
