@@ -123,6 +123,10 @@ fi
 if [ -z "$AUDIO" ]; then
   AUDIO=false
 fi
+# A log left by a viewer that ran as shell can't be appended to as system.
+if [ -e "$LOG" ] && [ ! -w "$LOG" ]; then
+  rm -f "$LOG"
+fi
 exec >>"$LOG" 2>&1
 echo "viewer-start $(date +%s) ip=$IP size=$SIZE bitrate=$BITRATE audio=$AUDIO"
 rm -f "$DST"
@@ -151,9 +155,11 @@ kill "$SERVER_PID" >/dev/null 2>&1 || true
 exit "$STATUS"
 `
 
+// The viewer runs as the system user so its capture includes windows apps
+// mark as secure; shell stays its group, for /data/local/tmp.
 const viewerInitContent = `service virtroid_viewer /system/bin/sh /vendor/bin/virtroid-viewer.sh
     class late_start
-    user shell
+    user system
     group shell log graphics input audio video inet
     oneshot
     disabled

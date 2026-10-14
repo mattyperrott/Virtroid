@@ -4,9 +4,11 @@ import android.graphics.Rect;
 import android.hardware.display.VirtualDisplay;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.Process;
 import android.util.Log;
 import android.view.Surface;
 
+import org.server.scrcpy.wrappers.DisplayManager;
 import org.server.scrcpy.wrappers.ServiceManager;
 import org.server.scrcpy.wrappers.SurfaceControl;
 
@@ -35,6 +37,19 @@ public class ScreenCapture {
         if (virtualDisplay != null) {
             virtualDisplay.release();
             virtualDisplay = null;
+        }
+
+        // Run as the system user, the capture includes windows apps mark as
+        // secure: the viewer is the runtime's only screen, and the phone
+        // blocks screenshots of it. As the shell user they stay black.
+        if (Process.myUid() == Process.SYSTEM_UID) {
+            try {
+                virtualDisplay = DisplayManager.createSecureMirror("scrcpy", videoRect.width(), videoRect.height(), 0, surface);
+                Ln.i("Display: secure mirror, protected windows included");
+                return;
+            } catch (Exception secureException) {
+                Ln.w("Display: secure mirror unavailable, protected windows will be black: " + secureException);
+            }
         }
 
         try {

@@ -201,11 +201,23 @@ echo "boot-test: viewer listening: \$(echo \$listening | \$B tr -s ' ')"
 # encryption proxy dials it the same way for each client), for 12 seconds:
 # a working stream does not end on its own. The screen size alone is 8
 # bytes; a working encoder sends at least a key frame.
-streamed=\$(\$B timeout 40 C /bin/docker exec smoke /system/bin/sh -c "(sleep 20) | timeout 12 toybox nc ::1 7007 | wc -c" 2>/dev/null | \$B tr -dc '0-9')
+\$B timeout 40 C /bin/docker exec smoke /system/bin/sh -c "(sleep 20) | timeout 12 toybox nc ::1 7007 | wc -c" >/run/streamed 2>/dev/null &
+stream_pid=\$!
+# While it streams, the capture display must be secure: windows apps mark
+# as secure are drawn only on secure displays, and are black otherwise.
+\$B sleep 6
+secure=\$(\$B timeout 15 C /bin/docker exec smoke /system/bin/sh -c "dumpsys display | grep -m1 -E 'scrcpy.*FLAG_SECURE'" 2>/dev/null)
+wait \$stream_pid
+streamed=\$(\$B tr -dc '0-9' </run/streamed)
 echo "boot-test: streamed \${streamed:-0} bytes in 12s"
+echo "boot-test: capture display: \$(echo "\${secure:-not secure}" | \$B cut -c1-160)"
 if [ "\${streamed:-0}" -lt 10000 ]; then
   \$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "tail -20 /data/local/tmp/virtroid-viewer.log; logcat -d -b main,system,crash 2>/dev/null | grep -iE 'scrcpy|codec|C2|MediaCodec|dma_heap|AndroidRuntime|FATAL' | tail -40" 2>&1 | \$B sed 's/^/boot-test:   /'
   fail "the viewer did not stream video"
+fi
+if [ -z "\$secure" ]; then
+  \$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "tail -20 /data/local/tmp/virtroid-viewer.log" 2>&1 | \$B sed 's/^/boot-test:   /'
+  fail "the viewer's capture display is not secure, so protected windows would be black"
 fi
 echo "boot-test: cpu.max \$(C /bin/bash -c 'cat /sys/fs/cgroup/docker/*/cpu.max' 2>&1 | \$B head -1)"
 echo "boot-test: lmkd \$(C /bin/adb -s 127.0.0.1:15555 shell getprop init.svc.lmkd | \$B tr -d '\r'), docker exec: \$(C /bin/docker exec smoke /system/bin/getprop sys.boot_completed)"

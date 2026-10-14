@@ -1,6 +1,8 @@
 package org.server.scrcpy.wrappers;
 
+import android.content.Context;
 import android.hardware.display.VirtualDisplay;
+import android.os.Handler;
 import android.os.IInterface;
 import android.view.Display;
 import android.view.Surface;
@@ -9,6 +11,7 @@ import org.server.scrcpy.DisplayInfo;
 import org.server.scrcpy.Ln;
 import org.server.scrcpy.Size;
 import org.server.scrcpy.util.Command;
+import org.server.scrcpy.util.FakeContext;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -133,5 +136,34 @@ public final class DisplayManager {
     public VirtualDisplay createVirtualDisplay(String name, int width, int height, int displayIdToMirror, Surface surface) throws Exception {
         Method method = getCreateVirtualDisplayMethod();
         return (VirtualDisplay) method.invoke(null, name, width, height, displayIdToMirror, surface);
+    }
+
+    private static final int VIRTUAL_DISPLAY_FLAG_SECURE = 1 << 2;
+    private static final int VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR = 1 << 4;
+
+    /**
+     * A mirror of displayIdToMirror that also shows windows apps mark as
+     * secure (FLAG_SECURE). Android allows it only to callers holding
+     * CAPTURE_SECURE_VIDEO_OUTPUT, which the system user does.
+     */
+    public static VirtualDisplay createSecureMirror(String name, int width, int height, int displayIdToMirror, Surface surface)
+            throws Exception {
+        Class<?> builderClass = Class.forName("android.hardware.display.VirtualDisplayConfig$Builder");
+        Object builder = builderClass.getConstructor(String.class, int.class, int.class, int.class)
+                .newInstance(name, width, height, 1);
+        builderClass.getMethod("setFlags", int.class).invoke(builder, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR | VIRTUAL_DISPLAY_FLAG_SECURE);
+        builderClass.getMethod("setSurface", Surface.class).invoke(builder, surface);
+        builderClass.getMethod("setDisplayIdToMirror", int.class).invoke(builder, displayIdToMirror);
+        Object config = builderClass.getMethod("build").invoke(builder);
+        android.hardware.display.DisplayManager displayManager =
+                (android.hardware.display.DisplayManager) FakeContext.get().getSystemService(Context.DISPLAY_SERVICE);
+        Class<?> configClass = Class.forName("android.hardware.display.VirtualDisplayConfig");
+        VirtualDisplay display = (VirtualDisplay) android.hardware.display.DisplayManager.class
+                .getMethod("createVirtualDisplay", configClass, Handler.class, VirtualDisplay.Callback.class)
+                .invoke(displayManager, config, null, null);
+        if (display == null) {
+            throw new IllegalStateException("secure virtual display was not created");
+        }
+        return display;
     }
 }

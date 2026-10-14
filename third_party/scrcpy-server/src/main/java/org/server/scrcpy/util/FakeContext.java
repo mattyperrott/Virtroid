@@ -14,7 +14,13 @@ import org.server.scrcpy.wrappers.ServiceManager;
 
 public final class FakeContext extends ContextWrapper {
 
-    public static final String PACKAGE_NAME = "com.android.shell";
+    public static final String SHELL_PACKAGE_NAME = "com.android.shell";
+    /**
+     * The package Android checks this process's permissions against: Android
+     * itself when the server runs as the system user (to capture protected
+     * windows), otherwise the shell.
+     */
+    public static final String PACKAGE_NAME = Process.myUid() == Process.SYSTEM_UID ? "android" : SHELL_PACKAGE_NAME;
     public static final int ROOT_UID = 0; // Like android.os.Process.ROOT_UID, but before API 29
 
     private static final FakeContext INSTANCE = new FakeContext();
@@ -72,7 +78,7 @@ public final class FakeContext extends ContextWrapper {
     public AttributionSource getAttributionSource() {
         AttributionSource.Builder builder = null;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            builder = new AttributionSource.Builder(Process.SHELL_UID);
+            builder = new AttributionSource.Builder(Process.myUid());
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setPackageName(PACKAGE_NAME);
