@@ -46,7 +46,7 @@ jobs:
       - name: Reject tracked release and distribution artifacts
         working-directory: ${{ github.workspace }}
         run: |
-          tracked="$(git ls-files -- ':(glob)dist/**' ':(glob)**/dist/**' ':(glob)**/*.apk' ':(glob)**/*.aab' ':(glob)**/*.idsig' backend/falco-forwarder backend/virtnoded backend/virtroid-viewercrypt backend/virtroidd)"
+          tracked="$(git ls-files -- ':(glob)dist/**' ':(glob)**/dist/**' ':(glob)**/*.apk' ':(glob)**/*.aab' ':(glob)**/*.idsig' backend/falco-forwarder backend/virtnoded backend/virtroid-viewercrypt backend/virtroidd ':(glob)backend/cmd/*/falco-forwarder' ':(glob)backend/cmd/*/lifecycleqa' ':(glob)backend/cmd/*/viewercrypt' ':(glob)backend/cmd/*/virtnoded' ':(glob)backend/cmd/*/virtroid-admin' ':(glob)backend/cmd/*/virtroid-measurements' ':(glob)backend/cmd/*/virtroid-payments' ':(glob)backend/cmd/*/virtroid-provisioner' ':(glob)backend/cmd/*/virtroidd')"
           if [ -n "${tracked}" ]; then
             echo "Generated release/distribution artifacts must be published by CI, not committed:" >&2
             echo "${tracked}" >&2
