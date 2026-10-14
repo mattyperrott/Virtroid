@@ -318,6 +318,10 @@ class VirtroidApi(
          */
         @Volatile
         var check: ((baseUrl: String, lease: BlobKeyLease) -> String?)? = null
+
+        /** Keeps the runtime's notification key, for opening its notifications. */
+        @Volatile
+        var rememberNotificationKey: ((runtimeId: String, key: ByteArray) -> Unit)? = null
     }
 
     private val blobSealCheck get() = BlobSeal.check
@@ -1297,7 +1301,18 @@ class VirtroidApi(
     private fun sealBlobAccessKey(baseUrl: String, blobAccessKey: String, lease: BlobKeyLease): SealedBlobKey {
         val check = blobSealCheck
             ?: throw IOException("this runtime's VM must be verified before it receives its keys")
-        return BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease, check(baseUrl, lease))
+        val sealPublicKey = check(baseUrl, lease)
+        if (sealPublicKey != null) {
+            val accountKey = android.util.Base64.decode(
+                blobAccessKey.trim(),
+                android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING or android.util.Base64.URL_SAFE,
+            )
+            val notificationKey = BlobKeyEnvelopeCrypto.runtimeNotificationKey(accountKey, lease.runtimeId)
+            accountKey.fill(0)
+            runCatching { BlobSeal.rememberNotificationKey?.invoke(lease.runtimeId, notificationKey) }
+            notificationKey.fill(0)
+        }
+        return BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease, sealPublicKey)
     }
 
     private fun requestBlobKeyLease(

@@ -3204,10 +3204,24 @@ func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtime
 	if err := verifyAPKFile(apkPath, n.cfg.NotificationAgentAPKSHA256); err != nil {
 		return fmt.Errorf("verify notification agent APK: %w", err)
 	}
+	// The key the agent seals notifications with, when the phone sent the
+	// runtime's keys; a runtime provisioned without it is provisioned again.
+	var notificationKey []byte
+	if material, ok := n.cachedRuntimeBlobKey(runtime.ID); ok {
+		notificationKey = runtimeNotificationKey(material)
+		clearBytes(material)
+	}
+	defer clearBytes(notificationKey)
+	sealing := "plain"
+	if notificationKey != nil {
+		digest := sha256.Sum256(notificationKey)
+		sealing = "sealed-" + hex.EncodeToString(digest[:8])
+	}
 	markerValue := strings.Join([]string{
 		strings.ToLower(strings.TrimSpace(n.cfg.NotificationAgentAPKSHA256)),
 		strings.TrimRight(strings.TrimSpace(n.cfg.PublicControlPlaneURL), "/"),
 		strconv.Itoa(notificationAgentVersion),
+		sealing,
 	}, "\n") + "\n"
 	markerPath := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data", ".virtroid-notification-agent-ready")
 	if existing, err := os.ReadFile(markerPath); err == nil && string(existing) == markerValue {
@@ -3221,7 +3235,17 @@ func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtime
 		return fmt.Errorf("connect adb for notification agent: %w", err)
 	}
 	if err := n.adbInstallAPK(ctx, serial, apkPath); err != nil {
-		return fmt.Errorf("install notification agent: %w", err)
+		// An agent signed with another key can't be updated in place. It
+		// holds only its provisioning and queue, so replace it.
+		if !strings.Contains(err.Error(), "INSTALL_FAILED_UPDATE_INCOMPATIBLE") {
+			return fmt.Errorf("install notification agent: %w", err)
+		}
+		if _, uninstallErr := n.adbShellCapture(ctx, serial, "pm uninstall "+shellQuote(notificationAgentPackage)); uninstallErr != nil {
+			return fmt.Errorf("replace notification agent signed with another key: %w", uninstallErr)
+		}
+		if err := n.adbInstallAPK(ctx, serial, apkPath); err != nil {
+			return fmt.Errorf("install notification agent: %w", err)
+		}
 	}
 	if !n.androidPackageInstalled(ctx, serial, notificationAgentPackage) {
 		return fmt.Errorf("%w: %s", errInstalledPackageMissing, notificationAgentPackage)
@@ -3249,6 +3273,9 @@ func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtime
 		shellQuote(runtime.ID),
 		shellQuote(token),
 	)
+	if notificationKey != nil {
+		provisionCommand += " --es notification_key " + shellQuote(base64.RawURLEncoding.EncodeToString(notificationKey))
+	}
 	output, err := n.adbShellCapture(ctx, serial, provisionCommand)
 	if err != nil {
 		return fmt.Errorf("provision notification agent: %w", err)

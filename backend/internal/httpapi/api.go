@@ -1594,11 +1594,11 @@ func (a *API) deleteMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID       string          `json:"account_id"`
-		DeviceID        string          `json:"device_id"`
-		BlobKeyVerifier string          `json:"blob_key_verifier"`
-		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
-		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
+		AccountID          string          `json:"account_id"`
+		DeviceID           string          `json:"device_id"`
+		BlobKeyVerifier    string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string          `json:"runtime_key_verifier"`
+		BlobKeyEnvelope    blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "runtime deletion requires a blob-key envelope"})
@@ -1733,11 +1733,11 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID       string          `json:"account_id"`
-		DeviceID        string          `json:"device_id"`
-		BlobKeyVerifier string          `json:"blob_key_verifier"`
-		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
-		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
+		AccountID          string          `json:"account_id"`
+		DeviceID           string          `json:"device_id"`
+		BlobKeyVerifier    string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string          `json:"runtime_key_verifier"`
+		BlobKeyEnvelope    blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -1778,11 +1778,11 @@ func (a *API) stopMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID       string          `json:"account_id"`
-		DeviceID        string          `json:"device_id"`
-		BlobKeyVerifier string          `json:"blob_key_verifier"`
-		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
-		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
+		AccountID          string          `json:"account_id"`
+		DeviceID           string          `json:"device_id"`
+		BlobKeyVerifier    string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string          `json:"runtime_key_verifier"`
+		BlobKeyEnvelope    blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -1829,11 +1829,11 @@ func (a *API) wipeMyRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID       string          `json:"account_id"`
-		DeviceID        string          `json:"device_id"`
-		BlobKeyVerifier string          `json:"blob_key_verifier"`
-		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
-		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
+		AccountID          string          `json:"account_id"`
+		DeviceID           string          `json:"device_id"`
+		BlobKeyVerifier    string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string          `json:"runtime_key_verifier"`
+		BlobKeyEnvelope    blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -1889,13 +1889,13 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID       string          `json:"account_id"`
-		DeviceID        string          `json:"device_id"`
-		MaxSize         int             `json:"max_size"`
-		BitRate         int             `json:"bit_rate"`
-		BlobKeyVerifier string          `json:"blob_key_verifier"`
-		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
-		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
+		AccountID          string          `json:"account_id"`
+		DeviceID           string          `json:"device_id"`
+		MaxSize            int             `json:"max_size"`
+		BitRate            int             `json:"bit_rate"`
+		BlobKeyVerifier    string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string          `json:"runtime_key_verifier"`
+		BlobKeyEnvelope    blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2302,11 +2302,11 @@ func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AccountID       string          `json:"account_id"`
-		DeviceID        string          `json:"device_id"`
-		BlobKeyVerifier string          `json:"blob_key_verifier"`
-		RuntimeKeyVerifier string       `json:"runtime_key_verifier"`
-		BlobKeyEnvelope blobKeyEnvelope `json:"blob_key_envelope"`
+		AccountID          string          `json:"account_id"`
+		DeviceID           string          `json:"device_id"`
+		BlobKeyVerifier    string          `json:"blob_key_verifier"`
+		RuntimeKeyVerifier string          `json:"runtime_key_verifier"`
+		BlobKeyEnvelope    blobKeyEnvelope `json:"blob_key_envelope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})

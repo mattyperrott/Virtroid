@@ -12,6 +12,7 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.RuntimeCapabilityStore
 import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.push.NotificationRelayManager
+import io.virtroid.client.push.RuntimeNotificationKeys
 import kotlinx.coroutines.runBlocking
 
 class VirtroidApplication : Application(), Application.ActivityLifecycleCallbacks {
@@ -22,6 +23,9 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
         super.onCreate()
         RuntimeCapabilityStore.initialize(this)
         // A runtime's blob key is sealed only to a VM this phone has verified.
+        VirtroidApi.BlobSeal.rememberNotificationKey = { runtimeId, key ->
+            RuntimeNotificationKeys(this).save(runtimeId, key)
+        }
         VirtroidApi.BlobSeal.check = { baseUrl, lease ->
             runBlocking {
                 ConfidentialRuntimeGuard(this@VirtroidApplication).checkBlobSealKey(lease) {

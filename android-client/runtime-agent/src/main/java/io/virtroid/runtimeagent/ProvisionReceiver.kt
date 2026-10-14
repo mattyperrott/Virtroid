@@ -14,6 +14,7 @@ class ProvisionReceiver : BroadcastReceiver() {
             baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty(),
             runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID).orEmpty(),
             token = intent.getStringExtra(EXTRA_TOKEN).orEmpty(),
+            notificationKey = intent.getStringExtra(EXTRA_NOTIFICATION_KEY).orEmpty(),
         )
         if (!AgentConfigStore(context).provision(config)) {
             resultCode = RESULT_REJECTED
@@ -28,6 +29,7 @@ class ProvisionReceiver : BroadcastReceiver() {
         const val EXTRA_BASE_URL = "base_url"
         const val EXTRA_RUNTIME_ID = "runtime_id"
         const val EXTRA_TOKEN = "token"
+        const val EXTRA_NOTIFICATION_KEY = "notification_key"
         const val RESULT_OK = 1
         const val RESULT_REJECTED = 2
     }

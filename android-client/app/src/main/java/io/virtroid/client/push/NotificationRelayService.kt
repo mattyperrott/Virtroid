@@ -226,15 +226,25 @@ class NotificationRelayService : Service() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        // On a secure lock screen, only that a notification arrived: the app
+        // and title show once the phone is unlocked.
+        val publicVersion = Notification.Builder(this, EVENTS_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_phone)
+            .setContentTitle(getString(R.string.notification_sealed_title))
+            .setWhen(event.postedAt.toEpochMilli())
+            .setShowWhen(true)
+            .build()
         val notification = Notification.Builder(this, EVENTS_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_phone)
             .setContentTitle(event.appLabel)
-            .setContentText(event.title.ifBlank { "New notification" })
-            .setSubText(event.packageName)
+            .setContentText(event.title.ifBlank { getString(R.string.notification_new) })
+            .apply { if (event.packageName.isNotBlank()) setSubText(event.packageName) }
             .setWhen(event.postedAt.toEpochMilli())
             .setShowWhen(true)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .setContentIntent(pendingIntent)
             .build()
         manager.notify(event.eventId.hashCode(), notification)
@@ -243,12 +253,37 @@ class NotificationRelayService : Service() {
 
     private fun parseEvent(raw: String): RelayEvent {
         val json = JSONObject(raw)
+        if (json.getInt("version") == SEALED_EVENT_VERSION) {
+            return parseSealedRuntimeEvent(json)
+        }
         require(json.getInt("version") == 1)
         return if (json.optString("kind") == SECURITY_EVENT_KIND) {
             parseSecurityEvent(json)
         } else {
             parseRuntimeEvent(json)
         }
+    }
+
+    /**
+     * A runtime event its VM sealed with the runtime's notification key, so
+     * the control plane never read it. Without that key on this phone, it
+     * still says a notification arrived, without what it was.
+     */
+    private fun parseSealedRuntimeEvent(json: JSONObject): RuntimeRelayEvent {
+        val keys = buildSet {
+            val iterator = json.keys()
+            while (iterator.hasNext()) add(iterator.next())
+        }
+        require(keys == EXPECTED_SEALED_EVENT_KEYS)
+        val eventId = UUID.fromString(json.getString("event_id")).toString()
+        val runtimeId = UUID.fromString(json.getString("runtime_id")).toString()
+        val sealed = android.util.Base64.decode(json.getString("sealed"), android.util.Base64.NO_WRAP)
+        val opened = RuntimeNotificationKeys(this).open(runtimeId, eventId, sealed)
+            ?: return RuntimeRelayEvent(eventId, "", getString(R.string.notification_sealed_title), Instant.now(), "")
+        val inner = JSONObject(opened).put("version", 1)
+        val event = parseRuntimeEvent(inner)
+        require(event.eventId == eventId)
+        return event
     }
 
     private fun parseRuntimeEvent(json: JSONObject): RuntimeRelayEvent {
@@ -406,6 +441,8 @@ class NotificationRelayService : Service() {
         private const val INITIAL_RETRY_DELAY_MS = 2_000L
         private const val MAX_RETRY_DELAY_MS = 60_000L
         private val PACKAGE_PATTERN = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
+        private const val SEALED_EVENT_VERSION = 2
+        private val EXPECTED_SEALED_EVENT_KEYS = setOf("version", "event_id", "runtime_id", "sealed")
         private val EXPECTED_RUNTIME_EVENT_KEYS = setOf(
             "version",
             "event_id",

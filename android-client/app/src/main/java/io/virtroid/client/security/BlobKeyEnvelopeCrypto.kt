@@ -40,6 +40,7 @@ object BlobKeyEnvelopeCrypto {
     private const val SNAPSHOT_KEY_CONTEXT = "VIRTROID-RUNTIME-SNAPSHOT-KEY-V2"
     private const val MANIFEST_MAC_CONTEXT = "VIRTROID-RUNTIME-MANIFEST-MAC-V3"
     private const val NAMESPACE_CONTEXT = "VIRTROID-RUNTIME-BLOB-NAMESPACE-V3"
+    private const val NOTIFICATION_KEY_CONTEXT = "VIRTROID-RUNTIME-NOTIFICATION-KEY-V1"
     private const val AAD_CONTEXT = "VIRTROID-BLOB-KEY-ENVELOPE-V1"
     private const val HKDF_INFO = "virtroid-blob-key-envelope-v1"
     private const val GCM_TAG_BITS = 128
@@ -64,7 +65,13 @@ object BlobKeyEnvelopeCrypto {
 
         val accountKey = Base64.decode(blobAccessKey.trim(), B64_URL_FLAGS)
         require(accountKey.size == 32) { "invalid blob access key length" }
-        val plaintextKey = if (sealed) runtimeKeys(accountKey, lease.runtimeId) else accountKey
+        // Sealed: this runtime's keys, then the key its notifications are
+        // sealed with for this account's phones.
+        val plaintextKey = if (sealed) {
+            runtimeKeys(accountKey, lease.runtimeId) + runtimeNotificationKey(accountKey, lease.runtimeId)
+        } else {
+            accountKey
+        }
 
         val nodePublicKey = parseNodePublicKey(sealPublicKey ?: lease.nodePublicKey)
         val keyPairGenerator = KeyPairGenerator.getInstance("EC")
@@ -109,6 +116,13 @@ object BlobKeyEnvelopeCrypto {
         fun derive(context: String) = hmacSha256(accountKey, context.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + id)
         return derive(SNAPSHOT_KEY_CONTEXT) + derive(MANIFEST_MAC_CONTEXT) + derive(NAMESPACE_CONTEXT)
     }
+
+    /** The key a runtime's agent seals notifications with for the account's phones. */
+    fun runtimeNotificationKey(accountKey: ByteArray, runtimeId: String): ByteArray =
+        hmacSha256(
+            accountKey,
+            NOTIFICATION_KEY_CONTEXT.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + runtimeId.trim().toByteArray(Charsets.UTF_8),
+        )
 
     /** What the VM checks the runtime keys against once it opens them. */
     fun runtimeKeysVerifier(runtimeKeys: ByteArray): String =

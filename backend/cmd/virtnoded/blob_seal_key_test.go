@@ -88,6 +88,14 @@ func TestRuntimeKeysMatchTheAccountKeyDerivations(t *testing.T) {
 	if bytes.Equal(phoneRuntimeKeys(master, "runtime-2"), keys) {
 		t.Fatal("two runtimes share keys")
 	}
+	// With the notification key appended, the snapshot keys are unchanged.
+	withNotification := append(append([]byte(nil), keys...), bytes.Repeat([]byte{5}, 32)...)
+	if !bytes.Equal(deriveRuntimeSnapshotKey(withNotification, "runtime-1"), deriveRuntimeSnapshotKey(master, "runtime-1")) ||
+		deriveRuntimeBlobNamespace(withNotification, "runtime-1") != deriveRuntimeBlobNamespace(master, "runtime-1") ||
+		!bytes.Equal(runtimeNotificationKey(withNotification), bytes.Repeat([]byte{5}, 32)) ||
+		runtimeNotificationKey(keys) != nil || runtimeNotificationKey(master) != nil {
+		t.Fatal("the notification key changed the snapshot keys or wasn't found")
+	}
 	if snapshotKeyForManifest(keys, "runtime-1", &blobManifest{Version: 1}) != nil {
 		t.Fatal("runtime keys stood in for the account key of a version 1 snapshot")
 	}

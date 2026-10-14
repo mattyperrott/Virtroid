@@ -26,13 +26,13 @@ internal object KeystoreKeyPolicy {
         }
     }
 
-    fun generateAesKey(alias: String): SecretKey {
+    fun generateAesKey(alias: String, unlockedDeviceRequired: Boolean = true): SecretKey {
         return try {
-            generateAesKey(alias, strongBox = true)
+            generateAesKey(alias, strongBox = true, unlockedDeviceRequired)
         } catch (_: StrongBoxUnavailableException) {
-            generateAesKey(alias, strongBox = false)
+            generateAesKey(alias, strongBox = false, unlockedDeviceRequired)
         } catch (_: ProviderException) {
-            generateAesKey(alias, strongBox = false)
+            generateAesKey(alias, strongBox = false, unlockedDeviceRequired)
         }
     }
 
@@ -54,7 +54,7 @@ internal object KeystoreKeyPolicy {
         return generator.generateKeyPair()
     }
 
-    private fun generateAesKey(alias: String, strongBox: Boolean): SecretKey {
+    private fun generateAesKey(alias: String, strongBox: Boolean, unlockedDeviceRequired: Boolean): SecretKey {
         val generator = KeyGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_AES,
             ANDROID_KEYSTORE,
@@ -66,7 +66,7 @@ internal object KeystoreKeyPolicy {
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setRandomizedEncryptionRequired(true)
-            .setUnlockedDeviceRequired(true)
+            .setUnlockedDeviceRequired(unlockedDeviceRequired)
             .setIsStrongBoxBacked(strongBox)
             .build()
         generator.init(spec)

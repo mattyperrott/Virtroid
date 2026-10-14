@@ -2,9 +2,15 @@ package io.virtroid.runtimeagent
 
 import android.app.job.JobParameters
 import android.app.job.JobService
+import android.util.Base64
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.SecureRandom
 import java.util.concurrent.Executors
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class NotificationUploadJob : JobService() {
     private val executor = Executors.newSingleThreadExecutor()
@@ -48,7 +54,7 @@ class NotificationUploadJob : JobService() {
             connection.doOutput = true
             connection.setRequestProperty("Authorization", "Bearer ${config.token}")
             connection.setRequestProperty("Content-Type", "application/json")
-            val payload = event.toJson().toString().toByteArray(Charsets.UTF_8)
+            val payload = uploadBody(config, event).toString().toByteArray(Charsets.UTF_8)
             connection.setFixedLengthStreamingMode(payload.size)
             connection.outputStream.use { it.write(payload) }
             when (connection.responseCode) {
@@ -65,4 +71,29 @@ class NotificationUploadJob : JobService() {
     }.getOrDefault(UploadResult.RETRY)
 
     private enum class UploadResult { DELIVERED, DUPLICATE, REJECTED, RETRY }
+
+    companion object {
+        private const val SEALED_CONTEXT = "virtroid-notification-v1"
+
+        /**
+         * With the runtime's notification key, the event's app, time and title
+         * go sealed (AES-GCM, bound to this runtime and event), readable only by
+         * the account's phones; otherwise as plain metadata.
+         */
+        internal fun uploadBody(config: AgentConfig, event: RuntimeNotificationEvent): JSONObject {
+            if (config.notificationKey.isEmpty()) {
+                return event.toJson()
+            }
+            val key = Base64.decode(config.notificationKey, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+            cipher.updateAAD("$SEALED_CONTEXT\n${config.runtimeId}\n${event.eventId}".toByteArray(Charsets.UTF_8))
+            val sealed = cipher.doFinal(event.toJson().toString().toByteArray(Charsets.UTF_8))
+            key.fill(0)
+            return JSONObject()
+                .put("event_id", event.eventId)
+                .put("sealed", Base64.encodeToString(iv + sealed, Base64.NO_WRAP))
+        }
+    }
 }

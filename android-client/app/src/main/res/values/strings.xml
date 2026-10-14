@@ -680,4 +680,6 @@
         <item quantity="one">%d minute</item>
         <item quantity="other">%d minutes</item>
     </plurals>
+    <string name="notification_sealed_title">New notification in your runtime</string>
+    <string name="notification_new">New notification</string>
 </resources>

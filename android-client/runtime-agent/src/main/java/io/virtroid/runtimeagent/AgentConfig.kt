@@ -9,6 +9,10 @@ internal data class AgentConfig(
     val baseUrl: String,
     val runtimeId: String,
     val token: String,
+    // The runtime's notification key, base64url: with it, events leave this
+    // runtime sealed for the account's phones and the control plane can't
+    // read them. Absent from runtimes started by older apps.
+    val notificationKey: String = "",
 )
 
 internal class AgentConfigStore(context: Context) {
@@ -26,6 +30,7 @@ internal class AgentConfigStore(context: Context) {
                 .put("base_url", config.baseUrl.trimEnd('/'))
                 .put("runtime_id", config.runtimeId)
                 .put("token", config.token)
+                .put("notification_key", config.notificationKey)
                 .toString(),
         )
         return true
@@ -39,6 +44,7 @@ internal class AgentConfigStore(context: Context) {
                 baseUrl = json.getString("base_url"),
                 runtimeId = json.getString("runtime_id"),
                 token = json.getString("token"),
+                notificationKey = json.optString("notification_key"),
             )
         }.getOrNull()?.takeIf(::isValid)
     }
@@ -49,6 +55,7 @@ internal class AgentConfigStore(context: Context) {
         require(!uri.host.isNullOrBlank())
         UUID.fromString(config.runtimeId)
         require(config.token.matches(Regex("^[A-Za-z0-9_-]{43,128}$")))
+        require(config.notificationKey.isEmpty() || config.notificationKey.matches(Regex("^[A-Za-z0-9_-]{43}$")))
         true
     }.getOrDefault(false)
 

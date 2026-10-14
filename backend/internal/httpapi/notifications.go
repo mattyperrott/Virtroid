@@ -42,7 +42,16 @@ type runtimeNotificationEvent struct {
 	AppLabel    string    `json:"app_label"`
 	PostedAt    time.Time `json:"posted_at"`
 	Title       string    `json:"title"`
+	// Sealed is the app, time and title encrypted in the VM with the
+	// runtime's notification key, which only the account's phones derive;
+	// this server relays it unread. Agents without the key send the fields.
+	Sealed string `json:"sealed,omitempty"`
 }
+
+const (
+	minSealedNotificationBytes = 12 + 16 + 2
+	maxSealedNotificationBytes = 4 << 10
+)
 
 type securityNoticeEvent struct {
 	EventID    string
@@ -305,7 +314,7 @@ func (a *API) receiveRuntimeNotification(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid metadata-only notification event"})
 		return
 	}
-	payload, err := encodeRuntimeNotificationPayload(event)
+	payload, err := encodeRuntimeNotificationPayload(target.RuntimeID, event)
 	if err != nil {
 		writeInternalAPIError(w, "notification_payload_encode_failed", err)
 		return
@@ -347,7 +356,15 @@ func (a *API) receiveRuntimeNotification(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func encodeRuntimeNotificationPayload(event runtimeNotificationEvent) ([]byte, error) {
+func encodeRuntimeNotificationPayload(runtimeID string, event runtimeNotificationEvent) ([]byte, error) {
+	if event.Sealed != "" {
+		return json.Marshal(map[string]any{
+			"version":    2,
+			"event_id":   event.EventID,
+			"runtime_id": runtimeID,
+			"sealed":     event.Sealed,
+		})
+	}
 	return json.Marshal(map[string]any{
 		"version":      1,
 		"event_id":     event.EventID,
@@ -463,6 +480,14 @@ func clientSecuritySummary(source, rule string) string {
 func validRuntimeNotification(event runtimeNotificationEvent) bool {
 	if _, err := uuid.Parse(strings.TrimSpace(event.EventID)); err != nil {
 		return false
+	}
+	if event.Sealed != "" {
+		// Sealed events carry nothing readable beside their id.
+		if event.PackageName != "" || event.AppLabel != "" || event.Title != "" || !event.PostedAt.IsZero() {
+			return false
+		}
+		sealed, err := base64.StdEncoding.DecodeString(event.Sealed)
+		return err == nil && len(sealed) >= minSealedNotificationBytes && len(sealed) <= maxSealedNotificationBytes
 	}
 	if len(event.PackageName) == 0 || len(event.PackageName) > maxNotificationPackageChars ||
 		!notificationPackagePattern.MatchString(event.PackageName) {

@@ -2425,11 +2425,24 @@ func deriveBlobKeys(masterKey, salt []byte) ([]byte, []byte) {
 // A runtime's key material is either the account key, from apps that
 // predate sealed handoffs, or this runtime's own keys, which phones derive
 // and seal to the VM so it never holds the account key: the snapshot key,
-// the manifest MAC key and the raw blob namespace, 32 bytes each.
-const runtimeKeysSize = 96
+// the manifest MAC key and the raw blob namespace, 32 bytes each, then the
+// key the runtime's notifications are sealed with for the account's phones.
+const (
+	runtimeKeysSize                 = 96
+	runtimeKeysWithNotificationSize = runtimeKeysSize + 32
+)
 
 func runtimeKeysOnly(material []byte) bool {
-	return len(material) == runtimeKeysSize
+	return len(material) == runtimeKeysSize || len(material) == runtimeKeysWithNotificationSize
+}
+
+// runtimeNotificationKey is the key the runtime's notification agent seals
+// events with, when the phone sent one.
+func runtimeNotificationKey(material []byte) []byte {
+	if len(material) != runtimeKeysWithNotificationSize {
+		return nil
+	}
+	return append([]byte(nil), material[runtimeKeysSize:]...)
 }
 
 func deriveRuntimeSnapshotKey(masterKey []byte, runtimeID string) []byte {

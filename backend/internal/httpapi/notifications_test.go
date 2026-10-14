@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func TestRuntimeNotificationPayloadContainsOnlyApprovedMetadata(t *testing.T) {
 		PostedAt:    time.Now().UTC(),
 		Title:       "Alice",
 	}
-	payload, err := encodeRuntimeNotificationPayload(event)
+	payload, err := encodeRuntimeNotificationPayload("runtime-1", event)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +49,37 @@ func TestRuntimeNotificationPayloadContainsOnlyApprovedMetadata(t *testing.T) {
 		if !want[key] {
 			t.Fatalf("payload contains unapproved key %q", key)
 		}
+	}
+}
+
+func TestSealedRuntimeNotificationsCarryNothingReadable(t *testing.T) {
+	sealed := runtimeNotificationEvent{
+		EventID: "d9c31cc4-5395-45d7-bc93-52f249c5245a",
+		Sealed:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
+	}
+	if !validRuntimeNotification(sealed) {
+		t.Fatal("a sealed event was rejected")
+	}
+	leaky := sealed
+	leaky.Title = "Alice"
+	if validRuntimeNotification(leaky) {
+		t.Fatal("a sealed event with a readable title was accepted")
+	}
+	tiny := sealed
+	tiny.Sealed = base64.StdEncoding.EncodeToString(make([]byte, 8))
+	if validRuntimeNotification(tiny) {
+		t.Fatal("a sealed event too short to hold a tag was accepted")
+	}
+	payload, err := encodeRuntimeNotificationPayload("runtime-1", sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != 4 || decoded["sealed"] != sealed.Sealed || decoded["runtime_id"] != "runtime-1" || decoded["version"] != float64(2) {
+		t.Fatalf("sealed payload = %v", decoded)
 	}
 }
 
