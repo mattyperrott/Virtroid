@@ -32,6 +32,7 @@ import io.virtroid.client.databinding.RuntimeCardBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
 import io.virtroid.client.security.BlobKeyEnvelopeCrypto
+import io.virtroid.client.update.UpdatePrompt
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.ConfidentialRuntimeGuard
@@ -138,6 +139,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         handleRuntimeLifecycleIntent(intent)
+        if (savedInstanceState == null) {
+            UpdatePrompt.check(this, quiet = true)
+        }
         refreshRuntimes()
     }
 

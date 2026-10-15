@@ -1,5 +1,6 @@
 package io.virtroid.client
 
+import io.virtroid.client.update.UpdatePrompt
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -69,6 +70,8 @@ class PrivacySecurityActivity : AppCompatActivity() {
         }
         binding.forceClearCacheButton.setOnClickListener { forceClearCache() }
         binding.operatorVisibilityRow.setOnClickListener { showOperatorVisibility() }
+        binding.checkForUpdatesButton.setOnClickListener { UpdatePrompt.check(this, quiet = false) }
+        binding.appVersionText.text = getString(R.string.update_version, BuildConfig.VERSION_NAME)
 
         binding.requirePinSwitch.contentDescription = getString(R.string.privacy_require_pin_biometric)
         binding.biometricUnlockSwitch.contentDescription = getString(R.string.privacy_biometric_vault_unlock)

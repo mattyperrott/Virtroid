@@ -596,6 +596,25 @@
                         app:tint="@color/v_text_muted" />
                 </LinearLayout>
             </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/checkForUpdatesButton"
+                style="@style/VirtroidButton.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="58dp"
+                android:layout_marginTop="32dp"
+                android:text="@string/update_check"
+                app:icon="@drawable/ic_refresh"
+                app:iconTint="@color/v_text_muted"
+                app:rippleColor="@color/v_accent_soft" />
+
+            <TextView
+                android:id="@+id/appVersionText"
+                style="@style/VirtroidSettingsSubtitle"
+                android:layout_width="match_parent"
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="24dp"
+                android:gravity="center_horizontal" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>
