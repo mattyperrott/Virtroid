@@ -35,9 +35,8 @@ and stored across independent Sia storage hosts, and the VM is destroyed.
   <a href="#architecture">Architecture</a> ·
   <a href="#security-model">Security</a> ·
   <a href="#latency">Latency</a> ·
-  <a href="#building-from-source">Building</a> ·
   <a href="#progress">Progress</a> ·
-  <a href="https://virtroid.network/demo/">Browser Emulated App Demo</a>
+  <a href="#building-from-source">Building</a> ·
 </p>
 
 ---
@@ -146,7 +145,6 @@ linked one.
 5. **Stop.** After that period with the viewer closed, or straight away if you choose **Stop and save now**, Android shuts down. Its data is encrypted, sharded across Sia hosts, and the plaintext removed.
 6. **Destroy.** The VM is deleted with its encrypted disk. The next start begins again on a fresh VM.
 
-The diagram's source is [`assets/architecture/virtroid-lifecycle.archify.json`](assets/architecture/virtroid-lifecycle.archify.json).
 
 ### Starting a session
 
@@ -233,7 +231,6 @@ In **Privacy & Security**:
   <img alt="Virtroid architecture: the phone sends a signed start through the edge; virtroidd checks credit and the provisioner has Aleph Cloud boot the account's own SEV-SNP VM from a measured image, releasing its disk key after attestation; the phone verifies the attestation, then streams from the VM; user data is restored from and saved to independent Sia hosts through the indexer; notifications are relayed to the phone" src="assets/architecture/virtroid-target-light.png">
 </picture>
 
-The diagram's source is [`assets/architecture/virtroid-target.archify.json`](assets/architecture/virtroid-target.archify.json).
 
 | Component | Where | Responsibility |
 | :--- | :--- | :--- |
@@ -361,6 +358,51 @@ region:
 
 ---
 
+## Progress
+
+As of 14 October 2026.
+
+### Working
+
+| Area | Status | Notes |
+| :--- | :---: | :--- |
+| Identity and recovery | ✅ Live | Sign-up with automatically issued invitations, device signing, linked phones, identity password changes, account deletion, and recovery on a replacement phone, done on a real phone |
+| Confidential runtime VMs | ✅ Live | Per-account SEV-SNP VMs on Aleph Cloud (Europe), created on demand from the measured, verified-root image (image 13) and deleted 30 minutes after last use. A new VM passes attestation and is unlocked in 30–90 seconds once its compute node has the image |
+| Attestation and signed images | ✅ Live | The phone verifies each VM against AMD's root and the offline-signed image list (app 0.3.7 and later) |
+| Encrypted storage on Sia | ✅ Live | 50 storage contracts on mainnet. A real runtime's 590 MB of data saves in about 30 seconds |
+| Restart from Sia on a new VM | ✅ Live | Done on a real phone: after the old VM was deleted, a new one restored the runtime and Android was up 27 seconds after the start began, with the viewer open about 1 minute 40 seconds after the VM was created |
+| Runtime lifecycle | ✅ Live | Create, start, stop, restore, a fresh persona on every start, factory reset, deletion, and lost-snapshot handling |
+| Keep running when closed | ✅ Live | Per-runtime period from 30 minutes to a week, set with a slider, with a countdown and Stop and save now (app 0.4.0) |
+| Notifications | ✅ Live | Metadata-only, encrypted inside the VM for the account's phones so the control plane sees only ciphertext, and delivered while the phone is locked |
+| Apps | ✅ Live | Per-runtime selection from about 4,400 F-Droid apps, a paged catalogue that follows F-Droid's signed index, installs that happen once, and F-Droid allowed to install |
+| Remote viewer | ✅ Live | Encrypted live control, audio, on-demand microphone, camera import, and direct streaming over pinned TLS with an edge fallback |
+| Wallet and billing | ✅ Live | USDT (TRC20) deposits, a trial, and charges of 0.25 USDT per running hour and 0.05 USDT per GB-month stored |
+| Operator console | ✅ Live | The Observatory: fleet, runtime VMs, payments, Sia, security, and release telemetry |
+| Control-plane hardening | ✅ Live | Falco, Suricata, firewalling, AppArmor, and protected releases |
+| Database backups | ✅ Live | Every night the control plane's and indexd's databases are sealed with a key from the indexd recovery phrase and stored on Aleph; [restoring](deploy/vps/indexd.md#backups) needs only the phrase |
+
+### What's left
+
+| Area | Status | Notes |
+| :--- | :---: | :--- |
+| Confidential handoffs and viewer | ✅ Live | Images 12 and 13 with app 0.4.2 and later: capture as Android's `system` user, so apps that block screenshots (SimpleX Chat) show in the viewer; the viewer's hops inside Android on private sockets; snapshot keys sealed only to a VM that has just proved itself, and only that runtime's keys; notifications encrypted inside the VM; viewers that must prove they hold the runtime's key, so the control plane cannot watch or control a runtime; photos and files sealed for the VM, so it can neither read nor plant them; and a Docker store rebuilt from the measured image at every boot. Done on a real phone on 15 October 2026 |
+| Low-latency streaming | ✅ Live | Image 13 and app 0.4.3: BBR congestion control, the node reading the viewer's socket directly, small buffers along the whole path, and an encoder that lowers its bitrate while the connection falls behind and raises it again after, so video drops quality instead of queueing. The session bar shows how far the picture is behind when it is |
+| Security review fixes | 🟡 Mostly done | Two reviews (14 October 2026) found 18 and 28 issues. Fixed on the server: crash-safe VM creation and deletion, node keys revoked before a deletion is recorded, standard key derivation for snapshots, a fresh database that initialises, and the backups above. Fixed in images 12 and 13 and app 0.4.2: the confidential handoff and viewer items above, Milan chips refused, and attestation required by release builds. Still open: an expiring signed image list, rollback protection that does not trust the server's floor, migrating older device keys, and finer TCB checks on the phone |
+| South-East Asia region | ⏳ Not built | Europe only today. From Bangkok a Europe VM is about 230 ms away per round trip; a Singapore server would be about 30–50 ms |
+| QUIC streaming | ⏳ Not planned yet | Streams use TLS over TCP, now with BBR and bounded queues. QUIC would mainly shorten reconnecting and survive switching networks; it would not shorten the 230 ms round trip from Bangkok, which only a closer region removes |
+| Custom AOSP image | ⏳ Not built | Runtimes use the stock ReDroid 14 image; F-Droid is installed at first start |
+| Tetragon in the VM | ⏳ Not built | |
+| Deposit conversion | 🧪 Dry run | Treasury sweeps and SimpleSwap swaps into Siacoin, ETH for Aleph credits, and TRX for fees are built and log what they would do; Siacoin and Aleph credits are topped up by hand until they are switched to live |
+| Off-host append-only logs | ⏳ Not built | Sensor events stay on the control plane |
+
+> [!NOTE]
+> **Disclaimer:**
+> Virtroid is under active development. Security properties, interfaces, schemas, and deployment procedures may change.
+> Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
+> deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
+
+---
+
 ## Building from source
 
 ### Requirements
@@ -443,51 +485,6 @@ npm run build
 | [`assets/`](assets/) | Architecture diagram images and their Archify source |
 | [`third_party/`](third_party/) | Reviewable vendored source, provenance, and upstream notices |
 | [`.github/workflows/`](.github/workflows/) | CI: backend, Android, deployment and code-scanning checks |
-
----
-
-## Progress
-
-As of 14 October 2026.
-
-### Working
-
-| Area | Status | Notes |
-| :--- | :---: | :--- |
-| Identity and recovery | ✅ Live | Sign-up with automatically issued invitations, device signing, linked phones, identity password changes, account deletion, and recovery on a replacement phone, done on a real phone |
-| Confidential runtime VMs | ✅ Live | Per-account SEV-SNP VMs on Aleph Cloud (Europe), created on demand from the measured, verified-root image (image 13) and deleted 30 minutes after last use. A new VM passes attestation and is unlocked in 30–90 seconds once its compute node has the image |
-| Attestation and signed images | ✅ Live | The phone verifies each VM against AMD's root and the offline-signed image list (app 0.3.7 and later) |
-| Encrypted storage on Sia | ✅ Live | 50 storage contracts on mainnet. A real runtime's 590 MB of data saves in about 30 seconds |
-| Restart from Sia on a new VM | ✅ Live | Done on a real phone: after the old VM was deleted, a new one restored the runtime and Android was up 27 seconds after the start began, with the viewer open about 1 minute 40 seconds after the VM was created |
-| Runtime lifecycle | ✅ Live | Create, start, stop, restore, a fresh persona on every start, factory reset, deletion, and lost-snapshot handling |
-| Keep running when closed | ✅ Live | Per-runtime period from 30 minutes to a week, set with a slider, with a countdown and Stop and save now (app 0.4.0) |
-| Notifications | ✅ Live | Metadata-only, encrypted inside the VM for the account's phones so the control plane sees only ciphertext, and delivered while the phone is locked |
-| Apps | ✅ Live | Per-runtime selection from about 4,400 F-Droid apps, a paged catalogue that follows F-Droid's signed index, installs that happen once, and F-Droid allowed to install |
-| Remote viewer | ✅ Live | Encrypted live control, audio, on-demand microphone, camera import, and direct streaming over pinned TLS with an edge fallback |
-| Wallet and billing | ✅ Live | USDT (TRC20) deposits, a trial, and charges of 0.25 USDT per running hour and 0.05 USDT per GB-month stored |
-| Operator console | ✅ Live | The Observatory: fleet, runtime VMs, payments, Sia, security, and release telemetry |
-| Control-plane hardening | ✅ Live | Falco, Suricata, firewalling, AppArmor, and protected releases |
-| Database backups | ✅ Live | Every night the control plane's and indexd's databases are sealed with a key from the indexd recovery phrase and stored on Aleph; [restoring](deploy/vps/indexd.md#backups) needs only the phrase |
-
-### What's left
-
-| Area | Status | Notes |
-| :--- | :---: | :--- |
-| Confidential handoffs and viewer | ✅ Live | Images 12 and 13 with app 0.4.2 and later: capture as Android's `system` user, so apps that block screenshots (SimpleX Chat) show in the viewer; the viewer's hops inside Android on private sockets; snapshot keys sealed only to a VM that has just proved itself, and only that runtime's keys; notifications encrypted inside the VM; viewers that must prove they hold the runtime's key, so the control plane cannot watch or control a runtime; photos and files sealed for the VM, so it can neither read nor plant them; and a Docker store rebuilt from the measured image at every boot. Done on a real phone on 15 October 2026 |
-| Low-latency streaming | ✅ Live | Image 13 and app 0.4.3: BBR congestion control, the node reading the viewer's socket directly, small buffers along the whole path, and an encoder that lowers its bitrate while the connection falls behind and raises it again after, so video drops quality instead of queueing. The session bar shows how far the picture is behind when it is |
-| Security review fixes | 🟡 Mostly done | Two reviews (14 October 2026) found 18 and 28 issues. Fixed on the server: crash-safe VM creation and deletion, node keys revoked before a deletion is recorded, standard key derivation for snapshots, a fresh database that initialises, and the backups above. Fixed in images 12 and 13 and app 0.4.2: the confidential handoff and viewer items above, Milan chips refused, and attestation required by release builds. Still open: an expiring signed image list, rollback protection that does not trust the server's floor, migrating older device keys, and finer TCB checks on the phone |
-| South-East Asia region | ⏳ Not built | Europe only today. From Bangkok a Europe VM is about 230 ms away per round trip; a Singapore server would be about 30–50 ms |
-| QUIC streaming | ⏳ Not planned yet | Streams use TLS over TCP, now with BBR and bounded queues. QUIC would mainly shorten reconnecting and survive switching networks; it would not shorten the 230 ms round trip from Bangkok, which only a closer region removes |
-| Custom AOSP image | ⏳ Not built | Runtimes use the stock ReDroid 14 image; F-Droid is installed at first start |
-| Tetragon in the VM | ⏳ Not built | |
-| Deposit conversion | 🧪 Dry run | Treasury sweeps and SimpleSwap swaps into Siacoin, ETH for Aleph credits, and TRX for fees are built and log what they would do; Siacoin and Aleph credits are topped up by hand until they are switched to live |
-| Off-host append-only logs | ⏳ Not built | Sensor events stay on the control plane |
-
-> [!NOTE]
-> **Disclaimer:**
-> Virtroid is under active development. Security properties, interfaces, schemas, and deployment procedures may change.
-> Do not use it for high-risk or production-sensitive workloads without independently reviewing the source,
-> deployed configuration, threat model, recovery design, runtime-host trust, and storage limitations.
 
 ---
 
