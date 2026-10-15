@@ -78,7 +78,8 @@ func (f *fakeSwaps) estimate(_ context.Context, _, to swapCurrency, amount strin
 		return "", errors.New("bad amount")
 	}
 	if reverse {
-		return new(big.Rat).Quo(value, rate(to)).FloatString(8), nil
+		// As SimpleSwap: floating-rate quotes run forward only.
+		return "", errors.New("GET /v3/estimates: status 422: Reverse estimates must be fixed")
 	}
 	return new(big.Rat).Mul(value, rate(to)).FloatString(8), nil
 }
@@ -175,7 +176,7 @@ func TestDryRunOnlyLogsSweepsAndSwaps(t *testing.T) {
 	if len(h.chain.sent) != 0 || len(h.swaps.created) != 0 {
 		t.Fatalf("dry run sent %d transactions and created %d exchanges", len(h.chain.sent), len(h.swaps.created))
 	}
-	if !h.logged("would send 15.000000 TRX from the treasury to "+h.deposit) || !h.logged("would swap 150.000000 USDT for about 15000.00000000 sc:sc") {
+	if !h.logged("would send 15.000000 TRX from the treasury to "+h.deposit) || !h.logged("would swap 153.000000 USDT for about 15300.00000000 sc:sc") {
 		t.Fatalf("logs = %q", h.logs)
 	}
 }
@@ -349,5 +350,18 @@ func TestDailySpendStopsAtAlephsLastPage(t *testing.T) {
 	perDay, err := alephAPI{baseURL: server.URL, client: server.Client()}.dailySpend(context.Background(), "0x4631b0613fF21cd5715f1b1572b4CD5bc0916c4C", 7, now)
 	if err != nil || perDay != 1_000_000 {
 		t.Fatalf("dailySpend = %d, %v; want 1,000,000", perDay, err)
+	}
+}
+
+func TestSmallNeedBuysTheSmallestSwap(t *testing.T) {
+	h := newHarness(t, treasuryDryRun)
+	h.chain.balances[h.treasury] = accountBalance{TRXSun: 200_000_000, USDTMicro: 400_000_000}
+	budget := int64(400_000_000)
+	// 0.005 ETH is 10.2 USDT with the margin; the treasury's floor is 25.
+	if err := h.t.swap(context.Background(), swapNeed{to: ether, amount: "0.005", addressTo: "0x4631b0613fF21cd5715f1b1572b4CD5bc0916c4C", why: "test"}, h.treasury, &budget); err != nil {
+		t.Fatal(err)
+	}
+	if !h.logged("would swap 25.000000 USDT for about 0.01250000 eth:eth") || budget != 375_000_000 {
+		t.Fatalf("budget=%d logs=%q", budget, h.logs)
 	}
 }

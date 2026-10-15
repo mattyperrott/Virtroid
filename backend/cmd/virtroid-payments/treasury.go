@@ -301,11 +301,23 @@ func (t *treasury) convert(ctx context.Context, treasuryAddress string) error {
 }
 
 func (t *treasury) swap(ctx context.Context, need swapNeed, treasuryAddress string, budget *int64) error {
-	quote, err := t.swaps.estimate(ctx, usdtOnTron, need.to, need.amount, true)
+	// SimpleSwap quotes the other way round (what an amount received costs)
+	// only at fixed rates, so the USDT needed is priced from what 100 USDT
+	// buys now, with 2% for the rate to move before the swap completes.
+	quote, err := t.swaps.estimate(ctx, usdtOnTron, need.to, "100", false)
 	if err != nil {
 		return fmt.Errorf("quote: %w", err)
 	}
-	wanted, err := decimalToMicro(quote, true)
+	per100, ok := new(big.Rat).SetString(quote)
+	if !ok || per100.Sign() <= 0 {
+		return fmt.Errorf("unreadable quote %q", quote)
+	}
+	wantedAmount, ok := new(big.Rat).SetString(need.amount)
+	if !ok {
+		return fmt.Errorf("unreadable amount %q", need.amount)
+	}
+	usdt := new(big.Rat).Quo(new(big.Rat).Mul(wantedAmount, big.NewRat(102, 1)), per100)
+	wanted, err := decimalToMicro(usdt.FloatString(6), true)
 	if err != nil {
 		return err
 	}
@@ -317,7 +329,9 @@ func (t *treasury) swap(ctx context.Context, need swapNeed, treasuryAddress stri
 			minimum = max(minimum, pairMin)
 		}
 	}
-	amount := min(wanted, t.cfg.MaxSwapMicro, *budget)
+	// A need smaller than the smallest swap buys the smallest swap: the rest
+	// is a margin, and waiting would only leave it short.
+	amount := min(max(wanted, minimum), t.cfg.MaxSwapMicro, *budget)
 	if amount < minimum {
 		t.logf("treasury: %s (%s USDT), but %s USDT may be swapped now and the smallest swap is %s USDT",
 			need.why, microToDecimal(wanted), microToDecimal(min(t.cfg.MaxSwapMicro, max(*budget, 0))), microToDecimal(minimum))
