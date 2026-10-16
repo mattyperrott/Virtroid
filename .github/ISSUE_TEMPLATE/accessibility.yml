@@ -1,0 +1,54 @@
+name: Accessibility barrier
+description: Report difficulty using VirtRoid with an access need or assistive technology.
+title: "[Accessibility]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See the [accessibility statement](https://github.com/mattyperrott/Virtroid/blob/main/ACCESSIBILITY.md) for current limitations.
+        Share only what is useful. You do not need to disclose a disability or medical information, attach screenshots, or turn off privacy controls.
+        This issue is public. For a security or privacy vulnerability, [report privately](https://github.com/mattyperrott/Virtroid/security/advisories/new).
+  - type: textarea
+    id: task
+    attributes:
+      label: Task and barrier
+      description: What were you trying to do, and which screen or control blocked you?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and access settings
+      description: Include the app version, Android/device or browser/OS, and assistive technology/version or relevant settings if known. Say unknown where needed.
+      placeholder: TalkBack or other tool; keyboard/input method; font or display size; zoom level
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps and observed behavior
+      description: Explain how to reach the barrier and what happens. A description is enough; screenshots are optional.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What would let you complete the task?
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround or suggested improvement
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed sensitive information from this public report.
+          required: true
+        - label: I agree to follow the [Code of Conduct](https://github.com/mattyperrott/Virtroid/blob/main/CODE_OF_CONDUCT.md).
+          required: true

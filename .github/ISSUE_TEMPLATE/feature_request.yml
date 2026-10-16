@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest an improvement to VirtRoid.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the task or problem first. Requests are reviewed according to project scope and available maintenance time.
+        Keep private account information and runtime contents out of this public issue. [Report vulnerabilities privately](https://github.com/mattyperrott/Virtroid/security/advisories/new).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Who needs this, what are they trying to do, and what prevents it today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the user-visible result, with an example if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or current workaround
+      description: Include other approaches you considered, if any.
+    validations:
+      required: false
+  - type: textarea
+    id: implications
+    attributes:
+      label: Privacy, security, accessibility, and operational considerations
+      description: Note any implications you know about, such as new permissions, retained data, trust boundaries, provider dependencies, or costs. It is fine to be unsure.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Relevant components, related issues, or sanitized examples.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this request.
+          required: true
+        - label: I agree to follow the [Code of Conduct](https://github.com/mattyperrott/Virtroid/blob/main/CODE_OF_CONDUCT.md).
+          required: true

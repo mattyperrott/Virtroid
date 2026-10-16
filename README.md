@@ -39,6 +39,10 @@ and stored across independent Sia storage hosts, and the VM is destroyed.
   <a href="#building-from-source">Building</a> ·
 </p>
 
+[Contributing](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) ·
+[Security](SECURITY.md) · [Accessibility](ACCESSIBILITY.md) ·
+[License and commercial use](LICENSING.md)
+
 ---
 
 ## Why Virtroid

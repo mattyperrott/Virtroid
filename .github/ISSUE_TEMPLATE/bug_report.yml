@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a reproducible problem in VirtRoid.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a suspected security or privacy vulnerability, [report privately](https://github.com/mattyperrott/Virtroid/security/advisories/new).
+        This issue will be public. Remove credentials, identity passwords, wallet seeds, account identifiers, and private runtime contents from evidence.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - Android client
+        - Runtime agent or remote viewer
+        - Control plane or API
+        - Runtime node or snapshots
+        - VM provisioning or attestation
+        - Sia storage
+        - Wallet or billing
+        - Operator console
+        - Deployment or build tooling
+        - Documentation
+        - Other or unsure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Include the app version and relevant service or image version if known. Say unknown if unavailable.
+      placeholder: App version, Git commit, or image version
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include Android/device or OS/browser versions and deployment mode as relevant. Do not include private host addresses.
+      placeholder: Android version; device model; browser/OS; Aleph SEV-SNP or local development
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest sequence that reproduces the problem and say how often it occurs.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the error text and any effect on runtime state or saved data.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence and checks already tried
+      description: Optional logs, screenshots, timestamps with time zone, workarounds, or results from the latest version. Screenshots are not required.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This is not a suspected security vulnerability, and I removed sensitive information.
+          required: true
+        - label: I agree to follow the [Code of Conduct](https://github.com/mattyperrott/Virtroid/blob/main/CODE_OF_CONDUCT.md).
+          required: true
