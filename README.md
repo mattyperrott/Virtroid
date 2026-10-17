@@ -1,6 +1,3 @@
-
-
-````markdown
 <!-- markdownlint-disable MD013 MD033 MD041 -->
 
 <h1 align="center">Virtroid</h1>
@@ -534,4 +531,3 @@ npm run build
 <p align="center">
   <img src="android-client/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="128" alt="Virtroid logo">
 </p>
-````
