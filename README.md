@@ -16,6 +16,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/mattyperrott/Virtroid/releases/latest"><strong>Download the Android client</strong></a>
+</p>
+
+<p align="center">
   <a href="#why-virtroid">Why Virtroid</a> ·
   <a href="#using-virtroid">Get started</a> ·
   <a href="#how-it-works">How it works</a> ·
@@ -32,26 +36,67 @@
 
 ## Overview
 
-Virtroid runs Android apps remotely. Your apps, accounts, messages and files stay in an Android runtime inside a confidential virtual machine protected by **AMD SEV-SNP**.
+Virtroid runs your Android apps remotely. Your phone is the controller and encrypted viewer: it verifies the VM’s hardware attestation, displays its screen and sends your input. Apps, accounts, messages and files stay in the runtime.
 
-Your phone verifies the VM’s hardware attestation, displays its encrypted video stream and sends your input. When the runtime stops, its data is encrypted inside the VM and saved across independent **Sia storage hosts**. The unused VM and its encrypted disk are then deleted.
+Each account has a dedicated confidential virtual machine protected by **AMD SEV-SNP**. When a runtime stops, its data is encrypted inside the VM and saved across independent **Sia storage hosts**. The provisioner deletes the account’s VM and its encrypted disk when the VM is no longer in use; a later start can restore your data into a replacement VM.
 
-You control when runtimes start, how long they remain active after you close the viewer, which apps they contain, and when to reset or delete them.
+You choose when runtimes start, how long they keep running after you close the viewer, which apps they contain, and when to reset or delete them.
 
+[Contributing](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) ·
+[Security policy](SECURITY.md) · [Accessibility](ACCESSIBILITY.md) ·
+[License and commercial use](LICENSING.md)
+
+---
 
 ## Why Virtroid
 
-| Benefit | What it means |
-| :--- | :--- |
-| **Keep runtime data off your phone** | Android apps and their data remain remote. The handset holds the client, local credentials and settings, rather than the runtime’s app databases and files. |
-| **Control the runtime’s lifetime** | Keep it running for **30 minutes to 1 week** after closing the viewer, or stop and save immediately. |
-| **Distribute encrypted storage** | Snapshots are encrypted before leaving the VM, then split into **30 shards** across independent hosts. **Any 10** reconstruct the encrypted data. |
-| **Verify before viewing** | The phone checks AMD’s attestation signature, the approved image measurement and the VM’s bound TLS key before streaming. |
-| **Separate device and network identities** | Each start presents a fresh device model and fingerprint. Apps use the VM’s datacenter connection rather than the phone’s IP address, carrier or location. |
-| **Use Android without Google services** | Choose apps from a verified F-Droid catalogue or install more through F-Droid inside the runtime. A custom debloated AOSP image remains planned. |
-| **Keep your account when your phone changes** | Recover with your account ID and identity password, then revoke a lost phone from another linked device. |
-| **Register without personal details** | An account consists of a key pair and an identity password. No name, email address or phone number is required. |
-| **Pay for usage** | Fund a USDT balance and pay for runtime hours and stored data. New accounts receive one runtime and one free running hour. |
+### Keep runtime data off your phone
+
+Your remote apps, messages, accounts and files live in the runtime. The handset holds the Virtroid client, its credentials and local settings, rather than a local copy of the runtime’s app databases and files.
+
+The client protects the information it does keep:
+
+- **Device key.** Held in Android’s hardware-backed Keystore, non-exportable, and used for device signing only while the phone is unlocked.
+- **Account key.** Wrapped by your identity password, which is never stored on the phone or sent to the service.
+- **Local client state.** Logs, settings and session handles can be protected by an encrypted vault with an app PIN or biometric unlock.
+- **Notifications.** Optional, encrypted metadata containing the app name, time and title, without the message body.
+
+Your phone remains part of the security boundary while you use it. Its local credentials, metadata and displayed content still need protection.
+
+### Run only when you need it
+
+Close the viewer and the runtime keeps running for the period you choose, from **30 minutes to 1 week**. Messaging apps keep receiving, and encrypted notifications let you know when to reopen the viewer. You can change the period, check the shutdown countdown or choose **Stop and save now**.
+
+When the runtime stops, Android shuts down, its data is encrypted and saved to Sia, and the plaintext is removed. VM retirement is a separate step: starts can reuse the account’s existing VM until it becomes unused and is deleted. A start after deletion restores the runtime onto a fresh VM.
+
+### Store encrypted data across independent hosts
+
+Your snapshot is encrypted before it leaves the VM. Sia splits each chunk into **30 shards** across independent storage hosts; **any 10** reconstruct the encrypted data. A single host holds an encrypted fragment, and reconstruction still leaves ciphertext that requires your runtime’s key.
+
+An authenticated manifest protects the chunks and their order. The phone also tracks snapshot generations to detect older data; stronger server-independent rollback protection remains unfinished.
+
+### Verify before you connect
+
+AMD SEV-SNP encrypts the VM’s memory with a key unavailable to the host. The VM boots a measured, read-only image, and the provisioner releases its disk key and node secrets only after verifying its attestation.
+
+Before showing the runtime’s screen, your phone checks AMD’s attestation signature, the image measurement against an **offline-signed approval list**, and the VM’s bound TLS key. Reproducible builds let others rebuild the image and compare measurements.
+
+The approved software, release signer, hardware and other trust boundaries are described in the [security model](#security-model).
+
+### Separate your handset from the runtime
+
+- **Device persona.** Each start presents a fresh device model and fingerprint. This changes device identifiers; accounts and restored app data can still link sessions.
+- **Network.** Runtime apps use the VM’s datacenter connection rather than the phone’s IP address or carrier connection.
+- **Account isolation.** Each account has its own VM. Runtimes belonging to that account can use the same VM; separate runtimes do not each have their own VM boundary.
+- **Apps without Google services.** Browse a verified F-Droid catalogue or install more through F-Droid inside the runtime. Runtimes currently use stock ReDroid 14; a custom debloated AOSP image remains planned.
+
+### No personal details to register
+
+An account consists of a key pair and an identity password. You do not need to supply a name, email address or phone number. Fund your balance with **USDT** and pay for runtime hours and stored data. New accounts receive **one runtime and one free running hour**.
+
+### Lose your phone, keep your runtimes
+
+Runtimes belong to your account. On a replacement phone, recover with your **account ID** and **identity password**. The new phone creates its own signing key; revoke the lost phone from another linked device.
 
 ---
 
@@ -59,7 +104,7 @@ You control when runtimes start, how long they remain active after you close the
 
 ### 1. Set up your identity
 
-1. **Install the client** on an Android 9 or later phone.
+1. **[Download the Android client](https://github.com/mattyperrott/Virtroid/releases/latest)** and install it on an Android 9 or later phone.
 2. **Create your identity.** The app generates your account’s key pair and asks for an **identity password of at least 14 characters**.
 3. **Save your account ID and identity password.** Together, they recover your account on another phone. There is no alternative recovery method.
 4. **Lock the app — recommended.** In **Privacy & Security**, set an **8-digit PIN**, optionally with biometric unlock, to protect local state in an encrypted vault.
@@ -106,7 +151,7 @@ While the viewer is closed, messaging apps keep receiving messages. Optional not
 
 **Wallet** displays your account’s **USDT (TRC20) deposit address** and balance. Charges are deducted from that balance.
 
-| Item | Reported rate or allowance |
+| Item | Rate or allowance |
 | :--- | :--- |
 | New-account trial | **1 runtime and 1 running hour free** |
 | Runtime usage | **0.25 USDT per running hour** |
@@ -148,7 +193,7 @@ In **Privacy & Security**:
 3. **Use.** The phone verifies the VM, then streams its screen over an end-to-end encrypted channel.
 4. **Close.** The runtime stays active for the selected period. Apps continue receiving messages and forwarding notification metadata.
 5. **Stop and save.** When the period expires, or you select **Stop and save now**, Android shuts down. Its data is encrypted, saved across Sia hosts and removed in plaintext.
-6. **Destroy.** Delete the unused VM and its encrypted disk. The reported deployment deletes VMs **30 minutes after last use**. A subsequent start after deletion provisions a fresh VM and restores the saved data.
+6. **Retire the VM.** Once the account’s VM is unused, the provisioner deletes it and its encrypted disk. The deployment described under [Progress](#progress) uses a **30-minute idle period**. A start before retirement can reuse the VM; a start after deletion provisions a replacement and restores the saved data.
 
 Saved snapshots remain on Sia rather than on the compute machine that ran the runtime.
 
@@ -163,7 +208,7 @@ Saved snapshots remain on Sia rather than on the compute machine that ran the ru
 | **5. Attest and stream** | The phone verifies AMD’s signature, the image measurement against the signed allowlist, and the VM’s TLS key bound into the report. It then streams directly over pinned TLS, with an end-to-end encrypted edge fallback when a direct route is unavailable. |
 | **6. Save** | On stop, the VM encrypts the runtime’s data and saves it back to Sia. |
 
-**Transport status:** direct QUIC streaming is part of the described transport direction, but the reported implementation uses **TLS over TCP**. QUIC is not yet scheduled.
+**Transport:** streaming uses **TLS over TCP**, with BBR congestion control and bounded queues. QUIC remains an unscheduled option for faster reconnects and network changes.
 
 ### Snapshots, storage and restore
 
@@ -188,7 +233,7 @@ Reconstructing a stored snapshot requires enough shards from separate hosts. Rec
   <img alt="Virtroid architecture: the phone sends signed requests through the edge; virtroidd checks credit; the provisioner prepares an account-dedicated SEV-SNP VM and releases its disk key after attestation; the phone verifies the VM and streams from it; encrypted snapshots move through the indexer to independent Sia hosts; encrypted notification metadata is relayed to linked phones." src="assets/architecture/virtroid-target-light.png">
 </picture>
 
-The diagrams describe the architecture and intended lifecycle. The tables below identify components that remain planned or operate only in dry-run mode.
+The diagrams describe the architecture and intended lifecycle. VM retirement follows the account-level idle policy above. The component descriptions identify planned features and services operating in dry-run mode.
 
 ### Components
 
@@ -202,9 +247,9 @@ The diagrams describe the architecture and intended lifecycle. The tables below 
 | **Payments service** | Control plane | Sole holder of the deposit wallet seed. Detects confirmed TRON USDT deposits, checks them against a second node and signs reports. Treasury sweeps and funding conversions are built but remain in dry-run mode. |
 | **Sia indexer — `indexd`** | Control plane | Assigns account-specific Sia keys and pays storage hosts in Siacoin. Sees opaque storage metadata. |
 | **Host sensors** | Control plane | Falco and Suricata monitor the control plane. Off-host, append-only event storage is planned; events currently remain on the control plane. |
-| **Runtime VM** | Aleph Cloud; per account in the reported deployment | SEV-SNP guest booting a measured image, running `virtnoded`, the viewer encryption proxy and Android in a container. Tetragon is planned. |
+| **Runtime VM** | Aleph Cloud; one per account | SEV-SNP guest booting a measured image, running `virtnoded`, the viewer encryption proxy and Android in a container. Tetragon is planned. |
 | **`virtnoded`** | Runtime VM | Android lifecycle, viewing, app installation, Sia snapshots and cleanup. |
-| **Android runtime** | Runtime VM | Currently stock ReDroid 14, with F-Droid installed at first start and a Virtroid agent forwarding notification metadata. A custom debloated AOSP build without Google services is planned. |
+| **Android runtime** | Runtime VM | Currently stock ReDroid 14, with F-Droid installed at first start and a Virtroid agent forwarding notification metadata. A custom debloated AOSP build is planned. |
 | **Sia network** | Independent storage hosts | Stores encrypted snapshot chunks as 30 shards, any 10 of which reconstruct them. |
 
 ### Runtime VM image
@@ -247,7 +292,7 @@ Each account has a region. Its VM is never shared with another account.
 | :--- | :--- |
 | **Europe** | Live SEV-SNP VMs on Aleph Cloud, paid per hour. |
 | **South-East Asia and Australia** | Planned service from a dedicated regional SEV-SNP server, for example in Singapore. |
-| **United States** | Aleph Cloud SEV-SNP nodes are part of the regional design; the reported deployment is Europe-only. |
+| **United States** | Aleph Cloud SEV-SNP nodes are part of the regional design; the deployment described under [Progress](#progress) is Europe-only. |
 
 The provisioner supports warm spare VMs to reduce first-start time.
 
@@ -362,9 +407,9 @@ Viewer responsiveness depends mainly on the network round trip between the phone
 | **Distance** | Input travels to the VM and the updated screen returns, costing a full round trip. Fibre adds roughly **1 ms per 100 km of route**, and network routes are longer than straight-line distances. A distant VM can add about a quarter-second before other processing; a regional VM can reduce this to tens of milliseconds. |
 | **Video processing** | Encoding in the VM and decoding on the phone add roughly **1–2 frames**, or **30–60 ms at 30 fps**. |
 | **Transport** | TCP packet loss can stall later data for a round trip, producing a hitch. The current implementation uses BBR and bounded queues. QUIC remains an unscheduled option for faster reconnects and network changes. |
-| **Rendering** | Confidential VMs have no GPU, so Android renders on the CPU. Heavy apps and animations can drop frames. |
+| **Rendering** | The deployed confidential VMs have no GPU, so Android renders on the CPU. Heavy apps and animations can drop frames. |
 
-From **South East Asia**, a Europe VM is approximately **230 ms away per round trip**. A Singapore server is expected to reduce that to approximately **30–50 ms**.
+From **Bangkok**, the reported round trip to a Europe VM is approximately **230 ms**. A Singapore server is expected to reduce that to approximately **30–50 ms**; the South-East Asia region is not yet deployed.
 
 A closer region removes geographic delay. Changing transport does not.
 
@@ -389,6 +434,7 @@ A closer region removes geographic delay. Changing transport does not.
 
 ## Progress
 
+The dated reviews and phone verification below are from **14–15 October 2026**. The timings describe individual tests, rather than guaranteed startup or transfer times.
 
 ### Live capabilities
 
@@ -411,6 +457,7 @@ A closer region removes geographic delay. Changing transport does not.
 
 ### Confidential handoffs and viewer — live
 
+Delivered in **runtime images 12 and 13** with **app 0.4.2 and later**, and verified on a real phone on **15 October 2026**:
 
 - Screen capture runs as Android’s `system` user, allowing screenshot-protected apps such as **SimpleX Chat** to appear in the viewer.
 - Viewer hops inside Android use private sockets.
@@ -422,6 +469,7 @@ A closer region removes geographic delay. Changing transport does not.
 
 ### Streaming improvements — live
 
+Delivered in **runtime image 13** with **app 0.4.3**:
 
 - **BBR congestion control**
 - Direct reads from the viewer’s socket by the node
@@ -435,11 +483,15 @@ The encoder reduces picture quality under pressure instead of allowing video to 
 
 | Area | Status | Details |
 | :--- | :---: | :--- |
-| **Security review fixes** | 🟡 Mostly done | Server and confidential-viewer fixes are complete; image-list expiry, stronger rollback protection, older device-key migration and finer phone-side TCB checks remain open. |
+| **Security review fixes** | 🟡 Mostly done | Two reviews on **14 October 2026** reported **18 and 28 issues**. Server fixes are summarized below, and confidential handoff/viewer changes are listed above. Image-list expiry, server-independent rollback protection, older device-key migration and finer phone-side TCB checks remain open. |
+| **South-East Asia region** | ⏳ Not built | The deployment is Europe-only. A Singapore server is planned to reduce round-trip latency for regional users. |
+| **QUIC streaming** | ⏳ Not scheduled | Streams use TLS over TCP with BBR and bounded queues. QUIC is an option for reconnects and network changes; reducing geographic delay requires a closer region. |
+| **Deposit conversion** | 🧪 Dry run | Treasury sweeps and SimpleSwap conversions into Siacoin, ETH for Aleph credits and TRX for fees are built but log intended actions. Siacoin and Aleph credits are topped up manually. |
 | **Custom AOSP image** | ⏳ Not built | Runtimes currently use stock ReDroid 14, with F-Droid installed at first start. |
 | **Tetragon in runtime VMs** | ⏳ Not built | Planned process monitoring and executable allowlisting. |
 | **Off-host append-only logs** | ⏳ Not built | Sensor events currently remain on the control plane. |
 
+Server fixes include crash-safe VM creation and deletion, revoking node keys before recording deletion, standard snapshot key derivation, database initialization and encrypted database backups. Runtime images **12 and 13** with **app 0.4.2** added the confidential handoff and viewer changes above, rejection of Milan chips, and mandatory attestation in release builds.
 
 > [!WARNING]
 > **Active development.** Security properties, interfaces, schemas and deployment procedures may change.
