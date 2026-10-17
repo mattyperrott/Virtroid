@@ -291,8 +291,6 @@ Each account has a region. Its VM is never shared with another account.
 | Region | Deployment |
 | :--- | :--- |
 | **Europe** | Live SEV-SNP VMs on Aleph Cloud, paid per hour. |
-| **South-East Asia and Australia** | Planned service from a dedicated regional SEV-SNP server, for example in Singapore. |
-| **United States** | Aleph Cloud SEV-SNP nodes are part of the regional design; the deployment described under [Progress](#progress) is Europe-only. |
 
 The provisioner supports warm spare VMs to reduce first-start time.
 
@@ -348,7 +346,6 @@ These protections still depend on the phone’s security while it is unlocked an
 - **Your unlocked phone.** Malware on it can see what the viewer displays.
 - **Your identity password.** It protects the wrapped account key using **PBKDF2-HMAC-SHA256 with 600,000 iterations**. Anyone holding the wrapped key can attempt offline password guesses; a weak password remains vulnerable.
 
-<details>
 <summary><strong>Implemented security controls</strong></summary>
 
 ### Request authentication and authorization
@@ -391,7 +388,6 @@ These protections still depend on the phone’s security while it is unlocked an
 - Falco and Suricata event collection, with sanitized, account-scoped client delivery.
 - Protected offline release builds, immutable image and deployment-tree verification, and CI rejection of committed binaries.
 
-</details>
 
 > [!CAUTION]
 > **Virtroid is not an anonymity network.** The control plane and runtime VM can see the phone’s connection IP address, and USDT deposits are public on TRON. Use a VPN or Tor on the phone if concealing that connection matters to you.
@@ -434,19 +430,18 @@ A closer region removes geographic delay. Changing transport does not.
 
 ## Progress
 
-The dated reviews and phone verification below are from **14–15 October 2026**. The timings describe individual tests, rather than guaranteed startup or transfer times.
 
 ### Live capabilities
 
 | Area | Status | Details |
 | :--- | :---: | :--- |
 | **Identity and recovery** | ✅ Live | Sign-up with automatically issued invitations, device signing, linked phones, identity password changes, account deletion and replacement-phone recovery. Verified on a real phone. |
-| **Confidential runtime VMs** | ✅ Live | Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root **image 13** and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
-| **Attestation and signed images** | ✅ Live | **App 0.3.7+** verifies each VM against AMD’s root and the offline-signed image list. |
+| **Confidential runtime VMs** | ✅ Live | Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
+| **Attestation and signed images** | ✅ Live | Verifies each VM against AMD’s root and the offline-signed image list. |
 | **Encrypted Sia storage** | ✅ Live | **50 mainnet storage contracts**. A real runtime’s **590 MB** snapshot saves in approximately **30 seconds**. |
 | **Restore onto a new VM** | ✅ Live | Verified on a real phone after deleting the old VM. Android was running **27 seconds after start began**; the viewer opened approximately **1 minute 40 seconds after VM creation**. |
 | **Runtime lifecycle** | ✅ Live | Create, start, stop, restore, fresh personas, factory reset, deletion and lost-snapshot handling. |
-| **Keep running when closed** | ✅ Live | **App 0.4.0** adds a per-runtime **30-minute to 1-week** slider, shutdown countdown and **Stop and save now**. |
+| **Keep running when closed** | ✅ Live | Per-runtime **30-minute to 1-week** slider, shutdown countdown and **Stop and save now**. |
 | **Notifications** | ✅ Live | Metadata-only notifications encrypted inside the VM for account-linked phones. Delivered while the phone is locked; the control plane sees ciphertext. |
 | **Apps** | ✅ Live | Approximately **4,400 F-Droid apps**, signed-index catalogue synchronization, paged browsing, per-runtime selection, one-time installs and additional installation through F-Droid. |
 | **Remote viewer** | ✅ Live | Encrypted control, audio, on-demand microphone, camera import and direct pinned-TLS streaming with an edge fallback. |
@@ -457,7 +452,6 @@ The dated reviews and phone verification below are from **14–15 October 2026**
 
 ### Confidential handoffs and viewer — live
 
-Delivered in **runtime images 12 and 13** with **app 0.4.2 and later**, and verified on a real phone on **15 October 2026**:
 
 - Screen capture runs as Android’s `system` user, allowing screenshot-protected apps such as **SimpleX Chat** to appear in the viewer.
 - Viewer hops inside Android use private sockets.
@@ -469,7 +463,6 @@ Delivered in **runtime images 12 and 13** with **app 0.4.2 and later**, and veri
 
 ### Streaming improvements — live
 
-Delivered in **runtime image 13** with **app 0.4.3**:
 
 - **BBR congestion control**
 - Direct reads from the viewer’s socket by the node
@@ -483,15 +476,11 @@ The encoder reduces picture quality under pressure instead of allowing video to 
 
 | Area | Status | Details |
 | :--- | :---: | :--- |
-| **Security review fixes** | 🟡 Mostly done | Two reviews on **14 October 2026** reported **18 and 28 issues**. Server fixes are summarized below, and confidential handoff/viewer changes are listed above. Image-list expiry, server-independent rollback protection, older device-key migration and finer phone-side TCB checks remain open. |
-| **South-East Asia region** | ⏳ Not built | The deployment is Europe-only. A Singapore server is planned to reduce round-trip latency for regional users. |
-| **QUIC streaming** | ⏳ Not scheduled | Streams use TLS over TCP with BBR and bounded queues. QUIC is an option for reconnects and network changes; reducing geographic delay requires a closer region. |
 | **Deposit conversion** | 🧪 Dry run | Treasury sweeps and SimpleSwap conversions into Siacoin, ETH for Aleph credits and TRX for fees are built but log intended actions. Siacoin and Aleph credits are topped up manually. |
 | **Custom AOSP image** | ⏳ Not built | Runtimes currently use stock ReDroid 14, with F-Droid installed at first start. |
 | **Tetragon in runtime VMs** | ⏳ Not built | Planned process monitoring and executable allowlisting. |
 | **Off-host append-only logs** | ⏳ Not built | Sensor events currently remain on the control plane. |
 
-Server fixes include crash-safe VM creation and deletion, revoking node keys before recording deletion, standard snapshot key derivation, database initialization and encrypted database backups. Runtime images **12 and 13** with **app 0.4.2** added the confidential handoff and viewer changes above, rejection of Milan chips, and mandatory attestation in release builds.
 
 > [!WARNING]
 > **Active development.** Security properties, interfaces, schemas and deployment procedures may change.
