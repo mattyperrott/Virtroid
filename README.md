@@ -38,10 +38,6 @@ Your phone verifies the VM’s hardware attestation, displays its encrypted vide
 
 You control when runtimes start, how long they remain active after you close the viewer, which apps they contain, and when to reset or delete them.
 
-> [!IMPORTANT]
-> **Release candidate.** The progress report is dated **14 October 2026**, with additional updates recorded on **15 October 2026**.
->
-> The reported deployment runs in **Europe**, streams over **TLS/TCP**, and uses **stock ReDroid 14**. Regional expansion, a custom Android image and other unfinished features are identified below.
 
 ## Why Virtroid
 
