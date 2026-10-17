@@ -188,6 +188,7 @@ In **Privacy & Security**:
   <img alt="Runtime lifecycle: create; start on a confidential VM and restore from Sia; verify and use; keep running after closing the viewer; stop and save encrypted data to Sia; destroy the unused VM; start again. Wipe clears saved data, and delete removes the runtime." src="assets/architecture/virtroid-lifecycle-light.png">
 </picture>
 
+
 1. **Create.** Choose a name, a keep-running period and any F-Droid apps to pre-install.
 2. **Start.** Assign a confidential VM and a fresh device persona. Restore and decrypt saved data inside the VM before Android boots. Selected apps are installed once.
 3. **Use.** The phone verifies the VM, then streams its screen over an end-to-end encrypted channel.
