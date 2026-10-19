@@ -73,11 +73,11 @@ When the runtime stops, Android shuts down, its data is encrypted and saved to S
 
 Your snapshot is encrypted before it leaves the VM. Sia splits each chunk into **30 shards** across independent storage hosts; **any 10** reconstruct the encrypted data. A single host holds an encrypted fragment, and reconstruction still leaves ciphertext that requires your runtime’s key.
 
-An authenticated manifest protects the chunks and their order. The phone also tracks snapshot generations to detect older data; stronger server-independent rollback protection remains unfinished.
+An authenticated manifest protects the chunks, their order and the snapshot's generation. Each phone seals the newest generation it has seen together with the runtime's keys, and the VM refuses to restore anything older, so the control plane cannot roll a runtime back to an earlier snapshot.
 
 ### Verify before you connect
 
-AMD SEV-SNP encrypts the VM’s memory with a key unavailable to the host. The VM boots a measured, read-only image, and the provisioner releases its disk key and node secrets only after verifying its attestation.
+AMD SEV-SNP encrypts the VM’s memory with a key unavailable to the host. The VM boots a measured, read-only image, and the provisioner releases its node secrets only after verifying its attestation. The VM encrypts its working disk with a key it makes at each boot, which never leaves it.
 
 Before showing the runtime’s screen, your phone checks AMD’s attestation signature, the image measurement against an **offline-signed approval list**, and the VM’s bound TLS key. Reproducible builds let others rebuild the image and compare measurements.
 
@@ -219,7 +219,7 @@ A snapshot contains the runtime’s entire **`/data`**: apps, app data, accounts
 | :--- | :--- |
 | **Encryption** | Inside the VM, the snapshot is compressed and encrypted using **AES-256-CTR with HMAC-SHA256**, in an encrypt-then-MAC construction. Keys derive from a per-runtime key, which derives from the account key, with a fresh salt for every snapshot. |
 | **Authenticated manifest** | The manifest records the snapshot’s **4 MiB chunks**, their hashes and its generation. Authentication with the account key protects against chunk substitution, reordering and truncation by storage hosts or the control plane. |
-| **Generation tracking** | The phone records the newest generation observed for each runtime and rejects older snapshots. Wipes and lost snapshots are recorded explicitly so a deliberate fresh start can be accepted. Server-independent rollback protection remains unfinished. |
+| **Generation tracking** | The phone records the newest generation it has seen for each runtime and seals it with the runtime's keys. The VM refuses older or unauthenticated snapshots and numbers new ones above it, so a wipe or a lost snapshot never brings an older one back. A phone with no record yet (new or recovered) accepts the newest authenticated snapshot. |
 | **Distributed storage** | The Sia indexer gives each account its own keys. Each chunk becomes **30 shards on independent storage hosts**; any **10** reconstruct it. The indexer sees opaque object names and sizes. |
 | **Restore** | The VM fetches the latest snapshot, verifies its authentication tags and only then decrypts it into the new Android container. |
 
@@ -329,8 +329,8 @@ Treasury sweeps and **SimpleSwap** conversions are implemented in **dry-run mode
 | **Handset** | Runtime app databases and files remain remote. Device signing keys use Android’s hardware-backed Keystore; the account key is password-wrapped; local logs, settings and session handles can be protected by the app’s encrypted PIN/biometric vault. |
 | **Data in use** | SEV-SNP encrypts guest memory with a key unavailable to the host. The phone verifies the VM’s attestation and approved image before viewing. |
 | **Data in transit** | The viewer is encrypted between the phone and a proxy inside the VM. The edge and relays see ciphertext. Control requests are signed and replay-protected. |
-| **Data at rest** | Snapshots are encrypted inside the VM using account-derived keys and distributed across Sia hosts. Unused compute VMs and their encrypted disks are deleted. |
-| **Notifications** | App name, time and title are encrypted inside the VM for linked phones. Message bodies are excluded, and the control plane sees ciphertext. |
+| **Data at rest** | Snapshots are encrypted inside the VM using account-derived keys and distributed across Sia hosts. The VM's working disk is encrypted with a key made inside it at each boot. Unused compute VMs and their disks are deleted. |
+| **Notifications** | App name, time and title are encrypted inside the VM for linked phones. Message bodies are excluded, and the control plane sees ciphertext; it refuses readable titles from a confidential VM. |
 
 A forensic extraction of the handset—at a border, by police or by someone with extraction tools—targets the client and its local state rather than a local copy of the remote Android runtime.
 
@@ -340,12 +340,13 @@ These protections still depend on the phone’s security while it is unlocked an
 
 ### What you still trust
 
-- **Image builders and signers.** They determine the approved runtime software. Reproducible builds allow independent measurement comparisons.
-- **The provisioner.** It holds each VM’s data-disk key and releases it only after attestation to an approved image.
+- **Image builders and signers.** They determine the approved runtime software. Reproducible builds allow independent measurement comparisons. The signed approval list expires after 60 days, so a server cannot keep serving one that still approves a revoked image.
+- **The provisioner.** It holds each VM’s node identity key and releases it only after attestation to an approved image. It never holds the VM’s disk key or a runtime’s keys.
 - **The control plane.** It decides placement and sees account, runtime, timing and connection-IP metadata.
-- **AMD SEV-SNP and host firmware.** Their security against firmware flaws and side channels remains part of the trust boundary.
+- **AMD SEV-SNP and host firmware.** Their security against firmware flaws and side channels remains part of the trust boundary. **FABRICKED** (CVE-2025-54510, AMD-SB-3034) lets a host with unpatched firmware read a VM’s memory and forge its attestation report. The approval list sets minimum firmware per processor (on Genoa, SNP firmware 28, which carries AMD’s fix), and phones check the report’s firmware against AMD’s certificate for that chip. EPYC Milan, whose attestation can be forged, is refused.
+- **The runtime’s Android build.** Runtimes use stock ReDroid 14, whose Android security patch level is **May 2024**. Apps inside a runtime could exploit Android flaws fixed since then. A current build is planned (see [Remaining work](#remaining-work)).
 - **Your unlocked phone.** Malware on it can see what the viewer displays.
-- **Your identity password.** It protects the wrapped account key using **PBKDF2-HMAC-SHA256 with 600,000 iterations**. Anyone holding the wrapped key can attempt offline password guesses; a weak password remains vulnerable.
+- **Your identity password.** It protects the wrapped account key using **Argon2id (64 MiB, 3 passes)**. The server hands the wrapped key only to a phone that proves the password with a separate login key, and pauses recovery for an hour after ten wrong attempts. Someone holding the server’s database could still attempt offline guesses; a weak password remains vulnerable. Accounts created before app 0.4.5 move from PBKDF2 to Argon2id the next time their password is entered.
 
 <summary><strong>Implemented security controls</strong></summary>
 
@@ -359,7 +360,8 @@ These protections still depend on the phone’s security while it is unlocked an
 ### Runtime and transport verification
 
 - SEV-SNP attestation checked by the provisioner before releasing VM secrets and by the phone before streaming.
-- Offline-signed approved image measurements, with the verification key embedded in the app.
+- Offline-signed approved image measurements that expire, with the verification key and a current list built into the app.
+- Minimum AMD firmware per processor, checked against the chip’s AMD certificate; EPYC Milan refused.
 - TLS viewer transport with session-bound relay credentials.
 - Remote-node connections restricted to **operator-allowlisted IP addresses**, with TLS pinned to each node’s reported key for control-plane calls and phone streams.
 - Viewers must prove possession of the runtime’s key, preventing the control plane from watching or controlling the runtime.
@@ -376,8 +378,8 @@ These protections still depend on the phone’s security while it is unlocked an
 ### Snapshot and application integrity
 
 - AES-256-CTR with HMAC-SHA256 snapshot encryption.
-- Authenticated manifests and monotonic generations.
-- Account keys wrapped by the user’s identity password.
+- Authenticated manifests, whose generations the VM keeps above the newest each phone has seen.
+- Account keys wrapped under the user’s identity password with Argon2id.
 - F-Droid index-signature verification and SHA-256 pinning for every APK.
 
 ### Payments and infrastructure
@@ -459,8 +461,9 @@ A closer region removes geographic delay. Changing transport does not.
 - Snapshot keys are sealed to a VM that has just attested, with access limited to the requested runtime’s keys.
 - Notification metadata is encrypted inside the VM.
 - Viewers prove possession of the runtime’s key, preventing the control plane from watching or controlling the runtime.
-- Imported photos and files are sealed for the VM, preventing the control plane from reading or planting them.
-- The Docker store is rebuilt from the measured image on every boot.
+- Imported photos and files are sealed for the VM, preventing the control plane from reading or planting them. Nothing is sent unsealed.
+- The VM's working disk, Docker store included, is encrypted with a key made inside the VM at each boot.
+- Phones seal the newest snapshot generation they have seen; the VM refuses older snapshots.
 
 ### Streaming improvements — live
 
@@ -478,7 +481,7 @@ The encoder reduces picture quality under pressure instead of allowing video to 
 | Area | Status | Details |
 | :--- | :---: | :--- |
 | **Deposit conversion** | 🧪 Dry run | Treasury sweeps and SimpleSwap conversions into Siacoin, ETH for Aleph credits and TRX for fees are built but log intended actions. Siacoin and Aleph credits are topped up manually. |
-| **Custom AOSP image** | ⏳ Not built | Runtimes currently use stock ReDroid 14, with F-Droid installed at first start. |
+| **Current Android build** | ⏳ Not built | Runtimes use stock ReDroid 14 (Android security patch **2024-05-05**), with F-Droid installed at first start. ReDroid's newest stock image is Android 16 with June 2025 patches; a custom AOSP build would carry current patches. |
 | **Tetragon in runtime VMs** | ⏳ Not built | Planned process monitoring and executable allowlisting. |
 | **Off-host append-only logs** | ⏳ Not built | Sensor events currently remain on the control plane. |
 

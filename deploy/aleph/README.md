@@ -50,12 +50,13 @@ loads no further kernel modules.
 3. The VM boots, verifies its root against the measured hash, and waits.
 4. The provisioner runs `aleph instance unlock`. The CLI verifies the VM's
    SEV-SNP report (AMD signature chain, launch measurement, policy) over
-   attested TLS, and only then sends the VM's node id and key, region, control
-   plane URL and data-disk key. Only the provisioner's address, measured on the
+   attested TLS, and only then sends the VM's node id and key, region and
+   control plane URL. Only the provisioner's address, measured on the
    kernel command line, can inject them. The node key is approved in the
    control plane at the same moment.
 5. `/sbin/init` (`nix/vm-init.sh`) does the rest:
-   - opens the data disk;
+   - encrypts the data disk with a key it makes from `/dev/urandom` at each
+     boot, which never leaves the VM;
    - allows only ports 8443 (attestation agent) and 9443 (node) inbound;
    - loads the Android image;
    - starts Docker and `virtnoded` with `NODE_SNP_ATTESTATION=required`.
@@ -69,13 +70,16 @@ loads no further kernel modules.
 
 | Party | Can it read or change a user's runtime? |
 | :--- | :--- |
-| The Aleph host operator | No. Memory is encrypted by SEV-SNP. The root is verified against the measurement, and the data disk is encrypted inside the VM with a key that only arrives after attestation. |
+| The Aleph host operator | No, provided its firmware is not older than the approved list's minimum (an unpatched host could break SEV-SNP; see FABRICKED, AMD-SB-3034). Memory is encrypted by SEV-SNP. The root is verified against the measurement, and the data disk is encrypted with a key made inside the VM. |
 | Aleph's network | No. It only relays signed messages and public images. |
-| The Virtroid VPS | It cannot change what a VM runs: the root, kernel and initrd are measured, and phones only accept measurements on a list signed with your offline key. The provisioner does hold each VM's data-disk key, so a compromised VPS that also controlled an Aleph host could read that VM's stored data. |
+| The Virtroid VPS | It cannot change what a VM runs: the root, kernel and initrd are measured, and phones only accept measurements on a list signed with your offline key. It holds each VM's node key, which identifies the node to the control plane, but never the data disk's key or a runtime's keys. |
 
-The data disk uses LUKS with `aes-xts-plain64`, which protects confidentiality
-but not integrity: a host can corrupt blocks, but cannot read them or choose
-their contents.
+The data disk uses plain dm-crypt with `aes-xts-plain64` and a key made at
+each boot. That protects confidentiality, and nothing written in one boot can
+be read or replayed in the next, but not integrity within a boot: a host can
+corrupt blocks or return their earlier contents, though it cannot read them or
+choose what they decrypt to. Full integrity (dm-integrity) would slow every
+write and every boot.
 
 ## One-time setup
 
@@ -170,15 +174,27 @@ with Nix for builds (a small Aleph VM works).
      machine you keep offline, or a key you store offline. Put the printed
      public key in `android-client/app/src/main/res/raw/measurement_signing_keys`
      and release the app once.
-   - For each new image: `virtroid-measurements sign --key
-     measurement-signing.key --serial <higher than last> --measurement <hex> ...
+   - For each new image, and at least every 60 days: `virtroid-measurements
+     sign --key measurement-signing.key --serial <higher than last>
+     --measurement <hex> ... --min-tcb Genoa=bootloader=12,tee=0,snp=28,microcode=88
      --out snp-measurements.json`. Copy that file to the VPS and set
-     `SNP_MEASUREMENTS_FILE` to its path.
+     `SNP_MEASUREMENTS_FILE` to its path, and put the same file in
+     `android-client/app/src/main/res/raw/snp_measurement_list` for the next
+     app release.
+
+   A list expires (`--valid-for`, 60 days by default) so that a server cannot
+   keep serving one that still approves a revoked image: phones refuse an
+   expired list and, with no current one, refuse confidential VMs until a new
+   list is published. Sign the next list well before then. `--min-tcb` sets,
+   per AMD product, the oldest host firmware phones accept, checked against
+   the chip's AMD certificate; SNP firmware 28 on Genoa carries AMD's fix for
+   FABRICKED (AMD-SB-3034). A product without a minimum is refused, and Milan
+   is always refused.
 
    Phones fetch the list when they meet an image they don't know yet, check
-   your signature, and never go back to a lower serial. To revoke an image,
-   sign a new list without it. Until a list is published, phones refuse these
-   VMs, by design.
+   your signature, and never go back to a lower serial or to one older than
+   the list built into the app. To revoke an image, sign a new list without
+   it. Until a list is published, phones refuse these VMs, by design.
 
 ## Cost
 
@@ -191,8 +207,10 @@ them, and `PROVISIONER_MAX_VMS` caps how many exist at once.
 
 - A VM keeps its secrets only in memory, so after a restart its initrd waits
   for them again. The provisioner notices because the attestation agent
-  presents a new TLS key on every boot: it attests the VM again, injects the
-  same secrets, and the node comes back with its data disk intact. A VM that
+  presents a new TLS key on every boot: it attests the VM again and injects
+  the same secrets. The data disk's key is made inside the VM at each boot, so
+  a restart starts from an empty disk: running runtimes lose changes since
+  their last save, and saved snapshots (on Sia) are untouched. A VM that
   restarts more than three times after being unlocked, before its node ever
   comes up, is failing to boot and is retired.
 - With `NODE_BLOB_STORE_KIND=local-disk`, runtime snapshots stay on the VM's
