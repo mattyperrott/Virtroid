@@ -39,7 +39,7 @@
         pname = "virtroid-node";
         version = self.shortRev or "dirty";
         src = lib.cleanSource ../../../backend;
-        vendorHash = "sha256-Qy2Hpxw+BfvbRxkqwcRT5QFHS93SCJoclviknVQHd24=";
+        vendorHash = "sha256-PqyJ5/boVdE64zocPmCCr6x8sxAR3MHxgHTzKm4vM+Q=";
         subPackages = [ "cmd/virtnoded" "cmd/viewercrypt" ];
         env.CGO_ENABLED = 0;
         ldflags = [ "-s" "-w" ];
