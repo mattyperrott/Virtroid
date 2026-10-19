@@ -439,7 +439,7 @@ A closer region removes geographic delay. Changing transport does not.
 | Area | Status | Details |
 | :--- | :---: | :--- |
 | **Identity and recovery** | ✅ Live | Sign-up with automatically issued invitations, device signing, linked phones, identity password changes, account deletion and replacement-phone recovery. Verified on a real phone. |
-| **Confidential runtime VMs** | ✅ Live | Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
+| **Confidential runtime VMs** | ✅ Live | Image 14. Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
 | **Attestation and signed images** | ✅ Live | Verifies each VM against AMD’s root and the offline-signed image list. |
 | **Encrypted Sia storage** | ✅ Live | **50 mainnet storage contracts**. A real runtime’s **590 MB** snapshot saves in approximately **30 seconds**. |
 | **Restore onto a new VM** | ✅ Live | Verified on a real phone after deleting the old VM. Android was running **27 seconds after start began**; the viewer opened approximately **1 minute 40 seconds after VM creation**. |
