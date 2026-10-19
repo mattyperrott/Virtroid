@@ -88,7 +88,8 @@ func (n *nodeAgent) decryptBlobKeyEnvelope(envelope blobKeyEnvelopePayload, expe
 	// Sealed envelopes carry this runtime's own keys; older ones the account key.
 	var actualVerifier string
 	switch {
-	case strings.TrimSpace(envelope.Algorithm) == blobKeyEnvelopeAlgorithmSealed && runtimeKeysOnly(plaintext):
+	case strings.TrimSpace(envelope.Algorithm) == blobKeyEnvelopeAlgorithmSealed &&
+		(runtimeKeysOnly(plaintext) || len(plaintext) == runtimeKeysWithFloorSize):
 		actualVerifier = runtimeKeysVerifierForPlaintext(plaintext)
 	case strings.TrimSpace(envelope.Algorithm) == blobKeyEnvelopeAlgorithm && len(plaintext) == 32:
 		actualVerifier = blobKeyVerifierForPlaintext(plaintext)

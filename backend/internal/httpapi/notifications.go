@@ -314,6 +314,12 @@ func (a *API) receiveRuntimeNotification(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid metadata-only notification event"})
 		return
 	}
+	if target.Confidential && event.Sealed == "" {
+		// A confidential VM's agent seals everything; a readable title from
+		// one is refused rather than passed on.
+		writeAPIError(w, http.StatusBadRequest, "runtime_notification_not_sealed", "notifications from a confidential runtime must be sealed")
+		return
+	}
 	payload, err := encodeRuntimeNotificationPayload(target.RuntimeID, event)
 	if err != nil {
 		writeInternalAPIError(w, "notification_payload_encode_failed", err)

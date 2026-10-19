@@ -291,10 +291,6 @@ func (r *reconciler) unlock(ctx context.Context, vm provisionedVM) error {
 	if err != nil {
 		return err
 	}
-	dataKey, err := r.dataKey(vm.ID)
-	if err != nil {
-		return err
-	}
 	before := r.bootIdentity(ctx, vm)
 	err = r.aleph.Unlock(ctx, unlockSpec{
 		ItemHash:       vm.ItemHash,
@@ -304,7 +300,6 @@ func (r *reconciler) unlock(ctx context.Context, vm provisionedVM) error {
 		Secrets: map[string]string{
 			"virtroid_node_id":       vm.ID,
 			"virtroid_node_key":      privateKey,
-			"virtroid_data_key":      dataKey,
 			"virtroid_region":        vm.Region,
 			"virtroid_control_plane": r.cfg.VMControlPlaneURL,
 		},
@@ -511,7 +506,7 @@ func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alep
 	delete(r.lastBootCheck, vm.ID)
 	delete(r.seenBoot, vm.ID)
 	delete(r.restarts, vm.ID)
-	for _, path := range []string{r.nodeKeyPath(vm.ID), r.dataKeyPath(vm.ID), r.bootPath(vm.ID), r.createPath(vm.ID)} {
+	for _, path := range []string{r.nodeKeyPath(vm.ID), r.legacyDataKeyPath(vm.ID), r.bootPath(vm.ID), r.createPath(vm.ID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -606,34 +601,8 @@ func (r *reconciler) nodeKey(vmID string) (string, string, error) {
 	return encoded, publicKey, nil
 }
 
-func (r *reconciler) dataKeyPath(vmID string) string {
+// legacyDataKeyPath is where VMs' disk keys were kept before each VM made
+// its own at boot; any left are removed with their VM.
+func (r *reconciler) legacyDataKeyPath(vmID string) string {
 	return filepath.Join(r.cfg.StateDir, "node-keys", filepath.Base(vmID)+".data")
-}
-
-// dataKey returns the VM's own key for the encrypted volume that holds user
-// data, creating it on first use. Every VM boots from the same published
-// disk image, so user data must not rely on that image's shared disk key.
-func (r *reconciler) dataKey(vmID string) (string, error) {
-	path := r.dataKeyPath(vmID)
-	if data, err := os.ReadFile(path); err == nil {
-		key := strings.TrimSpace(string(data))
-		if decoded, err := base64.StdEncoding.DecodeString(key); err != nil || len(decoded) != 32 {
-			return "", fmt.Errorf("stored data key for %s is unreadable", vmID)
-		}
-		return key, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	key := base64.StdEncoding.EncodeToString(raw)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
-		return "", err
-	}
-	return key, nil
 }

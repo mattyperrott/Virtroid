@@ -89,7 +89,7 @@ func testReconciler(t *testing.T, cp *fakeControlPlane, aleph *fakeAleph) *recon
 		DataMiB:           30720,
 		PassphraseFile:    "/run/secrets/luks",
 		RegionCRNs: map[string][]crnTarget{
-			"snp-eu": {{Hash: crnA, AMDProduct: "Genoa"}, {Hash: crnB, AMDProduct: "Milan"}},
+			"snp-eu": {{Hash: crnA, AMDProduct: "Genoa"}, {Hash: crnB, AMDProduct: "Turin"}},
 		},
 	}, cp, aleph)
 }
@@ -306,17 +306,14 @@ func TestUnlockingVMReceivesItsSecretsOnlyThroughTheCLI(t *testing.T) {
 	}
 	spec := aleph.unlocked[0]
 	privateKey, _, _ := r.nodeKey("pvm-1")
-	if spec.AMDProduct != "Milan" || spec.PassphraseFile != "/run/secrets/luks" ||
+	if spec.AMDProduct != "Turin" || spec.PassphraseFile != "/run/secrets/luks" ||
 		spec.Secrets["virtroid_node_id"] != "pvm-1" || spec.Secrets["virtroid_node_key"] != privateKey ||
 		spec.Secrets["virtroid_region"] != "snp-eu" || spec.Secrets["virtroid_control_plane"] != "https://virtroid.example" {
 		t.Fatalf("unlock spec = %+v", spec)
 	}
-	dataKey, _ := r.dataKey("pvm-1")
-	if spec.Secrets["virtroid_data_key"] != dataKey || len(dataKey) != 44 {
-		t.Fatalf("data key secret = %q, want the VM's 32-byte key", spec.Secrets["virtroid_data_key"])
-	}
-	if otherKey, _ := r.dataKey("pvm-2"); otherKey == dataKey {
-		t.Fatal("two VMs got the same data key")
+	// The VM makes its own disk key at boot; none is sent or kept here.
+	if _, sent := spec.Secrets["virtroid_data_key"]; sent {
+		t.Fatal("a disk key was sent to the VM")
 	}
 
 	// Retries are spaced out.
@@ -355,7 +352,7 @@ func TestRetiredVMIsDeletedAndItsKeyRemoved(t *testing.T) {
 	if _, _, err := r.nodeKey("pvm-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.dataKey("pvm-1"); err != nil {
+	if err := os.WriteFile(r.legacyDataKeyPath("pvm-1"), []byte("old key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.saveCreate("pvm-1", createRecord{CRNHash: crnA, SubmittedAt: time.Now(), ItemHash: hash}); err != nil {
@@ -394,8 +391,8 @@ func TestRetiredVMIsDeletedAndItsKeyRemoved(t *testing.T) {
 	if _, err := os.Stat(r.nodeKeyPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("node key still on disk: %v", err)
 	}
-	if _, err := os.Stat(r.dataKeyPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("data key still on disk: %v", err)
+	if _, err := os.Stat(r.legacyDataKeyPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an old disk key is still on disk: %v", err)
 	}
 	if _, err := os.Stat(r.createPath("pvm-1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("create record still on disk: %v", err)
@@ -490,12 +487,12 @@ func TestParsers(t *testing.T) {
 			t.Errorf("isAttestationFailure(%q) = %v, want %v", message, !fatal, fatal)
 		}
 	}
-	regions, err := parseRegionCRNs("snp-eu=" + crnA + "@Milan," + crnB + "; snp-us=" + hash)
-	if err != nil || len(regions["snp-eu"]) != 2 || regions["snp-eu"][0].AMDProduct != "Milan" ||
+	regions, err := parseRegionCRNs("snp-eu=" + crnA + "@Turin," + crnB + "; snp-us=" + hash)
+	if err != nil || len(regions["snp-eu"]) != 2 || regions["snp-eu"][0].AMDProduct != "Turin" ||
 		regions["snp-eu"][1].AMDProduct != "Genoa" || regions["snp-us"][0].Hash != hash {
 		t.Fatalf("parseRegionCRNs = %+v err=%v", regions, err)
 	}
-	for _, bad := range []string{"", "snp-eu=nothex", "=" + crnA, "snp-eu=" + crnA + "@Zen9"} {
+	for _, bad := range []string{"", "snp-eu=nothex", "=" + crnA, "snp-eu=" + crnA + "@Zen9", "snp-eu=" + crnA + "@Milan"} {
 		if _, err := parseRegionCRNs(bad); err == nil {
 			t.Errorf("parseRegionCRNs(%q) accepted", bad)
 		}
@@ -652,7 +649,7 @@ func TestRestartedVMIsUnlockedAgain(t *testing.T) {
 	if err := r.runOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(aleph.unlocked) != 2 || aleph.unlocked[1].Secrets["virtroid_data_key"] != aleph.unlocked[0].Secrets["virtroid_data_key"] {
+	if len(aleph.unlocked) != 2 || aleph.unlocked[1].Secrets["virtroid_node_key"] != aleph.unlocked[0].Secrets["virtroid_node_key"] {
 		t.Fatalf("unlocks after a restart = %d", len(aleph.unlocked))
 	}
 	if recorded, _ := r.unlockedBoot("pvm-1"); recorded != "boot-2" {

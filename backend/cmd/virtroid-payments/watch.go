@@ -101,7 +101,7 @@ func (w *watcher) cycle(ctx context.Context) error {
 		// Every address users see must be one this seed can spend.
 		derived, err := w.wallet.Address(uint32(watched.Index))
 		if err != nil || derived != watched.Address {
-			log.Printf("payments: index %d: the control plane shows %s, this seed derives %s; check TRON_DEPOSIT_XPUB", watched.Index, watched.Address, derived)
+			log.Printf("payments: index %d: the control plane shows %q, this seed derives %q; check TRON_DEPOSIT_XPUB", watched.Index, watched.Address, derived)
 			continue
 		}
 		recent := watched.ViewedAt != nil && now.Sub(*watched.ViewedAt) < recentlyViewed
@@ -109,7 +109,7 @@ func (w *watcher) cycle(ctx context.Context) error {
 			continue
 		}
 		if err := w.checkAddress(ctx, watched, now); err != nil {
-			log.Printf("payments: index %d: %v", watched.Index, err)
+			log.Printf("payments: index %d: %q", watched.Index, err)
 			continue
 		}
 		w.nextCheck[watched.Address] = now.Add(idleCheckEvery)

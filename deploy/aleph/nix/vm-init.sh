@@ -51,23 +51,18 @@ node_id="$(read_secret virtroid_node_id)"
 node_key="$(read_secret virtroid_node_key)"
 region="$(read_secret virtroid_region)"
 control_plane="$(read_secret virtroid_control_plane)"
-data_key="$(read_secret virtroid_data_key)"
 rm -f "${secrets}"/*
 
-# --- This VM's own encrypted data disk -----------------------------------------
+# --- This boot's encrypted data disk -------------------------------------------
+# The key is random, made here at each boot and held only in this VM's
+# encrypted memory: nobody outside the VM, the provisioner included, ever has
+# it, and what one boot wrote cannot be read or replayed into the next. Saved
+# runtimes live on Sia, so a reboot only loses a session's unsaved changes.
 [ -b "${data_device}" ] || die "data disk ${data_device} is missing"
-if ! cryptsetup isLuks "${data_device}"; then
-  log "formatting the data disk"
-  printf '%s' "${data_key}" | cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 \
-    --batch-mode --key-file - "${data_device}" || die "cannot format the data disk"
-  fresh=1
-fi
-printf '%s' "${data_key}" | cryptsetup open --key-file - "${data_device}" "${data_mapper}" ||
-  die "cannot unlock the data disk"
-unset data_key
-if [ "${fresh:-0}" = 1 ]; then
-  mkfs.ext4 -q -L virtroid-data "/dev/mapper/${data_mapper}" || die "cannot create the data filesystem"
-fi
+cryptsetup open --type plain --cipher aes-xts-plain64 --key-size 512 \
+  --key-file /dev/urandom --keyfile-size 64 "${data_device}" "${data_mapper}" ||
+  die "cannot open the data disk"
+mkfs.ext4 -q -L virtroid-data "/dev/mapper/${data_mapper}" || die "cannot create the data filesystem"
 mount -o nosuid,nodev "/dev/mapper/${data_mapper}" /srv/virtroid || die "cannot mount the data disk"
 mkdir -p /srv/virtroid/runtimes /srv/virtroid/docker /srv/virtroid/node-tls /srv/virtroid/apks/cache
 chmod 0700 /srv/virtroid/node-tls
@@ -102,11 +97,8 @@ table inet virtroid {
 EOF
 
 # --- Docker, the runtime image, and the node ------------------------------------
-# Docker's store is on the data disk, whose encryption does not stop the host
-# replaying older blocks. Start it empty, so the image and layers that run are
-# always the ones loaded from the measured root below. Runtime data lives in
-# bind mounts outside it, and the node recreates its containers.
-rm -rf /srv/virtroid/docker
+# Docker's store starts empty each boot (the disk is new), so the image and
+# layers that run are always the ones loaded from the measured root below.
 dockerd --data-root /srv/virtroid/docker --exec-root /run/docker --pidfile /run/docker.pid \
   --log-level warn >/var/log/dockerd.log 2>&1 &
 dockerd_pid=$!

@@ -26,7 +26,6 @@ roothash=$(cat "$img/root/roothash")
 offset=$(cat "$img/root/hash-offset")
 node_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null |
   openssl pkcs8 -topk8 -nocrypt -outform DER | base64 -w0)
-data_key=$(openssl rand -hex 32)
 
 cat > initrd/init <<EOF
 #!/bin/busybox sh
@@ -71,7 +70,6 @@ printf %s smoke-node > \$S/virtroid_node_id
 printf %s '$node_key' > \$S/virtroid_node_key
 printf %s snp-eu > \$S/virtroid_region
 printf %s https://control.invalid > \$S/virtroid_control_plane
-printf %s '$data_key' > \$S/virtroid_data_key
 \$B mount -t proc proc /mnt/root/proc
 \$B mount -t sysfs sys /mnt/root/sys
 \$B mount -o bind /dev /mnt/root/dev
@@ -154,6 +152,7 @@ if [ "\$booted" != 1 ]; then
 fi
 memory "Android booted"
 echo "boot-test: Android booted: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.fingerprint | \$B tr -d '\r')"
+echo "boot-test: Android security patch: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.version.security_patch | \$B tr -d '\r')"
 # Android's own networking (netd's firewall and routing, its DNS resolver)
 # must work for apps: resolve a name from inside Android.
 resolved=""

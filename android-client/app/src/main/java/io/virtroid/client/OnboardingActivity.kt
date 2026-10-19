@@ -270,12 +270,21 @@ class OnboardingActivity : AppCompatActivity() {
                 command = "> POST /api/v1/recovery/challenge",
                 detail = "fetching the password-encrypted account key_",
             )
+            // Newer accounts hand out their envelope only for the login key
+            // derived from the password; the password itself never leaves.
+            val parameters = api.getAccountRecoveryParameters(sessionStore.baseUrl, input.accountId)
+            val keys = if (parameters.version >= AccountMasterKeyCrypto.VERSION) {
+                withContext(Dispatchers.Default) { AccountMasterKeyCrypto.deriveKeys(parameters, input.password) }
+            } else {
+                null
+            }
             val start = api.beginAccountRecovery(
                 baseUrl = sessionStore.baseUrl,
                 accountId = input.accountId,
                 deviceId = deviceId,
                 deviceName = deviceName,
                 publicKey = publicKey,
+                loginKey = keys?.loginKey,
             )
             markPreviousMilestone("Recovery challenge received", shortDescriptor(start.challenge.id))
 
@@ -285,7 +294,7 @@ class OnboardingActivity : AppCompatActivity() {
                 detail = "the blob password never leaves this phone_",
             )
             val unlocked = withContext(Dispatchers.Default) {
-                AccountMasterKeyCrypto.unlock(start.credential, input.password)
+                AccountMasterKeyCrypto.unlock(start.credential, input.password, keys)
             }
             val recoverySignature = withContext(Dispatchers.Default) {
                 AccountMasterKeyCrypto.signRecoveryChallenge(start.challenge, unlocked.recoveryPrivateKey)

@@ -194,7 +194,8 @@ func loadCreditBuyer(driver alephDriver) (*creditBuyer, error) {
 
 // parseRegionCRNs reads "region=hash[@Product],hash;region2=hash" into the
 // compute nodes each region may use. Product is the AMD EPYC generation
-// (Milan, Genoa, Turin) that the attestation chain is checked against.
+// (Genoa or Turin) that the attestation chain is checked against. Milan is
+// refused: its attestation keys can be forged, so its reports prove nothing.
 func parseRegionCRNs(raw string) (map[string][]crnTarget, error) {
 	regions := map[string][]crnTarget{}
 	for _, entry := range strings.Split(raw, ";") {
@@ -218,7 +219,7 @@ func parseRegionCRNs(raw string) (map[string][]crnTarget, error) {
 				product = "Genoa"
 			}
 			switch product {
-			case "Milan", "Genoa", "Turin":
+			case "Genoa", "Turin":
 			default:
 				return nil, fmt.Errorf("unknown AMD product %q for node %s", product, hash)
 			}

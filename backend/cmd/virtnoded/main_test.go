@@ -1207,3 +1207,16 @@ func TestViewerStartWithoutTheRuntimeKeysFails(t *testing.T) {
 		t.Fatal("startViewerService succeeded without the runtime's keys")
 	}
 }
+
+func TestConfidentialNodeNeverSetsUpUnsealedNotifications(t *testing.T) {
+	sealKey, err := newBlobSealKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := &nodeAgent{blobSealKey: sealKey}
+	node.cfg.NotificationAgentEnabled = true
+	err = node.ensureNotificationAgent(context.Background(), runtimeAssignment{ID: "runtime-1"}, dockerInspectResponse{})
+	if err != errNotificationKeyPending {
+		t.Fatalf("without the phone's key = %v, want errNotificationKeyPending", err)
+	}
+}

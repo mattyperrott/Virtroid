@@ -138,7 +138,7 @@ jobs:
 
       - name: Shell syntax
         run: |
-          mapfile -d '' scripts < <(find deploy/vps backend/third_party -type f -name '*.sh' -print0)
+          mapfile -d '' scripts < <(find deploy/vps deploy/aleph backend/third_party -type f -name '*.sh' -print0)
           bash -n "${scripts[@]}"
 
       - name: Environment safety regression test
@@ -153,3 +153,29 @@ jobs:
             -v "${PWD}/deploy/vps/suricata/virtroid.rules:/etc/suricata/rules/virtroid.rules:ro" \
             jasonish/suricata:8.0.6@sha256:51a59543dcb6e5f9d586c06053c6b71d462cea919b45719090443f4af1428780 \
             -T -S /etc/suricata/rules/virtroid.rules -l /tmp
+
+  runtime-image:
+    name: Runtime VM image inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      # The measured image builds virtnoded and viewercrypt with its own Go and
+      # a pinned vendor hash; a go.mod change without a new hash fails here
+      # rather than on the image builder.
+      - name: Build the VM's node binaries
+        run: >-
+          nix --extra-experimental-features 'nix-command flakes' build --no-link --print-build-logs
+          "git+file://${GITHUB_WORKSPACE}?dir=deploy/aleph/nix#virtroid-node"
+
+      - name: Evaluate the whole image
+        run: >-
+          nix --extra-experimental-features 'nix-command flakes' eval --raw
+          "git+file://${GITHUB_WORKSPACE}?dir=deploy/aleph/nix#packages.x86_64-linux.runtimeImage.drvPath"

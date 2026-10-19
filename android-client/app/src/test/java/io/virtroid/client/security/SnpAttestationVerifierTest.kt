@@ -45,6 +45,38 @@ class SnpAttestationVerifierTest {
     }
 
     @Test
+    fun malformedReportSignaturesAreRefusedCleanly() {
+        for (fill in listOf(0x00, 0xff)) {
+            val broken = milanReport.copyOf().also { it.fill(fill.toByte(), 0x2a0, 0x2a0 + 2 * 72) }
+            assertThrows(SnpAttestationException::class.java) {
+                SnpAttestationVerifier.verifyAmdSignature(milanAttestation(report = broken), testTime)
+            }
+        }
+    }
+
+    @Test
+    fun firmwareLevelsComeFromTheReportAndItsSigningKey() {
+        val reported = SnpAttestationVerifier.reportedTcb(milanReport, "Milan")
+        // The levels AMD certified this VCEK for are the report's.
+        SnpAttestationVerifier.checkFirmware(milanAttestation(), reported)
+        assertThrows(SnpAttestationException::class.java) {
+            SnpAttestationVerifier.checkFirmware(milanAttestation(), reported.copy(snp = reported.snp + 1))
+        }
+        assertThrows(SnpAttestationException::class.java) {
+            SnpAttestationVerifier.checkFirmware(milanAttestation(), null)
+        }
+        // A report claiming other levels, or another chip, than its key's.
+        val otherLevels = milanReport.copyOf().also { it[0x180 + 6] = (it[0x180 + 6] + 1).toByte() }
+        assertThrows(SnpAttestationException::class.java) {
+            SnpAttestationVerifier.checkFirmware(milanAttestation(report = otherLevels), reported)
+        }
+        val otherChip = milanReport.copyOf().also { it[0x1a0] = (it[0x1a0].toInt() xor 1).toByte() }
+        assertThrows(SnpAttestationException::class.java) {
+            SnpAttestationVerifier.checkFirmware(milanAttestation(report = otherChip), reported)
+        }
+    }
+
+    @Test
     fun onlyTheBuiltInAmdRootIsTrusted() {
         assertThrows(SnpAttestationException::class.java) {
             SnpAttestationVerifier.verifyAmdSignature(milanAttestation(ark = resource("genoa-ark.der")), testTime)

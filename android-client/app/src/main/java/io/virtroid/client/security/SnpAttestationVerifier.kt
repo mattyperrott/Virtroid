@@ -61,6 +61,25 @@ class SealAttestation(val chip: NodeAttestation, val sealPublicKey: ByteArray) {
     }
 }
 
+/**
+ * AMD firmware security patch levels, as a VM's attestation report and its
+ * VCEK certificate state them. FMC exists only on Turin.
+ */
+data class SnpTcb(
+    val bootloader: Int,
+    val tee: Int,
+    val snp: Int,
+    val microcode: Int,
+    val fmc: Int = 0,
+) {
+    fun isAtLeast(minimum: SnpTcb): Boolean =
+        bootloader >= minimum.bootloader && tee >= minimum.tee && snp >= minimum.snp &&
+            microcode >= minimum.microcode && fmc >= minimum.fmc
+
+    override fun toString(): String =
+        "bootloader $bootloader, TEE $tee, SNP $snp, microcode $microcode" + if (fmc > 0) ", FMC $fmc" else ""
+}
+
 /** A runtime node's SEV-SNP attestation bundle, as the node built it. */
 class NodeAttestation(
     val product: String,
@@ -123,6 +142,11 @@ object SnpAttestationVerifier {
     private const val POLICY_MIGRATE_MA_BIT = 1L shl 18
     private const val POLICY_DEBUG_BIT = 1L shl 19
     private const val MAX_VMPL = 1
+    private const val REPORTED_TCB_OFFSET = 0x180
+    private const val CHIP_ID_OFFSET = 0x1a0
+    private const val CHIP_ID_SIZE = 64
+    private const val VCEK_SPL_OID = "1.3.6.1.4.1.3704.1.3"
+    private const val VCEK_HWID_OID = "1.3.6.1.4.1.3704.1.4"
 
     private val NODE_TLS_KEY_DOMAIN = "virtroid-node-tls-key-v1\u0000".toByteArray(Charsets.US_ASCII)
     private const val VIEWER_KEY_DOMAIN = "virtroid-viewer-key-v1\n"
@@ -203,12 +227,111 @@ object SnpAttestationVerifier {
         }
         val r = littleEndianInteger(report, SIGNATURE_OFFSET)
         val s = littleEndianInteger(report, SIGNATURE_OFFSET + SIGNATURE_COMPONENT_SIZE)
-        val verifier = Signature.getInstance("SHA384withECDSA")
-        verifier.initVerify(vcek.publicKey)
-        verifier.update(report, 0, SIGNED_LENGTH)
-        if (!verifier.verify(derSignature(r, s))) {
+        // A malformed signature or key is a failed check, never another kind of error.
+        val valid = try {
+            val verifier = Signature.getInstance("SHA384withECDSA")
+            verifier.initVerify(vcek.publicKey)
+            verifier.update(report, 0, SIGNED_LENGTH)
+            verifier.verify(derSignature(r, s))
+        } catch (error: GeneralSecurityException) {
+            false
+        }
+        if (!valid) {
             throw SnpAttestationException("attestation report signature does not verify")
         }
+    }
+
+    /**
+     * Checks the firmware the VM's host runs. The levels in the report must be
+     * the ones AMD certified the signing key (VCEK) for, on this chip, and at
+     * least [minimum], which the signed approval list sets per product: hosts
+     * below it miss fixes such as the one for FABRICKED (AMD-SB-3034), which
+     * lets a host forge reports. Call after [verifyAmdSignature].
+     */
+    fun checkFirmware(attestation: NodeAttestation, minimum: SnpTcb?) {
+        if (minimum == null) {
+            throw SnpAttestationException("the approved image list sets no firmware minimum for AMD ${attestation.product}")
+        }
+        val report = attestation.report
+        if (report.size < REPORT_SIZE) {
+            throw SnpAttestationException("attestation report is truncated")
+        }
+        val reported = reportedTcb(report, attestation.product)
+        val vcek = certificate(attestation.vcek, "VCEK")
+        val turin = attestation.product == "Turin"
+        val certified = SnpTcb(
+            bootloader = vcekLevel(vcek, 1),
+            tee = vcekLevel(vcek, 2),
+            snp = vcekLevel(vcek, 3),
+            microcode = vcekLevel(vcek, 8),
+            fmc = if (turin) vcekLevel(vcek, 9) else 0,
+        )
+        if (certified != reported) {
+            throw SnpAttestationException("the report's firmware levels are not the ones its signing key was issued for")
+        }
+        val hardwareId = vcekHardwareId(vcek)
+        val chipId = report.copyOfRange(CHIP_ID_OFFSET, CHIP_ID_OFFSET + CHIP_ID_SIZE)
+        if (hardwareId.size != (if (turin) 8 else CHIP_ID_SIZE) ||
+            !MessageDigest.isEqual(hardwareId, chipId.copyOf(hardwareId.size))
+        ) {
+            throw SnpAttestationException("the report's chip is not the one its signing key belongs to")
+        }
+        if (!reported.isAtLeast(minimum)) {
+            throw SnpAttestationException("the VM's host runs AMD firmware ($reported) older than the approved minimum ($minimum)")
+        }
+    }
+
+    /** The firmware levels a report was signed at (its REPORTED_TCB). */
+    fun reportedTcb(report: ByteArray, product: String): SnpTcb {
+        val level = { index: Int -> report[REPORTED_TCB_OFFSET + index].toInt() and 0xff }
+        return if (product == "Turin") {
+            SnpTcb(bootloader = level(1), tee = level(2), snp = level(3), microcode = level(7), fmc = level(0))
+        } else {
+            SnpTcb(bootloader = level(0), tee = level(1), snp = level(6), microcode = level(7))
+        }
+    }
+
+    private fun vcekLevel(vcek: X509Certificate, component: Int): Int {
+        val value = derContent(vcekExtension(vcek, "$VCEK_SPL_OID.$component"), 0x02)
+        if (value.isEmpty() || value.size > 2) {
+            throw SnpAttestationException("AMD VCEK certificate has an invalid firmware level")
+        }
+        return java.math.BigInteger(1, value).toInt().also {
+            if (it > 255) throw SnpAttestationException("AMD VCEK certificate has an invalid firmware level")
+        }
+    }
+
+    private fun vcekHardwareId(vcek: X509Certificate): ByteArray {
+        val value = vcekExtension(vcek, VCEK_HWID_OID)
+        // The value is an OCTET STRING; some encoders put the bytes in bare.
+        return if (value.isNotEmpty() && value[0] == 0x04.toByte()) derContent(value, 0x04) else value
+    }
+
+    private fun vcekExtension(vcek: X509Certificate, oid: String): ByteArray {
+        val wrapped = vcek.getExtensionValue(oid)
+            ?: throw SnpAttestationException("AMD VCEK certificate lacks extension $oid")
+        return derContent(wrapped, 0x04)
+    }
+
+    /** The content of one DER element with [tag] that fills [encoded]. */
+    private fun derContent(encoded: ByteArray, tag: Int): ByteArray {
+        if (encoded.size < 2 || encoded[0].toInt() and 0xff != tag) {
+            throw SnpAttestationException("AMD VCEK certificate has a malformed extension")
+        }
+        var offset = 2
+        var length = encoded[1].toInt() and 0xff
+        if (length >= 0x80) {
+            val count = length and 0x7f
+            if (count !in 1..2 || encoded.size < 2 + count) {
+                throw SnpAttestationException("AMD VCEK certificate has a malformed extension")
+            }
+            length = 0
+            repeat(count) { length = (length shl 8) or (encoded[offset++].toInt() and 0xff) }
+        }
+        if (offset + length != encoded.size) {
+            throw SnpAttestationException("AMD VCEK certificate has a malformed extension")
+        }
+        return encoded.copyOfRange(offset, offset + length)
     }
 
     /** Refuses chips whose attestation can be forged. */
@@ -286,12 +409,12 @@ object SnpAttestationVerifier {
         } catch (error: Exception) {
             throw SnpAttestationException("attested node key is not an EC public key")
         }
-        val verifier = Signature.getInstance("SHA256withECDSA")
-        verifier.initVerify(tlsKey)
-        verifier.update("$VIEWER_KEY_DOMAIN$runtimeId\n$viewerPublicKey".toByteArray(Charsets.UTF_8))
         val valid = try {
+            val verifier = Signature.getInstance("SHA256withECDSA")
+            verifier.initVerify(tlsKey)
+            verifier.update("$VIEWER_KEY_DOMAIN$runtimeId\n$viewerPublicKey".toByteArray(Charsets.UTF_8))
             verifier.verify(signatureBytes)
-        } catch (error: Exception) {
+        } catch (error: GeneralSecurityException) {
             false
         }
         if (!valid) {
@@ -307,16 +430,21 @@ object SnpAttestationVerifier {
 
     /** AMD signs its chain with RSASSA-PSS, SHA-384, MGF1-SHA-384, 48-byte salt. */
     private fun verifyRsaPss(certificate: X509Certificate, issuerKey: PublicKey, name: String) {
-        val verifier = try {
-            Signature.getInstance("SHA384withRSA/PSS")
-        } catch (error: NoSuchAlgorithmException) {
-            Signature.getInstance("RSASSA-PSS").apply {
-                setParameter(PSSParameterSpec("SHA-384", "MGF1", MGF1ParameterSpec.SHA384, 48, 1))
+        val valid = try {
+            val verifier = try {
+                Signature.getInstance("SHA384withRSA/PSS")
+            } catch (error: NoSuchAlgorithmException) {
+                Signature.getInstance("RSASSA-PSS").apply {
+                    setParameter(PSSParameterSpec("SHA-384", "MGF1", MGF1ParameterSpec.SHA384, 48, 1))
+                }
             }
+            verifier.initVerify(issuerKey)
+            verifier.update(certificate.tbsCertificate)
+            verifier.verify(certificate.signature)
+        } catch (error: GeneralSecurityException) {
+            false
         }
-        verifier.initVerify(issuerKey)
-        verifier.update(certificate.tbsCertificate)
-        if (!verifier.verify(certificate.signature)) {
+        if (!valid) {
             throw SnpAttestationException("AMD $name certificate signature does not verify")
         }
     }

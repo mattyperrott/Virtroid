@@ -10,6 +10,7 @@ import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.RuntimeCapabilityStore
+import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.push.NotificationRelayManager
 import io.virtroid.client.push.RuntimeNotificationKeys
@@ -25,6 +26,9 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
         // A runtime's blob key is sealed only to a VM this phone has verified.
         VirtroidApi.BlobSeal.rememberNotificationKey = { runtimeId, key ->
             RuntimeNotificationKeys(this).save(runtimeId, key)
+        }
+        VirtroidApi.BlobSeal.snapshotFloor = { accountId, runtimeId ->
+            SnapshotRollbackGuard(this).snapshotFloor(accountId, runtimeId)
         }
         VirtroidApi.BlobSeal.check = { baseUrl, lease ->
             runBlocking {

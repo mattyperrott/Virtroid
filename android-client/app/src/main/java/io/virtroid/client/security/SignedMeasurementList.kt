@@ -7,8 +7,20 @@ import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 
-/** A verified list of approved runtime VM launch measurements. */
-data class MeasurementList(val serial: Long, val measurements: Set<String>)
+/**
+ * A verified list of approved runtime VM launch measurements, with when it
+ * expires (milliseconds, null for lists from before expiry existed) and, per
+ * AMD product, the oldest host firmware it accepts.
+ */
+data class MeasurementList(
+    val serial: Long,
+    val measurements: Set<String>,
+    val expiresAtMillis: Long? = null,
+    val minimumFirmware: Map<String, SnpTcb> = emptyMap(),
+) {
+    /** Whether the list may be used now: lists without an expiry may not. */
+    fun isCurrent(nowMillis: Long): Boolean = expiresAtMillis != null && nowMillis < expiresAtMillis
+}
 
 /**
  * The list of approved runtime VM images, signed offline with a release key
@@ -68,7 +80,26 @@ object SignedMeasurementList {
             if (measurements.any { it.length != 96 || !it.all { char -> char in '0'..'9' || char in 'a'..'f' } }) {
                 throw SnpAttestationException("measurement list holds an invalid measurement")
             }
-            MeasurementList(serial, measurements)
+            val expiresAt = list.optString("expires_at").takeIf { it.isNotEmpty() }?.let {
+                java.time.Instant.parse(it).toEpochMilli()
+            }
+            val minimumFirmware = mutableMapOf<String, SnpTcb>()
+            list.optJSONObject("min_tcb")?.let { products ->
+                for (product in products.keys()) {
+                    val levels = products.getJSONObject(product)
+                    fun level(name: String): Int = levels.optInt(name, 0).also {
+                        if (it !in 0..255) throw SnpAttestationException("measurement list holds an invalid firmware level")
+                    }
+                    minimumFirmware[product] = SnpTcb(
+                        bootloader = level("bootloader"),
+                        tee = level("tee"),
+                        snp = level("snp"),
+                        microcode = level("microcode"),
+                        fmc = level("fmc"),
+                    )
+                }
+            }
+            MeasurementList(serial, measurements, expiresAt, minimumFirmware)
         } catch (error: SnpAttestationException) {
             throw error
         } catch (error: Exception) {

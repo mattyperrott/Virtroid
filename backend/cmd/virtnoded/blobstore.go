@@ -11,6 +11,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -280,6 +281,12 @@ func (n *nodeAgent) prepareSessionData(ctx context.Context, runtime runtimeAssig
 		return false, err
 	}
 	defer clearBytes(masterKey)
+	floor, strict := n.snapshotFloor(runtime.ID)
+	if strict {
+		if err := checkSnapshotFloor(manifest, floor); err != nil {
+			return false, err
+		}
+	}
 
 	if err := os.MkdirAll(runtimeRoot, 0o755); err != nil {
 		return false, err
@@ -303,6 +310,11 @@ func (n *nodeAgent) prepareSessionData(ctx context.Context, runtime runtimeAssig
 			fallback := manifest.MigrationFallback
 			if fallback == nil {
 				return false, err
+			}
+			if strict {
+				if floorErr := checkSnapshotFloor(fallback, floor); floorErr != nil {
+					return false, errors.Join(err, floorErr)
+				}
 			}
 			fallbackStore, fallbackErr := n.blobStoreForManifest(fallback)
 			if fallbackErr != nil {
@@ -442,13 +454,11 @@ func (n *nodeAgent) persistSessionData(ctx context.Context, runtime runtimeAssig
 		_ = store.deleteManifest(context.WithoutCancel(ctx), manifest)
 		return nil, err
 	}
-	manifest.Generation = 1
-	if previous != nil {
-		if previous.Generation < 0 || previous.Generation == math.MaxInt64 {
-			_ = store.deleteManifest(context.WithoutCancel(ctx), manifest)
-			return nil, errors.New("blob manifest generation cannot be advanced")
-		}
-		manifest.Generation = previous.Generation + 1
+	floor, strict := n.snapshotFloor(runtime.ID)
+	manifest.Generation, err = nextSnapshotGeneration(previous, floor, strict)
+	if err != nil {
+		_ = store.deleteManifest(context.WithoutCancel(ctx), manifest)
+		return nil, err
 	}
 	if previous != nil && previous.Store != manifest.Store {
 		fallback := *previous
@@ -695,10 +705,16 @@ func (n *nodeAgent) runtimeBlobKeyWithContext(ctx context.Context, runtime runti
 	if err != nil {
 		return nil, err
 	}
-	key, err := n.decryptBlobKeyEnvelope(envelope, verifier, expiresAt)
+	plaintext, err := n.decryptBlobKeyEnvelope(envelope, verifier, expiresAt)
 	if err != nil {
 		return nil, err
 	}
+	key, floor, hasFloor := splitSnapshotFloor(plaintext)
+	if hasFloor {
+		n.noteSnapshotFloor(runtime.ID, floor)
+	}
+	key = append([]byte(nil), key...)
+	clearBytes(plaintext)
 	n.cacheRuntimeBlobKey(runtime.ID, key)
 	return key, nil
 }
@@ -2459,7 +2475,77 @@ func deriveBlobKeysV1(masterKey, salt []byte) ([]byte, []byte) {
 const (
 	runtimeKeysSize                 = 96
 	runtimeKeysWithNotificationSize = runtimeKeysSize + 32
+	// Newer phones follow the keys with the newest snapshot generation they
+	// have seen for the runtime, 8 bytes big-endian.
+	runtimeKeysWithFloorSize = runtimeKeysWithNotificationSize + 8
 )
+
+// splitSnapshotFloor separates a sealed plaintext into the runtime's keys and
+// the phone's snapshot floor, when it carries one.
+func splitSnapshotFloor(plaintext []byte) (keys []byte, floor int64, hasFloor bool) {
+	if len(plaintext) != runtimeKeysWithFloorSize {
+		return plaintext, 0, false
+	}
+	raw := binary.BigEndian.Uint64(plaintext[runtimeKeysWithNotificationSize:])
+	if raw > math.MaxInt64-1 {
+		raw = math.MaxInt64 - 1
+	}
+	return plaintext[:runtimeKeysWithNotificationSize], int64(raw), true
+}
+
+// noteSnapshotFloor keeps the highest floor any phone sent for the runtime.
+func (n *nodeAgent) noteSnapshotFloor(runtimeID string, floor int64) {
+	n.runtimeBlobKeyMu.Lock()
+	defer n.runtimeBlobKeyMu.Unlock()
+	if n.snapshotFloors == nil {
+		n.snapshotFloors = make(map[string]int64)
+	}
+	if current, ok := n.snapshotFloors[runtimeID]; !ok || floor > current {
+		n.snapshotFloors[runtimeID] = floor
+	}
+}
+
+// snapshotFloor is the runtime's floor, and whether a phone sent one: then
+// only authenticated manifests at or above it are restored.
+func (n *nodeAgent) snapshotFloor(runtimeID string) (int64, bool) {
+	n.runtimeBlobKeyMu.Lock()
+	defer n.runtimeBlobKeyMu.Unlock()
+	floor, ok := n.snapshotFloors[strings.TrimSpace(runtimeID)]
+	return floor, ok
+}
+
+// nextSnapshotGeneration numbers a new snapshot after the previous one and,
+// when the phone sent a floor, above everything that phone has seen, so a
+// fresh start after lost data never reuses an old generation.
+func nextSnapshotGeneration(previous *blobManifest, floor int64, strict bool) (int64, error) {
+	generation := int64(1)
+	if previous != nil {
+		if previous.Generation < 0 || previous.Generation == math.MaxInt64 {
+			return 0, errors.New("blob manifest generation cannot be advanced")
+		}
+		generation = previous.Generation + 1
+	}
+	if strict && generation <= floor {
+		generation = floor + 1
+	}
+	return generation, nil
+}
+
+// checkSnapshotFloor refuses a manifest older than what the runtime's phone
+// has seen. The generation is covered by the manifest's MAC, which the restore
+// checks with the runtime's key, so the control plane cannot raise it.
+func checkSnapshotFloor(manifest *blobManifest, floor int64) error {
+	if manifest == nil {
+		return nil
+	}
+	if manifest.Version != 3 {
+		return errors.New("this runtime's phone accepts only authenticated snapshots")
+	}
+	if manifest.Generation < floor {
+		return fmt.Errorf("snapshot generation %d is older than generation %d, which this runtime's phone has already seen", manifest.Generation, floor)
+	}
+	return nil
+}
 
 func runtimeKeysOnly(material []byte) bool {
 	return len(material) == runtimeKeysSize || len(material) == runtimeKeysWithNotificationSize

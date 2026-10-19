@@ -16,13 +16,16 @@ class ConfidentialRuntimeException(message: String, cause: Throwable? = null) : 
  * when its node offers an attestation, or when it was attested before on this
  * phone, so a server that stops sending the attestation cannot downgrade it.
  *
- * Approved images come from the newest signed measurement list this phone has
- * verified, or from the list bundled with the app until it has one.
+ * Approved images, and the oldest host firmware each AMD product may run, come
+ * from the newest signed list this phone has verified that has not expired, or
+ * from the signed list bundled with the app. An expired list is fetched again,
+ * and nothing is verified against one: a server that keeps serving an old list
+ * cannot keep a since-revoked image approved for long.
  */
 class ConfidentialRuntimeGuard(
     private val context: Context,
-    private val bundledMeasurements: Set<String> = loadMeasurements(context),
     private val signingKeys: List<PublicKey> = loadSigningKeys(context),
+    private val bundledDocument: String? = loadBundledList(context),
 ) {
     private val attested = context.getSharedPreferences(ATTESTED_PREFS, Context.MODE_PRIVATE)
     private val lists = context.getSharedPreferences(LIST_PREFS, Context.MODE_PRIVATE)
@@ -48,14 +51,16 @@ class ConfidentialRuntimeGuard(
             }
             val node = NodeAttestation.parse(attestation.nodeAttestationJson)
             SnpAttestationVerifier.checkPlatform(node.product)
+            val list = currentListOrThrow()
             val measurement = SnpAttestationVerifier.verify(
                 attestation = node,
                 expectedTlsPin = relayTlsPin,
                 runtimeId = runtimeId,
                 viewerPublicKey = viewerPublicKey,
                 viewerKeySignature = attestation.viewerKeySignature,
-                allowedMeasurements = approvedMeasurements(),
+                allowedMeasurements = list.measurements,
             )
+            SnpAttestationVerifier.checkFirmware(node, list.minimumFirmware[node.product])
             verified = node.product to measurement
         }
         verifyRefreshingList(verify, fetchMeasurementList)
@@ -98,8 +103,10 @@ class ConfidentialRuntimeGuard(
                 throw SnpAttestationException("seal challenge is not base64")
             }
             SnpAttestationVerifier.checkPlatform(sealed.chip.product)
+            val list = currentListOrThrow()
             SnpAttestationVerifier.verifyAmdSignature(sealed.chip)
-            SnpAttestationVerifier.checkSealReport(sealed.chip.report, sealed.sealPublicKey, nonce, approvedMeasurements())
+            SnpAttestationVerifier.checkFirmware(sealed.chip, list.minimumFirmware[sealed.chip.product])
+            SnpAttestationVerifier.checkSealReport(sealed.chip.report, sealed.sealPublicKey, nonce, list.measurements)
             sealKey = sealed.sealPublicKey
         }
         verifyRefreshingList(verify, fetchMeasurementList)
@@ -135,11 +142,12 @@ class ConfidentialRuntimeGuard(
     /**
      * Fetches the signed list now and then even when every image checks out:
      * otherwise a revoked image would stay approved on this phone until it
-     * met one it didn't know. A failed fetch keeps the list it has.
+     * met one it didn't know. With no current list it fetches every time. A
+     * failed fetch keeps the list it has, until that list expires.
      */
     private suspend fun refreshListIfStale(fetchMeasurementList: suspend () -> String?) {
         val now = System.currentTimeMillis()
-        if (now - lists.getLong(KEY_LIST_CHECKED_AT, 0) < LIST_REFRESH_MS) {
+        if (currentList(now) != null && now - lists.getLong(KEY_LIST_CHECKED_AT, 0) < LIST_REFRESH_MS) {
             return
         }
         val document = try {
@@ -151,7 +159,16 @@ class ConfidentialRuntimeGuard(
         lists.edit().putLong(KEY_LIST_CHECKED_AT, now).apply()
     }
 
-    fun approvedMeasurements(): Set<String> = storedList()?.measurements ?: bundledMeasurements
+    fun approvedMeasurements(): Set<String> = currentList()?.measurements.orEmpty()
+
+    private fun currentListOrThrow(): MeasurementList = currentList()
+        ?: throw SnpAttestationException("the list of approved server images has expired and no newer one could be fetched")
+
+    /** The newest verified list that has not expired, or null. */
+    private fun currentList(now: Long = System.currentTimeMillis()): MeasurementList? =
+        listOfNotNull(storedList(), bundledList())
+            .filter { it.isCurrent(now) && it.serial >= minimumSerial() }
+            .maxByOrNull { it.serial }
 
     /** Stores a verified list newer than any seen before; returns whether it did. */
     fun accept(document: String): Boolean {
@@ -160,7 +177,9 @@ class ConfidentialRuntimeGuard(
         } catch (error: SnpAttestationException) {
             return false
         }
-        if (list.serial <= lists.getLong(KEY_HIGHEST_SERIAL, 0)) {
+        // Lists without an expiry predate it and are never used again; and a
+        // list is kept only when newer than the bundled one and any seen.
+        if (list.expiresAtMillis == null || list.serial <= minimumSerial()) {
             return false
         }
         lists.edit()
@@ -170,8 +189,16 @@ class ConfidentialRuntimeGuard(
         return true
     }
 
-    private fun storedList(): MeasurementList? {
-        val document = lists.getString(KEY_DOCUMENT, null) ?: return null
+    /** No list older than the bundled one, or than one seen before, is used. */
+    private fun minimumSerial(): Long =
+        maxOf(lists.getLong(KEY_HIGHEST_SERIAL, 0), bundledList()?.serial ?: 0)
+
+    private fun storedList(): MeasurementList? = verifiedOrNull(lists.getString(KEY_DOCUMENT, null))
+
+    private fun bundledList(): MeasurementList? = verifiedOrNull(bundledDocument)
+
+    private fun verifiedOrNull(document: String?): MeasurementList? {
+        document ?: return null
         return try {
             SignedMeasurementList.verify(document, signingKeys)
         } catch (error: SnpAttestationException) {
@@ -187,19 +214,15 @@ class ConfidentialRuntimeGuard(
         private const val KEY_LIST_CHECKED_AT = "list_checked_at"
         private const val LIST_REFRESH_MS = 6 * 60 * 60 * 1_000L
 
-        fun loadMeasurements(context: Context): Set<String> =
-            context.resources.openRawResource(R.raw.snp_launch_measurements).bufferedReader().useLines { lines ->
-                parseMeasurements(lines.toList())
-            }
+        /** The signed list built into this release of the app. */
+        fun loadBundledList(context: Context): String? =
+            context.resources.openRawResource(R.raw.snp_measurement_list).bufferedReader().use { it.readText() }
+                .trim().takeIf { it.isNotEmpty() }
 
         fun loadSigningKeys(context: Context): List<PublicKey> =
             context.resources.openRawResource(R.raw.measurement_signing_keys).bufferedReader().useLines { lines ->
                 SignedMeasurementList.parseKeys(lines.toList())
             }
 
-        fun parseMeasurements(lines: List<String>): Set<String> = lines
-            .map { it.substringBefore('#').trim().lowercase() }
-            .filter { it.length == 96 && it.all { char -> char in '0'..'9' || char in 'a'..'f' } }
-            .toSet()
     }
 }

@@ -41,9 +41,11 @@ class IdentityKeyManager(
             null
         }
         val blobAccessKey = if (credential != null) {
-            withContext(Dispatchers.Default) {
+            val unlocked = withContext(Dispatchers.Default) {
                 AccountMasterKeyCrypto.unlock(credential, password).blobAccessKey
             }
+            upgradeIfOlder(baseUrl, accountId, deviceId, credential, password)
+            unlocked
         } else {
             val bundle = withContext(Dispatchers.Default) {
                 val legacyBlobAccessKey = IdentityCrypto.deriveBlobAccessKey(accountId, deviceId, password)
@@ -78,6 +80,29 @@ class IdentityKeyManager(
         api.changeIdentityPassword(baseUrl, accountId, deviceId, rewrapped.credential, rewrapped.proof)
         passwordStore.saveConfigured(accountId, deviceId)
         return passwordStore.cacheBlobAccessKey(accountId, deviceId, rewrapped.blobAccessKey)
+    }
+
+    /**
+     * Rewraps an older (PBKDF2) envelope under the same password as the
+     * current version, whose envelope the server hands out only for the
+     * password's login key. Best effort: the next unlock tries again.
+     */
+    private suspend fun upgradeIfOlder(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        credential: AccountRecoveryCredential,
+        password: String,
+    ) {
+        if (credential.version >= AccountMasterKeyCrypto.VERSION) {
+            return
+        }
+        runCatching {
+            val upgraded = withContext(Dispatchers.Default) {
+                AccountMasterKeyCrypto.rewrap(credential, deviceId, password, password)
+            }
+            api.changeIdentityPassword(baseUrl, accountId, deviceId, upgraded.credential, upgraded.proof)
+        }
     }
 
     private suspend fun registerOrUnlockExisting(

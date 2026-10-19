@@ -144,8 +144,9 @@ with Nix for builds (a small Aleph VM works).
 
 4. **Compute nodes.** Pick compute nodes per region from `aleph node list`.
    Each node's `/about/capability` must list `sev_snp`. Set
-   `PROVISIONER_REGION_CRNS`, e.g. `snp-eu=<hash>@Genoa,<hash>@Milan`, naming
-   each node's EPYC generation.
+   `PROVISIONER_REGION_CRNS`, e.g. `snp-eu=<hash>@Genoa,<hash>@Turin`, naming
+   each node's EPYC generation. Milan nodes are refused: their attestation
+   can be forged.
 
 5. **Control plane.** In `.env`:
    - `PROVISIONER_PUBLIC_KEY`: the public half of the provisioner key, from

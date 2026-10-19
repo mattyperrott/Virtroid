@@ -215,7 +215,7 @@ func (a *API) provisionerReport(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrProvisionedVMTransition):
 		writeAPIError(w, http.StatusConflict, "provisioned_vm_transition_rejected", err.Error())
 	case err != nil:
-		log.Printf("provisioner report rejected vm=%s state=%s", r.PathValue("id"), req.State)
+		log.Printf("provisioner report rejected vm=%q state=%q", r.PathValue("id"), req.State)
 		writeAPIError(w, http.StatusBadRequest, "provisioner_report_rejected", err.Error())
 	default:
 		writeJSON(w, http.StatusOK, vm)

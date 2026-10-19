@@ -46,8 +46,8 @@ android {
         applicationId = "io.virtroid.client"
         minSdk = 28
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.4.4"
+        versionCode = 19
+        versionName = "0.4.5"
         buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(defaultControlPlaneUrl))
         // Every runtime must prove it is a confidential VM: the server's word
         // that one isn't is never enough.
@@ -204,6 +204,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // QR codes for deposit addresses.
     implementation("com.google.zxing:core:3.5.3")
+    // Argon2id for the identity password (Android has no built-in one).
+    implementation("org.bouncycastle:bcprov-jdk18on:1.80")
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is only a stub in JVM unit tests.
     testImplementation("org.json:json:20260522")

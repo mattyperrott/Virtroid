@@ -234,10 +234,10 @@ DROP TABLE IF EXISTS device_push_subscriptions;
 
 CREATE TABLE IF NOT EXISTS account_recovery_credentials (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL CHECK (version = 2),
-    kdf_algorithm TEXT NOT NULL CHECK (kdf_algorithm = 'PBKDF2_HMAC_SHA256_V2'),
+    version INTEGER NOT NULL,
+    kdf_algorithm TEXT NOT NULL,
     kdf_salt TEXT NOT NULL,
-    kdf_iterations INTEGER NOT NULL CHECK (kdf_iterations BETWEEN 600000 AND 2000000),
+    kdf_iterations INTEGER NOT NULL,
     envelope_algorithm TEXT NOT NULL CHECK (envelope_algorithm = 'AES_GCM_256_V1'),
     envelope_iv TEXT NOT NULL,
     envelope_ciphertext TEXT NOT NULL,
@@ -245,6 +245,26 @@ CREATE TABLE IF NOT EXISTS account_recovery_credentials (
     blob_key_verifier TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Version 3 credentials derive their keys with Argon2id (kdf_iterations is
+-- its passes, kdf_memory_kib its memory) and also a login key, of which only
+-- a hash (auth_verifier) is kept: the envelope is handed out only to whoever
+-- presents the login key, and repeated failures lock recovery for a while.
+ALTER TABLE account_recovery_credentials ADD COLUMN IF NOT EXISTS kdf_memory_kib INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE account_recovery_credentials ADD COLUMN IF NOT EXISTS auth_verifier TEXT NOT NULL DEFAULT '';
+ALTER TABLE account_recovery_credentials ADD COLUMN IF NOT EXISTS failed_auth_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE account_recovery_credentials ADD COLUMN IF NOT EXISTS auth_locked_until TIMESTAMPTZ;
+ALTER TABLE account_recovery_credentials DROP CONSTRAINT IF EXISTS account_recovery_credentials_version_check;
+ALTER TABLE account_recovery_credentials DROP CONSTRAINT IF EXISTS account_recovery_credentials_kdf_algorithm_check;
+ALTER TABLE account_recovery_credentials DROP CONSTRAINT IF EXISTS account_recovery_credentials_kdf_iterations_check;
+ALTER TABLE account_recovery_credentials DROP CONSTRAINT IF EXISTS account_recovery_credentials_kdf_check;
+ALTER TABLE account_recovery_credentials ADD CONSTRAINT account_recovery_credentials_kdf_check CHECK (
+    (version = 2 AND kdf_algorithm = 'PBKDF2_HMAC_SHA256_V2'
+        AND kdf_iterations BETWEEN 600000 AND 2000000 AND auth_verifier = '')
+    OR (version = 3 AND kdf_algorithm = 'ARGON2ID_V3'
+        AND kdf_iterations BETWEEN 3 AND 10 AND kdf_memory_kib BETWEEN 65536 AND 262144
+        AND auth_verifier <> '')
 );
 
 CREATE TABLE IF NOT EXISTS account_recovery_challenges (

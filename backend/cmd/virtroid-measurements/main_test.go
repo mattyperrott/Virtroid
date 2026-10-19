@@ -20,7 +20,7 @@ func TestKeygenSignVerify(t *testing.T) {
 		t.Fatal("keygen overwrote an existing key")
 	}
 	measurement := strings.Repeat("0f", 48)
-	if err := run([]string{"sign", "--key", keyFile, "--serial", "3", "--measurement", measurement, "--out", listFile}, &out, &out); err != nil {
+	if err := run([]string{"sign", "--key", keyFile, "--serial", "3", "--measurement", measurement, "--min-tcb", "Genoa=bootloader=12,tee=0,snp=28,microcode=88", "--out", listFile}, &out, &out); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()

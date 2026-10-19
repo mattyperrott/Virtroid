@@ -4,7 +4,9 @@
 //
 //	virtroid-measurements keygen --out measurement-signing.key
 //	virtroid-measurements sign --key measurement-signing.key --serial 1 \
-//	    --measurement <96 hex> [--measurement ...] --out snp-measurements.json
+//	    --measurement <96 hex> [--measurement ...] \
+//	    --min-tcb Genoa=bootloader=12,tee=0,snp=28,microcode=88 \
+//	    [--valid-for 60d] --out snp-measurements.json
 //	virtroid-measurements verify --public-key <base64> snp-measurements.json
 package main
 
@@ -20,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,13 +100,34 @@ func sign(args []string, stdout, stderr io.Writer) error {
 	keyFile := flags.String("key", "", "private key file from keygen")
 	serial := flags.Int64("serial", 0, "list serial; must be higher than the previous list's")
 	out := flags.String("out", "", "file for the signed list")
-	var values repeated
+	validFor := flags.String("valid-for", "60d", "how long phones accept the list (e.g. 60d, 720h); sign a new one before then")
+	var values, minTCBs repeated
 	flags.Var(&values, "measurement", "approved launch measurement (96 hex); repeatable")
+	flags.Var(&minTCBs, "min-tcb", "Product=bootloader=N,tee=N,snp=N,microcode=N[,fmc=N]: the oldest host firmware phones accept; repeatable")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *keyFile == "" || *out == "" {
 		return errors.New("sign requires --key and --out")
+	}
+	lifetime, err := parseLifetime(*validFor)
+	if err != nil {
+		return err
+	}
+	minTCB := map[string]measurements.TCB{}
+	for _, entry := range minTCBs {
+		product, levels, ok := strings.Cut(entry, "=")
+		if !ok {
+			return fmt.Errorf("--min-tcb %q needs Product=levels", entry)
+		}
+		tcb, err := measurements.ParseTCB(levels)
+		if err != nil {
+			return fmt.Errorf("--min-tcb %s: %w", product, err)
+		}
+		minTCB[strings.TrimSpace(product)] = tcb
+	}
+	if len(minTCB) == 0 {
+		return errors.New("sign requires --min-tcb for each AMD product the VMs run on")
 	}
 	material, err := os.ReadFile(*keyFile)
 	if err != nil {
@@ -113,7 +137,11 @@ func sign(args []string, stdout, stderr io.Writer) error {
 	if err != nil || key == nil {
 		return errors.New("--key must hold a P-256 private key from keygen")
 	}
-	signed, err := measurements.Sign(key, *serial, values, time.Now())
+	now := time.Now()
+	signed, err := measurements.Sign(key, *serial, values, now, measurements.SignOptions{
+		ExpiresAt: now.Add(lifetime),
+		MinTCB:    minTCB,
+	})
 	if err != nil {
 		return err
 	}
@@ -124,8 +152,32 @@ func sign(args []string, stdout, stderr io.Writer) error {
 	if err := os.WriteFile(*out, append(document, '\n'), 0o644); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "signed serial %d with %d measurement(s) to %s\n", *serial, len(values), *out)
+	_, err = fmt.Fprintf(stdout, "signed serial %d with %d measurement(s), valid until %s, to %s\n",
+		*serial, len(values), now.Add(lifetime).UTC().Format(time.RFC3339), *out)
 	return err
+}
+
+// parseLifetime reads a duration that may be given in days ("60d").
+func parseLifetime(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	var lifetime time.Duration
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		count, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, fmt.Errorf("invalid --valid-for %q", raw)
+		}
+		lifetime = time.Duration(count) * 24 * time.Hour
+	} else {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, fmt.Errorf("invalid --valid-for %q", raw)
+		}
+		lifetime = parsed
+	}
+	if lifetime < time.Hour || lifetime > 180*24*time.Hour {
+		return 0, errors.New("--valid-for must be between 1 hour and 180 days")
+	}
+	return lifetime, nil
 }
 
 func verify(args []string, stdout, stderr io.Writer) error {
@@ -159,9 +211,22 @@ func verify(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "serial %d issued %s\n", list.Serial, list.IssuedAt)
+	fmt.Fprintf(stdout, "serial %d issued %s expires %s\n", list.Serial, list.IssuedAt, valueOr(list.ExpiresAt, "never"))
+	for _, product := range measurements.Products {
+		if tcb, ok := list.MinTCB[product]; ok {
+			fmt.Fprintf(stdout, "minimum %s firmware: bootloader=%d tee=%d snp=%d microcode=%d fmc=%d\n",
+				product, tcb.Bootloader, tcb.TEE, tcb.SNP, tcb.Microcode, tcb.FMC)
+		}
+	}
 	for _, measurement := range list.Measurements {
 		fmt.Fprintln(stdout, measurement)
 	}
 	return nil
+}
+
+func valueOr(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }

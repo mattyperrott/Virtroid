@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -1322,16 +1323,19 @@ func TestRegisterAccountRecoveryCredentialAtomicallyInitializesBlobIdentity(t *t
 			credential.EnvelopeCiphertext,
 			credential.RecoveryPublicKey,
 			credential.BlobKeyVerifier,
+			0,
+			"",
 		).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"account_id", "version", "kdf_algorithm", "kdf_salt", "kdf_iterations",
 			"envelope_algorithm", "envelope_iv", "envelope_ciphertext",
 			"recovery_public_key", "blob_key_verifier", "created_at", "updated_at",
+			"kdf_memory_kib", "auth_verifier",
 		}).AddRow(
 			credential.AccountID, credential.Version, credential.KDFAlgorithm, credential.KDFSalt,
 			credential.KDFIterations, credential.EnvelopeAlgorithm, credential.EnvelopeIV,
 			credential.EnvelopeCiphertext, credential.RecoveryPublicKey, credential.BlobKeyVerifier,
-			now, now,
+			now, now, 0, "",
 		))
 	mock.ExpectCommit()
 
@@ -4320,5 +4324,82 @@ func runtimeColumnNames() []string {
 		"updated_at",
 		"blob_generation_floor",
 		"idle_timeout_seconds",
+	}
+}
+
+func argonRecoveryCredentialForTest(t *testing.T, authKey []byte) AccountRecoveryCredential {
+	credential := accountRecoveryCredentialForTest(t)
+	credential.Version = AccountRecoveryArgonVersion
+	credential.KDFAlgorithm = AccountRecoveryArgonKDFAlgorithm
+	credential.KDFIterations = 3
+	credential.KDFMemoryKiB = 64 << 10
+	credential.AuthVerifier = RecoveryLoginKeyVerifier(authKey)
+	return credential
+}
+
+func TestValidateArgonRecoveryCredential(t *testing.T) {
+	credential := argonRecoveryCredentialForTest(t, bytes.Repeat([]byte{7}, 32))
+	if _, err := ValidateAccountRecoveryCredential(credential); err != nil {
+		t.Fatalf("version 3 credential refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*AccountRecoveryCredential){
+		"no login key":   func(value *AccountRecoveryCredential) { value.AuthVerifier = "" },
+		"little memory":  func(value *AccountRecoveryCredential) { value.KDFMemoryKiB = 32 << 10 },
+		"one pass":       func(value *AccountRecoveryCredential) { value.KDFIterations = 1 },
+		"mixed versions": func(value *AccountRecoveryCredential) { value.Version = AccountRecoveryVersion },
+		"v2 with a login": func(value *AccountRecoveryCredential) {
+			value.Version, value.KDFAlgorithm, value.KDFIterations = 2, AccountRecoveryKDFAlgorithm, AccountRecoveryMinIterations
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := credential
+			mutate(&invalid)
+			if _, err := ValidateAccountRecoveryCredential(invalid); err == nil {
+				t.Fatal("invalid account recovery credential was accepted")
+			}
+		})
+	}
+}
+
+func TestRecoveryLoginKeyFailuresLockRecovery(t *testing.T) {
+	authKey := bytes.Repeat([]byte{7}, 32)
+	credential := argonRecoveryCredentialForTest(t, authKey)
+	check := func(t *testing.T, failures int, lockedUntil any, key []byte, expect func(sqlmock.Sqlmock)) error {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		mock.ExpectBegin()
+		mock.ExpectQuery("SELECT failed_auth_attempts").WithArgs(credential.AccountID).
+			WillReturnRows(sqlmock.NewRows([]string{"failed_auth_attempts", "auth_locked_until"}).AddRow(failures, lockedUntil))
+		expect(mock)
+		tx, err := db.BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = checkRecoveryLoginKey(context.Background(), tx, credential, key)
+		if expectErr := mock.ExpectationsWereMet(); expectErr != nil {
+			t.Fatalf("unmet SQL expectations: %v", expectErr)
+		}
+		return err
+	}
+	if err := check(t, 3, nil, authKey, func(mock sqlmock.Sqlmock) {
+		mock.ExpectExec("SET failed_auth_attempts = 0").WithArgs(credential.AccountID).WillReturnResult(sqlmock.NewResult(0, 1))
+	}); err != nil {
+		t.Fatalf("the right login key = %v", err)
+	}
+	if err := check(t, 3, nil, bytes.Repeat([]byte{8}, 32), func(mock sqlmock.Sqlmock) {
+		mock.ExpectExec("SET failed_auth_attempts = \\$2").WithArgs(credential.AccountID, 4, nil).WillReturnResult(sqlmock.NewResult(0, 1))
+	}); !errors.Is(err, ErrRecoveryLoginFailed) {
+		t.Fatalf("a wrong login key = %v", err)
+	}
+	if err := check(t, accountRecoveryMaxFailedAuth-1, nil, bytes.Repeat([]byte{8}, 32), func(mock sqlmock.Sqlmock) {
+		mock.ExpectExec("SET failed_auth_attempts = \\$2").WithArgs(credential.AccountID, 0, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	}); !errors.Is(err, ErrRecoveryLoginFailed) {
+		t.Fatalf("the last allowed wrong login key = %v", err)
+	}
+	if err := check(t, 0, time.Now().Add(time.Minute), authKey, func(sqlmock.Sqlmock) {}); !errors.Is(err, ErrRecoveryLocked) {
+		t.Fatalf("while locked = %v", err)
 	}
 }

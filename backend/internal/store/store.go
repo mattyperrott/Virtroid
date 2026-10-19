@@ -32,8 +32,8 @@ const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101403
-	schemaVersionLabel               = "runtime inactivity periods 2026-10-14"
+	currentSchemaVersion       int64 = 2026101901
+	schemaVersionLabel               = "recovery login keys 2026-10-19"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -128,6 +128,10 @@ var (
 	ErrRecoveryAlreadyConfigured  = errors.New("account recovery is already configured")
 	ErrRecoveryChallengeInvalid   = errors.New("account recovery challenge is invalid, expired, or already used")
 	ErrRecoveryDeviceExists       = errors.New("the recovery device is already enrolled")
+	ErrRecoveryLoginFailed        = errors.New("the identity password is incorrect")
+	ErrRecoveryLoginRequired      = errors.New("this account's recovery needs the login key from its identity password")
+	ErrRecoveryLocked             = errors.New("too many wrong identity passwords; recovery is paused for an hour")
+	ErrRecoveryDowngrade          = errors.New("account recovery cannot go back to an older version")
 	ErrNotificationSubscription   = errors.New("notification subscription is invalid")
 	ErrNotificationDelivery       = errors.New("notification delivery is invalid")
 	ErrNotificationAgent          = errors.New("runtime notification agent is not authorized")
@@ -178,21 +182,52 @@ const (
 	AccountRecoveryEnvelopeAlgorithm = "AES_GCM_256_V1"
 	AccountRecoveryMinIterations     = 600_000
 	AccountRecoveryMaxIterations     = 2_000_000
+	// Version 3: Argon2id, with a login key the server checks before it hands
+	// out the envelope.
+	AccountRecoveryArgonVersion      = 3
+	AccountRecoveryArgonKDFAlgorithm = "ARGON2ID_V3"
+	AccountRecoveryArgonMinPasses    = 3
+	AccountRecoveryArgonMaxPasses    = 10
+	AccountRecoveryArgonMinMemoryKiB = 64 << 10
+	AccountRecoveryArgonMaxMemoryKiB = 256 << 10
+	// After this many wrong login keys in a row, recovery waits this long.
+	accountRecoveryMaxFailedAuth = 10
+	accountRecoveryAuthLockout   = time.Hour
 )
 
 type AccountRecoveryCredential struct {
-	AccountID          string    `json:"account_id"`
-	Version            int       `json:"version"`
-	KDFAlgorithm       string    `json:"kdf_algorithm"`
-	KDFSalt            string    `json:"kdf_salt"`
-	KDFIterations      int       `json:"kdf_iterations"`
-	EnvelopeAlgorithm  string    `json:"envelope_algorithm"`
-	EnvelopeIV         string    `json:"envelope_iv"`
-	EnvelopeCiphertext string    `json:"envelope_ciphertext"`
-	RecoveryPublicKey  string    `json:"recovery_public_key"`
-	BlobKeyVerifier    string    `json:"blob_key_verifier"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	AccountID          string `json:"account_id"`
+	Version            int    `json:"version"`
+	KDFAlgorithm       string `json:"kdf_algorithm"`
+	KDFSalt            string `json:"kdf_salt"`
+	KDFIterations      int    `json:"kdf_iterations"`
+	EnvelopeAlgorithm  string `json:"envelope_algorithm"`
+	EnvelopeIV         string `json:"envelope_iv"`
+	EnvelopeCiphertext string `json:"envelope_ciphertext"`
+	RecoveryPublicKey  string `json:"recovery_public_key"`
+	BlobKeyVerifier    string `json:"blob_key_verifier"`
+	KDFMemoryKiB       int    `json:"kdf_memory_kib,omitempty"`
+	// AuthVerifier is a hash of the version 3 login key. Phones send it when
+	// they register or rewrap; the server never sends it back.
+	AuthVerifier string    `json:"auth_verifier,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// WithoutAuthVerifier is the credential as sent to phones.
+func (c AccountRecoveryCredential) WithoutAuthVerifier() AccountRecoveryCredential {
+	c.AuthVerifier = ""
+	return c
+}
+
+// AccountRecoveryParameters is what a recovering phone needs to derive its
+// keys from the password before it may fetch the envelope.
+type AccountRecoveryParameters struct {
+	Version       int    `json:"version"`
+	KDFAlgorithm  string `json:"kdf_algorithm"`
+	KDFSalt       string `json:"kdf_salt,omitempty"`
+	KDFIterations int    `json:"kdf_iterations,omitempty"`
+	KDFMemoryKiB  int    `json:"kdf_memory_kib,omitempty"`
 }
 
 type AccountRecoveryChallenge struct {
@@ -341,6 +376,9 @@ type RuntimeNotificationTarget struct {
 	AccountID   string
 	RuntimeID   string
 	RuntimeName string
+	// Confidential is set when the runtime runs on an attested VM, whose
+	// agent always seals what it sends.
+	Confidential bool
 }
 
 type Runtime struct {
@@ -2090,12 +2128,28 @@ func ValidateAccountRecoveryCredential(input AccountRecoveryCredential) (Account
 	input.EnvelopeIV = strings.TrimSpace(input.EnvelopeIV)
 	input.EnvelopeCiphertext = strings.TrimSpace(input.EnvelopeCiphertext)
 	input.RecoveryPublicKey = strings.TrimSpace(input.RecoveryPublicKey)
-	if input.Version != AccountRecoveryVersion || input.KDFAlgorithm != AccountRecoveryKDFAlgorithm ||
-		input.EnvelopeAlgorithm != AccountRecoveryEnvelopeAlgorithm {
+	input.AuthVerifier = strings.TrimSpace(input.AuthVerifier)
+	if input.EnvelopeAlgorithm != AccountRecoveryEnvelopeAlgorithm {
 		return AccountRecoveryCredential{}, errors.New("unsupported account recovery credential")
 	}
-	if input.KDFIterations < AccountRecoveryMinIterations || input.KDFIterations > AccountRecoveryMaxIterations {
-		return AccountRecoveryCredential{}, errors.New("account recovery KDF iterations are outside the allowed range")
+	switch {
+	case input.Version == AccountRecoveryVersion && input.KDFAlgorithm == AccountRecoveryKDFAlgorithm:
+		if input.KDFIterations < AccountRecoveryMinIterations || input.KDFIterations > AccountRecoveryMaxIterations {
+			return AccountRecoveryCredential{}, errors.New("account recovery KDF iterations are outside the allowed range")
+		}
+		if input.KDFMemoryKiB != 0 || input.AuthVerifier != "" {
+			return AccountRecoveryCredential{}, errors.New("a version 2 account recovery credential has no login key")
+		}
+	case input.Version == AccountRecoveryArgonVersion && input.KDFAlgorithm == AccountRecoveryArgonKDFAlgorithm:
+		if input.KDFIterations < AccountRecoveryArgonMinPasses || input.KDFIterations > AccountRecoveryArgonMaxPasses ||
+			input.KDFMemoryKiB < AccountRecoveryArgonMinMemoryKiB || input.KDFMemoryKiB > AccountRecoveryArgonMaxMemoryKiB {
+			return AccountRecoveryCredential{}, errors.New("account recovery Argon2id cost is outside the allowed range")
+		}
+		if err := validateRecoveryBase64URL(input.AuthVerifier, 32, 32, "login key verifier"); err != nil {
+			return AccountRecoveryCredential{}, err
+		}
+	default:
+		return AccountRecoveryCredential{}, errors.New("unsupported account recovery credential")
 	}
 	if err := validateRecoveryBase64URL(input.KDFSalt, 32, 32, "KDF salt"); err != nil {
 		return AccountRecoveryCredential{}, err
@@ -2183,15 +2237,14 @@ func (s *Store) RegisterAccountRecoveryCredential(
 		INSERT INTO account_recovery_credentials (
 			account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
 			envelope_algorithm, envelope_iv, envelope_ciphertext,
-			recovery_public_key, blob_key_verifier
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			recovery_public_key, blob_key_verifier, kdf_memory_kib, auth_verifier
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (account_id) DO NOTHING
-		RETURNING account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
-		          envelope_algorithm, envelope_iv, envelope_ciphertext,
-		          recovery_public_key, blob_key_verifier, created_at, updated_at
+		RETURNING `+accountRecoveryCredentialColumns+`
 	`, accountID, validated.Version, validated.KDFAlgorithm, validated.KDFSalt,
 		validated.KDFIterations, validated.EnvelopeAlgorithm, validated.EnvelopeIV,
-		validated.EnvelopeCiphertext, validated.RecoveryPublicKey, validated.BlobKeyVerifier), &created)
+		validated.EnvelopeCiphertext, validated.RecoveryPublicKey, validated.BlobKeyVerifier,
+		validated.KDFMemoryKiB, validated.AuthVerifier), &created)
 	if err == nil {
 		if err := tx.Commit(); err != nil {
 			return AccountRecoveryCredential{}, err
@@ -2220,8 +2273,14 @@ func sameAccountRecoveryCredential(left, right AccountRecoveryCredential) bool {
 		left.KDFAlgorithm == right.KDFAlgorithm && left.KDFSalt == right.KDFSalt &&
 		left.KDFIterations == right.KDFIterations && left.EnvelopeAlgorithm == right.EnvelopeAlgorithm &&
 		left.EnvelopeIV == right.EnvelopeIV && left.EnvelopeCiphertext == right.EnvelopeCiphertext &&
-		left.RecoveryPublicKey == right.RecoveryPublicKey && left.BlobKeyVerifier == right.BlobKeyVerifier
+		left.RecoveryPublicKey == right.RecoveryPublicKey && left.BlobKeyVerifier == right.BlobKeyVerifier &&
+		left.KDFMemoryKiB == right.KDFMemoryKiB && left.AuthVerifier == right.AuthVerifier
 }
+
+const accountRecoveryCredentialColumns = `account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
+		       envelope_algorithm, envelope_iv, envelope_ciphertext,
+		       recovery_public_key, blob_key_verifier, created_at, updated_at,
+		       kdf_memory_kib, auth_verifier`
 
 func scanAccountRecoveryCredential(row interface{ Scan(...any) error }, destination *AccountRecoveryCredential) error {
 	if destination == nil {
@@ -2240,6 +2299,8 @@ func scanAccountRecoveryCredential(row interface{ Scan(...any) error }, destinat
 		&destination.BlobKeyVerifier,
 		&destination.CreatedAt,
 		&destination.UpdatedAt,
+		&destination.KDFMemoryKiB,
+		&destination.AuthVerifier,
 	)
 }
 
@@ -2280,9 +2341,7 @@ func (s *Store) RewrapAccountRecoveryCredential(
 	}
 	var current AccountRecoveryCredential
 	if err := scanAccountRecoveryCredential(tx.QueryRowContext(ctx, `
-		SELECT account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
-		       envelope_algorithm, envelope_iv, envelope_ciphertext,
-		       recovery_public_key, blob_key_verifier, created_at, updated_at
+		SELECT `+accountRecoveryCredentialColumns+`
 		  FROM account_recovery_credentials
 		 WHERE account_id = $1
 		 FOR UPDATE
@@ -2296,19 +2355,23 @@ func (s *Store) RewrapAccountRecoveryCredential(
 		subtle.ConstantTimeCompare([]byte(current.BlobKeyVerifier), []byte(validated.BlobKeyVerifier)) != 1 {
 		return AccountRecoveryCredential{}, ErrIdentityAuthFailed
 	}
+	if validated.Version < current.Version {
+		return AccountRecoveryCredential{}, ErrRecoveryDowngrade
+	}
 
 	var updated AccountRecoveryCredential
 	if err := scanAccountRecoveryCredential(tx.QueryRowContext(ctx, `
 		UPDATE account_recovery_credentials
 		   SET version = $2, kdf_algorithm = $3, kdf_salt = $4, kdf_iterations = $5,
 		       envelope_algorithm = $6, envelope_iv = $7, envelope_ciphertext = $8,
+		       kdf_memory_kib = $9, auth_verifier = $10,
+		       failed_auth_attempts = 0, auth_locked_until = NULL,
 		       updated_at = NOW()
 		 WHERE account_id = $1
-		 RETURNING account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
-		           envelope_algorithm, envelope_iv, envelope_ciphertext,
-		           recovery_public_key, blob_key_verifier, created_at, updated_at
+		 RETURNING `+accountRecoveryCredentialColumns+`
 	`, accountID, validated.Version, validated.KDFAlgorithm, validated.KDFSalt, validated.KDFIterations,
-		validated.EnvelopeAlgorithm, validated.EnvelopeIV, validated.EnvelopeCiphertext), &updated); err != nil {
+		validated.EnvelopeAlgorithm, validated.EnvelopeIV, validated.EnvelopeCiphertext,
+		validated.KDFMemoryKiB, validated.AuthVerifier), &updated); err != nil {
 		return AccountRecoveryCredential{}, err
 	}
 	return updated, tx.Commit()
@@ -2333,9 +2396,7 @@ func getAccountRecoveryCredentialQuery(
 ) (AccountRecoveryCredential, error) {
 	var credential AccountRecoveryCredential
 	err := scanAccountRecoveryCredential(queryer.QueryRowContext(ctx, `
-		SELECT account_id, version, kdf_algorithm, kdf_salt, kdf_iterations,
-		       envelope_algorithm, envelope_iv, envelope_ciphertext,
-		       recovery_public_key, blob_key_verifier, created_at, updated_at
+		SELECT `+accountRecoveryCredentialColumns+`
 		  FROM account_recovery_credentials
 		 WHERE account_id = $1
 	`, strings.TrimSpace(accountID)), &credential)
@@ -2351,6 +2412,7 @@ func (s *Store) CreateAccountRecoveryChallenge(
 	deviceID string,
 	deviceName string,
 	devicePublicKey string,
+	authKey []byte,
 ) (AccountRecoveryCredential, AccountRecoveryChallenge, error) {
 	accountID = strings.TrimSpace(accountID)
 	deviceID = strings.TrimSpace(deviceID)
@@ -2374,9 +2436,23 @@ func (s *Store) CreateAccountRecoveryChallenge(
 		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
 	}
 	defer tx.Rollback()
-	credential, err := getAccountRecoveryCredentialTX(ctx, tx, accountID)
+	credential, err := getAccountRecoveryCredentialForUpdate(ctx, tx, accountID)
 	if err != nil {
 		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+	}
+	if credential.Version >= AccountRecoveryArgonVersion {
+		if len(authKey) == 0 {
+			return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, ErrRecoveryLoginRequired
+		}
+		if err := checkRecoveryLoginKey(ctx, tx, credential, authKey); err != nil {
+			if errors.Is(err, ErrRecoveryLoginFailed) {
+				// The failure count must stick even though nothing else does.
+				if commitErr := tx.Commit(); commitErr != nil {
+					return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, commitErr
+				}
+			}
+			return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
+		}
 	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1)`, deviceID).Scan(&exists); err != nil {
@@ -2418,6 +2494,81 @@ func (s *Store) CreateAccountRecoveryChallenge(
 		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
 	}
 	return credential, challenge, nil
+}
+
+// AccountRecoveryParameters returns what a recovering phone derives its keys
+// with; for version 2 credentials, only the version.
+func (s *Store) AccountRecoveryParameters(ctx context.Context, accountID string) (AccountRecoveryParameters, error) {
+	if _, err := uuid.Parse(strings.TrimSpace(accountID)); err != nil {
+		return AccountRecoveryParameters{}, ErrRecoveryNotConfigured
+	}
+	credential, err := s.GetAccountRecoveryCredential(ctx, accountID)
+	if err != nil {
+		return AccountRecoveryParameters{}, err
+	}
+	parameters := AccountRecoveryParameters{Version: credential.Version, KDFAlgorithm: credential.KDFAlgorithm}
+	if credential.Version >= AccountRecoveryArgonVersion {
+		parameters.KDFSalt = credential.KDFSalt
+		parameters.KDFIterations = credential.KDFIterations
+		parameters.KDFMemoryKiB = credential.KDFMemoryKiB
+	}
+	return parameters, nil
+}
+
+func getAccountRecoveryCredentialForUpdate(ctx context.Context, tx *sql.Tx, accountID string) (AccountRecoveryCredential, error) {
+	var credential AccountRecoveryCredential
+	err := scanAccountRecoveryCredential(tx.QueryRowContext(ctx, `
+		SELECT `+accountRecoveryCredentialColumns+`
+		  FROM account_recovery_credentials
+		 WHERE account_id = $1
+		 FOR UPDATE
+	`, strings.TrimSpace(accountID)), &credential)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AccountRecoveryCredential{}, ErrRecoveryNotConfigured
+	}
+	return credential, err
+}
+
+// RecoveryLoginKeyVerifier is the stored form of a version 3 login key.
+func RecoveryLoginKeyVerifier(authKey []byte) string {
+	digest := sha256.Sum256(append([]byte("VIRTROID-ACCOUNT-RECOVERY-LOGIN-V3\n"), authKey...))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+// checkRecoveryLoginKey compares a login key with the account's, counting
+// failures and, after too many in a row, refusing every attempt for a while.
+func checkRecoveryLoginKey(ctx context.Context, tx *sql.Tx, credential AccountRecoveryCredential, authKey []byte) error {
+	var failures int
+	var lockedUntil sql.NullTime
+	if err := tx.QueryRowContext(ctx, `
+		SELECT failed_auth_attempts, auth_locked_until FROM account_recovery_credentials WHERE account_id = $1
+	`, credential.AccountID).Scan(&failures, &lockedUntil); err != nil {
+		return err
+	}
+	if lockedUntil.Valid && lockedUntil.Time.After(time.Now().UTC()) {
+		return ErrRecoveryLocked
+	}
+	if len(authKey) == 32 && subtle.ConstantTimeCompare(
+		[]byte(RecoveryLoginKeyVerifier(authKey)), []byte(credential.AuthVerifier)) == 1 {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE account_recovery_credentials SET failed_auth_attempts = 0, auth_locked_until = NULL
+			 WHERE account_id = $1
+		`, credential.AccountID)
+		return err
+	}
+	failures++
+	var lock any
+	if failures >= accountRecoveryMaxFailedAuth {
+		failures = 0
+		lock = time.Now().UTC().Add(accountRecoveryAuthLockout)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE account_recovery_credentials SET failed_auth_attempts = $2, auth_locked_until = $3
+		 WHERE account_id = $1
+	`, credential.AccountID, failures, lock); err != nil {
+		return err
+	}
+	return ErrRecoveryLoginFailed
 }
 
 func (s *Store) GetAccountRecoveryChallenge(ctx context.Context, challengeID string) (AccountRecoveryChallenge, error) {
@@ -6604,9 +6755,10 @@ func (s *Store) AuthenticateRuntimeNotificationAgent(
 		    AND r.account_id = a.account_id
 		    AND r.deleted_at IS NULL
 		    AND r.desired_state = 'running'
-		 RETURNING a.account_id, a.runtime_id, r.name`,
+		 RETURNING a.account_id, a.runtime_id, r.name,
+		           EXISTS (SELECT 1 FROM hosts h WHERE h.id = r.host_id AND h.snp_attestation <> '')`,
 		runtimeID, tokenSHA256,
-	).Scan(&target.AccountID, &target.RuntimeID, &target.RuntimeName)
+	).Scan(&target.AccountID, &target.RuntimeID, &target.RuntimeName, &target.Confidential)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return RuntimeNotificationTarget{}, ErrNotificationAgent

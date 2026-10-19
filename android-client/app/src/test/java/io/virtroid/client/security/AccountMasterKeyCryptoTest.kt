@@ -143,4 +143,73 @@ class AccountMasterKeyCryptoTest {
             assertTrue(error.message.orEmpty().contains("password", ignoreCase = true))
         }
     }
+
+    @Test
+    fun argon2idMatchesGo() {
+        val salt = ByteArray(32) { (it + 1).toByte() }
+        val derived = AccountMasterKeyCrypto.argon2id(password, salt, 3, 64 * 1024)
+        // golang.org/x/crypto/argon2.IDKey with the same inputs.
+        assertEquals(
+            "649e676bce34fe3bb2ad2824c1c2079186717dd4adc0dda6bd0513f7f00cab33" +
+                "6cbc0d200e2cec93d8660508df81e021101fd4bc476607a090600b71970ec02b",
+            derived.joinToString("") { "%02x".format(it) },
+        )
+    }
+
+    @Test
+    fun newCredentialsUseArgon2idAndALoginKey() {
+        val bundle = AccountMasterKeyCrypto.create(accountId, password)
+        val credential = bundle.credential
+        assertEquals(3, credential.version)
+        assertEquals("ARGON2ID_V3", credential.kdfAlgorithm)
+        assertEquals(3, credential.kdfIterations)
+        assertEquals(64 * 1024, credential.kdfMemoryKiB)
+        val keys = AccountMasterKeyCrypto.deriveKeys(
+            AccountRecoveryParameters(credential.version, credential.kdfAlgorithm, credential.kdfSalt, credential.kdfIterations, credential.kdfMemoryKiB),
+            password,
+        )
+        assertEquals(credential.authVerifier, AccountMasterKeyCrypto.loginKeyVerifier(keys.loginKey))
+        assertEquals(bundle.blobAccessKey, AccountMasterKeyCrypto.unlock(credential, password, keys).blobAccessKey)
+    }
+
+    @Test
+    fun loginKeyVerifierMatchesTheServer() {
+        val loginKey = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { 7 })
+        // store.RecoveryLoginKeyVerifier in Go.
+        assertEquals("aw370rarqujQKCqrA1vALRoR0_9-xxplx_vvJYP8pzg", AccountMasterKeyCrypto.loginKeyVerifier(loginKey))
+    }
+
+    @Test
+    fun olderEnvelopesStillOpenAndAreUpgraded() {
+        val created = AccountMasterKeyCrypto.create(accountId, password)
+        val unlocked = AccountMasterKeyCrypto.unlock(created.credential, password)
+        val legacy = AccountMasterKeyCrypto.seal(
+            created.credential.copy(version = 2),
+            password,
+            Base64.getUrlDecoder().decode(unlocked.blobAccessKey),
+            Base64.getDecoder().decode(unlocked.recoveryPrivateKey),
+        )
+        assertEquals(2, legacy.version)
+        assertEquals("PBKDF2_HMAC_SHA256_V2", legacy.kdfAlgorithm)
+        assertEquals("", legacy.authVerifier)
+        assertEquals(created.blobAccessKey, AccountMasterKeyCrypto.unlock(legacy, password).blobAccessKey)
+        val upgraded = AccountMasterKeyCrypto.rewrap(legacy, "22222222-2222-2222-2222-222222222222", password, password)
+        assertEquals(3, upgraded.credential.version)
+        assertTrue(upgraded.credential.authVerifier.isNotEmpty())
+        assertEquals(created.blobAccessKey, AccountMasterKeyCrypto.unlock(upgraded.credential, password).blobAccessKey)
+    }
+
+    @Test
+    fun rewrapProofCoversTheVersion3Fields() {
+        val credential = AccountRecoveryCredential(
+            accountId = accountId, version = 3, kdfAlgorithm = "ARGON2ID_V3", kdfSalt = "salt",
+            kdfIterations = 3, envelopeAlgorithm = "AES_GCM_256_V1", envelopeIv = "iv", envelopeCiphertext = "ct",
+            recoveryPublicKey = "pk", blobKeyVerifier = "bv", kdfMemoryKiB = 65536, authVerifier = "av",
+        )
+        // httpapi.rewrapProofCanonical in Go produces the same.
+        assertEquals(
+            "VIRTROID-ACCOUNT-RECOVERY-REWRAP-V2\n$accountId\ndevice\n3\nARGON2ID_V3\nsalt\n3\n65536\nav\niv\nct",
+            AccountMasterKeyCrypto.rewrapCanonical(credential, "device"),
+        )
+    }
 }

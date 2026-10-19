@@ -52,10 +52,11 @@ func nodeAttestationJSON(raw json.RawMessage, tlsPin string) (string, error) {
 	if bundle.Version != 1 {
 		return "", errors.New("unsupported snp_attestation version")
 	}
+	// Phones refuse Milan, whose attestation keys can be forged.
 	switch bundle.Product {
-	case "Milan", "Genoa", "Turin":
+	case "Genoa", "Turin":
 	default:
-		return "", errors.New("unknown snp_attestation product")
+		return "", errors.New("unsupported snp_attestation product")
 	}
 	for _, field := range []string{bundle.Report, bundle.TLSSPKI, bundle.VCEK, bundle.ASK, bundle.ARK} {
 		if decoded, err := base64.StdEncoding.DecodeString(field); err != nil || len(decoded) == 0 {

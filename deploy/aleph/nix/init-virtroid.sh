@@ -47,13 +47,13 @@ echo "init: starting attestation agent (owner-auth mode, owner=${owner})"
 run_attest_agent --owner "$owner"
 
 # The provisioner injects the VM's secrets after attesting it. Wait for all of
-# them: the agent writes each atomically, the data key last in sorted order
-# is not guaranteed, so check every file.
+# them: the agent writes each atomically, but in no set order, so check every
+# file. (The data disk's key is made inside the VM at boot, not injected.)
 echo "init: waiting for the provisioner's secrets"
 waited=0
 while true; do
     ready=1
-    for name in virtroid_node_id virtroid_node_key virtroid_region virtroid_control_plane virtroid_data_key; do
+    for name in virtroid_node_id virtroid_node_key virtroid_region virtroid_control_plane; do
         [ -s "/tmp/secrets/${name}" ] || ready=0
     done
     [ "$ready" = 1 ] && break

@@ -11,6 +11,7 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -159,5 +160,68 @@ func TestRuntimeViewerKeyMatchesAcrossHandoffs(t *testing.T) {
 	}
 	if got := hex.EncodeToString(fromAccount); got != "b39725a7f60e32ebca2e9db9e8d9ff5c92a4eefb070fbc2229c78a6045b551f6" {
 		t.Fatalf("viewer key vector = %s", got)
+	}
+}
+
+func TestThePhonesSnapshotFloorArrivesSealedWithTheKeys(t *testing.T) {
+	sealKey, err := newBlobSealKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := append(phoneRuntimeKeys(testBlobKey(9), "runtime-1"), bytes.Repeat([]byte{5}, 32)...)
+	plaintext := binary.BigEndian.AppendUint64(append([]byte(nil), keys...), 7)
+	node := &nodeAgent{blobSealKey: sealKey}
+	opened, err := node.decryptBlobKeyEnvelope(sealedTestEnvelope(t, sealKey.publicDER, plaintext),
+		runtimeKeysVerifierForPlaintext(plaintext), time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotKeys, floor, hasFloor := splitSnapshotFloor(opened)
+	if !hasFloor || floor != 7 || !bytes.Equal(gotKeys, keys) {
+		t.Fatalf("split = %x, %d, %v", gotKeys, floor, hasFloor)
+	}
+	if _, _, hasFloor := splitSnapshotFloor(keys); hasFloor {
+		t.Fatal("keys from an older phone carried a floor")
+	}
+	node.noteSnapshotFloor("runtime-1", 7)
+	node.noteSnapshotFloor("runtime-1", 3)
+	if floor, strict := node.snapshotFloor("runtime-1"); !strict || floor != 7 {
+		t.Fatalf("floor = %d, %v; the highest a phone sent is kept", floor, strict)
+	}
+	if _, strict := node.snapshotFloor("runtime-2"); strict {
+		t.Fatal("a runtime no phone sent a floor for is strict")
+	}
+}
+
+func TestSnapshotsBelowThePhonesFloorAreRefused(t *testing.T) {
+	if err := checkSnapshotFloor(&blobManifest{Version: 3, Generation: 7}, 7); err != nil {
+		t.Fatalf("the newest snapshot the phone saw was refused: %v", err)
+	}
+	if err := checkSnapshotFloor(&blobManifest{Version: 3, Generation: 6}, 7); err == nil {
+		t.Fatal("an older snapshot was accepted")
+	}
+	if err := checkSnapshotFloor(&blobManifest{Version: 2, Generation: 9}, 7); err == nil {
+		t.Fatal("an unauthenticated manifest was accepted")
+	}
+	if err := checkSnapshotFloor(nil, 7); err != nil {
+		t.Fatalf("a runtime with no snapshot was refused: %v", err)
+	}
+	for _, tc := range []struct {
+		previous *blobManifest
+		floor    int64
+		strict   bool
+		want     int64
+	}{
+		{nil, 0, false, 1},
+		{&blobManifest{Generation: 5}, 0, false, 6},
+		{&blobManifest{Generation: 5}, 9, true, 10},
+		{nil, 9, true, 10},
+		{&blobManifest{Generation: 12}, 9, true, 13},
+		{&blobManifest{Generation: 5}, 9, false, 6},
+	} {
+		got, err := nextSnapshotGeneration(tc.previous, tc.floor, tc.strict)
+		if err != nil || got != tc.want {
+			t.Errorf("nextSnapshotGeneration(%v, %d, %v) = %d, %v; want %d", tc.previous, tc.floor, tc.strict, got, err, tc.want)
+		}
 	}
 }

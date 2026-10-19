@@ -25,7 +25,6 @@ openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null |
   openssl pkcs8 -topk8 -nocrypt -outform DER | base64 -w0 > $s/virtroid_node_key
 printf %s snp-eu > $s/virtroid_region
 printf %s https://control.invalid > $s/virtroid_control_plane
-openssl rand -base64 32 | tr -d '\n' > $s/virtroid_data_key
 chmod 0700 $s
 printf '#!/bin/busybox sh\nexec /bin/busybox sleep 999999\n' > initrd/bin/aleph-attest-agent
 chmod 755 initrd/bin/aleph-attest-agent

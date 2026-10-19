@@ -55,7 +55,12 @@ object BlobKeyEnvelopeCrypto {
      * Otherwise it seals the account key to the node key, for nodes that
      * aren't attested.
      */
-    fun encryptBlobAccessKey(blobAccessKey: String, lease: BlobKeyLease, sealPublicKey: String?): SealedBlobKey {
+    fun encryptBlobAccessKey(
+        blobAccessKey: String,
+        lease: BlobKeyLease,
+        sealPublicKey: String?,
+        snapshotFloor: Long = 0L,
+    ): SealedBlobKey {
         val sealed = sealPublicKey != null
         val algorithm = if (sealed) SEALED_ALGORITHM else ALGORITHM
         if (sealed) {
@@ -66,10 +71,13 @@ object BlobKeyEnvelopeCrypto {
 
         val accountKey = Base64.decode(blobAccessKey.trim(), B64_URL_FLAGS)
         require(accountKey.size == 32) { "invalid blob access key length" }
-        // Sealed: this runtime's keys, then the key its notifications are
-        // sealed with for this account's phones.
+        // Sealed: this runtime's keys, the key its notifications are sealed
+        // with for this account's phones, then the newest snapshot generation
+        // this phone has seen, which the VM refuses to go below.
         val plaintextKey = if (sealed) {
-            runtimeKeys(accountKey, lease.runtimeId) + runtimeNotificationKey(accountKey, lease.runtimeId)
+            require(snapshotFloor >= 0L) { "invalid snapshot floor" }
+            runtimeKeys(accountKey, lease.runtimeId) + runtimeNotificationKey(accountKey, lease.runtimeId) +
+                java.nio.ByteBuffer.allocate(8).putLong(snapshotFloor).array()
         } else {
             accountKey
         }

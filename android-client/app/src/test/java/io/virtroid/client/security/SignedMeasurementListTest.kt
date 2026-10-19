@@ -1,7 +1,9 @@
 package io.virtroid.client.security
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.security.KeyPairGenerator
 import java.security.Signature
@@ -22,6 +24,24 @@ class SignedMeasurementListTest {
         val list = SignedMeasurementList.verify(goDocument, keys)
         assertEquals(5L, list.serial)
         assertEquals(setOf(ab, of), list.measurements)
+    }
+
+    // Signed by the Go tool with an expiry and minimum firmware (serial 6).
+    private val goCurrentKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmEq4h2HWPpnTOvxHtcVp3L+wMKEZmbMDnJ3sk/CGJMnDJMDZebApRptlkJmKtd2JqW6dKmdTlUW5Wp88PbpMQA=="
+    private val goCurrentDocument = "{\"payload\":\"eyJ2ZXJzaW9uIjoxLCJzZXJpYWwiOjYsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTlUMDA6MDA6MDBaIiwiZXhwaXJlc19hdCI6IjIwMjYtMTItMThUMDA6MDA6MDBaIiwibWluX3RjYiI6eyJHZW5vYSI6eyJib290bG9hZGVyIjoxMiwidGVlIjowLCJzbnAiOjI4LCJtaWNyb2NvZGUiOjg4fSwiVHVyaW4iOnsiYm9vdGxvYWRlciI6MSwidGVlIjoyLCJzbnAiOjMsIm1pY3JvY29kZSI6NCwiZm1jIjo1fX0sIm1lYXN1cmVtZW50cyI6WyJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIiXX0=\",\"signature\":\"MEQCIAmd3Vqc37cSK9DZu8yPnrs6SUiQPMrieP/PGtKGoRSiAiAcJfEroYC+TeY7TE3yUwDdSKBFQqmk3i5sIIy/x82eiw==\"}"
+
+    @Test
+    fun listsCarryExpiryAndMinimumFirmware() {
+        val list = SignedMeasurementList.verify(goCurrentDocument, SignedMeasurementList.parseKeys(listOf(goCurrentKey)))
+        assertEquals(6L, list.serial)
+        assertEquals(java.time.Instant.parse("2026-12-18T00:00:00Z").toEpochMilli(), list.expiresAtMillis)
+        assertEquals(SnpTcb(bootloader = 12, tee = 0, snp = 28, microcode = 88), list.minimumFirmware["Genoa"])
+        assertEquals(SnpTcb(bootloader = 1, tee = 2, snp = 3, microcode = 4, fmc = 5), list.minimumFirmware["Turin"])
+        assertTrue(list.isCurrent(java.time.Instant.parse("2026-12-17T23:59:59Z").toEpochMilli()))
+        assertFalse(list.isCurrent(java.time.Instant.parse("2026-12-18T00:00:00Z").toEpochMilli()))
+        // A list from before expiries existed is never current.
+        val old = SignedMeasurementList.verify(goDocument, SignedMeasurementList.parseKeys(listOf(goPublicKey)))
+        assertFalse(old.isCurrent(0L))
     }
 
     @Test

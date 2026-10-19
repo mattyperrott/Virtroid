@@ -8,7 +8,9 @@ import io.virtroid.client.security.BlobKeyEnvelopeCrypto
 import io.virtroid.client.security.BlobKeyLease
 import io.virtroid.client.security.SealedBlobKey
 import io.virtroid.client.security.AccountRecoveryChallenge
+import io.virtroid.client.security.AccountMasterKeyCrypto
 import io.virtroid.client.security.AccountRecoveryCredential
+import io.virtroid.client.security.AccountRecoveryParameters
 import io.virtroid.client.security.DeviceIdentityStore
 import io.virtroid.client.security.IdentityCrypto
 import io.virtroid.client.security.RuntimeCapabilityStore
@@ -326,6 +328,10 @@ class VirtroidApi(
         /** Keeps the runtime's notification key, for opening its notifications. */
         @Volatile
         var rememberNotificationKey: ((runtimeId: String, key: ByteArray) -> Unit)? = null
+
+        /** The newest snapshot generation this phone has seen for a runtime. */
+        @Volatile
+        var snapshotFloor: ((accountId: String, runtimeId: String) -> Long)? = null
     }
 
     private val blobSealCheck get() = BlobSeal.check
@@ -423,18 +429,38 @@ class VirtroidApi(
         payload.toAccountRecoveryCredential()
     }
 
+    /** How to derive this account's recovery keys from its identity password. */
+    suspend fun getAccountRecoveryParameters(baseUrl: String, accountId: String): AccountRecoveryParameters =
+        withContext(Dispatchers.IO) {
+            val payload = executeJson(
+                Request.Builder()
+                    .url(normalizeBaseUrl(baseUrl) + "/api/v1/recovery/parameters")
+                    .post(JSONObject().put("account_id", accountId).toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build(),
+            )
+            AccountRecoveryParameters(
+                version = payload.getInt("version"),
+                kdfAlgorithm = payload.optString("kdf_algorithm"),
+                kdfSalt = payload.optString("kdf_salt"),
+                kdfIterations = payload.optInt("kdf_iterations", 0),
+                kdfMemoryKiB = payload.optInt("kdf_memory_kib", 0),
+            )
+        }
+
     suspend fun beginAccountRecovery(
         baseUrl: String,
         accountId: String,
         deviceId: String,
         deviceName: String,
         publicKey: String,
+        loginKey: String? = null,
     ): AccountRecoveryStart = withContext(Dispatchers.IO) {
         val requestJson = JSONObject()
             .put("account_id", accountId)
             .put("device_id", deviceId)
             .put("device_name", deviceName)
             .put("public_key", publicKey)
+            .apply { loginKey?.let { put("auth_key", it) } }
             .toString()
         val bodyBytes = requestJson.toByteArray(Charsets.UTF_8)
         val request = Request.Builder()
@@ -949,7 +975,7 @@ class VirtroidApi(
     ): SessionLaunch = withContext(Dispatchers.IO) {
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "session", blobKeyVerifier)
-        val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
+        val envelope = sealBlobAccessKey(baseUrl, accountId, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("max_size", maxSize)
             .put("bit_rate", bitRate)
@@ -1005,7 +1031,6 @@ class VirtroidApi(
         runtimeId: String,
         sessionId: String,
         fileName: String,
-        contentType: String,
         body: ByteArray,
         viewerKey: ByteArray? = null,
     ): RuntimeFileImport = withContext(Dispatchers.IO) {
@@ -1014,8 +1039,7 @@ class VirtroidApi(
         }
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
         val payload = executeJson(
-            runtimeImportRequest(baseUrl, runtimeId, sessionId, "file", "files", fileName, body,
-                contentType.ifBlank { "application/octet-stream" }, viewerKey),
+            runtimeImportRequest(baseUrl, runtimeId, sessionId, "file", "files", fileName, body, viewerKey),
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1040,7 +1064,7 @@ class VirtroidApi(
         }
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
         val payload = executeJson(
-            runtimeImportRequest(baseUrl, runtimeId, sessionId, "photo", "photos", fileName, jpeg, "image/jpeg", viewerKey),
+            runtimeImportRequest(baseUrl, runtimeId, sessionId, "photo", "photos", fileName, jpeg, viewerKey),
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1065,7 +1089,7 @@ class VirtroidApi(
         }
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
         val payload = executeJson(
-            runtimeImportRequest(baseUrl, runtimeId, sessionId, "video", "videos", fileName, mp4, "video/mp4", viewerKey),
+            runtimeImportRequest(baseUrl, runtimeId, sessionId, "video", "videos", fileName, mp4, viewerKey),
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1088,30 +1112,21 @@ class VirtroidApi(
         route: String,
         fileName: String,
         content: ByteArray,
-        contentType: String,
         viewerKey: ByteArray?,
     ): Request {
-        if (viewerKey != null) {
-            return capabilityBinaryRequest(
-                baseUrl = baseUrl,
-                pathAndQuery = "/api/v1/me/runtimes/$runtimeId/$route?session_id=$sessionId&sealed=1",
-                method = "POST",
-                runtimeId = runtimeId,
-                body = RuntimeImportSeal.seal(viewerKey, runtimeId, kind, fileName, content),
-                contentType = "application/octet-stream",
-            )
+        // Imports are sealed for the runtime's VM, so the control plane never
+        // sees them; without the session's viewer key there is nothing to seal
+        // with, and nothing is sent.
+        if (viewerKey == null) {
+            throw IOException("This session can't send files securely. Reconnect to the runtime and try again.")
         }
-        val encodedFileName = Base64.encodeToString(
-            fileName.toByteArray(Charsets.UTF_8),
-            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-        )
         return capabilityBinaryRequest(
             baseUrl = baseUrl,
-            pathAndQuery = "/api/v1/me/runtimes/$runtimeId/$route?session_id=$sessionId&name=$encodedFileName",
+            pathAndQuery = "/api/v1/me/runtimes/$runtimeId/$route?session_id=$sessionId&sealed=1",
             method = "POST",
             runtimeId = runtimeId,
-            body = content,
-            contentType = contentType,
+            body = RuntimeImportSeal.seal(viewerKey, runtimeId, kind, fileName, content),
+            contentType = "application/octet-stream",
         )
     }
 
@@ -1275,7 +1290,7 @@ class VirtroidApi(
     ): RuntimeSummary = withContext(Dispatchers.IO) {
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, "stop", blobKeyVerifier)
-        val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
+        val envelope = sealBlobAccessKey(baseUrl, accountId, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("blob_key_verifier", blobKeyVerifier)
             .put("blob_key_envelope", envelope.envelope)
@@ -1315,7 +1330,7 @@ class VirtroidApi(
      * app's check verified it. Without that check, nothing is sent to a VM
      * that must be attested.
      */
-    private fun sealBlobAccessKey(baseUrl: String, blobAccessKey: String, lease: BlobKeyLease): SealedBlobKey {
+    private fun sealBlobAccessKey(baseUrl: String, accountId: String, blobAccessKey: String, lease: BlobKeyLease): SealedBlobKey {
         val check = blobSealCheck
             ?: throw IOException("this runtime's VM must be verified before it receives its keys")
         val sealPublicKey = check(baseUrl, lease)
@@ -1329,7 +1344,12 @@ class VirtroidApi(
             runCatching { BlobSeal.rememberNotificationKey?.invoke(lease.runtimeId, notificationKey) }
             notificationKey.fill(0)
         }
-        return BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease, sealPublicKey)
+        val snapshotFloor = if (sealPublicKey != null) {
+            BlobSeal.snapshotFloor?.invoke(accountId, lease.runtimeId) ?: 0L
+        } else {
+            0L
+        }
+        return BlobKeyEnvelopeCrypto.encryptBlobAccessKey(blobAccessKey, lease, sealPublicKey, snapshotFloor)
     }
 
     private fun requestBlobKeyLease(
@@ -1471,7 +1491,7 @@ class VirtroidApi(
     ): RuntimeSummary = withContext(Dispatchers.IO) {
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, action, blobKeyVerifier)
-        val envelope = sealBlobAccessKey(baseUrl, blobAccessKey, lease)
+        val envelope = sealBlobAccessKey(baseUrl, accountId, blobAccessKey, lease)
         val requestBody = JSONObject()
             .put("blob_key_verifier", blobKeyVerifier)
             .put("blob_key_envelope", envelope.envelope)
@@ -1650,6 +1670,12 @@ class VirtroidApi(
         .put("envelope_ciphertext", envelopeCiphertext)
         .put("recovery_public_key", recoveryPublicKey)
         .put("blob_key_verifier", blobKeyVerifier)
+        .apply {
+            if (version >= AccountMasterKeyCrypto.VERSION) {
+                put("kdf_memory_kib", kdfMemoryKiB)
+                put("auth_verifier", authVerifier)
+            }
+        }
 
     private fun JSONObject.toAccountRecoveryCredential(): AccountRecoveryCredential = AccountRecoveryCredential(
         accountId = getString("account_id"),
@@ -1662,6 +1688,7 @@ class VirtroidApi(
         envelopeCiphertext = getString("envelope_ciphertext"),
         recoveryPublicKey = getString("recovery_public_key"),
         blobKeyVerifier = getString("blob_key_verifier"),
+        kdfMemoryKiB = optInt("kdf_memory_kib", 0),
     )
 
     private fun JSONObject.toAccountRecoveryChallenge(): AccountRecoveryChallenge = AccountRecoveryChallenge(

@@ -13,18 +13,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image/jpeg"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"virtroid/backend/internal/callbackauth"
 	"virtroid/backend/internal/config"
@@ -374,6 +371,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/apps/catalog", api.listAppCatalog)
 	mux.HandleFunc("GET /api/v1/snp-measurements", api.snpMeasurements)
 	mux.HandleFunc("POST /api/v1/bootstrap", api.bootstrap)
+	mux.HandleFunc("POST /api/v1/recovery/parameters", api.accountRecoveryParameters)
 	mux.HandleFunc("POST /api/v1/recovery/challenge", api.beginAccountRecovery)
 	mux.HandleFunc("POST /api/v1/recovery/complete", api.completeAccountRecovery)
 
@@ -1066,7 +1064,7 @@ func (a *API) getMyAccountRecovery(w http.ResponseWriter, r *http.Request) {
 		writeInternalAPIError(w, "account_recovery_lookup_failed", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, credential)
+	writeJSON(w, http.StatusOK, credential.WithoutAuthVerifier())
 }
 
 func (a *API) registerMyAccountRecovery(w http.ResponseWriter, r *http.Request) {
@@ -1107,7 +1105,7 @@ func (a *API) registerMyAccountRecovery(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, registered)
+	writeJSON(w, http.StatusCreated, registered.WithoutAuthVerifier())
 }
 
 func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
@@ -1129,6 +1127,9 @@ func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
 		DeviceID   string `json:"device_id"`
 		DeviceName string `json:"device_name"`
 		PublicKey  string `json:"public_key"`
+		// AuthKey is the login key derived from the identity password, which
+		// version 3 credentials require before the envelope is handed out.
+		AuthKey string `json:"auth_key,omitempty"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -1138,12 +1139,21 @@ func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "recovery_device_proof_invalid", "valid new-device signing proof is required")
 		return
 	}
+	var authKey []byte
+	if strings.TrimSpace(req.AuthKey) != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(req.AuthKey))
+		if err != nil || len(decoded) != 32 {
+			writeAPIError(w, http.StatusBadRequest, "recovery_login_key_invalid", "the recovery login key is malformed")
+			return
+		}
+		authKey = decoded
+	}
 	if publicKey, err := parseECDSAPublicKeyMaterial(req.PublicKey); err != nil || publicKey.Curve.Params().Name != "P-256" {
 		writeAPIError(w, http.StatusBadRequest, "recovery_device_key_invalid", "new-device public key must be P-256")
 		return
 	}
 	credential, challenge, err := a.store.CreateAccountRecoveryChallenge(
-		r.Context(), req.AccountID, req.DeviceID, req.DeviceName, req.PublicKey,
+		r.Context(), req.AccountID, req.DeviceID, req.DeviceName, req.PublicKey, authKey,
 	)
 	if err != nil {
 		switch {
@@ -1151,15 +1161,51 @@ func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusNotFound, "account_recovery_unavailable", "account recovery is unavailable")
 		case errors.Is(err, store.ErrRecoveryDeviceExists):
 			writeAPIError(w, http.StatusConflict, "recovery_device_exists", err.Error())
+		case errors.Is(err, store.ErrRecoveryLoginRequired):
+			writeAPIError(w, http.StatusBadRequest, "recovery_login_required", err.Error())
+		case errors.Is(err, store.ErrRecoveryLoginFailed):
+			writeAPIError(w, http.StatusUnauthorized, "recovery_password_incorrect", err.Error())
+		case errors.Is(err, store.ErrRecoveryLocked):
+			w.Header().Set("Retry-After", "3600")
+			writeAPIError(w, http.StatusTooManyRequests, "account_recovery_locked", err.Error())
 		default:
 			writeInternalAPIError(w, "account_recovery_challenge_failed", err)
 		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"credential": credential,
+		"credential": credential.WithoutAuthVerifier(),
 		"challenge":  challenge,
 	})
+}
+
+// accountRecoveryParameters tells a recovering phone how to derive its keys
+// from the identity password: salt and Argon2id cost for version 3, which
+// then needs the login key to fetch the envelope; for version 2, only that.
+func (a *API) accountRecoveryParameters(w http.ResponseWriter, r *http.Request) {
+	if ok, retryAfter := a.bootstrapLimiter.allow("recovery|" + bootstrapClientKey(r, a.cfg.TrustProxyHeaders)); !ok {
+		if retryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
+		}
+		writeAPIError(w, http.StatusTooManyRequests, "account_recovery_rate_limited", "account recovery rate limit exceeded")
+		return
+	}
+	var req struct {
+		AccountID string `json:"account_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	parameters, err := a.store.AccountRecoveryParameters(r.Context(), req.AccountID)
+	switch {
+	case errors.Is(err, store.ErrRecoveryNotConfigured):
+		writeAPIError(w, http.StatusNotFound, "account_recovery_unavailable", "account recovery is unavailable")
+	case err != nil:
+		writeInternalAPIError(w, "account_recovery_lookup_failed", err)
+	default:
+		writeJSON(w, http.StatusOK, parameters)
+	}
 }
 
 func (a *API) completeAccountRecovery(w http.ResponseWriter, r *http.Request) {
@@ -1282,7 +1328,9 @@ func (a *API) changeMyIdentityPassword(w http.ResponseWriter, r *http.Request) {
 	updated, err := a.store.RewrapAccountRecoveryCredential(r.Context(), accountID, deviceID, req.Credential)
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, updated)
+		writeJSON(w, http.StatusOK, updated.WithoutAuthVerifier())
+	case errors.Is(err, store.ErrRecoveryDowngrade):
+		writeAPIError(w, http.StatusConflict, "account_recovery_downgrade", err.Error())
 	case errors.Is(err, store.ErrDeviceNotFound), errors.Is(err, store.ErrRecoveryNotConfigured):
 		writeAPIError(w, http.StatusNotFound, "account_recovery_unavailable", "account recovery is unavailable")
 	case errors.Is(err, store.ErrIdentityAuthFailed):
@@ -1297,6 +1345,22 @@ func (a *API) changeMyIdentityPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func rewrapProofCanonical(deviceID string, credential store.AccountRecoveryCredential) string {
+	if credential.Version >= store.AccountRecoveryArgonVersion {
+		// Version 3 also binds its KDF, cost and login-key verifier.
+		return strings.Join([]string{
+			"VIRTROID-ACCOUNT-RECOVERY-REWRAP-V2",
+			strings.TrimSpace(credential.AccountID),
+			strings.TrimSpace(deviceID),
+			strconv.Itoa(credential.Version),
+			strings.TrimSpace(credential.KDFAlgorithm),
+			strings.TrimSpace(credential.KDFSalt),
+			strconv.Itoa(credential.KDFIterations),
+			strconv.Itoa(credential.KDFMemoryKiB),
+			strings.TrimSpace(credential.AuthVerifier),
+			strings.TrimSpace(credential.EnvelopeIV),
+			strings.TrimSpace(credential.EnvelopeCiphertext),
+		}, "\n")
+	}
 	return strings.Join([]string{
 		"VIRTROID-ACCOUNT-RECOVERY-REWRAP-V1",
 		strings.TrimSpace(credential.AccountID),
@@ -2063,125 +2127,31 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) importMyRuntimeFile(w http.ResponseWriter, r *http.Request) {
-	runtimeID := strings.TrimSpace(r.PathValue("id"))
-	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
-	if !ok {
-		return
-	}
-	if r.URL.Query().Get("sealed") == "1" {
-		a.forwardSealedRuntimeImport(w, r, actor, runtimeID, "file", "files", maxRuntimeFileImportBytes)
-		return
-	}
-	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_file_name", err.Error())
-		return
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			writeAPIError(w, http.StatusRequestEntityTooLarge, "file_too_large", "imported file exceeds 32 MiB")
-			return
-		}
-		writeAPIError(w, http.StatusBadRequest, "file_read_failed", "could not read imported file")
-		return
-	}
-	if len(body) == 0 {
-		writeAPIError(w, http.StatusBadRequest, "empty_file", "imported file is empty")
-		return
-	}
-	if int64(len(body)) > maxRuntimeFileImportBytes {
-		writeAPIError(w, http.StatusRequestEntityTooLarge, "file_too_large", "imported file exceeds 32 MiB")
-		return
-	}
-
-	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, "file")
-	if !ok {
-		return
-	}
-	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/files?name=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString([]byte(filename)))
-	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": contentType})
+	a.importMyRuntimeMedia(w, r, "file", "files", maxRuntimeFileImportBytes)
 }
 
 func (a *API) importMyRuntimePhoto(w http.ResponseWriter, r *http.Request) {
-	runtimeID := strings.TrimSpace(r.PathValue("id"))
-	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
-	if !ok {
-		return
-	}
-	if r.URL.Query().Get("sealed") == "1" {
-		a.forwardSealedRuntimeImport(w, r, actor, runtimeID, "photo", "photos", maxRuntimePhotoImportBytes)
-		return
-	}
-	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_photo_name", err.Error())
-		return
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			writeAPIError(w, http.StatusRequestEntityTooLarge, "photo_too_large", "photo must be a JPEG no larger than 16 MiB")
-			return
-		}
-		writeAPIError(w, http.StatusBadRequest, "photo_read_failed", "could not read captured photo")
-		return
-	}
-	if err := validateRuntimePhoto(filename, body); err != nil {
-		writeAPIError(w, http.StatusUnsupportedMediaType, "photo_invalid", err.Error())
-		return
-	}
-
-	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, "photo")
-	if !ok {
-		return
-	}
-	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/photos?name=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString([]byte(filename)))
-	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": "image/jpeg"})
+	a.importMyRuntimeMedia(w, r, "photo", "photos", maxRuntimePhotoImportBytes)
 }
 
 func (a *API) importMyRuntimeVideo(w http.ResponseWriter, r *http.Request) {
+	a.importMyRuntimeMedia(w, r, "video", "videos", maxRuntimeVideoImportBytes)
+}
+
+// importMyRuntimeMedia takes only imports the phone sealed for the runtime's
+// VM. Nodes refuse anything else, so an unsealed upload would only show its
+// contents to this server.
+func (a *API) importMyRuntimeMedia(w http.ResponseWriter, r *http.Request, kind, route string, maxBytes int64) {
 	runtimeID := strings.TrimSpace(r.PathValue("id"))
 	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
 	if !ok {
 		return
 	}
-	if r.URL.Query().Get("sealed") == "1" {
-		a.forwardSealedRuntimeImport(w, r, actor, runtimeID, "video", "videos", maxRuntimeVideoImportBytes)
+	if r.URL.Query().Get("sealed") != "1" {
+		writeAPIError(w, http.StatusBadRequest, kind+"_not_sealed", "imports must be sealed for the runtime's VM; update the app")
 		return
 	}
-	filename, err := decodeRuntimeMediaName(r.URL.Query().Get("name"))
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_video_name", err.Error())
-		return
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			writeAPIError(w, http.StatusRequestEntityTooLarge, "video_too_large", "video must be an MP4 no larger than 32 MiB")
-			return
-		}
-		writeAPIError(w, http.StatusBadRequest, "video_read_failed", "could not read captured video")
-		return
-	}
-	if err := validateRuntimeVideo(filename, body); err != nil {
-		writeAPIError(w, http.StatusUnsupportedMediaType, "video_invalid", err.Error())
-		return
-	}
-
-	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, "video")
-	if !ok {
-		return
-	}
-	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/videos?name=" + url.QueryEscape(base64.RawURLEncoding.EncodeToString([]byte(filename)))
-	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": "video/mp4"})
+	a.forwardSealedRuntimeImport(w, r, actor, runtimeID, kind, route, maxBytes)
 }
 
 // sealedImportOverhead bounds what a phone's seal adds to an imported file.
@@ -2211,32 +2181,6 @@ func (a *API) forwardSealedRuntimeImport(w http.ResponseWriter, r *http.Request,
 	}
 	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/" + route + "?sealed=1"
 	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": "application/octet-stream"})
-}
-
-func validateRuntimePhoto(filename string, body []byte) error {
-	extension := strings.ToLower(filepath.Ext(strings.TrimSpace(filename)))
-	if extension != ".jpg" && extension != ".jpeg" {
-		return errors.New("captured photo name must end in .jpg or .jpeg")
-	}
-	if len(body) < 4 || int64(len(body)) > maxRuntimePhotoImportBytes || body[0] != 0xff || body[1] != 0xd8 {
-		return errors.New("photo must be a JPEG no larger than 16 MiB")
-	}
-	config, err := jpeg.DecodeConfig(bytes.NewReader(body))
-	if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 64_000_000 {
-		return errors.New("photo contains invalid or excessive JPEG dimensions")
-	}
-	return nil
-}
-
-func validateRuntimeVideo(filename string, body []byte) error {
-	extension := strings.ToLower(filepath.Ext(strings.TrimSpace(filename)))
-	if extension != ".mp4" {
-		return errors.New("captured video name must end in .mp4")
-	}
-	if len(body) < 12 || int64(len(body)) > maxRuntimeVideoImportBytes || string(body[4:8]) != "ftyp" {
-		return errors.New("video must be an MP4 no larger than 32 MiB")
-	}
-	return nil
 }
 
 func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor runtimeActor, runtimeID, operation string) (store.Runtime, store.Host, bool) {
@@ -2324,18 +2268,6 @@ func (a *API) proxyRuntimeMedia(w http.ResponseWriter, r *http.Request, host sto
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(payload)
-}
-
-func decodeRuntimeMediaName(encoded string) (string, error) {
-	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
-	if err != nil || len(decoded) == 0 || len(decoded) > 255 || !utf8.Valid(decoded) {
-		return "", errors.New("file name must be base64url encoded UTF-8 and no more than 255 bytes")
-	}
-	name := strings.TrimSpace(string(decoded))
-	if name == "" || strings.ContainsRune(name, 0) || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
-		return "", errors.New("file name is invalid")
-	}
-	return name, nil
 }
 
 func (a *API) endMySession(w http.ResponseWriter, r *http.Request) {

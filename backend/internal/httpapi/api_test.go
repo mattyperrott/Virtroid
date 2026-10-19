@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,8 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/jpeg"
 	"io"
 	"net"
 	"net/http"
@@ -139,47 +136,6 @@ func TestAPIRequestBodyLimitAllowsOnlyBoundedMediaRoutes(t *testing.T) {
 	}
 	if got := apiRequestBodyLimit("/api/v1/me/runtimes/id/session"); got != maxAPIRequestBodyBytes {
 		t.Fatalf("default limit = %d", got)
-	}
-}
-
-func TestValidateRuntimePhotoRequiresBoundedJPEG(t *testing.T) {
-	var photo bytes.Buffer
-	if err := jpeg.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateRuntimePhoto("capture.jpg", photo.Bytes()); err != nil {
-		t.Fatalf("valid JPEG rejected: %v", err)
-	}
-	if err := validateRuntimePhoto("capture.png", photo.Bytes()); err == nil {
-		t.Fatal("JPEG with a non-JPEG name was accepted")
-	}
-	if err := validateRuntimePhoto("capture.jpg", []byte("not a jpeg")); err == nil {
-		t.Fatal("invalid JPEG was accepted")
-	}
-}
-
-func TestValidateRuntimeVideoRequiresBoundedMP4(t *testing.T) {
-	video := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
-	if err := validateRuntimeVideo("capture.mp4", video); err != nil {
-		t.Fatalf("valid MP4 rejected: %v", err)
-	}
-	if err := validateRuntimeVideo("capture.mov", video); err == nil {
-		t.Fatal("MP4 with a non-MP4 name was accepted")
-	}
-	if err := validateRuntimeVideo("capture.mp4", []byte("not an mp4")); err == nil {
-		t.Fatal("invalid MP4 was accepted")
-	}
-}
-
-func TestDecodeRuntimeMediaNameRejectsPathTraversal(t *testing.T) {
-	encoded := base64.RawURLEncoding.EncodeToString([]byte("../payload.txt"))
-	if _, err := decodeRuntimeMediaName(encoded); err == nil {
-		t.Fatal("accepted a path-like media name")
-	}
-	encoded = base64.RawURLEncoding.EncodeToString([]byte("report.pdf"))
-	got, err := decodeRuntimeMediaName(encoded)
-	if err != nil || got != "report.pdf" {
-		t.Fatalf("decodeRuntimeMediaName = %q, %v", got, err)
 	}
 }
 
@@ -993,5 +949,18 @@ func TestRuntimeMutationUnexpectedErrorIsNotExposed(t *testing.T) {
 	}
 	if payload["code"] != "runtime_mutation_failed" || payload["error"] != "internal server error" {
 		t.Fatalf("payload = %#v, want stable generic internal error", payload)
+	}
+}
+
+func TestRewrapProofCoversTheVersion3Fields(t *testing.T) {
+	credential := store.AccountRecoveryCredential{
+		AccountID: "11111111-1111-1111-1111-111111111111", Version: 3, KDFAlgorithm: "ARGON2ID_V3",
+		KDFSalt: "salt", KDFIterations: 3, KDFMemoryKiB: 65536, AuthVerifier: "av",
+		EnvelopeIV: "iv", EnvelopeCiphertext: "ct",
+	}
+	// The phone's AccountMasterKeyCrypto.rewrapCanonical produces the same.
+	want := "VIRTROID-ACCOUNT-RECOVERY-REWRAP-V2\n11111111-1111-1111-1111-111111111111\ndevice\n3\nARGON2ID_V3\nsalt\n3\n65536\nav\niv\nct"
+	if got := rewrapProofCanonical("device", credential); got != want {
+		t.Fatalf("canonical = %q", got)
 	}
 }

@@ -196,7 +196,7 @@ func run() error {
 			defer ticker.Stop()
 			for {
 				if err := vault.cycle(ctx); err != nil {
-					log.Printf("treasury: %v", err)
+					log.Printf("treasury: %q", err)
 				}
 				select {
 				case <-ctx.Done():

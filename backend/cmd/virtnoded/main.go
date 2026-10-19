@@ -395,14 +395,18 @@ type nodeAgent struct {
 	blobCleanupMu       sync.Mutex
 	runtimeBlobKeyMu    sync.Mutex
 	runtimeBlobKeys     map[string][]byte
-	siaAccounts         siaAccounts
-	callbackNonceMu     sync.Mutex
-	callbackNonces      map[string]time.Time
-	relaySlots          chan struct{}
-	heartbeatStateMu    sync.RWMutex
-	lastHeartbeatAt     time.Time
-	lastHeartbeatOK     bool
-	observability       *observability.Service
+	// snapshotFloors is, per runtime, the newest snapshot generation a phone
+	// has seen, sent sealed with its keys. No older snapshot is restored, and
+	// new ones are numbered above it.
+	snapshotFloors   map[string]int64
+	siaAccounts      siaAccounts
+	callbackNonceMu  sync.Mutex
+	callbackNonces   map[string]time.Time
+	relaySlots       chan struct{}
+	heartbeatStateMu sync.RWMutex
+	lastHeartbeatAt  time.Time
+	lastHeartbeatOK  bool
+	observability    *observability.Service
 }
 
 type runtimeAppInstallState struct {
@@ -1913,7 +1917,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 		if n.shouldAttemptNotificationAgent(runtime.ID, time.Now()) {
 			agentErr := n.ensureNotificationAgent(ctx, runtime, inspect)
 			n.finishNotificationAgentAttempt(runtime.ID, agentErr == nil, time.Now())
-			if agentErr != nil {
+			if agentErr != nil && !errors.Is(agentErr, errNotificationKeyPending) {
 				// Notification forwarding is auxiliary. Keep the Android runtime usable
 				// and retry separately instead of blocking viewer readiness.
 				_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Runtime notification forwarding is not ready yet: %v.", agentErr))
@@ -3202,16 +3206,13 @@ func adbShellArgs(serial, shellCmd string) []string {
 	return []string{"-s", serial, "shell", shellCmd}
 }
 
+// errNotificationKeyPending defers a confidential runtime's notification agent
+// until the phone has sent the key it seals with.
+var errNotificationKeyPending = errors.New("waiting for the phone's notification key")
+
 func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtimeAssignment, inspect dockerInspectResponse) error {
 	if !n.cfg.NotificationAgentEnabled {
 		return nil
-	}
-	apkPath := strings.TrimSpace(n.cfg.NotificationAgentAPKPath)
-	if apkPath == "" {
-		return errors.New("notification agent APK path is required")
-	}
-	if err := verifyAPKFile(apkPath, n.cfg.NotificationAgentAPKSHA256); err != nil {
-		return fmt.Errorf("verify notification agent APK: %w", err)
 	}
 	// The key the agent seals notifications with, when the phone sent the
 	// runtime's keys; a runtime provisioned without it is provisioned again.
@@ -3221,6 +3222,19 @@ func (n *nodeAgent) ensureNotificationAgent(ctx context.Context, runtime runtime
 		clearBytes(material)
 	}
 	defer clearBytes(notificationKey)
+	if notificationKey == nil && n.blobSealKey != nil {
+		// A confidential VM never sets the agent up to send readable titles:
+		// without the phone's key (after this node restarted, say) the agent
+		// it has keeps sealing, and a new one waits for the key.
+		return errNotificationKeyPending
+	}
+	apkPath := strings.TrimSpace(n.cfg.NotificationAgentAPKPath)
+	if apkPath == "" {
+		return errors.New("notification agent APK path is required")
+	}
+	if err := verifyAPKFile(apkPath, n.cfg.NotificationAgentAPKSHA256); err != nil {
+		return fmt.Errorf("verify notification agent APK: %w", err)
+	}
 	sealing := "plain"
 	if notificationKey != nil {
 		digest := sha256.Sum256(notificationKey)

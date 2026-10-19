@@ -1,5 +1,0 @@
-# SEV-SNP launch measurements (lowercase hex, one per line) of the runtime VM
-# images this app trusts. A confidential runtime whose measurement is not
-# listed here is refused. Measurements depend on the runtime bundle, the
-# provisioner's address, the vCPU count and the CPU model; publish them with
-# the runtime (see deploy/aleph/README.md) and add them here in a release.
