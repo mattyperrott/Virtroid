@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,6 +43,16 @@ func main() {
 			RuntimeHourMicro:     cfg.RuntimePriceHourMicro,
 			StorageGiBMonthMicro: cfg.StoragePriceGiBMonthMicro,
 		})
+	}
+
+	// New accounts start where runtime VMs are provisioned; the default
+	// region has no confidential nodes, so phones would refuse them there.
+	if cfg.ProvisionerMaxVMs > 0 && len(cfg.ProvisionedRegions) > 0 {
+		region := strings.ToLower(strings.TrimSpace(cfg.ProvisionedRegions[0]))
+		if !store.ValidRegion(region) {
+			log.Fatalf("invalid PROVISIONED_REGIONS entry %q", cfg.ProvisionedRegions[0])
+		}
+		pg.SetNewAccountRegion(region)
 	}
 
 	go sessionReaperLoop(ctx, pg, cfg)

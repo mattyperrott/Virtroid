@@ -79,6 +79,8 @@ var allowedAndroidImages = map[string]struct{}{
 type Store struct {
 	db      *sql.DB
 	pricing Pricing
+	// newAccountRegion is the runtime region new accounts start in.
+	newAccountRegion string
 }
 
 var (
@@ -983,8 +985,8 @@ func (s *Store) bootstrapAccountWithIdentity(
 	}
 
 	if err := tx.QueryRowContext(ctx,
-		`INSERT INTO accounts (id) VALUES ($1) RETURNING id, created_at`,
-		accountID,
+		`INSERT INTO accounts (id, runtime_region) VALUES ($1, $2) RETURNING id, created_at`,
+		accountID, s.newAccountRegion,
 	).Scan(&result.Account.ID, &result.Account.CreatedAt); err != nil {
 		return BootstrapResult{}, err
 	}
@@ -8398,6 +8400,12 @@ func ValidRegion(region string) bool {
 		}
 	}
 	return true
+}
+
+// SetNewAccountRegion sets the runtime region new accounts start in, so their
+// runtimes go to the nodes provisioned there. Call it before serving.
+func (s *Store) SetNewAccountRegion(region string) {
+	s.newAccountRegion = region
 }
 
 // SetAccountRuntimeRegion places the account's future runtimes on nodes in

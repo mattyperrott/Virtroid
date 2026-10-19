@@ -150,15 +150,16 @@ with Nix for builds (a small Aleph VM works).
 5. **Control plane.** In `.env`:
    - `PROVISIONER_PUBLIC_KEY`: the public half of the provisioner key, from
      `virtroid-admin public-key`;
-   - `PROVISIONED_REGIONS=snp-eu`;
+   - `PROVISIONED_REGIONS=snp-eu`. New accounts start in the first region
+     listed; move older accounts with `virtroid-admin set-account-region`;
    - `PROVISIONER_MAX_VMS`: your spending cap;
    - optionally `PROVISIONER_WARM_SPARES=1`.
 
    Add `provisioner` to `VIRTROID_PROFILES` and redeploy.
 
-6. **First VM and the approved list.** Assign a test account to the region
-   (`virtroid-admin set-account-region --account <id> --region snp-eu`) and
-   start its runtime. Watch `deploy.sh logs provisioner`. Once the VM is up,
+6. **First VM and the approved list.** Start a new account's runtime, or
+   move an existing account to the region first
+   (`virtroid-admin set-account-region --account <id> --region snp-eu`). Watch `deploy.sh logs provisioner`. Once the VM is up,
    read the launch measurements the CLI recorded in its INSTANCE message
    (`aleph message get <item hash> --json`, under
    `content.environment.trusted_execution.measurements`).

@@ -510,7 +510,7 @@ func TestBootstrapAccountDoesNotCreateRuntime(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO accounts").
-		WithArgs(sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).
 			AddRow("11111111-1111-1111-1111-111111111111", now))
 	mock.ExpectExec("INSERT INTO account_entitlements").
@@ -606,7 +606,7 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO accounts").
-		WithArgs(accountID).
+		WithArgs(accountID, "").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).
 			AddRow(accountID, now))
 	mock.ExpectExec("INSERT INTO account_entitlements").
@@ -652,6 +652,41 @@ func TestBootstrapAccountWithIdentityUsesSuppliedIDs(t *testing.T) {
 	}
 }
 
+func TestBootstrapAccountStartsInTheNewAccountRegion(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	st.SetNewAccountRegion("snp-eu")
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	deviceID := "22222222-2222-2222-2222-222222222222"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO accounts").
+		WithArgs(accountID, "snp-eu").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(accountID, now))
+	mock.ExpectExec("INSERT INTO account_entitlements").
+		WithArgs(accountID).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO devices").
+		WithArgs(deviceID, accountID, "Pixel", "public-key").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_id", "name", "public_key", "blob_key_verifier", "created_at", "last_seen_at",
+		}).AddRow(deviceID, accountID, "Pixel", "public-key", nil, now, nil))
+	mock.ExpectCommit()
+
+	if _, err := st.BootstrapAccountWithIdentity(context.Background(), accountID, deviceID, "Pixel", "public-key", CreateRuntimeInput{}); err != nil {
+		t.Fatalf("BootstrapAccountWithIdentity returned error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestBootstrapAccountWithInvitationConsumesItInAccountTransaction(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -671,7 +706,7 @@ func TestBootstrapAccountWithInvitationConsumesItInAccountTransaction(t *testing
 		WithArgs(tokenDigest[:]).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(invitationID))
 	mock.ExpectQuery("INSERT INTO accounts").
-		WithArgs(accountID).
+		WithArgs(accountID, "").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(accountID, now))
 	mock.ExpectExec("INSERT INTO account_entitlements").
 		WithArgs(accountID).
@@ -723,7 +758,7 @@ func TestBootstrapAccountWithAutomaticInvitationIssuesAndConsumesInAccountTransa
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "device:"+deviceID, automaticBootstrapActor, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("INSERT INTO accounts").
-		WithArgs(accountID).
+		WithArgs(accountID, "").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(accountID, now))
 	mock.ExpectExec("INSERT INTO account_entitlements").
 		WithArgs(accountID).
@@ -810,7 +845,7 @@ func TestBootstrapInvitationConsumptionRollsBackWhenDeviceCreationFails(t *testi
 		WithArgs(tokenDigest[:]).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(invitationID))
 	mock.ExpectQuery("INSERT INTO accounts").
-		WithArgs(accountID).
+		WithArgs(accountID, "").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(accountID, now))
 	mock.ExpectExec("INSERT INTO account_entitlements").
 		WithArgs(accountID).
