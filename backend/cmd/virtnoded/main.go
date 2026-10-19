@@ -4381,7 +4381,9 @@ func (n *nodeAgent) startViewerService(ctx context.Context, runtime runtimeAssig
 			"current_audio=$(getprop virtroid.viewer.audio_enabled); "+
 			"svc=$(getprop init.svc.virtroid_viewer); "+
 			"if [ \"$svc\" = \"running\" ] && [ \"$current_ip\" = \"$desired_ip\" ] && [ \"$current_size\" = \"$desired_size\" ] && [ \"$current_bitrate\" = \"$desired_bitrate\" ] && [ \"$current_audio\" = \"$desired_audio\" ] && [ -s \"$public_key\" ] && %s; then exit 0; fi; "+
-			"rm -f /data/local/tmp/virtroid-viewer.log \"$public_key\"; "+
+			// The old viewer's key and socket go first: until the new viewer
+			// writes both, neither may look ready.
+			"rm -f /data/local/tmp/virtroid-viewer.log \"$public_key\" %s; "+
 			"(umask 077; echo \"$VIRTROID_VIEWER_AUTH_KEY\" > %s) || exit 1; "+
 			"chown 1000:1000 %s || exit 1; "+
 			"unset VIRTROID_VIEWER_AUTH_KEY; "+
@@ -4400,7 +4402,7 @@ func (n *nodeAgent) startViewerService(ctx context.Context, runtime runtimeAssig
 			"setprop ctl.start virtroid_viewer; "+
 			"for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do "+
 			"svc=$(getprop init.svc.virtroid_viewer); "+
-			"if [ \"$svc\" = \"running\" ] && [ -S %s ]; then exit 0; fi; "+
+			"if [ \"$svc\" = \"running\" ] && [ -S %s ] && [ -s \"$public_key\" ]; then exit 0; fi; "+
 			"sleep 1; "+
 			"done; "+
 			"echo \"service=$svc\"; "+
@@ -4413,6 +4415,7 @@ func (n *nodeAgent) startViewerService(ctx context.Context, runtime runtimeAssig
 		audioEnabled,
 		shellEscape(viewerPublicKeyPath),
 		viewerServiceReuseListenerCondition(),
+		encryptedViewerSocketPath,
 		viewerAuthKeyPath,
 		viewerAuthKeyPath,
 		shellEscape(clientIP),
@@ -4996,8 +4999,8 @@ func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssign
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		output, err := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
-			{"/system/bin/sh", "-c", fmt.Sprintf("[ -S %s ] && echo ready", encryptedViewerSocketPath)},
-			{"sh", "-c", fmt.Sprintf("[ -S %s ] && echo ready", encryptedViewerSocketPath)},
+			{"/system/bin/sh", "-c", fmt.Sprintf("[ -S %s ] && [ -s %s ] && echo ready", encryptedViewerSocketPath, viewerPublicKeyPath)},
+			{"sh", "-c", fmt.Sprintf("[ -S %s ] && [ -s %s ] && echo ready", encryptedViewerSocketPath, viewerPublicKeyPath)},
 		})
 		if err == nil && strings.Contains(output, "ready") {
 			return nil
