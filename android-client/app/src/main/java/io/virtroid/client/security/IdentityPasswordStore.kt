@@ -54,6 +54,7 @@ class IdentityPasswordStore(context: Context) {
         }
         prefs.clear(KEY_ACCOUNT_ID, KEY_DEVICE_ID)
         clearUnlocked()
+        AccountKeyBiometricStore(appContext).clear()
     }
 
     fun migrateToVaultIfUnlocked() {

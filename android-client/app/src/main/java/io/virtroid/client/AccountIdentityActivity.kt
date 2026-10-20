@@ -19,12 +19,15 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAccountIdentityBinding
+import io.virtroid.client.security.AccountKeyBiometricStore
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.DeviceIdentityStore
 import io.virtroid.client.push.NotificationRelayManager
 import io.virtroid.client.push.RuntimeNotificationKeys
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.authenticateStrongBiometric
+import io.virtroid.client.security.canUseStrongBiometric
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
@@ -44,6 +47,7 @@ class AccountIdentityActivity : AppCompatActivity() {
     private lateinit var appSettings: AppSettingsStore
     private lateinit var identityPasswordStore: IdentityPasswordStore
     private lateinit var identityKeyManager: IdentityKeyManager
+    private lateinit var accountKeyBiometricStore: AccountKeyBiometricStore
     private lateinit var appLockStore: AppLockStore
     private lateinit var appLogs: AppLogStore
     private val deviceIdentityStore = DeviceIdentityStore()
@@ -65,6 +69,7 @@ class AccountIdentityActivity : AppCompatActivity() {
         appSettings = AppSettingsStore(this)
         identityPasswordStore = IdentityPasswordStore(this)
         identityKeyManager = IdentityKeyManager(this, api)
+        accountKeyBiometricStore = AccountKeyBiometricStore(this)
         appLockStore = AppLockStore(this)
         appLogs = AppLogStore.get(this)
 
@@ -153,6 +158,8 @@ class AccountIdentityActivity : AppCompatActivity() {
         binding.itemIdentityPasswordSubtitle.text = when {
             !hasLinkedIdentity -> getString(R.string.account_identity_not_linked)
             identityPasswordCached -> getString(R.string.account_identity_password_cached)
+            identityPasswordConfigured && accountKeyBiometricStore.isEnabled() ->
+                getString(R.string.account_identity_password_fingerprint)
             identityPasswordConfigured -> getString(R.string.account_identity_password_required_later)
             else -> getString(R.string.account_identity_encryption_missing)
         }
@@ -435,6 +442,24 @@ class AccountIdentityActivity : AppCompatActivity() {
                     title = getString(R.string.identity_password_change_row),
                     subtitle = getString(R.string.identity_password_change_row_subtitle),
                 ) { changeIdentityPassword(accountId, deviceId) }
+            if (accountKeyBiometricStore.isEnabled()) {
+                sheet.row(
+                    icon = R.drawable.ic_fingerprint,
+                    title = getString(R.string.account_key_biometric_off_row),
+                    subtitle = getString(R.string.account_key_biometric_off_row_subtitle),
+                ) {
+                    accountKeyBiometricStore.clear()
+                    appLogs.info("Fingerprint unlock of the account key disabled", "auth")
+                    renderIdentity()
+                    Notice.confirm(this, getString(R.string.account_key_biometric_disabled))
+                }
+            } else if (canUseStrongBiometric()) {
+                sheet.row(
+                    icon = R.drawable.ic_fingerprint,
+                    title = getString(R.string.account_key_biometric_on_row),
+                    subtitle = getString(R.string.account_key_biometric_on_row_subtitle),
+                ) { confirmFingerprintUnlock(accountId, deviceId) }
+            }
             if (identityPasswordStore.isUnlockedFor(accountId, deviceId)) {
                 sheet.row(
                     icon = R.drawable.ic_lock,
@@ -454,6 +479,54 @@ class AccountIdentityActivity : AppCompatActivity() {
                 ) { configureIdentityPassword(accountId, deviceId) }
         }
         sheet.secondary(getString(R.string.identity_password_close)).show()
+    }
+
+    private fun confirmFingerprintUnlock(accountId: String, deviceId: String) {
+        showConfirmation(
+            title = getString(R.string.account_key_biometric_confirm_title),
+            message = getString(R.string.account_key_biometric_confirm_body),
+            confirmLabel = getString(R.string.account_key_biometric_confirm),
+            onConfirmed = { enableFingerprintUnlock(accountId, deviceId) },
+        )
+    }
+
+    /**
+     * Seals a copy of the account key that a fingerprint opens. The password
+     * is asked for even when the key is already unlocked, so only someone who
+     * knows it can turn this on.
+     */
+    private fun enableFingerprintUnlock(accountId: String, deviceId: String) {
+        lifecycleScope.launch {
+            val password = promptIdentityPassword(
+                title = getString(R.string.account_key_biometric_password_title),
+                hint = getString(R.string.account_key_biometric_password_body),
+            )?.trim()?.takeIf { it.isNotBlank() } ?: return@launch
+            val blobAccessKey = runCatching {
+                identityKeyManager.unlockOrMigrate(sessionStore.baseUrl, accountId, deviceId, password)
+            }.getOrElse { error ->
+                toast(error.virtroidDisplayMessage(this@AccountIdentityActivity))
+                return@launch
+            }
+            val cipher = accountKeyBiometricStore.encryptCipher()
+            if (cipher == null) {
+                toast(getString(R.string.account_key_biometric_enable_failed))
+                return@launch
+            }
+            val authenticated = authenticateStrongBiometric(
+                cipher = cipher,
+                title = getString(R.string.account_key_biometric_enable_title),
+                subtitle = getString(R.string.account_key_biometric_enable_subtitle),
+                negativeLabel = getString(R.string.account_key_biometric_cancel),
+            ) ?: return@launch
+            if (accountKeyBiometricStore.save(authenticated, accountId, deviceId, blobAccessKey)) {
+                appLogs.info("Fingerprint unlock of the account key enabled", "auth")
+                Notice.confirm(this@AccountIdentityActivity, getString(R.string.account_key_biometric_enabled))
+            } else {
+                accountKeyBiometricStore.clear()
+                toast(getString(R.string.account_key_biometric_enable_failed))
+            }
+            renderIdentity()
+        }
     }
 
     private fun configureIdentityPassword(accountId: String, deviceId: String) {

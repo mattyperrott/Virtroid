@@ -5,6 +5,7 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
 import android.util.Base64
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -12,9 +13,18 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class BiometricVaultKeyStore(context: Context) {
+/**
+ * A secret sealed by an Android Keystore key that needs a strong biometric
+ * check for every use. The local vault's key uses the defaults; other secrets
+ * pass their own preferences file and key alias.
+ */
+class BiometricVaultKeyStore(
+    context: Context,
+    prefsName: String = "virtroid-biometric-vault",
+    private val keyAlias: String = "virtroid_local_vault_biometric_v1",
+) {
     private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences("virtroid-biometric-vault", Context.MODE_PRIVATE)
+    private val prefs = appContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
     fun hasWrappedKey(): Boolean {
         return prefs.getString(KEY_IV, null)?.isNotBlank() == true &&
@@ -46,8 +56,10 @@ class BiometricVaultKeyStore(context: Context) {
         }
     }
 
-    fun saveWrappedKey(cipher: Cipher, vaultKey: ByteArray): Boolean {
+    /** Seals [vaultKey]; [associatedData], when given, must be passed again to unwrap it. */
+    fun saveWrappedKey(cipher: Cipher, vaultKey: ByteArray, associatedData: ByteArray? = null): Boolean {
         return runCatching {
+            associatedData?.let { cipher.updateAAD(it) }
             val ciphertext = cipher.doFinal(vaultKey)
             val iv = cipher.iv ?: return false
             prefs.edit()
@@ -58,15 +70,18 @@ class BiometricVaultKeyStore(context: Context) {
         }.getOrDefault(false)
     }
 
-    fun unwrapVaultKey(cipher: Cipher): ByteArray? {
+    fun unwrapVaultKey(cipher: Cipher, associatedData: ByteArray? = null): ByteArray? {
         val ciphertext = decode(KEY_CIPHERTEXT) ?: return null
-        return runCatching { cipher.doFinal(ciphertext) }.getOrNull()
+        return runCatching {
+            associatedData?.let { cipher.updateAAD(it) }
+            cipher.doFinal(ciphertext)
+        }.getOrNull()
     }
 
     fun clear() {
         prefs.edit().clear().apply()
         runCatching {
-            keyStore().deleteEntry(KEY_ALIAS)
+            keyStore().deleteEntry(keyAlias)
         }
     }
 
@@ -76,17 +91,26 @@ class BiometricVaultKeyStore(context: Context) {
     }
 
     private fun getOrCreateKey(): SecretKey {
-        keyStore().getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
+        keyStore().getKey(keyAlias, null)?.let { return it as SecretKey }
+        // In the phone's secure element where it has one, else the TEE.
+        return try {
+            generateKey(strongBox = true)
+        } catch (_: StrongBoxUnavailableException) {
+            generateKey(strongBox = false)
+        }
+    }
 
+    private fun generateKey(strongBox: Boolean): SecretKey {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         val builder = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
+            keyAlias,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setUserAuthenticationRequired(true)
             .setInvalidatedByBiometricEnrollment(true)
+            .setIsStrongBoxBacked(strongBox)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             builder.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
@@ -105,7 +129,6 @@ class BiometricVaultKeyStore(context: Context) {
 
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        const val KEY_ALIAS = "virtroid_local_vault_biometric_v1"
         const val AES_MODE = "AES/GCM/NoPadding"
         const val GCM_TAG_BITS = 128
         const val KEY_IV = "wrapped_key_iv"

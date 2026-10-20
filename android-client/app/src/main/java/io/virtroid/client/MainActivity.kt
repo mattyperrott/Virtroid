@@ -39,6 +39,7 @@ import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
+import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import io.virtroid.client.security.showConfirmation
 import io.virtroid.client.push.NotificationRelayManager
 import io.virtroid.client.ui.VirtroidMotion
@@ -920,6 +921,7 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun requireBlobAccessKey(accountId: String, deviceId: String): String {
         identityPasswordStore.unlockedBlobAccessKey(accountId, deviceId)?.let { return it }
+        unlockAccountKeyWithBiometric(accountId, deviceId, identityPasswordStore)?.let { return it }
         val password = promptIdentityPassword(
             title = getString(R.string.identity_unlock_title),
             hint = getString(R.string.identity_password_prompt),
