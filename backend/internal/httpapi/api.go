@@ -1725,7 +1725,10 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 	}
 
 	runtime, host, err := a.store.RuntimeBlobKeyTarget(r.Context(), actor.accountID, runtimeID, operation)
-	if errors.Is(err, store.ErrNoReadyHost) && operation == "start" {
+	// Starting, wiping and deleting all need a node the phone trusts with the
+	// runtime's keys; for a confidential account that is its own VM, so ask
+	// for one when it is not running.
+	if errors.Is(err, store.ErrNoReadyHost) && (operation == "start" || operation == "wipe" || operation == "delete") {
 		a.writeNoReadyHost(w, r, actor.accountID, err)
 		return
 	}

@@ -479,20 +479,30 @@ class MainActivity : AppCompatActivity() {
             val state = runCatching {
                 api.getRuntimeState(currentBaseUrl(), accountId, deviceId, runtime.id)
             }.getOrNull()
-            if (state?.canWipe != false) {
-                api.wipeRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
-                snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
+            // Wiping hands the runtime's keys to the account's own private
+            // server, which may first have to be started for it.
+            try {
+                if (state?.canWipe != false) {
+                    retryWhileRuntimeHostProvisioning(
+                        onWaiting = { _, progress -> showRuntimeHostProgress(runtime, progress) },
+                        beforeAttempt = { withStarted { } },
+                    ) {
+                        api.wipeRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
+                    }
+                    snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
+                }
+                activeSessionStore.loadForRuntime(runtime.id)?.let {
+                    activeSessionStore.clear()
+                }
+                retryWhileRuntimeHostProvisioning(
+                    onWaiting = { _, progress -> showRuntimeHostProgress(runtime, progress) },
+                    beforeAttempt = { withStarted { } },
+                ) {
+                    api.deleteRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
+                }
+            } finally {
+                clearRuntimeHostProgress(runtime.id)
             }
-            activeSessionStore.loadForRuntime(runtime.id)?.let {
-                activeSessionStore.clear()
-            }
-            api.deleteRuntime(
-                currentBaseUrl(),
-                accountId,
-                deviceId,
-                runtime.id,
-                blobAccessKey,
-            )
             snapshotRollbackGuard.clearRuntime(accountId, runtime.id)
             identityPasswordStore.saveConfigured(accountId, deviceId)
         }

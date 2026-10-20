@@ -3059,6 +3059,73 @@ func TestRuntimeBlobKeyTargetRejectsHostlessLocalBlobWithoutOwner(t *testing.T) 
 	}
 }
 
+func TestRuntimeBlobKeyTargetDeleteUsesAccountsOwnNode(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	vmID := "pvm-account"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeRowsWithBlob(now, runtimeID, accountID, "stopped", "stopped", "offline", nil, nil, "sia-indexd", `{"store":"sia-indexd"}`, nil))
+	mock.ExpectQuery(`(?s)SELECT h.id FROM hosts h.*h.region = COALESCE\(\(SELECT a.runtime_region FROM accounts a.*dedicated.account_id::text <> \$1`).
+		WithArgs(accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(vmID))
+	mock.ExpectQuery("SELECT h.id, h.name, h.advertise_addr").
+		WithArgs(vmID).
+		WillReturnRows(hostRows(now, vmID, "node-public-key"))
+	mock.ExpectCommit()
+
+	_, host, err := st.RuntimeBlobKeyTarget(context.Background(), accountID, runtimeID, "delete")
+	if err != nil {
+		t.Fatalf("RuntimeBlobKeyTarget returned error: %v", err)
+	}
+	if host.ID != vmID {
+		t.Fatalf("host.ID = %q, want %q", host.ID, vmID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRuntimeBlobKeyTargetWipeWithoutAccountNodeAsksForOne(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	st := &Store{db: db}
+	now := time.Now().UTC()
+	accountID := "11111111-1111-1111-1111-111111111111"
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM runtimes").
+		WithArgs(accountID, runtimeID).
+		WillReturnRows(runtimeRowsWithBlob(now, runtimeID, accountID, "stopped", "stopped", "offline", nil, nil, "sia-indexd", `{"store":"sia-indexd"}`, nil))
+	mock.ExpectQuery(`SELECT h.id FROM hosts h`).
+		WithArgs(accountID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	_, _, err = st.RuntimeBlobKeyTarget(context.Background(), accountID, runtimeID, "wipe")
+	if !errors.Is(err, ErrNoReadyHost) {
+		t.Fatalf("RuntimeBlobKeyTarget error = %v, want %v", err, ErrNoReadyHost)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestListRuntimeStatesReturnsBackendLifecycleSnapshot(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

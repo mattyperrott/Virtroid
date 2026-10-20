@@ -7264,17 +7264,11 @@ func (s *Store) AbortPendingSession(ctx context.Context, sessionID, relayToken, 
 	return rowsAffected > 0, err
 }
 
-func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (string, error) {
-	if strings.TrimSpace(preferredHostID) != "" {
-		hostID, err := requireReadyHostTX(ctx, tx, preferredHostID)
-		if err == nil {
-			return hostID, nil
-		}
-		if err != ErrNoReadyHost {
-			return "", err
-		}
-	}
-
+// pickCleanupHostTX finds a node to stop, wipe or delete a runtime that no
+// node holds. It follows the same placement rules as a start: a node in the
+// account's region that may serve the account. A confidential account's keys
+// then only go to its own VM, never to a shared node its phone would refuse.
+func pickCleanupHostTX(ctx context.Context, tx *sql.Tx, runtime Runtime) (string, error) {
 	var hostID string
 	if err := tx.QueryRowContext(ctx,
 		`SELECT h.id FROM hosts h
@@ -7284,13 +7278,15 @@ func pickReadyHostTX(ctx context.Context, tx *sql.Tx, preferredHostID string) (s
 		 WHERE h.docker_socket = TRUE
 		   AND h.binder = TRUE
 		   AND h.last_heartbeat_at >= NOW() - INTERVAL '2 minutes'
-		   AND NOT EXISTS (SELECT 1 FROM provisioned_vms p WHERE p.id = h.id)
 		   AND (
 		       (k.state = 'active' AND k.key_version = n.active_key_version)
 		       OR (k.state = 'overlap' AND k.valid_until > NOW())
 		   )
+		   AND h.region = COALESCE((SELECT a.runtime_region FROM accounts a WHERE a.id::text = $1), '')
+		   AND `+provisionedHostServesAccount("h.id", "$1")+`
 		 ORDER BY h.last_heartbeat_at DESC
 		 LIMIT 1`,
+		runtime.AccountID,
 	).Scan(&hostID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNoReadyHost
@@ -7442,7 +7438,7 @@ func runtimeCleanupHostTX(ctx context.Context, tx *sql.Tx, runtime Runtime) (str
 	if runtimeUsesNodeLocalBlob(runtime) {
 		return "", ErrRuntimeBlobOwner
 	}
-	return pickReadyHostTX(ctx, tx, "")
+	return pickCleanupHostTX(ctx, tx, runtime)
 }
 
 func runtimeUsesNodeLocalBlob(runtime Runtime) bool {
