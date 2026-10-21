@@ -32,3 +32,5 @@
 /backend/cmd/*/virtroid-provisioner
 /backend/cmd/*/virtroidd
 /.archify/
+/.impeccable/
+/PRODUCT.md
