@@ -11,7 +11,7 @@
     nixpkgs.follows = "aleph-vm/nixpkgs";
     # Go 1.27 for virtnoded only (the Sia SDK needs it); the rest of the image
     # keeps aleph-vm's nixpkgs.
-    nixpkgs-go.url = "github:NixOS/nixpkgs/7993f34ee47e28a3d607a525aadc6c94b73be728";
+    nixpkgs-go.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
     # The deployment's own inputs (node.env, runtime-image.tar, apks/). Build
     # with --override-input assets path:/path/to/assets.
     assets = {
