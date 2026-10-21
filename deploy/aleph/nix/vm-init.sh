@@ -16,6 +16,9 @@ data_mapper=virtroid-data
 public_port=9443
 tor_trans_port=9040
 tor_dns_port=5353
+# virtnoded's plain-HTTP port (NODE_BIND_ADDR in the measured node.env).
+node_private_port="$(sed -n 's/^NODE_BIND_ADDR=.*:\([0-9][0-9]*\)$/\1/p' /etc/virtroid/node.env)"
+node_private_port="${node_private_port:-8090}"
 
 # --- Writable state lives on tmpfs or the encrypted data disk ----------------
 mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || die "mount /run"
@@ -85,6 +88,10 @@ log "node ${node_id} at [${ipv6}]:${public_port}"
 # Inbound: the attestation agent (8443), the node (9443), replies, and the
 # runtime bridges. Docker adds its own forwarding and NAT tables.
 #
+# Nothing in a runtime connects to the node (the node dials into runtimes,
+# and their agent talks to the public control plane), so runtimes may not
+# reach virtnoded's private port: none of its server is exposed to apps.
+#
 # Runtimes whose traffic leaves through Tor sit on bridges in tor_bridges
 # (virtnoded adds each before the bridge exists). Their DNS goes to Tor's
 # DNSPort and their TCP to its TransPort; they reach nothing else on the VM,
@@ -105,6 +112,7 @@ table inet virtroid {
     iifname @tor_bridges udp dport ${tor_dns_port} accept
     iifname @tor_bridges drop
     meta l4proto { icmp, ipv6-icmp } accept
+    iifname { "docker0", "br-*" } tcp dport ${node_private_port} drop
     iifname { "docker0", "br-*" } accept
     tcp dport { 8443, ${public_port} } accept
   }

@@ -57,7 +57,9 @@ loads no further kernel modules.
 5. `/sbin/init` (`nix/vm-init.sh`) does the rest:
    - encrypts the data disk with a key it makes from `/dev/urandom` at each
      boot, which never leaves the VM;
-   - allows only ports 8443 (attestation agent) and 9443 (node) inbound;
+   - allows only ports 8443 (attestation agent) and 9443 (node) inbound,
+     and keeps runtimes off the node's private port (8090), which nothing in
+     a runtime needs;
    - starts Tor, and sends everything from a Tor runtime's bridge to Tor's
      TransPort and DNSPort while forwarding none of it (see Egress below);
    - loads the Android image;
