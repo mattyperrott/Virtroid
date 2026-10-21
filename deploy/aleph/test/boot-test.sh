@@ -170,6 +170,12 @@ for i in \$(\$B seq 1 90); do
 done
 echo "boot-test: network: \$resolved"
 echo "\$resolved" | \$B grep -q "^PING dns.google (" || fail "Android cannot resolve names through Tor"
+# Tor maps a .onion name to an address in its VirtualAddrNetwork (10.192.0.0/10)
+# itself, so this checks the mapping without reaching the service.
+onion=duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion
+mapped=\$(C /bin/adb -s 127.0.0.1:15555 shell "ping -c 1 -W 2 \$onion 2>&1 | head -1" | \$B tr -d '\r')
+echo "boot-test: onion: \$mapped"
+echo "\$mapped" | \$B grep -qE "^PING \$onion \\(10\\.(19[2-9]|2[0-5][0-9])\\." || fail "Android cannot resolve .onion names through Tor"
 # As virtnoded's startViewerService does: Android's init starts the viewer
 # service, so it runs with Android's environment (app_process needs
 # ANDROID_ART_ROOT and friends, which docker exec does not pass).

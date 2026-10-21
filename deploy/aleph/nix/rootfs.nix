@@ -41,6 +41,11 @@ let
   # bridges; IsolateClientAddr (the default, stated here) gives each runtime
   # its own circuits. Nothing else listens: no SOCKS, no relay, and the
   # control socket is for virtnoded (root) only.
+  #
+  # DNSPort answers a .onion name with an address from VirtualAddrNetwork,
+  # and a connection to it through TransPort reaches that onion service.
+  # Tor's default range is loopback, which a runtime's packets could never
+  # carry to the VM, so it is 10.192.0.0/10 (outside Docker's pools).
   torrc = pkgs.writeText "torrc" ''
     User tor
     DataDirectory /srv/virtroid/tor
@@ -48,6 +53,9 @@ let
     SocksPort 0
     TransPort 0.0.0.0:9040 IsolateClientAddr
     DNSPort 0.0.0.0:5353 IsolateClientAddr
+    AutomapHostsOnResolve 1
+    AutomapHostsSuffixes .onion
+    VirtualAddrNetworkIPv4 10.192.0.0/10
     ClientOnly 1
     AvoidDiskWrites 1
     Log notice stdout

@@ -83,6 +83,10 @@ traffic leaves the VM:
   and nothing goes out directly, even if Tor is down. Each runtime gets its own
   circuits (`IsolateClientAddr`), and the node asks Tor for new ones whenever a
   Tor runtime starts. A node without Tor refuses to start a Tor runtime.
+  `.onion` names resolve to addresses in `10.192.0.0/10` that Tor maps to
+  the onion service (`AutomapHostsOnResolve`), so apps such as SimpleX can
+  use onion hosts. DNS-over-TLS (port 853) is dropped, so Android's lookups
+  fall back to plain DNS, which Tor answers.
 
 The phone's viewer link is unaffected in both modes: it reaches `virtnoded`
 on the VM's public address and never crosses a runtime bridge.

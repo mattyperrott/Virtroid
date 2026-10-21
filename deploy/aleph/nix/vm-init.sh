@@ -98,6 +98,11 @@ log "node ${node_id} at [${ipv6}]:${public_port}"
 # and nothing of theirs is forwarded, so what Tor cannot carry (UDP, IPv6)
 # never leaves. The phone's viewer link reaches virtnoded on the public
 # interface and never crosses a runtime bridge, so it stays direct.
+#
+# Their DNS-over-TLS (853) is not redirected, so the forward chain drops it
+# and Android falls back to plain DNS, which Tor answers: through TransPort
+# it would reach a real resolver that cannot map .onion names. Connections
+# to the addresses Tor maps them to are ordinary TCP, redirected like any.
 nft -f - <<EOF || die "cannot load the firewall"
 table inet virtroid {
   set tor_bridges {
@@ -123,6 +128,7 @@ table inet virtroid {
   chain prerouting {
     type nat hook prerouting priority -110; policy accept;
     iifname @tor_bridges udp dport 53 redirect to :${tor_dns_port}
+    iifname @tor_bridges tcp dport 853 return
     iifname @tor_bridges meta nfproto ipv4 meta l4proto tcp redirect to :${tor_trans_port}
   }
 }
