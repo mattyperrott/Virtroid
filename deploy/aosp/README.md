@@ -33,7 +33,9 @@ They apply cleanly. Whether they boot has not been tested.
 
 ## What the image adds
 
-1. **A user build without Google.** No Google apps or microG. Built in: the
+1. **A user build without Google, cut to what's needed.** No Google apps or
+   microG, and none of the phone hardware's apps and services: the full
+   keep-and-cut list is in [components.md](components.md). Built in: the
    Virtroid runtime agent as a system app, a launcher (Lawnchair is the
    recommendation; Niagara and Hyperion are proprietary and can't ship),
    F-Droid with its privileged extension, a WebView, a browser and a keyboard.
