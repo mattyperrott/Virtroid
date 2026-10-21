@@ -115,7 +115,7 @@ func TestPostgresSchemaAndLifecycleIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register test node: %v", err)
 	}
-	runtime, err = st.StartRuntimeOnHost(ctx, accountID, runtime.ID, nodeID)
+	runtime, err = st.StartRuntimeOnHost(ctx, accountID, runtime.ID, nodeID, false)
 	if err != nil {
 		t.Fatalf("start runtime: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestPostgresPhotoImportDoesNotConsumeHostCameraSlots(t *testing.T) {
 		accountID := accountIDs[index]
 		go func() {
 			<-start
-			_, startErr := st.StartRuntimeOnHost(ctx, accountID, runtimeID, nodeID)
+			_, startErr := st.StartRuntimeOnHost(ctx, accountID, runtimeID, nodeID, false)
 			results <- startErr
 		}()
 	}
@@ -370,7 +370,7 @@ func TestPostgresSnapshotGenerationRejectionIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register disposable node: %v", err)
 	}
-	runtime, err = st.StartRuntimeOnHost(ctx, accountID, runtime.ID, nodeID)
+	runtime, err = st.StartRuntimeOnHost(ctx, accountID, runtime.ID, nodeID, false)
 	if err != nil {
 		t.Fatalf("assign disposable runtime: %v", err)
 	}

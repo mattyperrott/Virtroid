@@ -274,6 +274,9 @@ type runtimeAssignment struct {
 	EgressMode string `json:"egress_mode"`
 	// RegionSealed is the phone-sealed region (see region.go).
 	RegionSealed *string `json:"region_sealed"`
+	// IdentityResetPersonaVersion is the persona version whose start gives
+	// the runtime's apps new device IDs (see resetAppDeviceIDs).
+	IdentityResetPersonaVersion *int `json:"identity_reset_persona_version"`
 }
 
 type runtimeApp struct {
@@ -1997,6 +2000,15 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 		return fmt.Errorf("prepare session data: %w", err)
 	}
 	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
+	if wantsAppDeviceIDReset(runtime) {
+		reset, err := resetAppDeviceIDs(dataDir, runtime.PersonaVersion)
+		if err != nil {
+			return fmt.Errorf("reset app device IDs: %w", err)
+		}
+		if reset {
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "info", "App device IDs reset for the new persona.")
+		}
+	}
 
 	persona := buildSessionPersona(runtime)
 	personaJSON := marshalSessionPersona(persona)

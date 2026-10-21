@@ -512,6 +512,9 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS egress_mode TEXT NOT NULL DEFAULT 
 -- phones with a key only they and the runtime's VM hold. The control plane
 -- stores and relays it without being able to read it.
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS region_sealed TEXT;
+-- The persona version whose start gives the runtime's apps new device IDs
+-- (ANDROID_ID), set when its owner restarts it with a fresh identity.
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS identity_reset_persona_version INTEGER;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE runtimes ALTER COLUMN android_image SET DEFAULT 'redroid/redroid:14.0.0_64only-latest';

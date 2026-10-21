@@ -370,9 +370,9 @@
     <string name="controls_logs_title">Console Logs</string>
     <string name="controls_logs_body">Boot &amp; network events</string>
     <string name="controls_restart_title">Restart with New Persona</string>
-    <string name="controls_restart_body">Save encrypted state, destroy the current runtime, then boot a fresh device identity</string>
+    <string name="controls_restart_body">Save encrypted state, destroy the current runtime, then boot a fresh device identity with new app device IDs</string>
     <string name="controls_restart_confirm_title">Restart with a new persona?</string>
-    <string name="controls_restart_confirm_body">The current session will end. User data is encrypted and saved, the runtime is destroyed, and a fresh runtime starts with a newly generated device persona.</string>
+    <string name="controls_restart_confirm_body">The current session will end. User data is encrypted and saved, the runtime is destroyed, and a fresh runtime starts with a newly generated device persona. Apps also get new device IDs, so some may ask you to sign in again.</string>
     <string name="controls_restart_complete">Fresh runtime started with a new device persona.</string>
     <string name="controls_restart_timeout">The runtime did not finish shutting down in time.</string>
     <string name="controls_persona_rotation_failed">The runtime restarted without confirming a new persona version.</string>

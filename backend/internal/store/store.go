@@ -26,14 +26,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at, blob_generation_floor, idle_timeout_seconds, egress_mode, region_sealed`
+const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at, blob_generation_floor, idle_timeout_seconds, egress_mode, region_sealed, identity_reset_persona_version`
 
 const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026102101
-	schemaVersionLabel               = "runtime egress and sealed region 2026-10-21"
+	currentSchemaVersion       int64 = 2026102102
+	schemaVersionLabel               = "fresh app device IDs 2026-10-21"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -421,22 +421,26 @@ type Runtime struct {
 	// RegionSealed is the runtime's region (location and timezone), sealed by
 	// the account's phones for the runtime's VM. The control plane only
 	// stores and relays it.
-	RegionSealed        *string           `json:"region_sealed,omitempty"`
-	StorageBytesLimit   *int64            `json:"storage_bytes_limit,omitempty"`
-	StorageBytesUsed    *int64            `json:"storage_bytes_used,omitempty"`
-	StartedAt           *time.Time        `json:"started_at,omitempty"`
-	LoadAverage         *float64          `json:"load_average,omitempty"`
-	ContainerName       *string           `json:"container_name,omitempty"`
-	ADBPort             *int              `json:"adb_port,omitempty"`
-	ViewerPort          *int              `json:"viewer_port,omitempty"`
-	WipeRequested       bool              `json:"wipe_requested"`
-	CleanupPending      bool              `json:"cleanup_pending"`
-	OperationGeneration int64             `json:"operation_generation"`
-	LastError           *string           `json:"last_error,omitempty"`
-	SelectedApps        []AppCatalogEntry `json:"selected_apps,omitempty"`
-	DeletedAt           *time.Time        `json:"deleted_at,omitempty"`
-	CreatedAt           time.Time         `json:"created_at"`
-	UpdatedAt           time.Time         `json:"updated_at"`
+	RegionSealed *string `json:"region_sealed,omitempty"`
+	// IdentityResetPersonaVersion is the persona version whose start gives
+	// the runtime's apps new device IDs (ANDROID_ID): set by a start asking
+	// for a fresh identity, so later starts keep the IDs.
+	IdentityResetPersonaVersion *int              `json:"identity_reset_persona_version,omitempty"`
+	StorageBytesLimit           *int64            `json:"storage_bytes_limit,omitempty"`
+	StorageBytesUsed            *int64            `json:"storage_bytes_used,omitempty"`
+	StartedAt                   *time.Time        `json:"started_at,omitempty"`
+	LoadAverage                 *float64          `json:"load_average,omitempty"`
+	ContainerName               *string           `json:"container_name,omitempty"`
+	ADBPort                     *int              `json:"adb_port,omitempty"`
+	ViewerPort                  *int              `json:"viewer_port,omitempty"`
+	WipeRequested               bool              `json:"wipe_requested"`
+	CleanupPending              bool              `json:"cleanup_pending"`
+	OperationGeneration         int64             `json:"operation_generation"`
+	LastError                   *string           `json:"last_error,omitempty"`
+	SelectedApps                []AppCatalogEntry `json:"selected_apps,omitempty"`
+	DeletedAt                   *time.Time        `json:"deleted_at,omitempty"`
+	CreatedAt                   time.Time         `json:"created_at"`
+	UpdatedAt                   time.Time         `json:"updated_at"`
 }
 
 type RuntimeLogEntry struct {
@@ -3965,14 +3969,17 @@ func (s *Store) VerifiedAccountBlobKeyVerifier(ctx context.Context, accountID, b
 }
 
 func (s *Store) StartRuntime(ctx context.Context, accountID, runtimeID string) (Runtime, error) {
-	return s.startRuntime(ctx, accountID, runtimeID, "")
+	return s.startRuntime(ctx, accountID, runtimeID, "", false)
 }
 
-func (s *Store) StartRuntimeOnHost(ctx context.Context, accountID, runtimeID, hostID string) (Runtime, error) {
-	return s.startRuntime(ctx, accountID, runtimeID, strings.TrimSpace(hostID))
+// StartRuntimeOnHost starts the runtime on the host holding its keys. With
+// freshIdentity its apps also get new device IDs on this start (the
+// runtime's "Restart with New Persona"); an ordinary start keeps them.
+func (s *Store) StartRuntimeOnHost(ctx context.Context, accountID, runtimeID, hostID string, freshIdentity bool) (Runtime, error) {
+	return s.startRuntime(ctx, accountID, runtimeID, strings.TrimSpace(hostID), freshIdentity)
 }
 
-func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, requiredHostID string) (Runtime, error) {
+func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, requiredHostID string, freshIdentity bool) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Runtime{}, err
@@ -4052,6 +4059,7 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 				     wipe_requested = FALSE,
 				     last_error = NULL,
 				     persona_version = CASE WHEN $5 THEN persona_version + 1 ELSE persona_version END,
+				     identity_reset_persona_version = CASE WHEN $6 AND $5 THEN persona_version + 1 ELSE identity_reset_persona_version END,
 				     active_persona_json = CASE WHEN $5 THEN NULL ELSE active_persona_json END,
 				     container_name = CASE WHEN $5 THEN NULL ELSE container_name END,
 				     adb_port = CASE WHEN $5 THEN NULL ELSE adb_port END,
@@ -4065,6 +4073,7 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 		hostID,
 		viewerPort,
 		rotatePersona,
+		freshIdentity,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
@@ -4073,6 +4082,9 @@ func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, required
 	}
 
 	logMessage := fmt.Sprintf("Runtime start requested. persona_version=%d.", runtime.PersonaVersion)
+	if freshIdentity {
+		logMessage += " Apps get new device IDs."
+	}
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", logMessage); err != nil {
 		return Runtime{}, err
 	}
@@ -8149,6 +8161,7 @@ func scanRuntimeDest(runtime *Runtime) []any {
 		&runtime.IdleTimeoutSeconds,
 		&runtime.EgressMode,
 		&runtime.RegionSealed,
+		&runtime.IdentityResetPersonaVersion,
 	}
 }
 

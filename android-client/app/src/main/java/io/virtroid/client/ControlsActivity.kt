@@ -394,7 +394,7 @@ class ControlsActivity : AppCompatActivity() {
                         onWaiting = { _, _ -> },
                         beforeAttempt = { withStarted { } },
                     ) {
-                        api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
+                        api.startRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey, freshIdentity = true)
                     }
                     identityPasswordStore.saveConfigured(accountId, deviceId)
                     val ready = waitForRuntimeReady(accountId, deviceId, current.id)

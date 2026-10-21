@@ -1816,6 +1816,8 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		BlobKeyVerifier    string          `json:"blob_key_verifier"`
 		RuntimeKeyVerifier string          `json:"runtime_key_verifier"`
 		BlobKeyEnvelope    blobKeyEnvelope `json:"blob_key_envelope"`
+		// FreshIdentity gives the runtime's apps new device IDs on this start.
+		FreshIdentity bool `json:"fresh_identity"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -1833,7 +1835,7 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := a.store.StartRuntimeOnHost(r.Context(), actor.accountID, runtimeID, lease.hostID)
+	runtime, err := a.store.StartRuntimeOnHost(r.Context(), actor.accountID, runtimeID, lease.hostID, req.FreshIdentity)
 	if errors.Is(err, store.ErrNoReadyHost) {
 		a.activeBlobKeys.clear(runtimeID)
 		a.writeNoReadyHost(w, r, actor.accountID, err)

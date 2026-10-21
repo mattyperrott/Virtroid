@@ -2396,7 +2396,7 @@ func TestStartRuntimeSerializesTransitionAndMakesRetryIdempotent(t *testing.T) {
 		WithArgs(hostID, true, true, false, runtimeID, accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(hostID))
 	mock.ExpectQuery(`UPDATE runtimes(?s:.*?)started_at = NOW\(\)`).
-		WithArgs(accountID, runtimeID, hostID, sql.NullInt32{Int32: 46000, Valid: true}, true).
+		WithArgs(accountID, runtimeID, hostID, sql.NullInt32{Int32: 46000, Valid: true}, true, false).
 		WillReturnRows(runtimeStartRows(now, runtimeID, accountID, hostID, 2, 46000))
 	mock.ExpectExec("INSERT INTO runtime_logs").
 		WithArgs(runtimeID, "user", "info", "Runtime start requested. persona_version=2.").
@@ -4157,6 +4157,7 @@ func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, person
 		DefaultRuntimeIdleTimeout,
 		"direct",
 		nil,
+		nil,
 	)
 }
 
@@ -4263,6 +4264,7 @@ func runtimeRowValues(
 		int64(0),
 		DefaultRuntimeIdleTimeout,
 		"direct",
+		nil,
 		nil,
 	}
 }
@@ -4397,6 +4399,7 @@ func runtimeColumnNames() []string {
 		"idle_timeout_seconds",
 		"egress_mode",
 		"region_sealed",
+		"identity_reset_persona_version",
 	}
 }
 

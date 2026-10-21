@@ -928,14 +928,16 @@ class VirtroidApi(
         ).toRuntimeSummary()
     }
 
+    /** With [freshIdentity], the runtime's apps also get new device IDs (ANDROID_ID) on this start. */
     suspend fun startRuntime(
         baseUrl: String,
         accountId: String,
         deviceId: String,
         runtimeId: String,
         blobAccessKey: String,
+        freshIdentity: Boolean = false,
     ): RuntimeSummary =
-        mutateRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey, "start")
+        mutateRuntime(baseUrl, accountId, deviceId, runtimeId, blobAccessKey, "start", freshIdentity)
 
     suspend fun stopRuntime(
         baseUrl: String,
@@ -1537,6 +1539,7 @@ class VirtroidApi(
         runtimeId: String,
         blobAccessKey: String,
         action: String,
+        freshIdentity: Boolean = false,
     ): RuntimeSummary = withContext(Dispatchers.IO) {
         val blobKeyVerifier = IdentityCrypto.blobKeyVerifier(blobAccessKey)
         val lease = requestBlobKeyLease(baseUrl, accountId, deviceId, runtimeId, action, blobKeyVerifier)
@@ -1545,6 +1548,7 @@ class VirtroidApi(
             .put("blob_key_verifier", blobKeyVerifier)
             .put("blob_key_envelope", envelope.envelope)
             .apply { envelope.runtimeKeyVerifier?.let { put("runtime_key_verifier", it) } }
+            .apply { if (freshIdentity) put("fresh_identity", true) }
             .toString()
 
         val payload = executeJson(
