@@ -94,7 +94,9 @@ memory() {
 }
 for i in \$(\$B seq 1 300); do
   kill -0 \$init_pid 2>/dev/null || fail "/sbin/init exited"
-  C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 && break
+  # The init script starts virtnoded right after loading the image; its log
+  # appearing means the node has started.
+  C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 && C /bin/test -e /run/virtnoded.log && break
   \$B sleep 2
 done
 C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 || fail "runtime image never loaded"
@@ -111,6 +113,11 @@ C /bin/cat /run/virtnoded.log | \$B tail -15
 
 echo "boot-test: --- node assets ---"
 A=/srv/virtroid/assets
+# virtnoded writes these just after it starts.
+for i in \$(\$B seq 1 30); do
+  C /bin/bash -c "cd \$A && test -s scrcpy-server.jar && test -s virtroid-viewercrypt && test -s virtroid-viewer.sh && test -s virtroid-viewer.rc" 2>/dev/null && break
+  \$B sleep 2
+done
 C /bin/ls -la \$A
 for f in scrcpy-server.jar virtroid-viewercrypt virtroid-viewer.sh virtroid-viewer.rc; do
   C /bin/test -s \$A/\$f || fail "virtnoded did not write \$A/\$f"
