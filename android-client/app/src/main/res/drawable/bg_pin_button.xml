@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape
+<!-- A PIN key: a flat tile with a soft lime ripple where it's pressed. -->
+<ripple
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid
-        android:color="@color/v_surface" />
-</shape>
+    android:color="@color/v_accent_soft">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/v_surface" />
+        </shape>
+    </item>
+</ripple>

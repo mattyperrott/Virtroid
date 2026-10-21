@@ -21,6 +21,7 @@ import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.VirtroidMotion
 
 class UnlockActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPinAuthenticationBinding
@@ -31,6 +32,20 @@ class UnlockActivity : AppCompatActivity() {
     private var showingPassphrase = false
     private var returnToPrevious = false
     private var requiredPinLength = AppLockStore.LEGACY_PIN_LENGTH
+    // Set while a wrong PIN shakes or a right one plays out, so taps then are ignored.
+    private var inputLocked = false
+    private val pinDots by lazy {
+        listOf(
+            binding.pinDot1,
+            binding.pinDot2,
+            binding.pinDot3,
+            binding.pinDot4,
+            binding.pinDot5,
+            binding.pinDot6,
+            binding.pinDot7,
+            binding.pinDot8,
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,12 +89,16 @@ class UnlockActivity : AppCompatActivity() {
         )
         pinButtons.forEach { (button, value) ->
             button.contentDescription = value
+            VirtroidMotion.pressFeedback(button)
             button.setOnClickListener { appendPin(value) }
         }
+        VirtroidMotion.pressFeedback(binding.pinDeleteButton)
         binding.pinDeleteButton.setOnClickListener {
-            if (pinBuffer.isNotEmpty()) {
-                pinBuffer.deleteAt(pinBuffer.lastIndex)
+            if (!inputLocked && pinBuffer.isNotEmpty()) {
+                val removed = pinBuffer.lastIndex
+                pinBuffer.deleteAt(removed)
                 updateDots()
+                VirtroidMotion.dip(pinDots[removed])
             }
         }
         binding.unlockButton.setOnClickListener { unlockWithPassphrase() }
@@ -90,26 +109,51 @@ class UnlockActivity : AppCompatActivity() {
         renderMode()
         renderBiometric()
         updateDots()
+        if (savedInstanceState == null) {
+            val rows = (0 until binding.pinPad.childCount).map { binding.pinPad.getChildAt(it) }
+            VirtroidMotion.riseIn(listOf(binding.pinHeader) + rows)
+        }
     }
 
     private fun appendPin(value: String) {
-        if (showingPassphrase || pinBuffer.length >= requiredPinLength) return
+        if (inputLocked || showingPassphrase || pinBuffer.length >= requiredPinLength) return
         pinBuffer.append(value)
         updateDots()
+        VirtroidMotion.popIn(pinDots[pinBuffer.lastIndex])
         if (pinBuffer.length == requiredPinLength) {
             if (showLockoutIfNeeded()) {
-                pinBuffer = StringBuilder()
-                updateDots()
+                rejectPin()
                 return
             }
             if (appLockStore.verify(pinBuffer.toString())) {
-                launchMain()
+                acceptPin()
             } else {
-                pinBuffer = StringBuilder()
-                updateDots()
+                rejectPin()
                 toast(getString(R.string.lock_invalid_pin))
             }
         }
+    }
+
+    /** A wrong PIN: the dots turn red and shake, then empty. */
+    private fun rejectPin() {
+        inputLocked = true
+        pinDots.take(requiredPinLength).forEach { it.setBackgroundResource(R.drawable.bg_pin_dot_error) }
+        VirtroidMotion.rejectHaptic(binding.pinDotsRow)
+        VirtroidMotion.shake(binding.pinDotsRow) {
+            pinBuffer = StringBuilder()
+            updateDots()
+            inputLocked = false
+        }
+    }
+
+    /** The right PIN: the dots ripple and the lock pulses before the app opens. */
+    private fun acceptPin() {
+        inputLocked = true
+        pinBuffer = StringBuilder(pinBuffer.length).append("x".repeat(pinBuffer.length))
+        VirtroidMotion.confirmHaptic(binding.pinDotsRow)
+        VirtroidMotion.pulse(binding.iconLock)
+        val waveMs = VirtroidMotion.wave(pinDots.take(requiredPinLength))
+        binding.root.postDelayed({ launchMain() }, waveMs)
     }
 
     private fun unlockWithPassphrase() {
@@ -120,6 +164,8 @@ class UnlockActivity : AppCompatActivity() {
         if (appLockStore.verify(value)) {
             launchMain()
         } else {
+            VirtroidMotion.rejectHaptic(binding.passphraseInput)
+            VirtroidMotion.shake(binding.passphraseInput)
             toast(getString(R.string.lock_invalid_passphrase))
         }
     }
@@ -214,17 +260,7 @@ class UnlockActivity : AppCompatActivity() {
             pinBuffer.length,
             requiredPinLength,
         )
-        val dots = listOf(
-            binding.pinDot1,
-            binding.pinDot2,
-            binding.pinDot3,
-            binding.pinDot4,
-            binding.pinDot5,
-            binding.pinDot6,
-            binding.pinDot7,
-            binding.pinDot8,
-        )
-        dots.forEachIndexed { index, view ->
+        pinDots.forEachIndexed { index, view ->
             view.isVisible = index < requiredPinLength
             view.setBackgroundResource(
                 if (index < pinBuffer.length) R.drawable.bg_pin_dot_active else R.drawable.bg_pin_dot_inactive,

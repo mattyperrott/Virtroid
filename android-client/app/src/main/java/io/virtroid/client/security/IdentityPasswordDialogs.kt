@@ -76,10 +76,11 @@ suspend fun AppCompatActivity.promptIdentityPassword(
 suspend fun AppCompatActivity.promptPinCode(
     title: String,
     hint: String,
+    pinLength: Int = AppLockStore.NEW_PIN_LENGTH,
 ): String? = promptSecureEntry(
     title = title,
     body = hint,
-    fieldHint = getString(R.string.lock_pin_field_hint),
+    fieldHint = getString(R.string.lock_pin_field_hint, pinLength),
     inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD,
 )
 
