@@ -4155,6 +4155,8 @@ func runtimeStartRows(now time.Time, runtimeID, accountID, hostID string, person
 		now,
 		int64(0),
 		DefaultRuntimeIdleTimeout,
+		"direct",
+		nil,
 	)
 }
 
@@ -4260,6 +4262,8 @@ func runtimeRowValues(
 		now,
 		int64(0),
 		DefaultRuntimeIdleTimeout,
+		"direct",
+		nil,
 	}
 }
 
@@ -4391,6 +4395,8 @@ func runtimeColumnNames() []string {
 		"updated_at",
 		"blob_generation_floor",
 		"idle_timeout_seconds",
+		"egress_mode",
+		"region_sealed",
 	}
 }
 
@@ -4468,5 +4474,40 @@ func TestRecoveryLoginKeyFailuresLockRecovery(t *testing.T) {
 	}
 	if err := check(t, 0, time.Now().Add(time.Minute), authKey, func(sqlmock.Sqlmock) {}); !errors.Is(err, ErrRecoveryLocked) {
 		t.Fatalf("while locked = %v", err)
+	}
+}
+
+func TestNormalizeEgressModeRefusesUnknownModes(t *testing.T) {
+	for value, want := range map[string]string{"": "direct", "direct": "direct", " TOR ": "tor"} {
+		got, err := normalizeEgressMode(value)
+		if err != nil || got != want {
+			t.Fatalf("normalizeEgressMode(%q) = %q, %v; want %q", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"vpn", "tor2", "direct " + "x"} {
+		if _, err := normalizeEgressMode(value); !errors.Is(err, ErrRuntimeEgressMode) {
+			t.Fatalf("normalizeEgressMode(%q) error = %v, want ErrRuntimeEgressMode", value, err)
+		}
+	}
+	if _, err := normalizedCreateInput(CreateRuntimeInput{EgressMode: "vpn"}); !errors.Is(err, ErrRuntimeEgressMode) {
+		t.Fatalf("create with an unknown egress mode = %v", err)
+	}
+}
+
+func TestValidRegionSealedChecksShapeOnly(t *testing.T) {
+	sealed := append([]byte(sealedRegionMagic), bytes.Repeat([]byte{1}, 12+16+40)...)
+	if !validRegionSealed(base64.RawURLEncoding.EncodeToString(sealed)) {
+		t.Fatal("a sealed region was refused")
+	}
+	for name, value := range map[string]string{
+		"plaintext":  base64.RawURLEncoding.EncodeToString([]byte(`{"latitude":52.52,"longitude":13.40}`)),
+		"no tag":     base64.RawURLEncoding.EncodeToString(append([]byte(sealedRegionMagic), make([]byte, 20)...)),
+		"not base64": "not base64!",
+		"padded":     base64.URLEncoding.EncodeToString(sealed),
+		"too large":  base64.RawURLEncoding.EncodeToString(append([]byte(sealedRegionMagic), make([]byte, maxSealedRegionBytes)...)),
+	} {
+		if validRegionSealed(value) {
+			t.Fatalf("%s region was accepted", name)
+		}
 	}
 }

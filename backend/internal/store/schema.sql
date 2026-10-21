@@ -505,6 +505,13 @@ ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS blob_generation_floor BIGINT NOT N
 -- How long the runtime keeps running with no viewer open before it is stopped
 -- and saved; its owner picks one of the periods the control plane offers.
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS idle_timeout_seconds INTEGER NOT NULL DEFAULT 1800;
+-- Where the runtime's own internet traffic leaves its VM: 'direct', or 'tor'
+-- through the VM's Tor client. The phone's viewer link is direct either way.
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS egress_mode TEXT NOT NULL DEFAULT 'direct';
+-- The runtime's region (location and timezone), sealed by the account's
+-- phones with a key only they and the runtime's VM hold. The control plane
+-- stores and relays it without being able to read it.
+ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS region_sealed TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE runtimes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE runtimes ALTER COLUMN android_image SET DEFAULT 'redroid/redroid:14.0.0_64only-latest';

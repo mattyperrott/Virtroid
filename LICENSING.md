@@ -45,6 +45,11 @@ In particular:
 - Dependencies, runtime images, and applications installed inside a runtime
   retain their own licenses. Availability through VirtRoid does not make them
   subject to the project license.
+- The Android client's city list,
+  `android-client/app/src/main/assets/cities.tsv`, is derived from
+  [GeoNames](https://www.geonames.org/) (`cities15000`, 2026-10-21) and is
+  available under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/);
+  the app credits GeoNames where the list is used.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is adapted from the Contributor
   Covenant 2.1 and retains its attribution. The upstream covenant text remains
   available under its [CC BY 4.0 terms][covenant-license].

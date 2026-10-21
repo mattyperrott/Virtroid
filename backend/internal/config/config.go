@@ -108,20 +108,27 @@ type NodeConfig struct {
 	// SNPAttestation is "auto", "required", or "off": whether the node proves
 	// its TLS key lives in an AMD SEV-SNP VM. SNPProduct overrides the EPYC
 	// generation read from the report.
-	SNPAttestation                string
-	SNPReportRoot                 string
-	SNPProduct                    string
-	ADBPath                       string
-	ADBHost                       string
-	BlobStoreKind                 string
-	RenterdWorkerURL              string
-	RenterdPassword               string
-	RenterdBucket                 string
-	RenterdWalletAddress          string
-	RenterdMinShards              int
-	RenterdTotalShards            int
-	RenterdContractSet            string
-	DockerNetworkName             string
+	SNPAttestation       string
+	SNPReportRoot        string
+	SNPProduct           string
+	ADBPath              string
+	ADBHost              string
+	BlobStoreKind        string
+	RenterdWorkerURL     string
+	RenterdPassword      string
+	RenterdBucket        string
+	RenterdWalletAddress string
+	RenterdMinShards     int
+	RenterdTotalShards   int
+	RenterdContractSet   string
+	DockerNetworkName    string
+	// AgentOnHost is set when the node runs on the VM itself rather than in
+	// a container: it reaches each runtime's bridge without joining it.
+	AgentOnHost bool
+	// TorEgress is set when the VM runs a Tor client and a firewall that
+	// sends the traffic of runtimes using it there and nowhere else.
+	TorEgress                     bool
+	TorControlSocket              string
 	ControlPlaneCallbackPublicKey string
 	RegistrationSecret            string
 	PrivateKey                    string
@@ -353,6 +360,9 @@ func LoadNode() NodeConfig {
 		RenterdTotalShards:            renterdTotalShards,
 		RenterdContractSet:            envOrDefault("NODE_SIA_RENTERD_CONTRACT_SET", ""),
 		DockerNetworkName:             envOrDefault("NODE_DOCKER_NETWORK", ""),
+		AgentOnHost:                   parseEnvBool("NODE_AGENT_ON_HOST", false),
+		TorEgress:                     parseEnvBool("NODE_TOR_EGRESS", false),
+		TorControlSocket:              envOrDefault("NODE_TOR_CONTROL_SOCKET", "/run/tor/control"),
 		ControlPlaneCallbackPublicKey: strings.TrimSpace(os.Getenv("CONTROL_PLANE_CALLBACK_PUBLIC_KEY_B64")),
 		RegistrationSecret:            strings.TrimSpace(os.Getenv("NODE_REGISTRATION_SECRET")),
 		PrivateKey:                    os.Getenv("NODE_PRIVATE_KEY_B64"),

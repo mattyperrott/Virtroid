@@ -54,6 +54,10 @@ data class RuntimeSummary(
     val blobGenerationFloor: Long,
     /** How long it keeps running with no viewer open before it stops and saves. */
     val idleTimeoutSeconds: Int,
+    /** "direct", or "tor" when its own traffic leaves through Tor. */
+    val egressMode: String,
+    /** Its region, sealed for its VM (RegionSeal); null when it has none. */
+    val regionSealed: String?,
     val startedAt: String?,
     val loadAverage: Double?,
     val adbPort: Int?,
@@ -785,6 +789,7 @@ class VirtroidApi(
         blobRetainDays: Int,
         appPackages: Collection<String> = emptyList(),
         idleTimeoutSeconds: Int = RuntimeIdlePeriods.DEFAULT_SECONDS,
+        egressMode: String = RuntimeEgress.DIRECT,
     ): RuntimeSummary =
         withContext(Dispatchers.IO) {
             val requestBody = JSONObject()
@@ -801,6 +806,7 @@ class VirtroidApi(
                 .put("blob_retain_days", blobRetainDays)
                 .put("app_packages", JSONArray(appPackages.toList()))
                 .put("idle_timeout_seconds", idleTimeoutSeconds)
+                .put("egress_mode", egressMode)
                 .toString()
 
             val payload = executeJson(
@@ -866,6 +872,49 @@ class VirtroidApi(
             .put("account_id", accountId)
             .put("device_id", deviceId)
             .put("idle_timeout_seconds", idleTimeoutSeconds)
+            .toString()
+        executeJson(
+            signedJsonRequest(
+                baseUrl = baseUrl,
+                pathAndQuery = "/api/v1/me/runtimes/$runtimeId",
+                method = "PATCH",
+                accountId = accountId,
+                deviceId = deviceId,
+                body = requestBody,
+            ),
+        ).toRuntimeSummary()
+    }
+
+    /** Replaces the runtime's sealed region, or clears it with null; allowed while it runs. */
+    suspend fun updateRuntimeRegion(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        regionSealed: String?,
+    ): RuntimeSummary = updateRuntimeField(baseUrl, accountId, deviceId, runtimeId, "region_sealed", regionSealed.orEmpty())
+
+    /** Changes where the runtime's own traffic leaves; only while it is stopped. */
+    suspend fun updateRuntimeEgress(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        egressMode: String,
+    ): RuntimeSummary = updateRuntimeField(baseUrl, accountId, deviceId, runtimeId, "egress_mode", egressMode)
+
+    private suspend fun updateRuntimeField(
+        baseUrl: String,
+        accountId: String,
+        deviceId: String,
+        runtimeId: String,
+        field: String,
+        value: String,
+    ): RuntimeSummary = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject()
+            .put("account_id", accountId)
+            .put("device_id", deviceId)
+            .put(field, value)
             .toString()
         executeJson(
             signedJsonRequest(
@@ -1729,6 +1778,8 @@ class VirtroidApi(
             blobSnapshotGeneration = blobManifest?.optLong("generation", 0L) ?: 0L,
             blobGenerationFloor = optLong("blob_generation_floor", 0L),
             idleTimeoutSeconds = optInt("idle_timeout_seconds", RuntimeIdlePeriods.DEFAULT_SECONDS),
+            egressMode = optString("egress_mode", RuntimeEgress.DIRECT).ifBlank { RuntimeEgress.DIRECT },
+            regionSealed = nullableString("region_sealed"),
             startedAt = nullableString("started_at"),
             loadAverage = if (has("load_average") && !isNull("load_average")) optDouble("load_average") else null,
             adbPort = optInt("adb_port").takeIf { has("adb_port") && !isNull("adb_port") },

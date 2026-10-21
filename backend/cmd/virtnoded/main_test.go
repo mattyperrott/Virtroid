@@ -1121,7 +1121,7 @@ func TestEnsureRuntimeNetworkReconnectsRecreatedNodeAgent(t *testing.T) {
 		}
 	})}
 
-	got, err := node.ensureRuntimeNetwork(context.Background(), runtimeID)
+	got, err := node.ensureRuntimeNetwork(context.Background(), runtimeID, "")
 	if err != nil {
 		t.Fatalf("ensureRuntimeNetwork: %v", err)
 	}

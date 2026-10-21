@@ -47,6 +47,10 @@
             android:exported="false"
             android:theme="@style/Theme.Virtroid.Modal" />
         <activity
+            android:name=".LocationPickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Virtroid.Modal" />
+        <activity
             android:name=".OnboardingActivity"
             android:exported="false" />
         <activity

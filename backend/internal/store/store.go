@@ -26,14 +26,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at, blob_generation_floor, idle_timeout_seconds`
+const runtimeColumns = `id, account_id, name, status, desired_state, connection_status, host_id, persona_version, active_persona_json, android_image, android_version, width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days, blob_store_kind, blob_manifest_json, blob_host_id, blob_last_snapshot_at, started_at, load_average, container_name, adb_port, viewer_port, wipe_requested, cleanup_pending, operation_generation, last_error, deleted_at, created_at, updated_at, blob_generation_floor, idle_timeout_seconds, egress_mode, region_sealed`
 
 const (
 	// "Virtroid" encoded as a positive signed 64-bit integer. PostgreSQL holds
 	// this transaction-scoped advisory lock while schema changes are applied.
 	schemaMigrationLockKey     int64 = 0x56697274726f6964
-	currentSchemaVersion       int64 = 2026101901
-	schemaVersionLabel               = "recovery login keys 2026-10-19"
+	currentSchemaVersion       int64 = 2026102101
+	schemaVersionLabel               = "runtime egress and sealed region 2026-10-21"
 	runtimeLogRetentionRows          = 2000
 	runtimeLogSourceRunes            = 64
 	runtimeLogLevelRunes             = 32
@@ -108,6 +108,9 @@ var (
 	ErrRuntimeSnapshotRollback    = errors.New("runtime snapshot generation is not monotonic")
 	ErrRuntimeProfile             = errors.New("runtime profile is not allowed")
 	ErrRuntimeIdleTimeout         = errors.New("runtime inactivity period is not one of the offered choices")
+	ErrRuntimeEgressActive        = errors.New("runtime egress can only be changed while the runtime is stopped")
+	ErrRuntimeEgressMode          = errors.New("runtime egress mode must be direct or tor")
+	ErrRuntimeRegion              = errors.New("runtime region must be sealed by the phone")
 	ErrSecurityEventRateLimit     = errors.New("security event rate limit exceeded")
 	ErrAccountNotFound            = errors.New("account not found")
 	ErrRuntimeBlobOwner           = errors.New("runtime local snapshot owner is unknown")
@@ -411,7 +414,14 @@ type Runtime struct {
 	BlobGenerationFloor int64 `json:"blob_generation_floor"`
 	// IdleTimeoutSeconds is how long the runtime keeps running with no viewer
 	// open before it is stopped and saved.
-	IdleTimeoutSeconds  int               `json:"idle_timeout_seconds"`
+	IdleTimeoutSeconds int `json:"idle_timeout_seconds"`
+	// EgressMode is where the runtime's own traffic leaves its VM: "direct",
+	// or "tor" through the VM's Tor client. The viewer link is direct either way.
+	EgressMode string `json:"egress_mode"`
+	// RegionSealed is the runtime's region (location and timezone), sealed by
+	// the account's phones for the runtime's VM. The control plane only
+	// stores and relays it.
+	RegionSealed        *string           `json:"region_sealed,omitempty"`
 	StorageBytesLimit   *int64            `json:"storage_bytes_limit,omitempty"`
 	StorageBytesUsed    *int64            `json:"storage_bytes_used,omitempty"`
 	StartedAt           *time.Time        `json:"started_at,omitempty"`
@@ -479,6 +489,8 @@ type CreateRuntimeInput struct {
 	AppPackages []string
 	// IdleTimeoutSeconds is one of RuntimeIdleTimeouts; zero means the default.
 	IdleTimeoutSeconds int
+	// EgressMode is "direct" (the default) or "tor".
+	EgressMode string
 }
 
 type UpdateRuntimeInput struct {
@@ -495,6 +507,11 @@ type UpdateRuntimeInput struct {
 	BlobRetainDays   *int
 	// IdleTimeoutSeconds, when set, must be one of RuntimeIdleTimeouts.
 	IdleTimeoutSeconds *int
+	// EgressMode, when set, is "direct" or "tor"; only while stopped.
+	EgressMode *string
+	// RegionSealed, when set, replaces the sealed region; "" clears it. It
+	// can change while the runtime runs.
+	RegionSealed *string
 }
 
 type UpdateAccountStorageInput struct {
@@ -1550,8 +1567,8 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		fmt.Sprintf(`INSERT INTO runtimes (
 			id, account_id, name, status, desired_state, connection_status, android_image, android_version,
 			width_px, height_px, density_dpi, audio_enabled, camera_mode, file_mode, blob_auto_snapshot, blob_retain_days,
-			idle_timeout_seconds
-		) VALUES ($1, $2, $3, 'stopped', 'stopped', 'offline', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			idle_timeout_seconds, egress_mode
+		) VALUES ($1, $2, $3, 'stopped', 'stopped', 'offline', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING %s`, runtimeColumns),
 		runtimeID,
 		accountID,
@@ -1567,6 +1584,7 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		input.BlobAutoSnapshot,
 		input.BlobRetainDays,
 		input.IdleTimeoutSeconds,
+		input.EgressMode,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		return Runtime{}, err
 	}
@@ -1788,6 +1806,28 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 	if mediaSettingsChanged && !strings.EqualFold(strings.TrimSpace(current.DesiredState), "stopped") {
 		return Runtime{}, ErrRuntimeMediaSettingsActive
 	}
+	if input.EgressMode != nil {
+		egressMode, err := normalizeEgressMode(*input.EgressMode)
+		if err != nil {
+			return Runtime{}, err
+		}
+		// The runtime's network is built for its mode when it starts.
+		if egressMode != current.EgressMode && !strings.EqualFold(strings.TrimSpace(current.DesiredState), "stopped") {
+			return Runtime{}, ErrRuntimeEgressActive
+		}
+		current.EgressMode = egressMode
+	}
+	if input.RegionSealed != nil {
+		regionSealed := strings.TrimSpace(*input.RegionSealed)
+		if regionSealed == "" {
+			current.RegionSealed = nil
+		} else {
+			if !validRegionSealed(regionSealed) {
+				return Runtime{}, ErrRuntimeRegion
+			}
+			current.RegionSealed = &regionSealed
+		}
+	}
 	if input.AudioEnabled != nil {
 		current.AudioEnabled = *input.AudioEnabled
 	}
@@ -1846,6 +1886,8 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		     blob_auto_snapshot = $12,
 		     blob_retain_days = $13,
 		     idle_timeout_seconds = $14,
+		     egress_mode = $15,
+		     region_sealed = $16,
 		     updated_at = NOW()
 		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'
 		 RETURNING %s`, runtimeColumns),
@@ -1863,6 +1905,8 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		current.BlobAutoSnapshot,
 		current.BlobRetainDays,
 		current.IdleTimeoutSeconds,
+		current.EgressMode,
+		current.RegionSealed,
 	).Scan(scanRuntimeDest(&runtime)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Runtime{}, ErrRuntimeNotFound
@@ -1871,7 +1915,7 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 	}
 
 	message := fmt.Sprintf(
-		"Settings updated. image=%s version=%s display=%dx%d@%ddpi camera=%s files=%s snapshots=%t/%dd",
+		"Settings updated. image=%s version=%s display=%dx%d@%ddpi camera=%s files=%s snapshots=%t/%dd egress=%s region=%s",
 		runtime.AndroidImage,
 		runtime.AndroidVersion,
 		runtime.WidthPx,
@@ -1881,6 +1925,8 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		runtime.FileMode,
 		runtime.BlobAutoSnapshot,
 		runtime.BlobRetainDays,
+		runtime.EgressMode,
+		map[bool]string{true: "sealed", false: "off"}[runtime.RegionSealed != nil],
 	)
 	if err := appendRuntimeLogTX(ctx, tx, runtime.ID, "user", "info", message); err != nil {
 		return Runtime{}, err
@@ -8101,6 +8147,8 @@ func scanRuntimeDest(runtime *Runtime) []any {
 		&runtime.UpdatedAt,
 		&runtime.BlobGenerationFloor,
 		&runtime.IdleTimeoutSeconds,
+		&runtime.EgressMode,
+		&runtime.RegionSealed,
 	}
 }
 
@@ -8131,6 +8179,11 @@ func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error)
 	if !validRuntimeIdleTimeout(input.IdleTimeoutSeconds) {
 		return CreateRuntimeInput{}, ErrRuntimeIdleTimeout
 	}
+	egressMode, err := normalizeEgressMode(input.EgressMode)
+	if err != nil {
+		return CreateRuntimeInput{}, err
+	}
+	input.EgressMode = egressMode
 	androidImage, err := normalizeAndroidImage(input.AndroidImage)
 	if err != nil {
 		return CreateRuntimeInput{}, err
@@ -8292,6 +8345,38 @@ func allocateViewerPortTX(ctx context.Context, tx *sql.Tx) (int, error) {
 	}
 
 	return 0, errors.New("no viewer ports available")
+}
+
+// normalizeEgressMode refuses unknown modes rather than falling back, so a
+// runtime meant to use Tor never starts direct by mistake.
+func normalizeEgressMode(value string) (string, error) {
+	switch mode := strings.ToLower(strings.TrimSpace(value)); mode {
+	case "":
+		return "direct", nil
+	case "direct", "tor":
+		return mode, nil
+	default:
+		return "", ErrRuntimeEgressMode
+	}
+}
+
+// Phones seal a runtime's region (sealedRegionMagic, a nonce, then AES-GCM)
+// with a key derived from the runtime's viewer key; only the runtime's VM can
+// open it. The control plane checks its shape and size, never its contents.
+const (
+	sealedRegionMagic    = "VRTREG1\n"
+	maxSealedRegionBytes = 2048
+)
+
+func validRegionSealed(value string) bool {
+	if len(value) > base64.RawURLEncoding.EncodedLen(maxSealedRegionBytes) {
+		return false
+	}
+	sealed, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return false
+	}
+	return len(sealed) >= len(sealedRegionMagic)+12+16 && string(sealed[:len(sealedRegionMagic)]) == sealedRegionMagic
 }
 
 func normalizeChoice(value, fallback string, allowed ...string) string {

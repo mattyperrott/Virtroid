@@ -716,4 +716,45 @@
     <string name="update_downloading">Downloading the update…</string>
     <string name="update_failed">The update was not installed.</string>
     <string name="update_allow_installs">Allow Virtroid to install updates, then tap Update again.</string>
+
+    <!-- Region (location and timezone) and Tor egress -->
+    <string name="location_picker_title">Location</string>
+    <string name="location_picker_subtitle">Where the runtime believes it is</string>
+    <string name="location_search_hint">Search cities</string>
+    <string name="location_search_empty">No city matches “%1$s”.</string>
+    <string name="location_city_detail">%1$s · %2$s</string>
+    <string name="location_coordinates_title">Enter coordinates</string>
+    <string name="location_coordinates_subtitle">Any place, by latitude and longitude</string>
+    <string name="location_coordinates_body">Decimal degrees, e.g. 52.52 and 13.405. The runtime takes the timezone of the nearest city.</string>
+    <string name="location_latitude_hint">Latitude (−90 to 90)</string>
+    <string name="location_longitude_hint">Longitude (−180 to 180)</string>
+    <string name="location_coordinates_invalid">Enter a latitude from −90 to 90 and a longitude from −180 to 180.</string>
+    <string name="location_coordinates_label">%1$s (near %2$s)</string>
+    <string name="location_off_title">No location</string>
+    <string name="location_off_subtitle">Apps find no location; the timezone stays as it is</string>
+    <string name="location_picker_note">The city list is stored on this phone (GeoNames, CC BY 4.0), so choosing sends nothing. Your choice is sealed for the runtime\'s server: Virtroid can\'t read it. Apps see its timezone now, and its location once the runtime\'s Android adds a location provider.</string>
+    <string name="location_none">Off</string>
+    <string name="new_runtime_region_heading">LOCATION &amp; NETWORK</string>
+    <string name="new_runtime_location_title">Location</string>
+    <string name="new_runtime_tor_title">Route through Tor</string>
+    <string name="new_runtime_tor_subtitle">Only the runtime\'s own traffic. Slower; calls and some sites won\'t work.</string>
+    <string name="new_runtime_region_failed">The runtime was created, but its location wasn\'t saved: %1$s</string>
+    <string name="controls_location_title">Location</string>
+    <string name="controls_location_sealed">Set (unlock to see where)</string>
+    <string name="controls_location_updated">Location updated</string>
+    <string name="controls_location_cleared">Location turned off</string>
+    <string name="controls_tor_title">Route through Tor</string>
+    <string name="controls_tor_on">On: only TCP and DNS leave, through Tor</string>
+    <string name="controls_tor_off">Off: traffic leaves directly from the runtime\'s server</string>
+    <string name="controls_tor_stop_first">Stop the runtime to change how its traffic leaves</string>
+    <string name="controls_tor_enabled">Tor is on from the next start</string>
+    <string name="controls_tor_disabled">Tor is off from the next start</string>
+    <string name="tor_info_direct_title">Your connection stays direct</string>
+    <string name="tor_info_direct_body">Only the runtime\'s own internet traffic goes through Tor. Your phone\'s link to the runtime doesn\'t.</string>
+    <string name="tor_info_sealed_title">Nothing goes around it</string>
+    <string name="tor_info_sealed_body">Web traffic and name lookups go through Tor. Everything else, such as UDP and IPv6, is dropped, even if Tor stops.</string>
+    <string name="tor_info_breaks_title">What stops working</string>
+    <string name="tor_info_breaks_body">Calls, video chat and some games need UDP. Many banks, sign-ups and sites block or challenge Tor.</string>
+    <string name="tor_info_turn_on">Turn on Tor</string>
+    <string name="tor_info_turn_off">Turn off Tor</string>
 </resources>

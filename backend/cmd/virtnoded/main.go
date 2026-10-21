@@ -270,6 +270,10 @@ type runtimeAssignment struct {
 	OperationGeneration int64        `json:"operation_generation"`
 	LastError           *string      `json:"last_error"`
 	SelectedApps        []runtimeApp `json:"selected_apps"`
+	// EgressMode is "direct" or "tor" (see tor_egress.go).
+	EgressMode string `json:"egress_mode"`
+	// RegionSealed is the phone-sealed region (see region.go).
+	RegionSealed *string `json:"region_sealed"`
 }
 
 type runtimeApp struct {
@@ -343,6 +347,7 @@ type dockerInspectResponse struct {
 type dockerNetworkInspectResponse struct {
 	Name       string            `json:"Name"`
 	Labels     map[string]string `json:"Labels"`
+	Options    map[string]string `json:"Options"`
 	Containers map[string]struct {
 		Name string `json:"Name"`
 	} `json:"Containers"`
@@ -376,6 +381,8 @@ type nodeAgent struct {
 	appInstallStates    map[string]runtimeAppInstallState
 	notificationAgentMu sync.Mutex
 	notificationAgentAt map[string]time.Time
+	regionMu            sync.Mutex
+	regionApplied       map[string]regionAttempt
 	nodePrivateKey      *ecdsa.PrivateKey
 	nodePublicKey       string
 	// tlsSPKIPin is set when the node serves the public TLS listener.
@@ -920,6 +927,7 @@ func (n *nodeAgent) capabilities(ctx context.Context, includePreflight bool) map
 		"renterd_bucket":      defaultBlobBucket(n.cfg.RenterdBucket),
 		"renterd_contractset": strings.TrimSpace(n.cfg.RenterdContractSet),
 		"region":              n.cfg.Region,
+		"tor_egress":          n.cfg.TorEgress,
 	}
 	if n.tlsSPKIPin != "" {
 		capabilities["public_addr"] = n.cfg.PublicAddr
@@ -1894,7 +1902,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 		// The node container may have been recreated while the guest survived.
 		// Reconcile its endpoint on every pass so ADB remains reachable without
 		// ever putting the guest back on the shared Compose bridge.
-		if _, networkErr := n.ensureRuntimeNetwork(ctx, runtime.ID); networkErr != nil {
+		if _, networkErr := n.ensureRuntimeNetwork(ctx, runtime.ID, runtimeBridgeName(runtime)); networkErr != nil {
 			return fmt.Errorf("reconnect node agent to isolated runtime network: %w", networkErr)
 		}
 	}
@@ -1948,6 +1956,9 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			}
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Selected app install failed: %v.", installErr))
 		}
+		if regionErr := n.ensureRuntimeRegion(ctx, runtime, containerName); regionErr != nil {
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Runtime region not applied yet: %v.", regionErr))
+		}
 		if transitioningOnline {
 			prewarmMaxSize := max(runtime.WidthPx, runtime.HeightPx)
 			if prewarmMaxSize <= 0 {
@@ -1999,6 +2010,12 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	}
 	if err := n.startContainer(ctx, containerName); err != nil {
 		return fmt.Errorf("start container: %w", err)
+	}
+	n.forgetRegion(runtime.ID)
+	if runtimeEgressMode(runtime) == egressTor {
+		if err := n.newTorIdentity(ctx); err != nil {
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Tor kept its earlier circuits: %v.", err))
+		}
 	}
 
 	restoreMessage := "fresh session container"
@@ -2569,13 +2586,16 @@ func (n *nodeAgent) containerUsesExpectedRuntimeNetwork(runtimeID string, inspec
 	return found && len(inspect.NetworkSettings.Networks) == 1, nil
 }
 
-func (n *nodeAgent) ensureRuntimeNetwork(ctx context.Context, runtimeID string) (string, error) {
+// ensureRuntimeNetwork creates the runtime's own bridge network, named
+// bridgeName when the firewall must know it (a Tor runtime's), and connects
+// the node to it when the node runs in a container.
+func (n *nodeAgent) ensureRuntimeNetwork(ctx context.Context, runtimeID, bridgeName string) (string, error) {
 	networkName, err := n.runtimeDockerNetworkName(runtimeID)
 	if err != nil || !runtimeUsesPerRuntimeNetwork() {
 		return networkName, err
 	}
 	agentContainer := strings.TrimSpace(os.Getenv("NODE_AGENT_CONTAINER_NAME"))
-	if agentContainer == "" {
+	if agentContainer == "" && !n.cfg.AgentOnHost {
 		return "", errors.New("NODE_AGENT_CONTAINER_NAME is required in per-runtime network mode")
 	}
 
@@ -2583,13 +2603,25 @@ func (n *nodeAgent) ensureRuntimeNetwork(ctx context.Context, runtimeID string) 
 	if err != nil {
 		return "", err
 	}
+	if found && inspect.Options[dockerBridgeNameOption] != bridgeName {
+		// Built for the other egress mode while the runtime was stopped.
+		if err := n.removeRuntimeNetwork(ctx, runtimeID); err != nil {
+			return "", fmt.Errorf("replace runtime network built for another egress mode: %w", err)
+		}
+		found = false
+	}
 	if !found {
+		options := map[string]string{}
+		if bridgeName != "" {
+			options[dockerBridgeNameOption] = bridgeName
+		}
 		payload, marshalErr := json.Marshal(map[string]any{
 			"Name":           networkName,
 			"Driver":         "bridge",
 			"Internal":       false,
 			"Attachable":     false,
 			"CheckDuplicate": true,
+			"Options":        options,
 			"Labels": map[string]string{
 				"io.virtroid.managed": "true",
 				"io.virtroid.runtime": runtimeID,
@@ -2624,6 +2656,9 @@ func (n *nodeAgent) ensureRuntimeNetwork(ctx context.Context, runtimeID string) 
 	}
 	if inspect.Labels["io.virtroid.managed"] != "true" || inspect.Labels["io.virtroid.runtime"] != runtimeID {
 		return "", fmt.Errorf("refusing unmanaged or mismatched Docker network %q", networkName)
+	}
+	if n.cfg.AgentOnHost {
+		return networkName, nil
 	}
 	for _, container := range inspect.Containers {
 		if strings.TrimPrefix(container.Name, "/") == strings.TrimPrefix(agentContainer, "/") {
@@ -2673,7 +2708,7 @@ func (n *nodeAgent) removeRuntimeNetwork(ctx context.Context, runtimeID string) 
 		return err
 	}
 	agentContainer := strings.TrimSpace(os.Getenv("NODE_AGENT_CONTAINER_NAME"))
-	if agentContainer == "" {
+	if agentContainer == "" && !n.cfg.AgentOnHost {
 		return errors.New("NODE_AGENT_CONTAINER_NAME is required in per-runtime network mode")
 	}
 	inspect, found, err := n.inspectRuntimeNetwork(ctx, networkName)
@@ -2681,14 +2716,14 @@ func (n *nodeAgent) removeRuntimeNetwork(ctx context.Context, runtimeID string) 
 		return err
 	}
 	if !found {
-		return nil
+		return n.forgetTorBridge(ctx, runtimeID)
 	}
 	if inspect.Labels["io.virtroid.managed"] != "true" || inspect.Labels["io.virtroid.runtime"] != runtimeID {
 		return fmt.Errorf("refusing to remove unmanaged or mismatched Docker network %q", networkName)
 	}
 	agentAttached := false
 	for _, container := range inspect.Containers {
-		if strings.TrimPrefix(container.Name, "/") == strings.TrimPrefix(agentContainer, "/") {
+		if agentContainer != "" && strings.TrimPrefix(container.Name, "/") == strings.TrimPrefix(agentContainer, "/") {
 			agentAttached = true
 			break
 		}
@@ -2720,7 +2755,7 @@ func (n *nodeAgent) removeRuntimeNetwork(ctx context.Context, runtimeID string) 
 	if status != http.StatusNotFound && (status < 200 || status >= 300) {
 		return fmt.Errorf("remove runtime network: status=%d body=%s", status, strings.TrimSpace(string(responseBody)))
 	}
-	return nil
+	return n.forgetTorBridge(ctx, runtimeID)
 }
 
 func (n *nodeAgent) doDockerRequest(ctx context.Context, method, requestURL string, payload []byte) (int, []byte, error) {
@@ -2818,7 +2853,15 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 	if err != nil {
 		return err
 	}
-	networkName, err := n.ensureRuntimeNetwork(ctx, runtime.ID)
+	if err := n.checkEgressSupported(runtime); err != nil {
+		return err
+	}
+	if runtimeEgressMode(runtime) == egressTor {
+		if err := n.allowTorBridge(ctx, runtime.ID); err != nil {
+			return fmt.Errorf("route the runtime through Tor: %w", err)
+		}
+	}
+	networkName, err := n.ensureRuntimeNetwork(ctx, runtime.ID, runtimeBridgeName(runtime))
 	if err != nil {
 		return err
 	}

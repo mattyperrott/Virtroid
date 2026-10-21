@@ -1554,6 +1554,8 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		AppPackages []string `json:"app_packages"`
 		// IdleTimeoutSeconds is how long it keeps running with no viewer open.
 		IdleTimeoutSeconds int `json:"idle_timeout_seconds"`
+		// EgressMode is "direct" (the default) or "tor".
+		EgressMode string `json:"egress_mode"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1584,6 +1586,7 @@ func (a *API) createMyRuntime(w http.ResponseWriter, r *http.Request) {
 		BlobRetainDays:     req.BlobRetainDays,
 		AppPackages:        req.AppPackages,
 		IdleTimeoutSeconds: req.IdleTimeoutSeconds,
+		EgressMode:         req.EgressMode,
 	})
 	if err != nil {
 		writeRuntimeMutationError(w, err)
@@ -1614,6 +1617,11 @@ func (a *API) updateMyRuntime(w http.ResponseWriter, r *http.Request) {
 		BlobRetainDays   *int    `json:"blob_retain_days"`
 		// IdleTimeoutSeconds can change while the runtime runs; it takes effect at once.
 		IdleTimeoutSeconds *int `json:"idle_timeout_seconds"`
+		// EgressMode changes only while the runtime is stopped.
+		EgressMode *string `json:"egress_mode"`
+		// RegionSealed is sealed by the phone for the runtime's VM; "" clears
+		// it. It can change while the runtime runs.
+		RegionSealed *string `json:"region_sealed"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1638,6 +1646,8 @@ func (a *API) updateMyRuntime(w http.ResponseWriter, r *http.Request) {
 		BlobAutoSnapshot:   req.BlobAutoSnapshot,
 		BlobRetainDays:     req.BlobRetainDays,
 		IdleTimeoutSeconds: req.IdleTimeoutSeconds,
+		EgressMode:         req.EgressMode,
+		RegionSealed:       req.RegionSealed,
 	})
 	if err != nil {
 		if err == store.ErrRuntimeNotFound {
@@ -3859,6 +3869,12 @@ func writeRuntimeMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusBadRequest, store.RuntimeProfileNotAllowedCode, err.Error())
 	case store.ErrRuntimeIdleTimeout:
 		writeAPIError(w, http.StatusBadRequest, "runtime_idle_timeout_invalid", err.Error())
+	case store.ErrRuntimeEgressActive:
+		writeAPIError(w, http.StatusConflict, "runtime_egress_active", err.Error())
+	case store.ErrRuntimeEgressMode:
+		writeAPIError(w, http.StatusBadRequest, "runtime_egress_mode_invalid", err.Error())
+	case store.ErrRuntimeRegion:
+		writeAPIError(w, http.StatusBadRequest, "runtime_region_invalid", err.Error())
 	default:
 		writeInternalAPIError(w, "runtime_mutation_failed", err)
 	}

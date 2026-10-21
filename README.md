@@ -331,6 +331,8 @@ Treasury sweeps and **SimpleSwap** conversions are implemented in **dry-run mode
 | **Data in transit** | The viewer is encrypted between the phone and a proxy inside the VM. The edge and relays see ciphertext. Control requests are signed and replay-protected. |
 | **Data at rest** | Snapshots are encrypted inside the VM using account-derived keys and distributed across Sia hosts. The VM's working disk is encrypted with a key made inside it at each boot. Unused compute VMs and their disks are deleted. |
 | **Notifications** | App name, time and title are encrypted inside the VM for linked phones. Message bodies are excluded, and the control plane sees ciphertext; it refuses readable titles from a confidential VM. |
+| **Location** | A runtime's chosen place and timezone are sealed on the phone for the VM. The control plane stores ciphertext, and runtime logs name neither. |
+| **Runtime egress** | A runtime can send its own traffic through Tor. The VM's firewall then lets out only what Tor carries (TCP and DNS), even if Tor stops; the phone's viewer link stays direct. |
 
 A forensic extraction of the handset—at a border, by police or by someone with extraction tools—targets the client and its local state rather than a local copy of the remote Android runtime.
 
@@ -446,6 +448,7 @@ A closer region removes geographic delay. Changing transport does not.
 | **Runtime lifecycle** | ✅ Live | Create, start, stop, restore, fresh personas, factory reset, deletion and lost-snapshot handling. |
 | **Keep running when closed** | ✅ Live | Per-runtime **30-minute to 1-week** slider, shutdown countdown and **Stop and save now**. |
 | **Notifications** | ✅ Live | Metadata-only notifications encrypted inside the VM for account-linked phones. Delivered while the phone is locked; the control plane sees ciphertext. |
+| **Location and Tor egress** | 🧪 Built, not released | Per-runtime place from a bundled city list or coordinates, sealed for the VM; its timezone applies now, the location itself once the AOSP image adds a GNSS provider. Per-runtime Tor egress with a firewall kill switch. Needs image 15. |
 | **Apps** | ✅ Live | Approximately **4,400 F-Droid apps**, signed-index catalogue synchronization, paged browsing, per-runtime selection, one-time installs and additional installation through F-Droid. |
 | **Remote viewer** | ✅ Live | Encrypted control, audio, on-demand microphone, camera import and direct pinned-TLS streaming with an edge fallback. |
 | **Wallet and billing** | ✅ Live | USDT (TRC20) deposits, trial allowance, **0.25 USDT/hour** runtime usage and **0.05 USDT/GB-month** storage. |

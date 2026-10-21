@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.text.InputType
 import android.widget.EditText
 import android.widget.LinearLayout
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
@@ -17,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.withStarted
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
+import io.virtroid.client.api.RuntimeEgress
 import io.virtroid.client.api.RuntimeLogEntry
 import io.virtroid.client.api.RuntimeState
 import io.virtroid.client.api.RuntimeSummary
@@ -28,6 +30,8 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionControlsBinding
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.RegionSeal
+import io.virtroid.client.security.RuntimeRegion
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
@@ -38,6 +42,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.IOException
 import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.VirtroidSheet
 
 class ControlsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionControlsBinding
@@ -57,6 +62,14 @@ class ControlsActivity : AppCompatActivity() {
     private var logsExpanded = false
     private val displayBodyText by lazy { findViewById<android.widget.TextView>(R.id.controlsDisplayBodyText) }
     private val buildBodyText by lazy { findViewById<android.widget.TextView>(R.id.controlsBuildBodyText) }
+    private val pickLocation = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        when (val choice = LocationPickerActivity.choice(result.data)) {
+            is LocationPickerActivity.Choice.Place -> updateRegion(choice.region)
+            LocationPickerActivity.Choice.Off -> updateRegion(null)
+            null -> Unit
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,6 +105,10 @@ class ControlsActivity : AppCompatActivity() {
         binding.buttonEditRuntime.setOnClickListener { showRenameDialog() }
         binding.displayOutputRow.setOnClickListener { showDisplayDialog() }
         binding.runtimeIdleRow.setOnClickListener { showIdleSettings() }
+        binding.runtimeLocationRow.setOnClickListener {
+            pickLocation.launch(LocationPickerActivity.intent(this, hasRegion = runtime?.regionSealed != null))
+        }
+        binding.runtimeTorRow.setOnClickListener { showTorSettings() }
         binding.runtimeAppsRow.setOnClickListener {
             startActivity(
                 AppInstallActivity.runtimeIntent(this, runtimeId, runtime?.name?.let(::runtimeDisplayName).orEmpty()),
@@ -165,6 +182,8 @@ class ControlsActivity : AppCompatActivity() {
 
     private fun bindRuntime(runtime: RuntimeSummary, state: RuntimeState? = runtimeState) {
         renderIdle(runtime, state)
+        renderRegion(runtime)
+        renderTor(runtime)
         binding.controlsRuntimeNameText.text = runtimeDisplayName(runtime.name)
         binding.controlsRuntimeSubtitleText.text = getString(R.string.controls_runtime_subtitle, runtime.id)
         binding.controlsStateValue.text = runtime.lifecycleLabel()
@@ -600,6 +619,101 @@ class ControlsActivity : AppCompatActivity() {
                 delay(30_000L)
                 ticks++
                 if (ticks % 4 == 0) loadRuntime() else runtime?.let { renderIdle(it, runtimeState) }
+            }
+        }
+    }
+
+    /**
+     * Names the runtime's location if the account key is already unlocked;
+     * only this account's phones can open the sealed region.
+     */
+    private fun renderRegion(runtime: RuntimeSummary) {
+        val sealed = runtime.regionSealed
+        val accountId = sessionStore.accountId
+        val deviceId = sessionStore.deviceId
+        binding.runtimeLocationSubtitle.text = when {
+            sealed == null -> getString(R.string.location_none)
+            accountId == null || deviceId == null -> getString(R.string.controls_location_sealed)
+            else -> identityPasswordStore.unlockedBlobAccessKey(accountId, deviceId)?.let { blobAccessKey ->
+                val viewerKey = RegionSeal.viewerKey(blobAccessKey, runtime.id)
+                try {
+                    RegionSeal.open(viewerKey, runtime.id, sealed)?.label
+                } finally {
+                    viewerKey.fill(0)
+                }
+            } ?: getString(R.string.controls_location_sealed)
+        }
+        binding.runtimeLocationRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            binding.runtimeLocationTitle.text,
+            binding.runtimeLocationSubtitle.text,
+        )
+    }
+
+    private fun updateRegion(region: RuntimeRegion?) {
+        val accountId = sessionStore.accountId ?: return
+        val deviceId = sessionStore.deviceId ?: return
+        lifecycleScope.launch {
+            runCatching {
+                val sealed = region?.let {
+                    val viewerKey = RegionSeal.viewerKey(requireBlobAccessKey(accountId, deviceId), runtimeId)
+                    try {
+                        RegionSeal.seal(viewerKey, runtimeId, it)
+                    } finally {
+                        viewerKey.fill(0)
+                    }
+                }
+                api.updateRuntimeRegion(sessionStore.baseUrl, accountId, deviceId, runtimeId, sealed)
+            }.onSuccess {
+                toast(getString(if (region == null) R.string.controls_location_cleared else R.string.controls_location_updated))
+                loadRuntime()
+            }.onFailure {
+                toast(it.virtroidDisplayMessage(this@ControlsActivity))
+            }
+        }
+    }
+
+    private fun renderTor(runtime: RuntimeSummary) {
+        binding.runtimeTorSubtitle.text = getString(
+            if (runtime.egressMode == RuntimeEgress.TOR) R.string.controls_tor_on else R.string.controls_tor_off,
+        )
+        binding.runtimeTorRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            binding.runtimeTorTitle.text,
+            binding.runtimeTorSubtitle.text,
+        )
+    }
+
+    private fun showTorSettings() {
+        val current = runtime ?: return
+        val torOn = current.egressMode == RuntimeEgress.TOR
+        VirtroidSheet(this)
+            .title(getString(R.string.controls_tor_title))
+            .row(R.drawable.ic_onion, getString(R.string.tor_info_direct_title), getString(R.string.tor_info_direct_body))
+            .row(R.drawable.ic_lock, getString(R.string.tor_info_sealed_title), getString(R.string.tor_info_sealed_body))
+            .row(R.drawable.ic_close, getString(R.string.tor_info_breaks_title), getString(R.string.tor_info_breaks_body))
+            .primary(getString(if (torOn) R.string.tor_info_turn_off else R.string.tor_info_turn_on)) {
+                if (!current.desiredState.equals("stopped", ignoreCase = true)) {
+                    toast(getString(R.string.controls_tor_stop_first))
+                } else {
+                    updateEgress(if (torOn) RuntimeEgress.DIRECT else RuntimeEgress.TOR)
+                }
+            }
+            .secondary(getString(R.string.controls_cancel))
+            .show()
+    }
+
+    private fun updateEgress(egressMode: String) {
+        val accountId = sessionStore.accountId ?: return
+        val deviceId = sessionStore.deviceId ?: return
+        lifecycleScope.launch {
+            runCatching {
+                api.updateRuntimeEgress(sessionStore.baseUrl, accountId, deviceId, runtimeId, egressMode)
+            }.onSuccess {
+                toast(getString(if (egressMode == RuntimeEgress.TOR) R.string.controls_tor_enabled else R.string.controls_tor_disabled))
+                loadRuntime()
+            }.onFailure {
+                toast(it.virtroidDisplayMessage(this@ControlsActivity))
             }
         }
     }

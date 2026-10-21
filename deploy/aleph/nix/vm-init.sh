@@ -14,6 +14,8 @@ secrets=/tmp/secrets
 data_device=/dev/vdb
 data_mapper=virtroid-data
 public_port=9443
+tor_trans_port=9040
+tor_dns_port=5353
 
 # --- Writable state lives on tmpfs or the encrypted data disk ----------------
 mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || die "mount /run"
@@ -82,19 +84,55 @@ log "node ${node_id} at [${ipv6}]:${public_port}"
 
 # Inbound: the attestation agent (8443), the node (9443), replies, and the
 # runtime bridges. Docker adds its own forwarding and NAT tables.
+#
+# Runtimes whose traffic leaves through Tor sit on bridges in tor_bridges
+# (virtnoded adds each before the bridge exists). Their DNS goes to Tor's
+# DNSPort and their TCP to its TransPort; they reach nothing else on the VM,
+# and nothing of theirs is forwarded, so what Tor cannot carry (UDP, IPv6)
+# never leaves. The phone's viewer link reaches virtnoded on the public
+# interface and never crosses a runtime bridge, so it stays direct.
 nft -f - <<EOF || die "cannot load the firewall"
 table inet virtroid {
+  set tor_bridges {
+    type ifname
+  }
   chain input {
     type filter hook input priority filter; policy drop;
     iif lo accept
     ct state established,related accept
     ct state invalid drop
+    iifname @tor_bridges tcp dport ${tor_trans_port} accept
+    iifname @tor_bridges udp dport ${tor_dns_port} accept
+    iifname @tor_bridges drop
     meta l4proto { icmp, ipv6-icmp } accept
     iifname { "docker0", "br-*" } accept
     tcp dport { 8443, ${public_port} } accept
   }
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    iifname @tor_bridges drop
+  }
+  chain prerouting {
+    type nat hook prerouting priority -110; policy accept;
+    iifname @tor_bridges udp dport 53 redirect to :${tor_dns_port}
+    iifname @tor_bridges meta nfproto ipv4 meta l4proto tcp redirect to :${tor_trans_port}
+  }
 }
 EOF
+
+# --- Tor, for the runtimes routed through it -----------------------------------
+# Its state lives on this boot's encrypted disk; it runs as its own user and
+# is restarted if it exits. While it is down, Tor runtimes have no network.
+mkdir -p /srv/virtroid/tor /run/tor
+chown tor:tor /srv/virtroid/tor /run/tor
+chmod 0700 /srv/virtroid/tor /run/tor
+(
+  while true; do
+    tor -f /etc/tor/torrc >>/var/log/tor.log 2>&1
+    log "tor exited; restarting it"
+    sleep 5
+  done
+) &
 
 # --- Docker, the runtime image, and the node ------------------------------------
 # Docker's store starts empty each boot (the disk is new), so the image and
@@ -117,13 +155,15 @@ set +a
 # The Android image ships inside the measured root; nothing is pulled.
 docker load -i /usr/share/virtroid/runtime-image.tar >/dev/null || die "cannot load the runtime image"
 docker image inspect "${NODE_RUNTIME_IMAGE}" >/dev/null 2>&1 || die "runtime image does not match NODE_RUNTIME_IMAGE"
-docker network create virtroid-guest >/dev/null || die "cannot create the runtime network"
 
 export NODE_ID="${node_id}" NODE_NAME="${node_id}" NODE_PRIVATE_KEY_B64="${node_key}" NODE_REGION="${region}"
 export CONTROL_PLANE_URL="${control_plane}" NODE_PUBLIC_CONTROL_PLANE_URL="${control_plane}"
 export NODE_ADVERTISE_ADDR="${ipv6}" NODE_PUBLIC_ADDR="[${ipv6}]:${public_port}" NODE_PUBLIC_TLS_BIND="[::]:${public_port}"
 export NODE_TLS_DIR=/srv/virtroid/node-tls NODE_RUNTIME_ROOT=/srv/virtroid/runtimes
-export NODE_DOCKER_NETWORK=virtroid-guest NODE_RUNTIME_NETWORK_MODE=shared
+# Each runtime gets its own bridge (virtroid-guest-<hash>), which the node,
+# running on this VM rather than in a container, reaches without joining.
+export NODE_DOCKER_NETWORK=virtroid-guest NODE_RUNTIME_NETWORK_MODE=per-runtime NODE_AGENT_ON_HOST=true
+export NODE_TOR_EGRESS=true NODE_TOR_CONTROL_SOCKET=/run/tor/control
 # Without attestation a phone refuses this VM, so fail loudly instead.
 export NODE_SNP_ATTESTATION=required
 unset node_key

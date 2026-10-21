@@ -28,7 +28,7 @@ accepts the measurement has checked all of it:
 - **Read-only root** (`nix/rootfs.nix`), a zstd-compressed EROFS image built
   reproducibly by Nix, about 720 MiB with its hash tree. It contains:
   - Docker's daemon, containerd and runc (without nixpkgs' image-building
-    extras), cryptsetup, nftables and adb;
+    extras), cryptsetup, nftables, adb and Tor;
   - `virtnoded` and its viewer encryption tool;
   - the Android runtime image, loaded at boot and never pulled;
   - the pinned apps.
@@ -58,6 +58,8 @@ loads no further kernel modules.
    - encrypts the data disk with a key it makes from `/dev/urandom` at each
      boot, which never leaves the VM;
    - allows only ports 8443 (attestation agent) and 9443 (node) inbound;
+   - starts Tor, and sends everything from a Tor runtime's bridge to Tor's
+     TransPort and DNSPort while forwarding none of it (see Egress below);
    - loads the Android image;
    - starts Docker and `virtnoded` with `NODE_SNP_ATTESTATION=required`.
 6. `virtnoded` gets an SNP report that binds its TLS key, adds AMD's
@@ -65,6 +67,23 @@ loads no further kernel modules.
 7. On each session the phone verifies that bundle itself: AMD root built into
    the app, an approved measurement, no debug policy, the TLS key it pins, and
    the viewer key signed by that TLS key. It refuses to connect otherwise.
+
+## Egress
+
+Each runtime has its own bridge network. A runtime's owner picks where its
+traffic leaves the VM:
+
+- **Direct** (the default): through the VM's own address, as before.
+- **Tor**: `virtnoded` names the runtime's bridge `vrt-<hash>` and adds it to
+  the firewall's `tor_bridges` set before the bridge exists. The firewall then
+  redirects its DNS to Tor's DNSPort and its TCP to Tor's TransPort, accepts
+  nothing else from it, and forwards none of it, so UDP and IPv6 never leave
+  and nothing goes out directly, even if Tor is down. Each runtime gets its own
+  circuits (`IsolateClientAddr`), and the node asks Tor for new ones whenever a
+  Tor runtime starts. A node without Tor refuses to start a Tor runtime.
+
+The phone's viewer link is unaffected in both modes: it reaches `virtnoded`
+on the VM's public address and never crosses a runtime bridge.
 
 ## What is trusted
 

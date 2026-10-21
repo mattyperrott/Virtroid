@@ -94,7 +94,7 @@ memory() {
 }
 for i in \$(\$B seq 1 300); do
   kill -0 \$init_pid 2>/dev/null || fail "/sbin/init exited"
-  C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 && C /bin/docker network inspect virtroid-guest >/dev/null 2>&1 && break
+  C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 && break
   \$B sleep 2
 done
 C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 || fail "runtime image never loaded"
@@ -118,7 +118,12 @@ done
 C /bin/mkdir -p /srv/virtroid/runtimes/smoke/data
 echo "boot-test: starting a runtime container as virtnoded does (limits, mounts, arguments)"
 . /mnt/lower/etc/virtroid/node.env 2>/dev/null || true
-C /bin/docker run -d --name smoke --privileged --network virtroid-guest \
+# A Tor runtime, set up as virtnoded does: its bridge joins the firewall's Tor
+# set before it exists. Nothing from it is forwarded, so Android resolving a
+# name below proves its DNS went through Tor.
+C /bin/nft add element inet virtroid tor_bridges '{ "vrt-smoke" }' || fail "add the Tor bridge"
+C /bin/docker network create -o com.docker.network.bridge.name=vrt-smoke virtroid-guest-smoke >/dev/null || fail "runtime network"
+C /bin/docker run -d --name smoke --privileged --network virtroid-guest-smoke \
   -p 127.0.0.1:15555:5555 \
   --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
   --cpus 2 --pids-limit \${NODE_RUNTIME_PIDS_LIMIT:-4096} --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
@@ -154,15 +159,17 @@ memory "Android booted"
 echo "boot-test: Android booted: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.fingerprint | \$B tr -d '\r')"
 echo "boot-test: Android security patch: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.version.security_patch | \$B tr -d '\r')"
 # Android's own networking (netd's firewall and routing, its DNS resolver)
-# must work for apps: resolve a name from inside Android.
+# must work for apps: resolve a name from inside Android, through Tor (which
+# may still be bootstrapping).
+C /bin/bash -c 'grep -m1 "Bootstrapped 100%" /var/log/tor.log || tail -3 /var/log/tor.log'
 resolved=""
-for i in \$(\$B seq 1 30); do
+for i in \$(\$B seq 1 90); do
   resolved=\$(C /bin/adb -s 127.0.0.1:15555 shell 'ping -c 1 -W 2 dns.google 2>&1 | head -1' | \$B tr -d '\r')
   echo "\$resolved" | \$B grep -q "^PING dns.google (" && break
   \$B sleep 2
 done
 echo "boot-test: network: \$resolved"
-echo "\$resolved" | \$B grep -q "^PING dns.google (" || fail "Android cannot resolve names"
+echo "\$resolved" | \$B grep -q "^PING dns.google (" || fail "Android cannot resolve names through Tor"
 # As virtnoded's startViewerService does: Android's init starts the viewer
 # service, so it runs with Android's environment (app_process needs
 # ANDROID_ART_ROOT and friends, which docker exec does not pass).

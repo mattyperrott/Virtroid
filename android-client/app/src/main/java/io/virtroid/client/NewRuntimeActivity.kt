@@ -13,6 +13,7 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtroid.client.api.AppCatalogEntry
 import io.virtroid.client.api.EntitlementSummary
+import io.virtroid.client.api.RuntimeEgress
 import io.virtroid.client.api.RuntimeIdlePeriods
 import io.virtroid.client.api.RuntimeSummary
 import io.virtroid.client.api.VirtroidApi
@@ -20,7 +21,14 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenCreateSessionBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
+import io.virtroid.client.security.IdentityKeyManager
+import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.RegionSeal
+import io.virtroid.client.security.RuntimeRegion
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.security.promptIdentityPassword
+import io.virtroid.client.security.unlockAccountKeyWithBiometric
+import java.io.IOException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -37,6 +45,18 @@ class NewRuntimeActivity : AppCompatActivity() {
     private var provisionJob: Job? = null
     private var appPicks: List<AppCatalogEntry> = emptyList()
     private var idleTimeoutSeconds = RuntimeIdlePeriods.DEFAULT_SECONDS
+    private var region: RuntimeRegion? = null
+    private lateinit var identityPasswordStore: IdentityPasswordStore
+    private lateinit var identityKeyManager: IdentityKeyManager
+    private val pickLocation = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        when (val choice = LocationPickerActivity.choice(result.data)) {
+            is LocationPickerActivity.Choice.Place -> region = choice.region
+            LocationPickerActivity.Choice.Off -> region = null
+            null -> return@registerForActivityResult
+        }
+        renderRegion()
+    }
     private val pickApps = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             appPicks = AppInstallActivity.decodePicks(result.data?.getStringExtra(AppInstallActivity.EXTRA_PICKS))
@@ -53,6 +73,8 @@ class NewRuntimeActivity : AppCompatActivity() {
 
         sessionStore = SessionStore(this)
         appLogs = AppLogStore.get(this)
+        identityPasswordStore = IdentityPasswordStore(this)
+        identityKeyManager = IdentityKeyManager(this, api)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.newRuntimeRoot) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -74,6 +96,11 @@ class NewRuntimeActivity : AppCompatActivity() {
         renderAppPicks()
         idleTimeoutSeconds = savedInstanceState?.getInt(STATE_IDLE_TIMEOUT, idleTimeoutSeconds) ?: idleTimeoutSeconds
         bindIdlePeriodSlider(binding.newRuntimeIdlePicker, idleTimeoutSeconds) { idleTimeoutSeconds = it }
+        region = savedInstanceState?.let(::restoreRegion)
+        renderRegion()
+        binding.newRuntimeLocationRow.setOnClickListener {
+            pickLocation.launch(LocationPickerActivity.intent(this, hasRegion = region != null))
+        }
         binding.optionStandardPersistent.setOnClickListener { showStorageInfo() }
         binding.newRuntimeStorageInfo.setOnClickListener { showStorageInfo() }
         loadEntitlement()
@@ -83,6 +110,31 @@ class NewRuntimeActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_APP_PICKS, AppInstallActivity.encodePicks(appPicks))
         outState.putInt(STATE_IDLE_TIMEOUT, idleTimeoutSeconds)
+        region?.let {
+            outState.putDouble(STATE_REGION_LATITUDE, it.latitude)
+            outState.putDouble(STATE_REGION_LONGITUDE, it.longitude)
+            outState.putString(STATE_REGION_TIMEZONE, it.timezone)
+            outState.putString(STATE_REGION_LABEL, it.label)
+        }
+    }
+
+    private fun restoreRegion(state: Bundle): RuntimeRegion? {
+        val timezone = state.getString(STATE_REGION_TIMEZONE) ?: return null
+        return RuntimeRegion(
+            latitude = state.getDouble(STATE_REGION_LATITUDE),
+            longitude = state.getDouble(STATE_REGION_LONGITUDE),
+            timezone = timezone,
+            label = state.getString(STATE_REGION_LABEL).orEmpty(),
+        )
+    }
+
+    private fun renderRegion() {
+        binding.newRuntimeLocationSubtitle.text = region?.label ?: getString(R.string.location_none)
+        binding.newRuntimeLocationRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            binding.newRuntimeLocationTitle.text,
+            binding.newRuntimeLocationSubtitle.text,
+        )
     }
 
     /** What happens to the runtime's data, behind the storage card's one line. */
@@ -175,7 +227,9 @@ class NewRuntimeActivity : AppCompatActivity() {
                         blobRetainDays = 7,
                         appPackages = appPicks.map { it.packageName },
                         idleTimeoutSeconds = idleTimeoutSeconds,
+                        egressMode = if (binding.torEgressSwitch.isChecked) RuntimeEgress.TOR else RuntimeEgress.DIRECT,
                     )
+                    region?.let { saveRegion(baseUrl, accountId, deviceId, runtime.id, it) }
                     waitForRuntimeProvisioned(baseUrl, accountId, deviceId, runtime.id)
                 }.onSuccess {
                     renderProvisionMilestone(
@@ -215,6 +269,38 @@ class NewRuntimeActivity : AppCompatActivity() {
                 provisionJob = null
             }
         }
+    }
+
+    /**
+     * Seals the chosen region for the new runtime's VM and saves it. The
+     * runtime exists by now, so a failure here is reported but not fatal.
+     */
+    private suspend fun saveRegion(baseUrl: String, accountId: String, deviceId: String, runtimeId: String, region: RuntimeRegion) {
+        runCatching {
+            val viewerKey = RegionSeal.viewerKey(requireBlobAccessKey(accountId, deviceId), runtimeId)
+            val sealed = try {
+                RegionSeal.seal(viewerKey, runtimeId, region)
+            } finally {
+                viewerKey.fill(0)
+            }
+            api.updateRuntimeRegion(baseUrl, accountId, deviceId, runtimeId, sealed)
+        }.onFailure {
+            appLogs.warn("Runtime location not saved: ${it.message}", "runtime")
+            toast(getString(R.string.new_runtime_region_failed, it.virtroidDisplayMessage(this)))
+        }
+    }
+
+    private suspend fun requireBlobAccessKey(accountId: String, deviceId: String): String {
+        identityPasswordStore.unlockedBlobAccessKey(accountId, deviceId)?.let { return it }
+        unlockAccountKeyWithBiometric(accountId, deviceId, identityPasswordStore)?.let { return it }
+        val password = promptIdentityPassword(
+            title = getString(R.string.identity_unlock_title),
+            hint = getString(R.string.identity_password_prompt),
+        )?.trim().orEmpty()
+        if (password.isBlank()) {
+            throw IOException(getString(R.string.identity_password_required))
+        }
+        return identityKeyManager.unlockOrMigrate(sessionStore.baseUrl, accountId, deviceId, password)
     }
 
     private suspend fun waitForRuntimeProvisioned(
@@ -333,6 +419,10 @@ class NewRuntimeActivity : AppCompatActivity() {
         private const val PROVISION_WAIT_MAX_MS = 5 * 60 * 1_000L
         private const val STATE_APP_PICKS = "app_picks"
         private const val STATE_IDLE_TIMEOUT = "idle_timeout_seconds"
+        private const val STATE_REGION_LATITUDE = "region_latitude"
+        private const val STATE_REGION_LONGITUDE = "region_longitude"
+        private const val STATE_REGION_TIMEZONE = "region_timezone"
+        private const val STATE_REGION_LABEL = "region_label"
 
         fun createIntent(context: Context): Intent = Intent(context, NewRuntimeActivity::class.java)
     }

@@ -89,6 +89,7 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
         RUNTIME_BALANCE_INSUFFICIENT_CODE -> context.getString(R.string.entitlement_balance_insufficient)
         "runtime_storage_quota_exceeded" -> context.getString(R.string.entitlement_storage_quota_reached)
         "runtime_profile_not_allowed" -> context.getString(R.string.entitlement_profile_not_allowed)
+        "runtime_egress_active" -> context.getString(R.string.controls_tor_stop_first)
         "no_ready_host" -> context.getString(R.string.entitlement_no_ready_host)
         RUNTIME_HOST_PROVISIONING_CODE -> context.getString(R.string.runtime_host_provisioning)
         "runtime_host_capacity" -> context.getString(R.string.runtime_host_capacity)
