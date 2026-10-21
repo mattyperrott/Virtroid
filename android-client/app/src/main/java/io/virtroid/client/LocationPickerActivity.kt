@@ -187,7 +187,7 @@ class LocationPickerActivity : AppCompatActivity() {
                     setPadding(dp(10), dp(10), dp(10), dp(10))
                     setImageResource(icon)
                     setColorFilter(getColor(R.color.v_accent))
-                    background = ContextCompat.getDrawable(context, R.drawable.bg_accent_soft_circle)
+                    background = ContextCompat.getDrawable(context, R.drawable.bg_icon_tile)
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 },
                 0,

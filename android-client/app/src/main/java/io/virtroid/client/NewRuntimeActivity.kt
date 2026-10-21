@@ -95,7 +95,13 @@ class NewRuntimeActivity : AppCompatActivity() {
         appPicks = AppInstallActivity.decodePicks(savedInstanceState?.getString(STATE_APP_PICKS))
         renderAppPicks()
         idleTimeoutSeconds = savedInstanceState?.getInt(STATE_IDLE_TIMEOUT, idleTimeoutSeconds) ?: idleTimeoutSeconds
-        bindIdlePeriodSlider(binding.newRuntimeIdlePicker, idleTimeoutSeconds) { idleTimeoutSeconds = it }
+        renderIdle()
+        binding.newRuntimeIdleRow.setOnClickListener {
+            showIdlePeriodSheet(selectedSeconds = idleTimeoutSeconds) { seconds ->
+                idleTimeoutSeconds = seconds
+                renderIdle()
+            }
+        }
         region = savedInstanceState?.let(::restoreRegion)
         renderRegion()
         binding.newRuntimeLocationRow.setOnClickListener {
@@ -116,6 +122,15 @@ class NewRuntimeActivity : AppCompatActivity() {
             outState.putString(STATE_REGION_TIMEZONE, it.timezone)
             outState.putString(STATE_REGION_LABEL, it.label)
         }
+    }
+
+    private fun renderIdle() {
+        binding.newRuntimeIdleSubtitle.text = getString(R.string.new_runtime_idle_summary, idlePeriodLabel(idleTimeoutSeconds))
+        binding.newRuntimeIdleRow.contentDescription = getString(
+            R.string.accessibility_setting_value,
+            binding.newRuntimeIdleTitle.text,
+            binding.newRuntimeIdleSubtitle.text,
+        )
     }
 
     private fun restoreRegion(state: Bundle): RuntimeRegion? {

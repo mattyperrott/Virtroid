@@ -80,7 +80,7 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_account"
                         app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -133,7 +133,7 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_mobile"
                         app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -285,7 +285,7 @@
                         android:src="@drawable/ic_wallet"
                         android:importantForAccessibility="no"
                         app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -405,7 +405,7 @@
                                 android:paddingTop="5dp"
                                 android:paddingBottom="5dp"
                                 android:layout_marginBottom="8dp"
-                                android:background="@drawable/bg_accent_soft_12" />
+                                android:background="@drawable/bg_chip_dark" />
                             <TextView
                                 android:id="@+id/storage_snapshots"
                                 android:layout_width="wrap_content"
@@ -499,7 +499,7 @@
                                 android:fontFamily="sans"
                                 android:includeFontPadding="false"
                                 android:layout_marginBottom="16dp"
-                                android:background="@drawable/bg_accent_soft_circle" />
+                                android:background="@drawable/bg_icon_tile" />
                             <TextView
                                 android:id="@+id/storage_credit_label"
                                 android:layout_width="match_parent"
@@ -600,7 +600,7 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_lock"
                         app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -649,7 +649,7 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_key"
                         app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -703,7 +703,7 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_devices"
                         app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_circle" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"

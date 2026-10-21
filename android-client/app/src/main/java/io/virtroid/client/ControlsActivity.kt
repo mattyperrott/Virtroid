@@ -596,6 +596,7 @@ class ControlsActivity : AppCompatActivity() {
     private fun renderIdle(runtime: RuntimeSummary, state: RuntimeState?) {
         val period = idlePeriodLabel(runtime.idleTimeoutSeconds)
         val stopAt = state?.idleStopAtMs
+        binding.runtimeIdleSubtitle.isVisible = true
         binding.runtimeIdleSubtitle.text = when {
             stopAt != null && stopAt > System.currentTimeMillis() ->
                 getString(R.string.controls_idle_counting, period, idleCountdown(stopAt - System.currentTimeMillis()))
@@ -631,6 +632,7 @@ class ControlsActivity : AppCompatActivity() {
         val sealed = runtime.regionSealed
         val accountId = sessionStore.accountId
         val deviceId = sessionStore.deviceId
+        binding.runtimeLocationSubtitle.isVisible = true
         binding.runtimeLocationSubtitle.text = when {
             sealed == null -> getString(R.string.location_none)
             accountId == null || deviceId == null -> getString(R.string.controls_location_sealed)
@@ -674,6 +676,7 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private fun renderTor(runtime: RuntimeSummary) {
+        binding.runtimeTorSubtitle.isVisible = true
         binding.runtimeTorSubtitle.text = getString(
             if (runtime.egressMode == RuntimeEgress.TOR) R.string.controls_tor_on else R.string.controls_tor_off,
         )

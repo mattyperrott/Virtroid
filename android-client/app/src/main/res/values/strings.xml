@@ -370,7 +370,7 @@
     <string name="controls_logs_title">Console Logs</string>
     <string name="controls_logs_body">Boot &amp; network events</string>
     <string name="controls_restart_title">Restart with New Persona</string>
-    <string name="controls_restart_body">Save encrypted state, destroy the current runtime, then boot a fresh device identity with new app device IDs</string>
+    <string name="controls_restart_body">Save, then restart as a new device with new app device IDs</string>
     <string name="controls_restart_confirm_title">Restart with a new persona?</string>
     <string name="controls_restart_confirm_body">The current session will end. User data is encrypted and saved, the runtime is destroyed, and a fresh runtime starts with a newly generated device persona. Apps also get new device IDs, so some may ask you to sign in again.</string>
     <string name="controls_restart_complete">Fresh runtime started with a new device persona.</string>
@@ -544,7 +544,7 @@
     <string name="operator_visibility_note">Runtime logs are kept for up to 30 days. Backups of the control plane can keep deleted records longer. Virtroid is not an anonymity service: use a VPN or Tor on this phone if your IP address matters.</string>
     <string name="privacy_require_pin_biometric">Require PIN + Local Vault</string>
     <string name="privacy_require_pin_biometric_body">PIN encrypts logs, session state, metadata, and sensitive settings on this device.</string>
-    <string name="privacy_biometric_vault_unlock">Biometric vault unlock</string>
+    <string name="privacy_biometric_vault_unlock">Biometric Vault Unlock</string>
     <string name="privacy_biometric_vault_unlock_body">Wraps the local vault key with Android Keystore and biometric authentication.</string>
     <string name="privacy_biometric_not_available">Biometric authentication is not available on this device.</string>
     <string name="privacy_biometric_enable_failed">Could not enable biometric vault unlock.</string>
@@ -569,14 +569,14 @@
     <string name="privacy_disable_app_lock_body">This exports protected local state back to legacy app storage and removes the encrypted local vault. Runtime blob encryption is not changed.</string>
     <string name="privacy_disable_app_lock_confirm">Disable</string>
     <string name="privacy_app_lock_setup_failed">Could not enable app lock on this device.</string>
-    <string name="privacy_telemetry_secured">ENCRYPTED</string>
+    <string name="privacy_telemetry_secured">SECURE</string>
     <string name="privacy_telemetry_disabled">DISABLED</string>
-    <string name="privacy_telemetry_setup_needed">SETUP NEEDED</string>
+    <string name="privacy_telemetry_setup_needed">NOT SET</string>
     <string name="privacy_telemetry_active">ACTIVE</string>
     <string name="privacy_telemetry_off">OFF</string>
     <string name="privacy_telemetry_verified">LINKED</string>
     <string name="privacy_telemetry_unlinked">UNLINKED</string>
-    <string name="privacy_telemetry_never">Never</string>
+    <string name="privacy_telemetry_never">NEVER</string>
     <string name="accessibility_setting_value">%1$s, %2$s</string>
 
     <string name="controls_apps_title">Apps</string>
@@ -584,6 +584,7 @@
     <string name="new_runtime_idle_heading">WHEN CLOSED</string>
     <string name="new_runtime_idle_title">Keep running</string>
     <string name="new_runtime_idle_caption">after you close the viewer</string>
+    <string name="new_runtime_idle_summary">%1$s after you close the viewer</string>
     <string name="controls_idle_title">Keep running when closed</string>
     <string name="controls_idle_viewer_open">%1$s · viewer open</string>
     <string name="controls_idle_counting">%1$s · stops in %2$s</string>
@@ -649,11 +650,11 @@
     <string name="permissions_heading">Choose device access</string>
     <string name="permissions_subtitle">Virtroid can work without these permissions. Allow the features you want before opening a runtime viewer.</string>
     <string name="permissions_notifications_title">Notifications</string>
-    <string name="permissions_notifications_body">Show security warnings and metadata-only runtime notification alerts.</string>
+    <string name="permissions_notifications_body">Security warnings and runtime alerts, without message text.</string>
     <string name="permissions_microphone_title">Microphone</string>
-    <string name="permissions_microphone_body">Used only while a connected runtime app is recording audio or handling a call.</string>
+    <string name="permissions_microphone_body">Only while a runtime app records audio or takes a call.</string>
     <string name="permissions_camera_title">Camera</string>
-    <string name="permissions_camera_body">Capture photos or videos for import into an active runtime.</string>
+    <string name="permissions_camera_body">Photos and videos you take to import into a runtime.</string>
     <string name="permissions_privacy_note">No camera or microphone capture starts from this screen. Access begins only when you use the related feature and can be changed later in Android settings.</string>
     <string name="permissions_allow">Allow</string>
     <string name="permissions_allowed">Allowed</string>

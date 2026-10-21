@@ -2,55 +2,57 @@
     <color name="virtroid_primary">#AFD135</color>
     <color name="virtroid_primary_highlight">#D0EC62</color>
     <color name="virtroid_primary_shadow">#78951E</color>
-    <color name="virtroid_on_primary">#111812</color>
-    <color name="virtroid_secondary">#242924</color>
-    <color name="virtroid_surface">#111812</color>
-    <color name="virtroid_surface_elevated">#121512</color>
-    <color name="virtroid_surface_alt">#171A18</color>
-    <color name="virtroid_card_surface">#171A18</color>
-    <color name="virtroid_card_surface_soft">#1E221F</color>
-    <color name="virtroid_card_stroke">#1CAFD135</color>
-    <color name="virtroid_card_stroke_soft">#0CAFD135</color>
-    <color name="virtroid_on_surface">#F0F3EE</color>
-    <color name="virtroid_on_surface_variant">#A3AA9E</color>
-    <color name="virtroid_on_surface_muted">#858A85</color>
+    <color name="virtroid_on_primary">#0E0E0E</color>
+    <color name="virtroid_secondary">#242424</color>
+    <color name="virtroid_surface">#131313</color>
+    <color name="virtroid_surface_elevated">#161616</color>
+    <color name="virtroid_surface_alt">#1B1B1B</color>
+    <color name="virtroid_card_surface">#1B1B1B</color>
+    <color name="virtroid_card_surface_soft">#242424</color>
+    <color name="virtroid_card_stroke">#14FFFFFF</color>
+    <color name="virtroid_card_stroke_soft">#0FFFFFFF</color>
+    <color name="virtroid_on_surface">#F4F4F5</color>
+    <color name="virtroid_on_surface_variant">#A1A1AA</color>
+    <color name="virtroid_on_surface_muted">#8A8A93</color>
     <color name="virtroid_success">#AFD135</color>
-    <color name="virtroid_success_dim">#202912</color>
+    <color name="virtroid_success_dim">#232616</color>
     <color name="virtroid_warning">#F5A623</color>
     <color name="virtroid_warning_orange">#F5A623</color>
     <color name="virtroid_warning_bg">#2B2111</color>
     <color name="virtroid_warning_orange_bg">#2B2111</color>
     <color name="virtroid_destructive">#DF7E79</color>
     <color name="virtroid_destructive_bg">#321918</color>
-    <color name="virtroid_black_glass">#E0121512</color>
-    <color name="virtroid_divider">#1CAFD135</color>
+    <color name="virtroid_black_glass">#E0131313</color>
+    <color name="virtroid_divider">#0FFFFFFF</color>
     <color name="virtroid_fab_bg">#AFD135</color>
-    <color name="virtroid_fab_fg">#111812</color>
+    <color name="virtroid_fab_fg">#0E0E0E</color>
     <color name="virtroid_shadow">#2A000000</color>
     <color name="virtroid_error">#DF7E79</color>
 
-    <!-- HTML-export UI tokens used by the converted screen_* layout resources. -->
-    <color name="v_bg">#111812</color>
-    <color name="v_bg_alt">#0C110D</color>
-    <color name="v_surface">#171A18</color>
-    <color name="v_surface_2">#1E221F</color>
-    <color name="v_surface_light">#242924</color>
-    <color name="v_surface_lighter">#2D322E</color>
+    <!-- HTML-export UI tokens used by the converted screen_* layout resources.
+         Neutral surfaces and zinc text; lime only marks what is active, and
+         edges are faint white hairlines. -->
+    <color name="v_bg">#131313</color>
+    <color name="v_bg_alt">#0E0E0E</color>
+    <color name="v_surface">#1B1B1B</color>
+    <color name="v_surface_2">#1B1B1B</color>
+    <color name="v_surface_light">#242424</color>
+    <color name="v_surface_lighter">#393939</color>
     <color name="v_accent">#AFD135</color>
     <color name="v_accent_highlight">#D0EC62</color>
     <color name="v_accent_shadow">#78951E</color>
     <color name="v_accent_soft">#1CAFD135</color>
     <color name="v_accent_stroke">#33AFD135</color>
-    <color name="v_text_primary">#FFF0F3EE</color>
-    <color name="v_text_secondary">#E6F0F3EE</color>
-    <color name="v_text_muted">#A3AA9E</color>
-    <color name="v_text_dim">#858A85</color>
-    <color name="v_border">#1CAFD135</color>
-    <color name="v_border_soft">#0CAFD135</color>
+    <color name="v_text_primary">#FFF4F4F5</color>
+    <color name="v_text_secondary">#E6F4F4F5</color>
+    <color name="v_text_muted">#A1A1AA</color>
+    <color name="v_text_dim">#8A8A93</color>
+    <color name="v_border">#14FFFFFF</color>
+    <color name="v_border_soft">#0FFFFFFF</color>
     <!-- A neutral edge for cards that need one. -->
     <color name="v_hairline">#14FFFFFF</color>
     <color name="v_black">#000000</color>
-    <color name="v_white">#F0F3EE</color>
+    <color name="v_white">#F4F4F5</color>
     <color name="v_danger">#DF7E79</color>
     <color name="v_danger_muted">#B3DF7E79</color>
     <color name="v_danger_dim">#99DF7E79</color>
@@ -66,6 +68,6 @@
     <color name="v_blue_soft">#3340C4E6</color>
     <color name="v_blue_stroke">#6640C4E6</color>
     <color name="v_green">#AFD135</color>
-    <color name="v_dock">#F2171A18</color>
+    <color name="v_dock">#F21B1B1B</color>
     <color name="v_transparent">#00000000</color>
 </resources>

@@ -70,10 +70,10 @@
         android:layout_height="76dp"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="42dp"
-        android:background="@drawable/bg_accent_soft_circle"
+        android:background="@drawable/bg_accent_circle"
         android:contentDescription="@string/session_camera_take_photo"
         android:enabled="false"
         android:padding="20dp"
         android:src="@drawable/ic_camera"
-        app:tint="@color/v_accent" />
+        app:tint="@color/virtroid_on_primary" />
 </FrameLayout>

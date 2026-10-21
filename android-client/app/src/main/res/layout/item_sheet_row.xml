@@ -14,7 +14,7 @@
         android:id="@+id/sheetRowIcon"
         android:layout_width="40dp"
         android:layout_height="40dp"
-        android:background="@drawable/bg_accent_soft_circle"
+        android:background="@drawable/bg_icon_tile"
         android:importantForAccessibility="no"
         android:padding="10dp"
         app:tint="@color/v_accent" />

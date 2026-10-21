@@ -28,6 +28,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.VirtroidSheet
 
@@ -38,10 +39,12 @@ class PrivacySecurityActivity : AppCompatActivity() {
     private lateinit var sessionStore: SessionStore
     private lateinit var appLogs: AppLogStore
     private var bindingSettings = false
-    private val unlockFormatter = DateTimeFormatter.ofPattern("hh:mm a (z)")
-        .withZone(ZoneId.systemDefault())
-    private val olderTimeFormatter = DateTimeFormatter.ofPattern("d MMM, hh:mm a")
-        .withZone(ZoneId.systemDefault())
+    // Short enough for the telemetry's fixed value box: today's time of day
+    // in the phone's 12- or 24-hour style, otherwise the date.
+    private val todayFormatter by lazy {
+        DateTimeFormatter.ofPattern(if (android.text.format.DateFormat.is24HourFormat(this)) "HH:mm" else "h:mm a")
+    }
+    private val olderDateFormatter = DateTimeFormatter.ofPattern("d MMM")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -170,6 +173,8 @@ class PrivacySecurityActivity : AppCompatActivity() {
             lockConfigured -> getString(R.string.privacy_telemetry_disabled)
             else -> getString(R.string.privacy_telemetry_setup_needed)
         }
+        // Lime only while the lock is actually on.
+        binding.appLockStatusValue.setTextColor(getColor(if (lockEnabled) R.color.v_accent else R.color.v_text_muted))
         binding.screenshotProtectionValue.text = if (appSettings.blockScreenCapture) {
             getString(R.string.privacy_telemetry_active)
         } else {
@@ -184,12 +189,12 @@ class PrivacySecurityActivity : AppCompatActivity() {
         binding.lastSessionEndValue.text = telemetryTime(appSettings.lastSessionEndAtMs())
     }
 
-    /** A recorded time: today's as a time of day, older ones with their date. */
+    /** A recorded time: today's as a time of day, older ones as their date. */
     private fun telemetryTime(epochMs: Long): String {
         if (epochMs <= 0L) return getString(R.string.privacy_telemetry_never)
         val time = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault())
-        val formatter = if (time.toLocalDate() == LocalDate.now()) unlockFormatter else olderTimeFormatter
-        return formatter.format(time)
+        val formatter = if (time.toLocalDate() == LocalDate.now()) todayFormatter else olderDateFormatter
+        return formatter.format(time).uppercase(Locale.getDefault())
     }
 
     private suspend fun setAppLockEnabled(enabled: Boolean) {

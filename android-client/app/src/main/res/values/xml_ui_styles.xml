@@ -65,8 +65,8 @@
     </style>
 
     <style name="VirtroidText.Body.Compact" parent="VirtroidText.Body">
-        <item name="android:textSize">12sp</item>
-        <item name="android:lineSpacingExtra">2dp</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:lineSpacingExtra">1dp</item>
     </style>
 
     <style name="VirtroidText.Label" parent="VirtroidText">
@@ -287,13 +287,24 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <style name="VirtroidTelemetryValueChip" parent="VirtroidTelemetryValueMono">
-        <item name="android:background">@drawable/bg_accent_soft_12</item>
-        <item name="android:paddingStart">10dp</item>
-        <item name="android:paddingTop">5dp</item>
-        <item name="android:paddingEnd">10dp</item>
-        <item name="android:paddingBottom">5dp</item>
-        <item name="android:textColor">@color/v_accent</item>
+    <!-- Every telemetry value sits in the same fixed box, right-aligned and
+         centred, so the rows line up whatever the value says. -->
+    <style name="VirtroidTelemetryValueBox" parent="VirtroidTelemetryValueMono">
+        <item name="android:layout_width">76dp</item>
+        <item name="android:background">@drawable/bg_chip_dark</item>
+        <item name="android:gravity">center</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:paddingStart">4dp</item>
+        <item name="android:paddingTop">4dp</item>
+        <item name="android:paddingEnd">4dp</item>
+        <item name="android:paddingBottom">4dp</item>
+    </style>
+
+    <style name="VirtroidTelemetryDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/v_border_soft</item>
     </style>
 
     <style name="VirtroidSettingsTitle">
@@ -312,7 +323,8 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:includeFontPadding">false</item>
         <item name="android:textColor">@color/v_text_muted</item>
-        <item name="android:textSize">12sp</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:lineSpacingExtra">1dp</item>
     </style>
 
     <style name="VirtroidSettingsDivider">

@@ -73,7 +73,7 @@
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:layout_marginBottom="20dp"
-                    android:background="@drawable/bg_accent_soft_12"
+                    android:background="@drawable/bg_icon_tile"
                     android:padding="12dp"
                     android:src="@drawable/ic_shield"
                     app:tint="@color/v_accent" />
@@ -109,7 +109,7 @@
                         <ImageView
                             android:layout_width="40dp"
                             android:layout_height="40dp"
-                            android:background="@drawable/bg_accent_soft_circle"
+                            android:background="@drawable/bg_icon_tile"
                             android:padding="10dp"
                             android:src="@drawable/ic_bell"
                             app:tint="@color/v_accent" />
@@ -127,7 +127,7 @@
 
                             <TextView
                                 style="@style/VirtroidSettingsSubtitle"
-                                android:layout_marginTop="6dp"
+                                android:layout_marginTop="4dp"
                                 android:text="@string/permissions_notifications_body" />
                         </LinearLayout>
 
@@ -154,7 +154,7 @@
                         <ImageView
                             android:layout_width="40dp"
                             android:layout_height="40dp"
-                            android:background="@drawable/bg_accent_soft_circle"
+                            android:background="@drawable/bg_icon_tile"
                             android:padding="10dp"
                             android:src="@drawable/ic_microphone"
                             app:tint="@color/v_accent" />
@@ -172,7 +172,7 @@
 
                             <TextView
                                 style="@style/VirtroidSettingsSubtitle"
-                                android:layout_marginTop="6dp"
+                                android:layout_marginTop="4dp"
                                 android:text="@string/permissions_microphone_body" />
                         </LinearLayout>
 
@@ -199,7 +199,7 @@
                         <ImageView
                             android:layout_width="40dp"
                             android:layout_height="40dp"
-                            android:background="@drawable/bg_accent_soft_circle"
+                            android:background="@drawable/bg_icon_tile"
                             android:padding="10dp"
                             android:src="@drawable/ic_camera"
                             app:tint="@color/v_accent" />
@@ -217,7 +217,7 @@
 
                             <TextView
                                 style="@style/VirtroidSettingsSubtitle"
-                                android:layout_marginTop="6dp"
+                                android:layout_marginTop="4dp"
                                 android:text="@string/permissions_camera_body" />
                         </LinearLayout>
 

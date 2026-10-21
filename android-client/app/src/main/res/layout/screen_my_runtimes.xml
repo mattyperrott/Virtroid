@@ -99,7 +99,7 @@
             android:layout_marginStart="24dp"
             android:layout_marginEnd="24dp"
             android:layout_marginBottom="8dp"
-            android:background="@drawable/bg_accent_soft_12"
+            android:background="@drawable/bg_surface_24"
             android:drawablePadding="10dp"
             android:fontFamily="sans"
             android:foreground="?attr/selectableItemBackground"

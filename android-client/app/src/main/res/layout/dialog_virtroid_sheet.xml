@@ -12,7 +12,7 @@
         app:cardBackgroundColor="@color/virtroid_card_surface"
         app:cardCornerRadius="0dp"
         app:cardElevation="0dp"
-        app:strokeColor="@color/v_accent_stroke"
+        app:strokeColor="@color/v_hairline"
         app:strokeWidth="1dp">
 
         <LinearLayout

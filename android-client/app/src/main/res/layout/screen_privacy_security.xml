@@ -75,12 +75,6 @@
                 android:layout_marginTop="12dp"
                 android:background="@drawable/bg_privacy_telemetry_card">
 
-                <View
-                    android:layout_width="4dp"
-                    android:layout_height="match_parent"
-                    android:layout_gravity="start"
-                    android:background="@color/v_accent" />
-
                 <LinearLayout
                     android:id="@+id/telemetryCard"
                     android:layout_width="match_parent"
@@ -93,7 +87,7 @@
 
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
+                        android:layout_height="58dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
 
@@ -107,15 +101,16 @@
 
                         <TextView
                             android:id="@+id/appLockStatusValue"
-                            style="@style/VirtroidTelemetryValueChip"
-                            android:text="Secured" />
+                            style="@style/VirtroidTelemetryValueBox"
+                            android:textColor="@color/v_accent"
+                            android:text="@string/privacy_telemetry_secured" />
                     </LinearLayout>
 
-                    <View style="@style/VirtroidSettingsDivider" />
+                    <View style="@style/VirtroidTelemetryDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
+                        android:layout_height="58dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
 
@@ -129,15 +124,15 @@
 
                         <TextView
                             android:id="@+id/screenshotProtectionValue"
-                            style="@style/VirtroidTelemetryValueMono"
-                            android:text="ACTIVE" />
+                            style="@style/VirtroidTelemetryValueBox"
+                            android:text="@string/privacy_telemetry_active" />
                     </LinearLayout>
 
-                    <View style="@style/VirtroidSettingsDivider" />
+                    <View style="@style/VirtroidTelemetryDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
+                        android:layout_height="58dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
 
@@ -151,15 +146,15 @@
 
                         <TextView
                             android:id="@+id/trustedDeviceValue"
-                            style="@style/VirtroidTelemetryValueMono"
-                            android:text="VERIFIED" />
+                            style="@style/VirtroidTelemetryValueBox"
+                            android:text="@string/privacy_telemetry_verified" />
                     </LinearLayout>
 
-                    <View style="@style/VirtroidSettingsDivider" />
+                    <View style="@style/VirtroidTelemetryDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
+                        android:layout_height="58dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
 
@@ -173,15 +168,15 @@
 
                         <TextView
                             android:id="@+id/lastUnlockValue"
-                            style="@style/VirtroidTelemetryValueMono"
-                            android:text="Never" />
+                            style="@style/VirtroidTelemetryValueBox"
+                            android:text="@string/privacy_telemetry_never" />
                     </LinearLayout>
 
-                    <View style="@style/VirtroidSettingsDivider" />
+                    <View style="@style/VirtroidTelemetryDivider" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
+                        android:layout_height="58dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
 
@@ -195,8 +190,8 @@
 
                         <TextView
                             android:id="@+id/lastSessionEndValue"
-                            style="@style/VirtroidTelemetryValueMono"
-                            android:text="Never" />
+                            style="@style/VirtroidTelemetryValueBox"
+                            android:text="@string/privacy_telemetry_never" />
                     </LinearLayout>
                 </LinearLayout>
             </FrameLayout>
@@ -232,8 +227,9 @@
                             android:text="@string/privacy_require_pin_biometric" />
 
                         <TextView
+                            android:layout_marginEnd="24dp"
                             style="@style/VirtroidSettingsSubtitle"
-                            android:layout_marginTop="8dp"
+                            android:layout_marginTop="4dp"
                             android:text="@string/privacy_require_pin_biometric_body" />
                     </LinearLayout>
 
@@ -266,8 +262,9 @@
                             android:text="@string/privacy_biometric_vault_unlock" />
 
                         <TextView
+                            android:layout_marginEnd="24dp"
                             style="@style/VirtroidSettingsSubtitle"
-                            android:layout_marginTop="8dp"
+                            android:layout_marginTop="4dp"
                             android:text="@string/privacy_biometric_vault_unlock_body" />
                     </LinearLayout>
 
@@ -301,9 +298,10 @@
                             android:text="@string/privacy_auto_lock_timer" />
 
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/autoLockTimerValue"
                             style="@style/VirtroidSettingsSubtitle"
-                            android:layout_marginTop="6dp"
+                            android:layout_marginTop="4dp"
                             android:text="Immediately" />
                     </LinearLayout>
 
@@ -403,8 +401,9 @@
                             android:text="@string/privacy_app_permissions" />
 
                         <TextView
+                            android:layout_marginEnd="24dp"
                             style="@style/VirtroidSettingsSubtitle"
-                            android:layout_marginTop="8dp"
+                            android:layout_marginTop="4dp"
                             android:text="@string/privacy_app_permissions_body" />
                     </LinearLayout>
 
@@ -436,8 +435,9 @@
                             android:text="@string/privacy_block_screen_capture" />
 
                         <TextView
+                            android:layout_marginEnd="24dp"
                             style="@style/VirtroidSettingsSubtitle"
-                            android:layout_marginTop="8dp"
+                            android:layout_marginTop="4dp"
                             android:text="@string/privacy_block_screen_capture_body" />
                     </LinearLayout>
 
@@ -521,8 +521,9 @@
                             android:text="@string/privacy_auto_clear_clipboard" />
 
                         <TextView
+                            android:layout_marginEnd="24dp"
                             style="@style/VirtroidSettingsSubtitle"
-                            android:layout_marginTop="6dp"
+                            android:layout_marginTop="4dp"
                             android:text="@string/privacy_auto_clear_clipboard_body" />
                     </LinearLayout>
 
@@ -583,8 +584,9 @@
                             android:text="@string/privacy_operator_visibility_title" />
 
                         <TextView
+                            android:layout_marginEnd="24dp"
                             style="@style/VirtroidSettingsSubtitle"
-                            android:layout_marginTop="8dp"
+                            android:layout_marginTop="4dp"
                             android:text="@string/privacy_operator_visibility_summary" />
                     </LinearLayout>
 

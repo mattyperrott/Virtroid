@@ -202,7 +202,7 @@
                         android:id="@+id/icon_passphrase_option"
                         android:layout_width="54dp"
                         android:layout_height="54dp"
-                        android:background="@drawable/bg_accent_soft_circle"
+                        android:background="@drawable/bg_icon_tile"
                         android:padding="14dp"
                         android:src="@drawable/ic_storage"
                         app:tint="@color/v_accent" />

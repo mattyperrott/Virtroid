@@ -130,7 +130,7 @@
                                 android:src="@drawable/ic_terminal"
                                 app:tint="@color/v_accent"
                                 android:layout_marginBottom="12dp"
-                                android:background="@drawable/bg_surface_light_circle" />
+                                android:background="@drawable/bg_icon_tile" />
                             <TextView
                                 android:id="@+id/stat_state_label"
                                 android:layout_width="wrap_content"
@@ -172,7 +172,7 @@
                                 android:src="@drawable/ic_shield"
                                 app:tint="@color/v_blue"
                                 android:layout_marginBottom="12dp"
-                                android:background="@drawable/bg_surface_light_circle" />
+                                android:background="@drawable/bg_icon_tile" />
                             <TextView
                                 android:id="@+id/stat_tunnel_label"
                                 android:layout_width="wrap_content"
@@ -213,7 +213,7 @@
                                 android:src="@drawable/ic_storage"
                                 app:tint="@color/v_amber"
                                 android:layout_marginBottom="12dp"
-                                android:background="@drawable/bg_surface_light_circle" />
+                                android:background="@drawable/bg_icon_tile" />
                             <TextView
                                 android:id="@+id/stat_storage_label"
                                 android:layout_width="wrap_content"
@@ -263,8 +263,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_phone"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -302,8 +302,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_session_menu"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -317,6 +317,7 @@
                             android:layout_height="wrap_content"
                             android:text="Display &amp; Output" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/controlsDisplayBodyText"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
@@ -324,16 +325,14 @@
                             android:text="Native aspect, adaptive 15-30fps"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
+                    <ImageView
                         android:id="@+id/item_display_output_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/runtimeAppsRow"
@@ -351,8 +350,8 @@
                         android:padding="13dp"
                         android:importantForAccessibility="no"
                         android:src="@drawable/ic_download"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -366,6 +365,7 @@
                             android:layout_height="wrap_content"
                             android:text="@string/controls_apps_title" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/runtimeAppsSubtitle"
                             style="@style/VirtroidText.Body.Compact"
                             android:ellipsize="end"
@@ -375,16 +375,13 @@
                             android:text="@string/controls_apps_subtitle"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
                         android:importantForAccessibility="no"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/runtimeIdleRow"
@@ -402,8 +399,8 @@
                         android:padding="13dp"
                         android:importantForAccessibility="no"
                         android:src="@drawable/ic_power"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -417,7 +414,9 @@
                             android:layout_height="wrap_content"
                             android:text="@string/controls_idle_title" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/runtimeIdleSubtitle"
+                            android:visibility="gone"
                             style="@style/VirtroidText.Body.Compact"
                             android:ellipsize="end"
                             android:maxLines="1"
@@ -425,16 +424,13 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
                         android:importantForAccessibility="no"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/runtimeLocationRow"
@@ -452,8 +448,8 @@
                         android:padding="13dp"
                         android:importantForAccessibility="no"
                         android:src="@drawable/ic_location"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -467,7 +463,9 @@
                             android:layout_height="wrap_content"
                             android:text="@string/controls_location_title" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/runtimeLocationSubtitle"
+                            android:visibility="gone"
                             style="@style/VirtroidText.Body.Compact"
                             android:ellipsize="end"
                             android:maxLines="1"
@@ -475,16 +473,13 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
                         android:importantForAccessibility="no"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/runtimeTorRow"
@@ -502,8 +497,8 @@
                         android:padding="13dp"
                         android:importantForAccessibility="no"
                         android:src="@drawable/ic_onion"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -517,7 +512,9 @@
                             android:layout_height="wrap_content"
                             android:text="@string/controls_tor_title" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/runtimeTorSubtitle"
+                            android:visibility="gone"
                             style="@style/VirtroidText.Body.Compact"
                             android:ellipsize="end"
                             android:maxLines="1"
@@ -525,16 +522,13 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
                         android:importantForAccessibility="no"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/cameraPassthroughRow"
@@ -551,8 +545,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_camera"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -566,6 +560,7 @@
                             android:layout_height="wrap_content"
                             android:text="Physical Camera Photo Import" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/item_camera_passthrough_subtitle"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
@@ -573,22 +568,15 @@
                             android:text="Inject local camera to cloud"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <FrameLayout
+                    <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/cameraPassthroughSwitch"
                         android:contentDescription="@string/new_runtime_camera_passthrough"
-                        android:layout_width="52dp"
-                        android:layout_height="30dp"
-                        android:background="@drawable/bg_switch_track_on"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
                         android:clickable="false"
-                        android:focusable="false">
-
-                        <View
-                            android:layout_width="22dp"
-                            android:layout_height="22dp"
-                            android:layout_gravity="end|center_vertical"
-                            android:layout_marginEnd="4dp"
-                            android:background="@drawable/bg_switch_thumb_dark" />
-                    </FrameLayout>
+                        android:focusable="false"
+                        android:text="" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/consoleLogsRow"
@@ -606,8 +594,8 @@
                         android:layout_height="48dp"
                         android:padding="13dp"
                         android:src="@drawable/ic_terminal"
-                        app:tint="@color/v_text_primary"
-                        android:background="@drawable/bg_surface_light_circle" />
+                        app:tint="@color/v_accent"
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -621,6 +609,7 @@
                             android:layout_height="wrap_content"
                             android:text="Console Logs" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/item_console_logs_subtitle"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
@@ -628,16 +617,14 @@
                             android:text="Boot &amp; network events"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
+                    <ImageView
                         android:id="@+id/item_console_logs_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_text_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <TextView
                     android:id="@+id/controlsLogsText"
@@ -658,7 +645,7 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:background="@drawable/bg_accent_soft_24"
+                    android:background="@drawable/bg_surface_24"
                     android:padding="16dp"
                     android:layout_marginBottom="12dp">
                     <ImageView
@@ -667,7 +654,7 @@
                         android:padding="13dp"
                         android:src="@drawable/ic_refresh"
                         app:tint="@color/v_accent"
-                        android:background="@drawable/bg_accent_soft_12" />
+                        android:background="@drawable/bg_icon_tile" />
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -679,8 +666,9 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/controls_restart_title"
-                            android:textColor="@color/v_accent" />
+                            android:textColor="@color/v_text_primary" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
@@ -688,15 +676,13 @@
                             android:textColor="@color/v_text_muted"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_accent"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_text_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/wipeRow"
@@ -730,6 +716,7 @@
                             android:text="@string/controls_wipe_title"
                             android:textColor="@color/v_amber" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/item_wipe_destroy_subtitle"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
@@ -738,16 +725,14 @@
                             android:textColor="@color/v_amber_muted"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
+                    <ImageView
                         android:id="@+id/item_wipe_destroy_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_amber_muted"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_amber_muted" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/destroyRow"
@@ -781,6 +766,7 @@
                             android:text="@string/controls_destroy_title"
                             android:textColor="@color/v_danger" />
                         <TextView
+                            android:layout_marginEnd="24dp"
                             android:id="@+id/item_destroy_subtitle"
                             style="@style/VirtroidText.Body.Compact"
                             android:layout_width="wrap_content"
@@ -789,16 +775,14 @@
                             android:textColor="@color/v_danger_muted"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <TextView
+                    <ImageView
                         android:id="@+id/item_destroy_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="&gt;"
-                        android:textColor="@color/v_danger_dim"
-                        android:textSize="18sp"
-                        android:fontFamily="sans"
-                        android:includeFontPadding="false"
-                        android:layout_marginStart="8dp" />
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/v_danger_dim" />
                 </LinearLayout>
             </LinearLayout>
         </ScrollView>
