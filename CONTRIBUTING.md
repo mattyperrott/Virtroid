@@ -42,7 +42,7 @@ The pinned toolchain and commands are in the
 
 | Component | Requirements |
 | :--- | :--- |
-| Go services | Go 1.27.2; PostgreSQL 18 for integration tests |
+| Go services | Go 1.27.3; PostgreSQL 18 for integration tests |
 | Android modules | JDK 17, Android SDK 36, and the checked-in Gradle wrapper |
 | Operator console | Node.js and npm; install with `npm ci` |
 | Confidential VM image | Nix and a Linux machine with `/dev/kvm`; see the [Aleph guide](deploy/aleph/README.md) |

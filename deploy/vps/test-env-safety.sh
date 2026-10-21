@@ -59,7 +59,7 @@ printf '%s\n' \
 export VIRTROID_RELEASE_ENV_FILE="${release_env_file}"
 printf '%s\n' \
   "POSTGRES_IMAGE=postgres:18@sha256:${digest}" \
-  "GO_BUILD_IMAGE=golang:1.27.2-bookworm@sha256:${digest}" \
+  "GO_BUILD_IMAGE=golang:1.27.3-bookworm@sha256:${digest}" \
   "BACKEND_RUNTIME_IMAGE=alpine:3.23@sha256:${digest}" \
   "NODE_RUNTIME_IMAGE=redroid/redroid:14.0.0_64only-latest@sha256:${digest}" \
   "HAPROXY_IMAGE=haproxy:lts@sha256:${digest}" \
