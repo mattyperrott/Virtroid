@@ -205,7 +205,7 @@ dependencies {
     // QR codes for deposit addresses.
     implementation("com.google.zxing:core:3.5.3")
     // Argon2id for the identity password (Android has no built-in one).
-    implementation("org.bouncycastle:bcprov-jdk18on:1.80")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is only a stub in JVM unit tests.
     testImplementation("org.json:json:20260522")
