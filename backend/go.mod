@@ -1,8 +1,6 @@
 module virtroid/backend
 
-go 1.27.0
-
-toolchain go1.27.3
+go 1.27.3
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
@@ -44,7 +42,7 @@ require (
 	go.sia.tech/mux v1.5.3 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/arch v0.0.0-20210923205945-b76863e36670 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
