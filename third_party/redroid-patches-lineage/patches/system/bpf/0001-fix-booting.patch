@@ -1,0 +1,16 @@
+diff --git a/loader/Loader.cpp b/loader/Loader.cpp
+index cde6447..1b61bc5 100644
+--- a/loader/Loader.cpp
++++ b/loader/Loader.cpp
+@@ -688,9 +688,11 @@ void vendorBpfLoader() {
+         ALOGE("If this triggers reliably, you're probably missing kernel options or patches.");
+         ALOGE("If this triggers randomly, you might be hitting some memory allocation "
+               "problems or startup script race.");
++        #if 0 // HACKED
+         ALOGE("--- DO NOT EXPECT SYSTEM TO BOOT SUCCESSFULLY ---");
+         sleep(20);
+         exit(121);
++        #endif
+     }
+ 
+     const char* args[] = {"/apex/com.android.tethering/bin/netbpfload", "done", NULL};

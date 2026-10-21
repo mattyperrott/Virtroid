@@ -1,0 +1,3 @@
+packages/modules/Connectivity https://android.googlesource.com/platform/packages/modules/Connectivity android-16.0.0_r4
+system/bpf https://android.googlesource.com/platform/system/bpf android-16.0.0_r4
+system/core https://android.googlesource.com/platform/system/core android-16.0.0_r4

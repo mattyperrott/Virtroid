@@ -1,0 +1,13 @@
+external/minijail https://android.googlesource.com/platform/external/minijail android-16.0.0_r4
+external/selinux https://android.googlesource.com/platform/external/selinux android-16.0.0_r4
+frameworks/av https://github.com/LineageOS/android_frameworks_av lineage-23.2
+frameworks/base https://github.com/LineageOS/android_frameworks_base lineage-23.2
+frameworks/native https://github.com/LineageOS/android_frameworks_native lineage-23.2
+packages/modules/Connectivity https://github.com/LineageOS/android_packages_modules_Connectivity lineage-23.2
+system/bpf https://github.com/LineageOS/android_system_bpf lineage-23.2
+system/core https://github.com/LineageOS/android_system_core lineage-23.2
+system/hwservicemanager https://android.googlesource.com/platform/system/hwservicemanager android-16.0.0_r4
+system/libhwbinder https://android.googlesource.com/platform/system/libhwbinder android-16.0.0_r4
+system/libvintf https://android.googlesource.com/platform/system/libvintf android-16.0.0_r4
+system/netd https://github.com/LineageOS/android_system_netd lineage-23.2
+system/vold https://github.com/LineageOS/android_system_vold lineage-23.2
