@@ -9,10 +9,11 @@
 </p>
 
 <p align="center">
-  <img alt="Release candidate" src="https://img.shields.io/badge/status-release%20candidate-AFD135?style=for-the-badge&labelColor=18221B">
-  <img alt="Android 9+" src="https://img.shields.io/badge/client-Android%209%2B-AFD135?style=for-the-badge&labelColor=18221B">
-  <img alt="AMD SEV-SNP" src="https://img.shields.io/badge/runtime-AMD%20SEV--SNP-F0F3EE?style=for-the-badge&labelColor=18221B">
-  <img alt="Sia storage" src="https://img.shields.io/badge/storage-Sia-F0F3EE?style=for-the-badge&labelColor=18221B">
+  <img alt="Release candidate" src="https://img.shields.io/badge/status-release%20candidate-AFD135?style=for-the-badge&labelColor=131313">
+  <img alt="Android 9+" src="https://img.shields.io/badge/client-Android%209%2B-AFD135?style=for-the-badge&labelColor=131313">
+  <img alt="AMD SEV-SNP" src="https://img.shields.io/badge/runtime-AMD%20SEV--SNP-F4F4F5?style=for-the-badge&labelColor=131313">
+  <img alt="Sia storage" src="https://img.shields.io/badge/storage-Sia-F4F4F5?style=for-the-badge&labelColor=131313">
+  <img alt="Tor egress" src="https://img.shields.io/badge/egress-direct%20or%20Tor-F4F4F5?style=for-the-badge&labelColor=131313">
 </p>
 
 <p align="center">
@@ -57,7 +58,7 @@ Your remote apps, messages, accounts and files live in the runtime. The handset 
 The client protects the information it does keep:
 
 - **Device key.** Held in Android’s hardware-backed Keystore, non-exportable, and used for device signing only while the phone is unlocked.
-- **Account key.** Wrapped by your identity password, which is never stored on the phone or sent to the service.
+- **Account key.** Wrapped by your identity password, which is never stored on the phone or sent to the service. Optionally, your fingerprint opens it on that phone instead of the password.
 - **Local client state.** Logs, settings and session handles can be protected by an encrypted vault with an app PIN or biometric unlock.
 - **Notifications.** Optional, encrypted metadata containing the app name, time and title, without the message body.
 
@@ -85,10 +86,11 @@ The approved software, release signer, hardware and other trust boundaries are d
 
 ### Separate your handset from the runtime
 
-- **Device persona.** Each start presents a fresh device model and fingerprint. This changes device identifiers; accounts and restored app data can still link sessions.
-- **Network.** Runtime apps use the VM’s datacenter connection rather than the phone’s IP address or carrier connection.
+- **Device persona.** Each start presents a fresh device model and build fingerprint. Apps keep their device ID across ordinary starts, so they stay signed in; **Restart with New Persona** gives every app a new one. Accounts and restored app data can still link sessions.
+- **Network.** Runtime apps use the VM’s datacenter connection rather than the phone’s IP address or carrier connection. Optionally, a runtime’s own traffic goes through **Tor**, including `.onion` addresses, and nothing else is let out, even if Tor stops. Your phone’s link to the runtime stays direct.
+- **Location.** Give each runtime a place: a city from a built-in list, or coordinates. The runtime takes that place’s timezone. The choice is sealed on your phone for the VM, so the service cannot read it. Apps will see the place itself as a GPS position once the custom Android image adds a location provider.
 - **Account isolation.** Each account has its own VM. Runtimes belonging to that account can use the same VM; separate runtimes do not each have their own VM boundary.
-- **Apps without Google services.** Browse a verified F-Droid catalogue or install more through F-Droid inside the runtime. Runtimes currently use stock ReDroid 14; a custom debloated AOSP image remains planned.
+- **Apps without Google services.** Browse a verified F-Droid catalogue or install more through F-Droid inside the runtime. Runtimes currently use stock ReDroid 14; a debloated image of our own, built from LineageOS, is planned ([plan](deploy/aosp/README.md)).
 
 ### No personal details to register
 
@@ -118,6 +120,8 @@ Tap **+** and configure:
 | **Session name** | Choose a name for the runtime. |
 | **Keep running** | Set how long it remains active after closing the viewer: **30 minutes to 1 week**. |
 | **Pre-install apps** | Browse or search F-Droid and select **up to 32 apps**. |
+| **Location** | Pick a city or enter coordinates, or leave it off. Sealed for the VM; the runtime takes the place’s timezone. |
+| **Route through Tor** | Send the runtime’s own internet traffic through Tor. Slower, and calls, video chat and some sites won’t work. |
 | **Audio passthrough** | Configure runtime audio access. |
 | **Host physical camera** | Configure access to the phone’s camera. |
 
@@ -140,7 +144,9 @@ While the viewer is closed, messaging apps keep receiving messages. Optional not
 | **Apps** | Change the runtime’s F-Droid app selection. |
 | **Keep running when closed** | Change the period and view the countdown until shutdown. |
 | **Stop and save now** | Shut down Android and save its data immediately. |
-| **Restart with New Persona** | Restart with a fresh device persona. |
+| **Location** | Change or turn off the runtime’s place. |
+| **Route through Tor** | Turn Tor on or off while the runtime is stopped; it applies from the next start. |
+| **Restart with New Persona** | Save, then restart as a new device, with new app device IDs. Some apps may ask you to sign in again. |
 | **Factory Reset Runtime** | Clear the runtime’s saved data. |
 | **Wipe & Delete Runtime** | Wipe saved data and remove the runtime. |
 | **Display & Output** | Configure display and output settings. |
@@ -164,6 +170,7 @@ Manage phones and credentials in **Account Identity**:
 - **Linked devices** lists every phone connected to your account. Revoke devices you no longer have.
 - **Recover Account** restores access on a new or replacement phone using your account ID and identity password. The new phone generates its own signing key; the old phone is unnecessary.
 - **Change your identity password** without changing the underlying account key. Existing runtimes and snapshots remain unaffected.
+- **Unlock with fingerprint** lets your fingerprint open the account key on this phone instead of typing the identity password. The key copy it uses is destroyed if a fingerprint is added to the phone, and dropped when you sign out.
 
 ### Privacy settings
 
@@ -176,6 +183,8 @@ In **Privacy & Security**:
 | **Auto-clear Clipboard** | Clears the phone’s clipboard when a session ends. |
 | **Require unlock on app resume** | Requires the app’s PIN when returning to it. |
 | **Auto-lock Timer** | Controls when the app locks and requests its PIN. |
+| **Force Clear Local Cache Now** | Removes the app’s cached local data on the phone. |
+| **What the operator can see** | Lists the metadata the service can and cannot see. |
 
 ---
 
@@ -190,7 +199,7 @@ In **Privacy & Security**:
 
 
 1. **Create.** Choose a name, a keep-running period and any F-Droid apps to pre-install.
-2. **Start.** Assign a confidential VM and a fresh device persona. Restore and decrypt saved data inside the VM before Android boots. Selected apps are installed once.
+2. **Start.** Assign a confidential VM and a fresh device persona. Restore and decrypt saved data inside the VM before Android boots. Apply the runtime’s sealed location and, if chosen, route its traffic through Tor on fresh circuits. Selected apps are installed once.
 3. **Use.** The phone verifies the VM, then streams its screen over an end-to-end encrypted channel.
 4. **Close.** The runtime stays active for the selected period. Apps continue receiving messages and forwarding notification metadata.
 5. **Stop and save.** When the period expires, or you select **Stop and save now**, Android shuts down. Its data is encrypted, saved across Sia hosts and removed in plaintext.
@@ -234,7 +243,7 @@ Reconstructing a stored snapshot requires enough shards from separate hosts. Rec
   <img alt="Virtroid architecture: the phone sends signed requests through the edge; virtroidd checks credit; the provisioner prepares an account-dedicated SEV-SNP VM and releases its disk key after attestation; the phone verifies the VM and streams from it; encrypted snapshots move through the indexer to independent Sia hosts; encrypted notification metadata is relayed to linked phones." src="assets/architecture/virtroid-target-light.png">
 </picture>
 
-The diagrams describe the architecture and intended lifecycle. VM retirement follows the account-level idle policy above. The component descriptions identify planned features and services operating in dry-run mode.
+The diagrams describe the architecture and intended lifecycle. VM retirement follows the account-level idle policy above. The component descriptions identify planned features.
 
 ### Components
 
@@ -245,12 +254,12 @@ The diagrams describe the architecture and intended lifecycle. VM retirement fol
 | **`virtroidd`** | Control plane | Accounts, devices, policy, billing, placement, runtimes, capabilities, sessions, app catalogue, notification delivery and the Observatory. |
 | **PostgreSQL** | Control plane | Authoritative account, billing and lifecycle state. |
 | **Provisioner** | Control plane | Creates account-dedicated SEV-SNP VMs on Aleph Cloud, verifies attestation before releasing secrets, manages warm spares and deletes unused VMs. |
-| **Payments service** | Control plane | Sole holder of the deposit wallet seed. Detects confirmed TRON USDT deposits, checks them against a second node and signs reports. Treasury sweeps and funding conversions are built but remain in dry-run mode. |
+| **Payments service** | Control plane | Sole holder of the deposit wallet seed. Detects confirmed TRON USDT deposits, checks them against a second node and signs reports. Sweeps deposits into a treasury and swaps them for what the service runs on, within per-swap and daily caps. |
 | **Sia indexer — `indexd`** | Control plane | Assigns account-specific Sia keys and pays storage hosts in Siacoin. Sees opaque storage metadata. |
 | **Host sensors** | Control plane | Falco and Suricata monitor the control plane. Off-host, append-only event storage is planned; events currently remain on the control plane. |
-| **Runtime VM** | Aleph Cloud; one per account | SEV-SNP guest booting a measured image, running `virtnoded`, the viewer encryption proxy and Android in a container. Tetragon is planned. |
-| **`virtnoded`** | Runtime VM | Android lifecycle, viewing, app installation, Sia snapshots and cleanup. |
-| **Android runtime** | Runtime VM | Currently stock ReDroid 14, with F-Droid installed at first start and a Virtroid agent forwarding notification metadata. A custom debloated AOSP build is planned. |
+| **Runtime VM** | Aleph Cloud; one per account | SEV-SNP guest booting a measured image, running `virtnoded`, the viewer encryption proxy, a Tor client and Android in a container. Tetragon is planned. |
+| **`virtnoded`** | Runtime VM | Android lifecycle, viewing, app installation, location and timezone, Tor routing, Sia snapshots and cleanup. |
+| **Android runtime** | Runtime VM | Currently stock ReDroid 14, with F-Droid installed at first start and a Virtroid agent forwarding notification metadata. A debloated build of our own, based on LineageOS, is planned. |
 | **Sia network** | Independent storage hosts | Stores encrypted snapshot chunks as 30 shards, any 10 of which reconstruct them. |
 
 ### Runtime VM image
@@ -259,7 +268,8 @@ The runtime image includes the entire Linux VM:
 
 - **Verified, read-only root.** Built with Nix and checked block by block using **dm-verity**. The root hash is part of the measured boot chain, so changing the image changes the measurement checked by the phone.
 - **Hardened kernel.** Includes Android’s Binder driver and refuses to load kernel modules.
-- **Guest services.** Runs `virtnoded`, the attestation agent, the viewer encryption proxy and Docker for the Android container.
+- **Guest services.** Runs `virtnoded`, the attestation agent, the viewer encryption proxy, Docker for the Android container and Tor for runtimes that route through it.
+- **Tor egress.** Each runtime that uses Tor gets its own network bridge. The VM’s firewall sends everything from it to Tor and drops what Tor cannot carry (UDP and IPv6), so nothing leaves directly even if Tor stops. Such a runtime reaches nothing else on the VM, and no runtime can reach `virtnoded`’s private port.
 - **Planned process enforcement.** Tetragon will monitor processes and block executables outside its allowlist.
 - **Encrypted writable storage.** Writable state is confined to the VM’s data disk, whose active encryption key is held in memory.
 - **No embedded user data.** Runtime data is restored from Sia at startup.
@@ -311,12 +321,12 @@ Each runtime maintains its own app selection, chosen during creation or changed 
 2. **Confirm.** Deposits are checked for confirmation and verified against a second TRON node.
 3. **Credit once.** Confirmed deposits are credited once to the account’s USDT balance.
 4. **Charge usage.** Runtime hours and GB-month storage charges are deducted from that balance.
-5. **Fund infrastructure.** The conversion system is designed to sweep funds to a treasury and use instant-swap services to obtain:
-   - **Siacoin** for the Sia indexer
-   - **ETH** for Aleph credits and associated gas
-   - **TRX** for transaction fees
+5. **Fund infrastructure.** Every 30 minutes, deposit addresses holding 20 USDT or more are swept into a treasury. When a balance runs low, the treasury swaps USDT through **SimpleSwap**, sending only to addresses fixed in the service’s configuration:
+   - **Siacoin** for the Sia indexer, when it holds 10% or more below its 20,000 SC target
+   - **ETH** from which the provisioner buys Aleph credits (keeping some for gas), when they cover less than about a week of recent spending
+   - **TRX** for transaction fees, when the treasury runs low
 
-Treasury sweeps and **SimpleSwap** conversions are implemented in **dry-run mode**, logging intended actions. Siacoin and Aleph credits are currently topped up manually; automatic replenishment is intended to run when balances become low.
+Each swap is between 25 and 200 USDT, and at most 500 USDT leaves for swaps in a day. Every sweep and transfer is built and signed inside the isolated payments service. SimpleSwap sees each swap’s amounts and addresses. Details: [`deploy/vps/payments.md`](deploy/vps/payments.md).
 
 ---
 
@@ -347,6 +357,7 @@ These protections still depend on the phone’s security while it is unlocked an
 - **The control plane.** It decides placement and sees account, runtime, timing and connection-IP metadata.
 - **AMD SEV-SNP and host firmware.** Their security against firmware flaws and side channels remains part of the trust boundary. **FABRICKED** (CVE-2025-54510, AMD-SB-3034) lets a host with unpatched firmware read a VM’s memory and forge its attestation report. The approval list sets minimum firmware per processor (on Genoa, SNP firmware 28, which carries AMD’s fix), and phones check the report’s firmware against AMD’s certificate for that chip. EPYC Milan, whose attestation can be forged, is refused.
 - **The runtime’s Android build.** Runtimes use stock ReDroid 14, whose Android security patch level is **May 2024**. Apps inside a runtime could exploit Android flaws fixed since then. A current build is planned (see [Remaining work](#remaining-work)).
+- **Tor, for runtimes that use it.** As with any Tor use, exit relays see which ordinary (non-`.onion`) sites the runtime connects to, and the content of any traffic not protected by TLS. Sites see a Tor exit instead of the VM’s address.
 - **Your unlocked phone.** Malware on it can see what the viewer displays.
 - **Your identity password.** It protects the wrapped account key using **Argon2id (64 MiB, 3 passes)**. The server hands the wrapped key only to a phone that proves the password with a separate login key, and pauses recovery for an hour after ten wrong attempts. Someone holding the server’s database could still attempt offline guesses; a weak password remains vulnerable. Accounts created before app 0.4.5 move from PBKDF2 to Argon2id the next time their password is entered.
 
@@ -369,6 +380,8 @@ These protections still depend on the phone’s security while it is unlocked an
 - Viewers must prove possession of the runtime’s key, preventing the control plane from watching or controlling the runtime.
 - Private sockets for viewer hops inside Android.
 - Snapshot keys sealed only to a freshly attested VM, limited to the requested runtime’s keys.
+- A runtime’s location sealed on the phone for the VM; the control plane stores ciphertext.
+- Per-runtime Tor egress whose firewall lets out only what Tor carries, even if Tor stops, with fresh circuits at each start.
 
 ### Client identity and local storage
 
@@ -388,6 +401,7 @@ These protections still depend on the phone’s security while it is unlocked an
 
 - Deposit addresses derived from a public key.
 - Wallet seed held only by the isolated payments service, which signs its reports.
+- Treasury sweeps and swaps signed inside that service, sent only to configured addresses, with per-swap and daily caps.
 - Loopback-bound services and deny-by-default firewalling.
 - AppArmor, Auditd, Fail2ban and unattended security updates.
 - Falco and Suricata event collection, with sanitized, account-scoped client delivery.
@@ -395,7 +409,7 @@ These protections still depend on the phone’s security while it is unlocked an
 
 
 > [!CAUTION]
-> **Virtroid is not an anonymity network.** The control plane and runtime VM can see the phone’s connection IP address, and USDT deposits are public on TRON. Use a VPN or Tor on the phone if concealing that connection matters to you.
+> **Virtroid is not an anonymity network.** The control plane and runtime VM can see the phone’s connection IP address, and USDT deposits are public on TRON. Routing a runtime through Tor hides the VM’s address from the sites its apps visit; it does not hide your phone from Virtroid, because the viewer link stays direct. Use a VPN or Tor on the phone if concealing that connection matters to you.
 
 ---
 
@@ -421,14 +435,15 @@ A closer region removes geographic delay. Changing transport does not.
 | Path | Purpose |
 | :--- | :--- |
 | [`android-client/`](android-client/) | Android controller, runtime agent, scrcpy integration, tests and signing gates. |
-| [`operator-console/`](operator-console/) | The Observatory: React operator console and its production bundle. |
+| [`operator-console/`](operator-console/) | The Observatory: React operator console, built into each control-plane release. |
 | [`backend/cmd/`](backend/cmd/) | Control plane, node agent, provisioner, payments, measurement signing, administration, viewer encryption and sensor entry points. |
 | [`backend/internal/`](backend/internal/) | Identity, policy, billing, persistence, lifecycle, app catalogue, Sia, TRON, security and operator API logic. |
 | [`deploy/vps/`](deploy/vps/) | Reproducible control-plane deployment, hardening, HAProxy, Falco, Suricata, Sia indexer, payments and release tooling. |
 | [`deploy/aleph/`](deploy/aleph/) | Confidential runtime VM image, kernel and provisioning guide. |
 | [`deploy/provisioner/`](deploy/provisioner/) | Provisioner image containing `virtroid-provisioner` and Aleph’s `aleph` CLI. |
+| [`deploy/aosp/`](deploy/aosp/) | Plan and keep-and-cut list for the custom Android image based on LineageOS. |
 | [`assets/`](assets/) | Architecture diagram images and their Archify source. |
-| [`third_party/`](third_party/) | Reviewable vendored source, provenance and upstream notices. |
+| [`third_party/`](third_party/) | Reviewable vendored source (the scrcpy server, ReDroid’s container patches ported to LineageOS), provenance and upstream notices. |
 | [`.github/workflows/`](.github/workflows/) | Backend, Android, deployment and code-scanning CI checks. |
 
 ---
@@ -440,18 +455,20 @@ A closer region removes geographic delay. Changing transport does not.
 
 | Area | Status | Details |
 | :--- | :---: | :--- |
-| **Identity and recovery** | ✅ Live | Sign-up with automatically issued invitations, device signing, linked phones, identity password changes, account deletion and replacement-phone recovery. Verified on a real phone. |
-| **Confidential runtime VMs** | ✅ Live | Image 14. Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
+| **Identity and recovery** | ✅ Live | Sign-up with automatically issued invitations, device signing, linked phones, identity password changes, optional fingerprint unlock of the account key, account deletion and replacement-phone recovery. Verified on a real phone. |
+| **Confidential runtime VMs** | ✅ Live | Image 15. Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root images and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
 | **Attestation and signed images** | ✅ Live | Verifies each VM against AMD’s root and the offline-signed image list. |
 | **Encrypted Sia storage** | ✅ Live | **50 mainnet storage contracts**. A real runtime’s **590 MB** snapshot saves in approximately **30 seconds**. |
 | **Restore onto a new VM** | ✅ Live | Verified on a real phone after deleting the old VM. Android was running **27 seconds after start began**; the viewer opened approximately **1 minute 40 seconds after VM creation**. |
-| **Runtime lifecycle** | ✅ Live | Create, start, stop, restore, fresh personas, factory reset, deletion and lost-snapshot handling. |
+| **Runtime lifecycle** | ✅ Live | Create, start, stop, restore, fresh personas (new app device IDs only on **Restart with New Persona**), factory reset, deletion and lost-snapshot handling. |
 | **Keep running when closed** | ✅ Live | Per-runtime **30-minute to 1-week** slider, shutdown countdown and **Stop and save now**. |
 | **Notifications** | ✅ Live | Metadata-only notifications encrypted inside the VM for account-linked phones. Delivered while the phone is locked; the control plane sees ciphertext. |
-| **Location and Tor egress** | 🧪 Built, not released | Per-runtime place from a bundled city list or coordinates, sealed for the VM; its timezone applies now, the location itself once the AOSP image adds a GNSS provider. Per-runtime Tor egress with a firewall kill switch. Needs image 15. |
+| **Location** | ✅ Live | Image 15 and app 0.4.7. Per-runtime place from a built-in city list or coordinates, sealed for the VM. Its timezone applies now; apps will see the place as a GPS position once the custom Android image adds a location provider. |
+| **Tor egress** | ✅ Live | Image 15 and app 0.4.7. Per-runtime Tor routing with a firewall kill switch, `.onion` addresses and fresh circuits at each start; the viewer link stays direct. Verified on a real phone. |
 | **Apps** | ✅ Live | Approximately **4,400 F-Droid apps**, signed-index catalogue synchronization, paged browsing, per-runtime selection, one-time installs and additional installation through F-Droid. |
 | **Remote viewer** | ✅ Live | Encrypted control, audio, on-demand microphone, camera import and direct pinned-TLS streaming with an edge fallback. |
 | **Wallet and billing** | ✅ Live | USDT (TRC20) deposits, trial allowance, **0.25 USDT/hour** runtime usage and **0.05 USDT/GB-month** storage. |
+| **Treasury and funding** | ✅ Live | Deposits swept into a treasury and swapped through SimpleSwap for Siacoin, ETH for Aleph credits and TRX for fees, when balances run low and within per-swap and daily caps. |
 | **Operator console** | ✅ Live | Observatory views for fleet, runtime VMs, payments, Sia, security and release telemetry. |
 | **Control-plane hardening** | ✅ Live | Falco, Suricata, firewalling, AppArmor and protected releases. |
 | **Database backups** | ✅ Live | Nightly control-plane and `indexd` database backups, sealed with a key derived from the `indexd` recovery phrase and stored on Aleph. [Restoration](deploy/vps/indexd.md#backups) requires only the phrase. |
@@ -483,8 +500,7 @@ The encoder reduces picture quality under pressure instead of allowing video to 
 
 | Area | Status | Details |
 | :--- | :---: | :--- |
-| **Deposit conversion** | 🧪 Dry run | Treasury sweeps and SimpleSwap conversions into Siacoin, ETH for Aleph credits and TRX for fees are built but log intended actions. Siacoin and Aleph credits are topped up manually. |
-| **Current Android build** | ⏳ Not built | Runtimes use stock ReDroid 14 (Android security patch **2024-05-05**), with F-Droid installed at first start. ReDroid's newest stock image is Android 16 with June 2025 patches; a custom AOSP build would carry current patches. |
+| **Current Android build** | ⏳ Planned | Runtimes use stock ReDroid 14 (Android security patch **2024-05-05**), with F-Droid installed at first start. The replacement is built from **LineageOS 23.2** (Android 16 with monthly security patches), debloated, with a GPS location provider fed by the VM. ReDroid’s container patches have been checked against it and the four that didn’t apply are ported; the first build waits on a build server. See the [plan](deploy/aosp/README.md) and [keep-and-cut list](deploy/aosp/components.md). |
 | **Tetragon in runtime VMs** | ⏳ Not built | Planned process monitoring and executable allowlisting. |
 | **Off-host append-only logs** | ⏳ Not built | Sensor events currently remain on the control plane. |
 
@@ -502,7 +518,7 @@ The encoder reduces picture quality under pressure instead of allowing video to 
 
 | Component | Requirements |
 | :--- | :--- |
-| **Backend** | Go **1.27**; PostgreSQL **18** for integration tests |
+| **Backend** | Go **1.27.3** or later; PostgreSQL **18** for integration tests |
 | **Android client** | JDK **17** and Android SDK with **compile SDK 36** |
 | **Operator console** | Node.js and npm |
 | **Runtime VM image** | Nix on Linux with `/dev/kvm` |
