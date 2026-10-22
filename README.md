@@ -13,7 +13,6 @@
   <img alt="Android 9+" src="https://img.shields.io/badge/client-Android%209%2B-AFD135?style=for-the-badge&labelColor=131313">
   <img alt="AMD SEV-SNP" src="https://img.shields.io/badge/runtime-AMD%20SEV--SNP-F4F4F5?style=for-the-badge&labelColor=131313">
   <img alt="Sia storage" src="https://img.shields.io/badge/storage-Sia-F4F4F5?style=for-the-badge&labelColor=131313">
-  <img alt="Tor egress" src="https://img.shields.io/badge/egress-direct%20or%20Tor-F4F4F5?style=for-the-badge&labelColor=131313">
 </p>
 
 <p align="center">
