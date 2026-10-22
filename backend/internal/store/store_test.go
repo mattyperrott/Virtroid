@@ -2489,11 +2489,54 @@ func TestEnsureRuntimeStartEntitlementRejectsExhaustedTrialTime(t *testing.T) {
 }
 
 func TestNormalizedCreateInputRejectsUnsafeProfile(t *testing.T) {
-	if _, err := normalizedCreateInput(CreateRuntimeInput{AndroidImage: "attacker/image:latest"}); !errors.Is(err, ErrRuntimeProfile) {
+	if _, err := normalizedCreateInput(CreateRuntimeInput{AndroidImage: "attacker/image:latest"}, defaultRuntimeAndroidVersion); !errors.Is(err, ErrRuntimeProfile) {
 		t.Fatalf("custom android image error = %v, want %v", err, ErrRuntimeProfile)
 	}
-	if _, err := normalizedCreateInput(CreateRuntimeInput{WidthPx: 1920, HeightPx: 1080, DensityDpi: 320}); !errors.Is(err, ErrRuntimeProfile) {
+	if _, err := normalizedCreateInput(CreateRuntimeInput{WidthPx: 1920, HeightPx: 1080, DensityDpi: 320}, defaultRuntimeAndroidVersion); !errors.Is(err, ErrRuntimeProfile) {
 		t.Fatalf("oversized profile error = %v, want %v", err, ErrRuntimeProfile)
+	}
+}
+
+func TestRuntimesAreLabelledWithTheDeployedAndroid(t *testing.T) {
+	// An app that last saw android-14 still sends it after the switch.
+	input, err := normalizedCreateInput(CreateRuntimeInput{AndroidVersion: "android-14", AndroidImage: defaultAndroidImage}, "android-16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.AndroidVersion != "android-16" || input.AndroidImage != runtimeAndroidImages["android-16"] {
+		t.Fatalf("label = %s %s, want the deployed android-16", input.AndroidVersion, input.AndroidImage)
+	}
+	if _, err := normalizedCreateInput(CreateRuntimeInput{AndroidVersion: "android-15"}, "android-16"); !errors.Is(err, ErrRuntimeProfile) {
+		t.Fatalf("unknown Android version error = %v, want %v", err, ErrRuntimeProfile)
+	}
+	st := &Store{}
+	if got := st.deployedAndroidVersion(); got != "android-14" {
+		t.Fatalf("default deployed version = %q", got)
+	}
+	if err := st.SetRuntimeAndroidVersion("android-15"); err == nil {
+		t.Fatal("an unknown deployed version was accepted")
+	}
+}
+
+func TestRelabelRuntimesAndroidLabelsEveryRuntime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	st := &Store{db: db}
+	if err := st.SetRuntimeAndroidVersion("android-16"); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectExec(`UPDATE runtimes\s+SET android_version = \$1,\s+android_image = \$2\s+WHERE deleted_at IS NULL`).
+		WithArgs("android-16", runtimeAndroidImages["android-16"]).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	relabelled, err := st.RelabelRuntimesAndroid(context.Background())
+	if err != nil || relabelled != 3 {
+		t.Fatalf("relabelled = %d, %v", relabelled, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
@@ -2502,7 +2545,7 @@ func TestNormalizedCreateInputPreservesExplicitAudioAndAllowsPhotoImport(t *test
 		AudioEnabled:    false,
 		AudioEnabledSet: true,
 		CameraMode:      "photo-import",
-	})
+	}, defaultRuntimeAndroidVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4492,7 +4535,7 @@ func TestNormalizeEgressModeRefusesUnknownModes(t *testing.T) {
 			t.Fatalf("normalizeEgressMode(%q) error = %v, want ErrRuntimeEgressMode", value, err)
 		}
 	}
-	if _, err := normalizedCreateInput(CreateRuntimeInput{EgressMode: "vpn"}); !errors.Is(err, ErrRuntimeEgressMode) {
+	if _, err := normalizedCreateInput(CreateRuntimeInput{EgressMode: "vpn"}, defaultRuntimeAndroidVersion); !errors.Is(err, ErrRuntimeEgressMode) {
 		t.Fatalf("create with an unknown egress mode = %v", err)
 	}
 }

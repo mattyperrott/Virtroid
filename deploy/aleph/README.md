@@ -190,7 +190,11 @@ with Nix for builds (a small Aleph VM works).
    - `PROVISIONED_REGIONS=snp-eu`. New accounts start in the first region
      listed; move older accounts with `virtroid-admin set-account-region`;
    - `PROVISIONER_MAX_VMS`: your spending cap;
-   - optionally `PROVISIONER_WARM_SPARES=1`.
+   - optionally `PROVISIONER_WARM_SPARES=1`;
+   - `RUNTIME_ANDROID_VERSION`: the Android `ALEPH_RUNTIME`/`ALEPH_IMAGE` run
+     (`android-16` from image 16, `android-14` before). Change it together
+     with them when a new image changes Android; virtroidd then labels every
+     runtime with it.
 
    Add `provisioner` to `VIRTROID_PROFILES` and redeploy.
 

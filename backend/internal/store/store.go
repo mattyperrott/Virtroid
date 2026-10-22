@@ -72,15 +72,26 @@ const (
 	accountRecoveryChallengeTTL = 10 * time.Minute
 )
 
-var allowedAndroidImages = map[string]struct{}{
-	defaultAndroidImage: {},
+// runtimeAndroidImages are the Android versions runtime VM images have
+// carried, with the image a runtime's label names. A VM image holds a single
+// Android image, so every runtime is labelled with the deployed one; clients
+// may still send either.
+var runtimeAndroidImages = map[string]string{
+	"android-14": defaultAndroidImage,
+	// With Google's ARM translation added in the VM image
+	// (deploy/aleph/build-runtime-image.sh).
+	"android-16": "redroid/redroid:16.0.0_64only-250627",
 }
+
+const defaultRuntimeAndroidVersion = "android-14"
 
 type Store struct {
 	db      *sql.DB
 	pricing Pricing
 	// newAccountRegion is the runtime region new accounts start in.
 	newAccountRegion string
+	// runtimeAndroidVersion is the Android the deployed runtime VM image runs.
+	runtimeAndroidVersion string
 }
 
 var (
@@ -1548,7 +1559,7 @@ func (s *Store) CreateRuntime(ctx context.Context, accountID string, input Creat
 		return Runtime{}, errors.New("account id is required")
 	}
 
-	input, err := normalizedCreateInput(input)
+	input, err := normalizedCreateInput(input, s.deployedAndroidVersion())
 	if err != nil {
 		return Runtime{}, err
 	}
@@ -1785,15 +1796,17 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, accountID, runtimeID 
 		current.Name = defaultString(*input.Name, current.Name)
 	}
 	if input.AndroidImage != nil {
-		androidImage, err := normalizeAndroidImage(defaultString(*input.AndroidImage, current.AndroidImage))
-		if err != nil {
+		if err := validateClientAndroidImage(*input.AndroidImage); err != nil {
 			return Runtime{}, err
 		}
-		current.AndroidImage = androidImage
 	}
 	if input.AndroidVersion != nil {
-		current.AndroidVersion = defaultString(*input.AndroidVersion, current.AndroidVersion)
+		if err := validateClientAndroidVersion(*input.AndroidVersion); err != nil {
+			return Runtime{}, err
+		}
 	}
+	current.AndroidVersion = s.deployedAndroidVersion()
+	current.AndroidImage = runtimeAndroidImages[current.AndroidVersion]
 	if input.WidthPx != nil && *input.WidthPx > 0 {
 		current.WidthPx = *input.WidthPx
 	}
@@ -8182,7 +8195,10 @@ func scanAccountStorageDest(storage *AccountStorage) []any {
 	}
 }
 
-func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error) {
+// normalizedCreateInput fills in a new runtime's defaults. androidVersion is
+// the deployed one, which the runtime is labelled with whatever the client
+// sent.
+func normalizedCreateInput(input CreateRuntimeInput, androidVersion string) (CreateRuntimeInput, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		input.Name = "My runtime"
 	}
@@ -8197,14 +8213,14 @@ func normalizedCreateInput(input CreateRuntimeInput) (CreateRuntimeInput, error)
 		return CreateRuntimeInput{}, err
 	}
 	input.EgressMode = egressMode
-	androidImage, err := normalizeAndroidImage(input.AndroidImage)
-	if err != nil {
+	if err := validateClientAndroidImage(input.AndroidImage); err != nil {
 		return CreateRuntimeInput{}, err
 	}
-	input.AndroidImage = androidImage
-	if strings.TrimSpace(input.AndroidVersion) == "" {
-		input.AndroidVersion = "android-14"
+	if err := validateClientAndroidVersion(input.AndroidVersion); err != nil {
+		return CreateRuntimeInput{}, err
 	}
+	input.AndroidVersion = androidVersion
+	input.AndroidImage = runtimeAndroidImages[androidVersion]
 	if input.WidthPx <= 0 {
 		input.WidthPx = 720
 	}
@@ -8292,19 +8308,34 @@ func normalizeAppPackageSelections(packageNames []string) ([]string, error) {
 	return normalized, nil
 }
 
-func normalizeAndroidImage(image string) (string, error) {
+// validateClientAndroidImage accepts no image or one a runtime VM image has
+// carried: clients send back the label they were given.
+func validateClientAndroidImage(image string) error {
 	image = strings.TrimSpace(image)
 	if image == "" {
-		return defaultAndroidImage, nil
+		return nil
 	}
-	if _, ok := allowedAndroidImages[image]; ok {
-		return image, nil
+	for _, known := range runtimeAndroidImages {
+		if image == known {
+			return nil
+		}
 	}
-	return "", ErrRuntimeProfile
+	return ErrRuntimeProfile
+}
+
+func validateClientAndroidVersion(version string) error {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return nil
+	}
+	if _, ok := runtimeAndroidImages[version]; !ok {
+		return ErrRuntimeProfile
+	}
+	return nil
 }
 
 func validateRuntimeProfile(input CreateRuntimeInput) error {
-	if input.AndroidVersion != "android-14" {
+	if _, ok := runtimeAndroidImages[input.AndroidVersion]; !ok {
 		return ErrRuntimeProfile
 	}
 	if input.WidthPx < 480 || input.WidthPx > 1600 {
@@ -8652,6 +8683,42 @@ func ValidRegion(region string) bool {
 // runtimes go to the nodes provisioned there. Call it before serving.
 func (s *Store) SetNewAccountRegion(region string) {
 	s.newAccountRegion = region
+}
+
+// SetRuntimeAndroidVersion sets the Android the deployed runtime VM image runs
+// (RUNTIME_ANDROID_VERSION), which runtimes are labelled with. Call it before
+// serving.
+func (s *Store) SetRuntimeAndroidVersion(version string) error {
+	if _, ok := runtimeAndroidImages[version]; !ok {
+		return fmt.Errorf("unknown runtime Android version %q", version)
+	}
+	s.runtimeAndroidVersion = version
+	return nil
+}
+
+func (s *Store) deployedAndroidVersion() string {
+	if s.runtimeAndroidVersion == "" {
+		return defaultRuntimeAndroidVersion
+	}
+	return s.runtimeAndroidVersion
+}
+
+// RelabelRuntimesAndroid labels every runtime with the deployed Android, which
+// each runs from its next start (an Android upgrade is one way). It returns
+// how many runtimes it relabelled.
+func (s *Store) RelabelRuntimesAndroid(ctx context.Context) (int64, error) {
+	version := s.deployedAndroidVersion()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE runtimes
+		   SET android_version = $1,
+		       android_image = $2
+		 WHERE deleted_at IS NULL
+		   AND (android_version <> $1 OR android_image <> $2)
+	`, version, runtimeAndroidImages[version])
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // SetAccountRuntimeRegion places the account's future runtimes on nodes in

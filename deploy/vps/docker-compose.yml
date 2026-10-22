@@ -64,6 +64,8 @@ services:
       PROVISIONER_MAX_VMS: ${PROVISIONER_MAX_VMS:-0}
       PROVISIONER_WARM_SPARES: ${PROVISIONER_WARM_SPARES:-0}
       PROVISIONER_SETUP_TIMEOUT: ${PROVISIONER_SETUP_TIMEOUT:-30m}
+      # The Android the runtime VM image (ALEPH_RUNTIME/ALEPH_IMAGE) runs.
+      RUNTIME_ANDROID_VERSION: ${RUNTIME_ANDROID_VERSION:-android-14}
       PROVISIONER_RETIRE_AFTER: ${PROVISIONER_RETIRE_AFTER:-2h}
       # Signed list of approved runtime VM measurements (virtroid-measurements sign).
       SNP_MEASUREMENTS_PATH: /run/virtroid/snp-measurements.json

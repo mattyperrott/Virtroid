@@ -51,6 +51,9 @@ type ServerConfig struct {
 	ProvisionerWarmSpares   int
 	ProvisionerSetupTimeout time.Duration
 	ProvisionerRetireAfter  time.Duration
+	// RuntimeAndroidVersion is the Android the deployed runtime VM image runs
+	// (android-14 or android-16); runtimes are labelled with it.
+	RuntimeAndroidVersion string
 	// SNPMeasurementsPath is the signed list of approved runtime VM launch
 	// measurements, served to phones as is.
 	SNPMeasurementsPath string
@@ -266,6 +269,7 @@ func LoadServer() ServerConfig {
 		ProvisionerMaxVMs:                provisionerMaxVMs,
 		ProvisionerWarmSpares:            provisionerWarmSpares,
 		ProvisionerSetupTimeout:          parseEnvDuration("PROVISIONER_SETUP_TIMEOUT", 30*time.Minute),
+		RuntimeAndroidVersion:            envOrDefault("RUNTIME_ANDROID_VERSION", "android-14"),
 		ProvisionerRetireAfter:           parseEnvDuration("PROVISIONER_RETIRE_AFTER", 2*time.Hour),
 		SNPMeasurementsPath:              strings.TrimSpace(os.Getenv("SNP_MEASUREMENTS_PATH")),
 		SiaIndexerAppURL:                 strings.TrimSpace(os.Getenv("SIA_INDEXER_APP_URL")),

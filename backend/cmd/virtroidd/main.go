@@ -55,6 +55,17 @@ func main() {
 		pg.SetNewAccountRegion(region)
 	}
 
+	// Runtimes are labelled with the Android the deployed runtime VM image
+	// runs; a new image can change it for all of them.
+	if err := pg.SetRuntimeAndroidVersion(cfg.RuntimeAndroidVersion); err != nil {
+		log.Fatalf("RUNTIME_ANDROID_VERSION: %v", err)
+	}
+	if relabelled, err := pg.RelabelRuntimesAndroid(ctx); err != nil {
+		log.Fatalf("relabel runtimes: %v", err)
+	} else if relabelled > 0 {
+		log.Printf("labelled %d runtimes %s", relabelled, cfg.RuntimeAndroidVersion)
+	}
+
 	go sessionReaperLoop(ctx, pg, cfg)
 	go appCatalogSyncLoop(ctx, pg, cfg)
 	go provisioningLoop(ctx, pg, cfg)
