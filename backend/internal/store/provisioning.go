@@ -405,6 +405,15 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 				return ProvisionedVM{}, fmt.Errorf("revoke the deleted VM's node key: %w", err)
 			}
 		}
+		// Its host goes too, or every VM ever provisioned would stay listed as
+		// a stale node. The revoked key stops heartbeats bringing it back; a
+		// runtime still placed on it keeps it.
+		if _, err := s.db.ExecContext(ctx, `
+			DELETE FROM hosts
+			 WHERE id = $1
+			   AND NOT EXISTS (SELECT 1 FROM runtimes WHERE host_id = $1 AND deleted_at IS NULL)`, id); err != nil {
+			return ProvisionedVM{}, fmt.Errorf("remove the deleted VM's host: %w", err)
+		}
 	case ProvisionedVMCreating:
 		if !validItemHash(report.ItemHash) {
 			return ProvisionedVM{}, errors.New("item_hash must be a 64-character hex item hash")

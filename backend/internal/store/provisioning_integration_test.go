@@ -237,12 +237,16 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 		t.Fatalf("unused VM = %+v, want retired as unused", vm)
 	}
 
-	// Deleting the VM revokes its node key.
+	// Deleting the VM revokes its node key and removes its host.
 	if _, err := st.ApplyProvisionerReport(ctx, aliceVM.ID, ProvisionerReport{State: ProvisionedVMDeleted}); err != nil {
 		t.Fatalf("delete alice VM: %v", err)
 	}
 	if keys, err := st.AuthorizedNodeKeys(ctx, aliceVM.ID); err == nil && len(keys) > 0 {
 		t.Fatalf("deleted VM still has authorized keys: %v", keys)
+	}
+	var hostRows int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM hosts WHERE id = $1`, aliceVM.ID).Scan(&hostRows); err != nil || hostRows != 0 {
+		t.Fatalf("deleted VM's host rows = %d err=%v, want none", hostRows, err)
 	}
 
 	// Runtimes whose data lived on a deleted VM start fresh instead of waiting
