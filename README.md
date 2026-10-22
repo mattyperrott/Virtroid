@@ -89,7 +89,7 @@ The approved software, release signer, hardware and other trust boundaries are d
 - **Network.** Runtime apps use the VM’s datacenter connection rather than the phone’s IP address or carrier connection. Optionally, a runtime’s own traffic goes through **Tor**, including `.onion` addresses, and nothing else is let out, even if Tor stops. Your phone’s link to the runtime stays direct.
 - **Location.** Give each runtime a place: a city from a built-in list, or coordinates. The runtime takes that place’s timezone. The choice is sealed on your phone for the VM, so the service cannot read it. Apps will see the place itself as a GPS position once the custom Android image adds a location provider.
 - **Account isolation.** Each account has its own VM. Runtimes belonging to that account can use the same VM; separate runtimes do not each have their own VM boundary.
-- **Apps without Google services.** Browse a verified F-Droid catalogue or install more through F-Droid inside the runtime. Runtimes currently use stock ReDroid 14; a debloated image of our own, built from LineageOS, is planned ([plan](deploy/aosp/README.md)).
+- **Apps without Google services.** Browse a verified F-Droid catalogue or install more through F-Droid inside the runtime. Runtimes run **Android 16** (ReDroid’s image, June 2025 security patches). ARM-only apps such as SimpleX run through Google’s ARM translation, a closed binary; an open-source replacement will be tried. A debloated image of our own, built from LineageOS with current monthly patches, is planned ([plan](deploy/aosp/README.md)).
 
 ### No personal details to register
 
@@ -258,7 +258,7 @@ The diagrams describe the architecture and intended lifecycle. VM retirement fol
 | **Host sensors** | Control plane | Falco and Suricata monitor the control plane. Off-host, append-only event storage is planned; events currently remain on the control plane. |
 | **Runtime VM** | Aleph Cloud; one per account | SEV-SNP guest booting a measured image, running `virtnoded`, the viewer encryption proxy, a Tor client and Android in a container. Tetragon is planned. |
 | **`virtnoded`** | Runtime VM | Android lifecycle, viewing, app installation, location and timezone, Tor routing, Sia snapshots and cleanup. |
-| **Android runtime** | Runtime VM | Currently stock ReDroid 14, with F-Droid installed at first start and a Virtroid agent forwarding notification metadata. A debloated build of our own, based on LineageOS, is planned. |
+| **Android runtime** | Runtime VM | Android 16: ReDroid’s image (security patch June 2025) with Google’s ARM translation added, so ARM-only apps run. F-Droid is installed at first start and a Virtroid agent forwards notification metadata. A debloated build of our own, based on LineageOS, is planned. |
 | **Sia network** | Independent storage hosts | Stores encrypted snapshot chunks as 30 shards, any 10 of which reconstruct them. |
 
 ### Runtime VM image
@@ -266,7 +266,8 @@ The diagrams describe the architecture and intended lifecycle. VM retirement fol
 The runtime image includes the entire Linux VM:
 
 - **Verified, read-only root.** Built with Nix and checked block by block using **dm-verity**. The root hash is part of the measured boot chain, so changing the image changes the measurement checked by the phone.
-- **Hardened kernel.** Includes Android’s Binder driver and refuses to load kernel modules.
+- **Hardened kernel.** Includes Android’s Binder driver and refuses to load kernel modules. For Android 16 it also has loop devices for Android’s system components (APEX packages), allows the writes to mounted block devices that Android’s APEX service makes, and has ashmem shared memory, ported from Google’s Android Common Kernel ([patch](deploy/aleph/kernel-ashmem.patch)).
+- **Android image.** Built by [`deploy/aleph/build-runtime-image.sh`](deploy/aleph/build-runtime-image.sh) from two pinned sources, ReDroid’s Android 16 image and the ARM translation from Google’s Android 16 x86_64 emulator image. It rebuilds byte for byte.
 - **Guest services.** Runs `virtnoded`, the attestation agent, the viewer encryption proxy, Docker for the Android container and Tor for runtimes that route through it.
 - **Tor egress.** Each runtime that uses Tor gets its own network bridge. The VM’s firewall sends everything from it to Tor and drops what Tor cannot carry (UDP and IPv6), so nothing leaves directly even if Tor stops. Such a runtime reaches nothing else on the VM, and no runtime can reach `virtnoded`’s private port.
 - **Planned process enforcement.** Tetragon will monitor processes and block executables outside its allowlist.
@@ -355,7 +356,7 @@ These protections still depend on the phone’s security while it is unlocked an
 - **The provisioner.** It holds each VM’s node identity key and releases it only after attestation to an approved image. It never holds the VM’s disk key or a runtime’s keys.
 - **The control plane.** It decides placement and sees account, runtime, timing and connection-IP metadata.
 - **AMD SEV-SNP and host firmware.** Their security against firmware flaws and side channels remains part of the trust boundary. **FABRICKED** (CVE-2025-54510, AMD-SB-3034) lets a host with unpatched firmware read a VM’s memory and forge its attestation report. The approval list sets minimum firmware per processor (on Genoa, SNP firmware 28, which carries AMD’s fix), and phones check the report’s firmware against AMD’s certificate for that chip. EPYC Milan, whose attestation can be forged, is refused.
-- **The runtime’s Android build.** Runtimes use stock ReDroid 14, whose Android security patch level is **May 2024**. Apps inside a runtime could exploit Android flaws fixed since then. A current build is planned (see [Remaining work](#remaining-work)).
+- **The runtime’s Android build.** Runtimes use ReDroid’s Android 16 image, whose security patch level is **June 2025**; ReDroid publishes no newer one. Apps inside a runtime could exploit Android flaws fixed since then. ARM-only apps also run through Google’s closed ARM translation. A build with current monthly patches is planned (see [Remaining work](#remaining-work)).
 - **Tor, for runtimes that use it.** As with any Tor use, exit relays see which ordinary (non-`.onion`) sites the runtime connects to, and the content of any traffic not protected by TLS. Sites see a Tor exit instead of the VM’s address.
 - **Your unlocked phone.** Malware on it can see what the viewer displays.
 - **Your identity password.** It protects the wrapped account key using **Argon2id (64 MiB, 3 passes)**. The server hands the wrapped key only to a phone that proves the password with a separate login key, and pauses recovery for an hour after ten wrong attempts. Someone holding the server’s database could still attempt offline guesses; a weak password remains vulnerable. Accounts created before app 0.4.5 move from PBKDF2 to Argon2id the next time their password is entered.
@@ -455,15 +456,16 @@ A closer region removes geographic delay. Changing transport does not.
 | Area | Status | Details |
 | :--- | :---: | :--- |
 | **Identity and recovery** | ✅ Live | Sign-up with automatically issued invitations, device signing, linked phones, identity password changes, optional fingerprint unlock of the account key, account deletion and replacement-phone recovery. Verified on a real phone. |
-| **Confidential runtime VMs** | ✅ Live | Image 15. Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root images and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
+| **Confidential runtime VMs** | ✅ Live | Image 16. Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured, verified-root images and deleted 30 minutes after last use. Once the compute node has the image, attestation and unlocking take **30–90 seconds**. |
+| **Android 16 and ARM apps** | ✅ Live | Image 16, since 22 October 2026: ReDroid’s Android 16 (security patch 2025-06-05) with Google’s ARM translation, so ARM-only apps such as SimpleX run. A saved runtime upgrades from Android 14 on its next start; the boot test checks that upgrade with SimpleX installed. Not yet verified on a real phone. |
 | **Attestation and signed images** | ✅ Live | Verifies each VM against AMD’s root and the offline-signed image list. |
 | **Encrypted Sia storage** | ✅ Live | **50 mainnet storage contracts**. A real runtime’s **590 MB** snapshot saves in approximately **30 seconds**. |
 | **Restore onto a new VM** | ✅ Live | Verified on a real phone after deleting the old VM. Android was running **27 seconds after start began**; the viewer opened approximately **1 minute 40 seconds after VM creation**. |
 | **Runtime lifecycle** | ✅ Live | Create, start, stop, restore, fresh personas (new app device IDs only on **Restart with New Persona**), factory reset, deletion and lost-snapshot handling. |
 | **Keep running when closed** | ✅ Live | Per-runtime **30-minute to 1-week** slider, shutdown countdown and **Stop and save now**. |
 | **Notifications** | ✅ Live | Metadata-only notifications encrypted inside the VM for account-linked phones. Delivered while the phone is locked; the control plane sees ciphertext. |
-| **Location** | ✅ Live | Image 15 and app 0.4.7. Per-runtime place from a built-in city list or coordinates, sealed for the VM. Its timezone applies now; apps will see the place as a GPS position once the custom Android image adds a location provider. |
-| **Tor egress** | ✅ Live | Image 15 and app 0.4.7. Per-runtime Tor routing with a firewall kill switch, `.onion` addresses and fresh circuits at each start; the viewer link stays direct. Verified on a real phone. |
+| **Location** | ✅ Live | Since image 15 and app 0.4.7. Per-runtime place from a built-in city list or coordinates, sealed for the VM. Its timezone applies now; apps will see the place as a GPS position once the custom Android image adds a location provider. |
+| **Tor egress** | ✅ Live | Since image 15 and app 0.4.7. Per-runtime Tor routing with a firewall kill switch, `.onion` addresses and fresh circuits at each start; the viewer link stays direct. Verified on a real phone. |
 | **Apps** | ✅ Live | Approximately **4,400 F-Droid apps**, signed-index catalogue synchronization, paged browsing, per-runtime selection, one-time installs and additional installation through F-Droid. |
 | **Remote viewer** | ✅ Live | Encrypted control, audio, on-demand microphone, camera import and direct pinned-TLS streaming with an edge fallback. |
 | **Wallet and billing** | ✅ Live | USDT (TRC20) deposits, trial allowance, **0.25 USDT/hour** runtime usage and **0.05 USDT/GB-month** storage. |
@@ -499,7 +501,7 @@ The encoder reduces picture quality under pressure instead of allowing video to 
 
 | Area | Status | Details |
 | :--- | :---: | :--- |
-| **Current Android build** | ⏳ Planned | Runtimes use stock ReDroid 14 (Android security patch **2024-05-05**), with F-Droid installed at first start. The replacement is built from **LineageOS 23.2** (Android 16 with monthly security patches), debloated, with a GPS location provider fed by the VM. ReDroid’s container patches have been checked against it and the four that didn’t apply are ported; the first build waits on a build server. See the [plan](deploy/aosp/README.md) and [keep-and-cut list](deploy/aosp/components.md). |
+| **Monthly Android patches** | ⏳ Planned | Runtimes run ReDroid’s Android 16 image (security patch **2025-06-05**), and ReDroid publishes no newer one. The planned image is built from **LineageOS 23.2** (Android 16 with monthly security patches), debloated, with a GPS location provider fed by the VM; it runs on the same VM kernel, which already has the loop devices and ashmem Android 16 needs. ReDroid’s container patches have been checked against it and the four that didn’t apply are ported; the first build waits on a build server, where the open-source Digitalis translator will also be tried in place of Google’s. See the [plan](deploy/aosp/README.md) and [keep-and-cut list](deploy/aosp/components.md). |
 | **Tetragon in runtime VMs** | ⏳ Not built | Planned process monitoring and executable allowlisting. |
 | **Off-host append-only logs** | ⏳ Not built | Sensor events currently remain on the control plane. |
 
