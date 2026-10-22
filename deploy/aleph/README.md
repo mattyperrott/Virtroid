@@ -146,7 +146,11 @@ with Nix for builds (a small Aleph VM works).
      agent hash;
    - `apks/`: the VPS's `/srv/virtroid/apks` without `cache/`;
    - the Android image: `runtime-image.json` pins a registry image by digest,
-     or put our own build in `runtime-image.tar`.
+     or put our own build in `runtime-image.tar`. Runtimes use ReDroid's
+     Android 16 image with Google's ARM translation added, so ARM-only apps
+     such as SimpleX run; `sudo deploy/aleph/build-runtime-image.sh OUT`
+     builds it from both pinned sources and writes `runtime-image.tar` and
+     `runtime-image.json` (whose `androidRelease` the personas claim).
 
    Then, on the builder:
    ```bash
@@ -160,7 +164,10 @@ with Nix for builds (a small Aleph VM works).
    ```
    `boot-test.sh` runs the root's real boot script with test secrets, then
    starts an Android runtime and its viewer with virtnoded's limits, mounts and
-   arguments, and passes once Android boots and the viewer listens.
+   arguments, and passes once Android boots and the viewer listens. It also
+   checks that an image offering arm64 can run it, and with
+   `BOOT_TEST_APKS=DIR` installs those APKs (SimpleX's ARM build, say) and
+   requires each app to keep running.
    `initrd-test.sh` boots the measured initrd itself, with a stand-in for the
    attestation agent, and passes when virtnoded starts and stops for want of
    SEV-SNP. With `BOOT_TEST_DEBUG=1`, a failed `boot-test.sh` VM stays up and

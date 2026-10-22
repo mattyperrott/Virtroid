@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -55,7 +56,7 @@ func buildSessionPersona(runtime runtimeAssignment) sessionPersona {
 	seed := fmt.Sprintf("%s:%d:%s", runtime.ID, runtime.PersonaVersion, runtime.AndroidVersion)
 	seedValue := stableHash(seed)
 	template := personaCatalog[int(seedValue%uint32(len(personaCatalog)))]
-	release := androidRelease(runtime.AndroidVersion)
+	release := runtimeAndroidRelease(runtime.AndroidVersion)
 	buildID := buildIDForRelease(release, stableHash(seed+":build"))
 	incremental := strconv.FormatUint(uint64(100000000+stableHash(seed+":inc")%900000000), 10)
 	fingerprint := fmt.Sprintf(
@@ -136,8 +137,18 @@ func androidRelease(version string) string {
 	return version
 }
 
+// runtimeAndroidRelease is the release the persona claims: the one the VM's
+// measured Android image runs (NODE_RUNTIME_ANDROID_RELEASE), since the
+// control plane's per-runtime version is only a label.
+func runtimeAndroidRelease(version string) string {
+	if release := strings.TrimSpace(os.Getenv("NODE_RUNTIME_ANDROID_RELEASE")); release != "" {
+		return release
+	}
+	return androidRelease(version)
+}
+
 func buildIDForRelease(release string, seed uint32) string {
-	prefix := "SP1A"
+	prefix, date := "SP1A", "220624"
 	switch release {
 	case "13":
 		prefix = "TQ3A"
@@ -146,9 +157,10 @@ func buildIDForRelease(release string, seed uint32) string {
 	case "15":
 		prefix = "AP3A"
 	case "16":
-		prefix = "BP1A"
+		// Android 16's June 2025 builds, matching the image's security patch.
+		prefix, date = "BP2A", "250605"
 	}
-	return fmt.Sprintf("%s.220624.%03d", prefix, 100+seed%900)
+	return fmt.Sprintf("%s.%s.%03d", prefix, date, 100+seed%900)
 }
 
 func base36Token(seed uint32, width int) string {

@@ -2,5 +2,6 @@
   "imageName": "redroid/redroid",
   "imageDigest": "sha256:0a611199ba2e0b5d60af39b3327a517f6407231f4352114ed3bd3cbfe2be69aa",
   "tag": "redroid-14.0.0-stock",
-  "hash": "sha256-orxNiT/OIFqIh2r+A0AXtgFbLky3jpZ6s+RefowwVW0="
+  "hash": "sha256-orxNiT/OIFqIh2r+A0AXtgFbLky3jpZ6s+RefowwVW0=",
+  "androidRelease": "14"
 }

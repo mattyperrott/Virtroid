@@ -1,11 +1,12 @@
-{ pkgs, lib, alephNix, extraFragment, ... }:
+{ pkgs, lib, alephNix, extraFragment, patches ? [ ], ... }:
 
 # The SEV-SNP guest kernel: Aleph's whitelist configuration
 # (aleph-vm nix/kernel-config.fragment, applied over `allnoconfig`) with
 # Virtroid's options. Adapted from aleph-vm's nix/kernel.nix (MIT licence,
-# Copyright (c) 2021-2024 ALEPH.IM SAS). The one change: for every symbol our
+# Copyright (c) 2021-2024 ALEPH.IM SAS). The changes: for every symbol our
 # fragment sets, Aleph's own line is removed first, so ours replaces it
-# instead of contradicting it.
+# instead of contradicting it; and `patches` (e.g. kernel-ashmem.patch) apply
+# to both the configuration and the build, so their options exist in both.
 let
   base = pkgs.linuxPackages_6_18.kernel;
 
@@ -25,7 +26,7 @@ let
     pname = "linux-config-virtroid-snp-guest";
     inherit (base) version src;
     nativeBuildInputs = with pkgs; [ bison flex perl ];
-    dontPatch = true;
+    inherit patches;
     dontFixup = true;
     buildPhase = ''
       export KCONFIG_NOTIMESTAMP=1
@@ -62,6 +63,7 @@ let
     inherit (base) version src modDirVersion;
     inherit configfile;
     config = { CONFIG_MODULES = "y"; };
+    kernelPatches = map (patch: { name = baseNameOf patch; inherit patch; }) patches;
   };
 in
 assert lib.assertMsg (lib.versionAtLeast base.version "6.18")

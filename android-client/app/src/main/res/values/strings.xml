@@ -326,7 +326,7 @@
     <string name="new_runtime_provision_detail_request">saving runtime settings_</string>
     <string name="new_runtime_provision_title_image">Verifying Runtime Image ...</string>
     <string name="new_runtime_provision_command_image">&gt; select redroid profile</string>
-    <string name="new_runtime_provision_detail_image">selecting Android 14 runtime image_</string>
+    <string name="new_runtime_provision_detail_image">selecting the Android runtime image_</string>
     <string name="new_runtime_provision_title_profile">Generating Device Profile ...</string>
     <string name="new_runtime_provision_command_profile">&gt; save hardware profile</string>
     <string name="new_runtime_provision_detail_profile">saving native display profile_</string>
@@ -340,7 +340,7 @@
     <string name="new_runtime_provision_command_error">&gt; provision runtime error</string>
     <string name="new_runtime_provision_event_identity">[ok] Signed identity registered</string>
     <string name="new_runtime_provision_event_capacity">[ok] Runtime entitlement reserved</string>
-    <string name="new_runtime_provision_event_image">[ok] Android 14 image selected</string>
+    <string name="new_runtime_provision_event_image">[ok] Android image selected</string>
     <string name="new_runtime_provision_event_profile">[ok] Hardware profile saved</string>
     <string name="new_runtime_provision_event_container">[ok] Runtime profile saved</string>
     <string name="new_runtime_provision_event_ready">[ok] Ready to start</string>

@@ -12,6 +12,12 @@
 #   BOOT_TEST_DEBUG=1   keep a failed VM up with a shell on ttyS1 (see vmsh)
 #   BOOT_TEST_SED=EXPR  sed expression applied to the overlay copy of /sbin/init
 #   BOOT_TEST_DIR       work directory (default /var/tmp/virtroid-boot-test)
+#   BOOT_TEST_APKS=DIR  install every APK in DIR; each app must start and keep
+#                       running (for ARM-only apps such as SimpleX's)
+#   BOOT_TEST_UPGRADE_FROM=TAR  an older runtime image (docker save): boot it on
+#                       fresh data with the APKs installed, then boot this
+#                       image on that data, as a saved runtime's first start
+#                       on a new Android version does
 set -euo pipefail
 
 img="$(cd "${1:?usage: boot-test.sh IMAGE_DIR}" && pwd)"
@@ -22,6 +28,10 @@ mkdir -p "$work/initrd"
 cd "$work"
 
 zcat "$img/runtime/initrd" | (cd initrd && cpio -idm --quiet)
+if [ -n "${BOOT_TEST_APKS:-}" ]; then
+  mkdir -p initrd/apks
+  cp "$BOOT_TEST_APKS"/*.apk initrd/apks/
+fi
 roothash=$(cat "$img/root/roothash")
 offset=$(cat "$img/root/hash-offset")
 node_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null |
@@ -70,6 +80,10 @@ printf %s smoke-node > \$S/virtroid_node_id
 printf %s '$node_key' > \$S/virtroid_node_key
 printf %s snp-eu > \$S/virtroid_region
 printf %s https://control.invalid > \$S/virtroid_control_plane
+if [ -d /apks ]; then
+  \$B mkdir -p /mnt/root/tmp/apks
+  \$B cp /apks/*.apk /mnt/root/tmp/apks/
+fi
 \$B mount -t proc proc /mnt/root/proc
 \$B mount -t sysfs sys /mnt/root/sys
 \$B mount -o bind /dev /mnt/root/dev
@@ -106,6 +120,7 @@ echo "boot-test: --- nft ruleset (virtroid) ---"
 C /bin/nft list table inet virtroid
 echo "boot-test: --- binderfs ---"
 \$B ls /dev/binderfs
+echo "boot-test: loop devices: \$(\$B ls /dev | \$B grep -c '^loop[0-9]')"
 echo "boot-test: --- docker info ---"
 C /bin/docker info 2>&1 | \$B grep -iE "storage driver|cgroup|warning|iptables|firewall"
 echo "boot-test: --- virtnoded log ---"
@@ -165,6 +180,36 @@ fi
 memory "Android booted"
 echo "boot-test: Android booted: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.fingerprint | \$B tr -d '\r')"
 echo "boot-test: Android security patch: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.version.security_patch | \$B tr -d '\r')"
+# An image that offers arm64 must be able to run it: ARM-only apps (SimpleX
+# ships no x86_64 build) load through the native bridge, and ARM executables
+# through the kernel's binfmt_misc handler, which Android's init registers.
+abis=\$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.product.cpu.abilist | \$B tr -d '\r')
+bridge=\$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.dalvik.vm.native.bridge | \$B tr -d '\r')
+echo "boot-test: ABIs \$abis; native bridge \$bridge"
+case "\$abis" in
+*arm64-v8a*)
+  C /bin/docker exec smoke /system/bin/sh -c "test -f /system/lib64/\$bridge" || fail "the image offers arm64 but its native bridge \$bridge is missing"
+  # ARM executables (not apps' libraries) also need the kernel's binfmt_misc,
+  # which the VM kernel leaves out.
+  if C /bin/grep -q binfmt_misc /proc/filesystems; then
+    arm=\$(C /bin/docker exec smoke /system/bin/sh -c "head -1 /proc/sys/fs/binfmt_misc/arm64_dyn" 2>/dev/null | \$B tr -d '\r')
+    echo "boot-test: arm64 executables: \${arm:-not registered}"
+    [ "\$arm" = enabled ] || fail "the arm64 binfmt_misc handler is not registered"
+  else
+    echo "boot-test: arm64 executables: no binfmt_misc in this kernel (apps' ARM libraries still load)"
+  fi
+  ;;
+esac
+# A runtime's region sets its timezone as virtnoded does (region.go):
+# automatic detection off, then the zone through AlarmManager, which the
+# system and running apps take at once.
+C /bin/adb -s 127.0.0.1:15555 shell settings put global auto_time_zone 0
+tzset=\$(C /bin/adb -s 127.0.0.1:15555 shell "cmd alarm set-timezone Asia/Tokyo; echo exit=\\\$?" | \$B tr -d '\r' | \$B tail -1)
+tzdevice=\$(C /bin/adb -s 127.0.0.1:15555 shell "dumpsys time_zone_detector | grep -m1 'getDeviceTimeZone()'" | \$B tr -d '\r' | \$B sed 's/^ *//')
+tzdate=\$(C /bin/adb -s 127.0.0.1:15555 shell date +%Z | \$B tr -d '\r')
+echo "boot-test: timezone: set \$tzset; \$tzdevice; date \$tzdate"
+echo "\$tzdevice" | \$B grep -q 'Asia/Tokyo' || fail "the system did not take the runtime's timezone"
+[ "\$tzdate" = JST ] || fail "a new process does not see the runtime's timezone"
 # Android's own networking (netd's firewall and routing, its DNS resolver)
 # must work for apps: resolve a name from inside Android, through Tor (which
 # may still be bootstrapping).
@@ -269,7 +314,7 @@ for i in \$(\$B seq 1 30); do
   \$B sleep 1
 done
 \$B timeout 60 C /bin/docker exec -d smoke /system/bin/sh -c "i=0; while [ \\\$i -lt 60 ]; do am start -W -a android.settings.SETTINGS >/dev/null 2>&1; sleep 0.7; input keyevent 3; sleep 0.7; i=\\\$((i+1)); done"
-\$B timeout 60 C /bin/docker exec smoke /system/bin/sh -c "(sleep 50) | toybox timeout 40 toybox nc -U /data/local/tmp/virtroid-viewer/scrcpy.sock | (i=0; n=0; while [ \\\$i -lt 160 ]; do c=\\\$(toybox dd bs=16384 count=1 2>/dev/null | toybox wc -c); n=\\\$((n+c)); sleep 0.25; i=\\\$((i+1)); done; echo \\\$n > /data/local/tmp/slow-read.count)" >/dev/null 2>&1
+\$B timeout 90 C /bin/docker exec smoke /system/bin/sh -c "(sleep 50) | toybox timeout 40 toybox nc -U /data/local/tmp/virtroid-viewer/scrcpy.sock | (i=0; n=0; while [ \\\$i -lt 160 ]; do c=\\\$(toybox dd bs=16384 count=1 2>/dev/null | toybox wc -c); n=\\\$((n+c)); sleep 0.25; i=\\\$((i+1)); done; echo \\\$n > /data/local/tmp/slow-read.count)" >/dev/null 2>&1
 slow=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "cat /data/local/tmp/slow-read.count 2>/dev/null" | \$B tr -dc '0-9')
 adapted=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "grep -E 'Video bitrate|Cannot change the video bitrate' /data/local/tmp/virtroid-viewer.log | tail -4" 2>/dev/null | \$B tr -d '\r')
 echo "boot-test: the slow viewer read \${slow:-0} bytes; bitrate:"
@@ -280,6 +325,89 @@ if ! echo "\$adapted" | \$B grep -q "Video bitrate"; then
 fi
 echo "boot-test: cpu.max \$(C /bin/bash -c 'cat /sys/fs/cgroup/docker/*/cpu.max' 2>&1 | \$B head -1)"
 echo "boot-test: lmkd \$(C /bin/adb -s 127.0.0.1:15555 shell getprop init.svc.lmkd | \$B tr -d '\r'), docker exec: \$(C /bin/docker exec smoke /system/bin/getprop sys.boot_completed)"
+# BOOT_TEST_APKS: each app installs, starts, and is still running 20 seconds
+# later without native-library errors.
+# Starts a package's launcher activity (Android 16's monkey no longer does).
+launch() { # launch PACKAGE PORT
+  comp=\$(C /bin/adb -s 127.0.0.1:\$2 shell "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER \$1 | toybox tail -1" | \$B tr -d '\r')
+  C /bin/adb -s 127.0.0.1:\$2 shell am start -n "\$comp" >/dev/null 2>&1
+}
+if C /bin/test -d /tmp/apks; then
+  for apk in \$(C /bin/bash -c 'ls /tmp/apks/*.apk'); do
+    C /bin/adb -s 127.0.0.1:15555 install -r -g "\$apk" 2>&1 | \$B tail -1 | \$B grep -q Success || fail "could not install \$apk"
+  done
+  for pkg in \$(C /bin/adb -s 127.0.0.1:15555 shell pm list packages -3 | \$B tr -d '\r' | \$B sed 's/^package://'); do
+    C /bin/adb -s 127.0.0.1:15555 shell logcat -c
+    launch "\$pkg" 15555
+    \$B sleep 20
+    pid=\$(C /bin/adb -s 127.0.0.1:15555 shell pidof "\$pkg" | \$B tr -d '\r')
+    abi=\$(C /bin/adb -s 127.0.0.1:15555 shell dumpsys package "\$pkg" | \$B grep -m1 -o 'primaryCpuAbi=[^ ]*' | \$B tr -d '\r')
+    errors=\$(C /bin/adb -s 127.0.0.1:15555 shell "logcat -d -b main,crash | grep -E 'FATAL EXCEPTION|UnsatisfiedLinkError|NativeBridge.*(fail|error)|ndk_translation.*(fail|error)' | head -5" | \$B tr -d '\r')
+    echo "boot-test: app \$pkg \$abi pid \${pid:-none}"
+    [ -z "\$errors" ] || { echo "\$errors" | \$B sed 's/^/boot-test:   /'; fail "\$pkg hit native-library errors"; }
+    if [ -z "\$pid" ]; then
+      C /bin/adb -s 127.0.0.1:15555 shell "logcat -d -b main,crash | grep -E 'Abort message|Fatal signal|CHECK failed|berberis|ActivityManager.*(died|Kill)' | tail -12" | \$B tr -d '\r' | \$B sed 's/^/boot-test:   /'
+      fail "\$pkg did not keep running"
+    fi
+  done
+fi
+
+# BOOT_TEST_UPGRADE_FROM (the third disk): Android from the older image
+# writes its data, then this image boots on the same data.
+android() { # android NAME IMAGE PORT
+  C /bin/docker run -d --name "\$1" --privileged -p 127.0.0.1:\$3:5555 \
+    --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
+    --cpus 2 --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
+    -v /srv/virtroid/runtimes/upgrade/data:/data "\$2" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \
+    androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 >/dev/null || fail "docker run \$2"
+}
+booted_on() { # booted_on PORT TRIES: Android finished booting
+  for i in \$(\$B seq 1 \$2); do
+    C /bin/adb connect 127.0.0.1:\$1 >/dev/null 2>&1
+    [ "\$(C /bin/adb -s 127.0.0.1:\$1 shell getprop sys.boot_completed 2>/dev/null | \$B tr -d '\r')" = 1 ] && return 0
+    \$B sleep 4
+  done
+  return 1
+}
+if [ -b /dev/vdc ]; then
+  C /bin/docker rm -f smoke >/dev/null
+  old=\$(C /bin/docker load -i /dev/vdc | \$B sed -n 's/^Loaded image: //p' | \$B head -1)
+  [ -n "\$old" ] || fail "could not load the older image"
+  C /bin/mkdir -p /srv/virtroid/runtimes/upgrade/data
+  android upgrade-old "\$old" 15556
+  booted_on 15556 90 || fail "the older image \$old did not boot"
+  echo "boot-test: upgrade: \$old booted, Android \$(C /bin/adb -s 127.0.0.1:15556 shell getprop ro.build.version.release | \$B tr -d '\r')"
+  if C /bin/test -d /tmp/apks; then
+    for apk in \$(C /bin/bash -c 'ls /tmp/apks/*.apk'); do
+      C /bin/adb -s 127.0.0.1:15556 install -r -g "\$apk" 2>&1 | \$B tail -1 | \$B grep -q Success || fail "could not install \$apk on \$old"
+    done
+    for pkg in \$(C /bin/adb -s 127.0.0.1:15556 shell pm list packages -3 | \$B tr -d '\r' | \$B sed 's/^package://'); do
+      launch "\$pkg" 15556
+    done
+    \$B sleep 20
+  fi
+  before=\$(C /bin/adb -s 127.0.0.1:15556 shell pm list packages -3 | \$B tr -d '\r' | \$B sort | \$B tr '\n' ' ')
+  C /bin/docker stop -t 60 upgrade-old >/dev/null
+  C /bin/docker rm upgrade-old >/dev/null
+  C /bin/adb disconnect 127.0.0.1:15556 >/dev/null 2>&1
+  android upgrade-new "\$NODE_RUNTIME_IMAGE" 15557
+  booted_on 15557 150 || {
+    C /bin/docker logs --tail 40 upgrade-new 2>&1 | \$B sed 's/^/boot-test:   /'
+    fail "this image did not boot on the older image's data"
+  }
+  after=\$(C /bin/adb -s 127.0.0.1:15557 shell pm list packages -3 | \$B tr -d '\r' | \$B sort | \$B tr '\n' ' ')
+  echo "boot-test: upgrade: booted \$(C /bin/adb -s 127.0.0.1:15557 shell getprop ro.build.version.release | \$B tr -d '\r') on that data; apps before: \${before:-none}; after: \${after:-none}"
+  [ "\$before" = "\$after" ] || fail "apps changed across the upgrade"
+  for pkg in \$after; do
+    pkg=\${pkg#package:}
+    C /bin/adb -s 127.0.0.1:15557 shell logcat -c
+    launch "\$pkg" 15557
+    \$B sleep 20
+    pid=\$(C /bin/adb -s 127.0.0.1:15557 shell pidof "\$pkg" | \$B tr -d '\r')
+    echo "boot-test: upgrade: \$pkg pid \${pid:-none}"
+    [ -n "\$pid" ] || fail "\$pkg did not run after the upgrade"
+  done
+fi
 echo "boot-test: --- virtnoded log ---"
 C /bin/cat /run/virtnoded.log | \$B tail -8
 echo "boot-test: PASS"
@@ -291,6 +419,8 @@ printf '#!/bin/busybox sh\nexec /bin/busybox env -i HOME=/run/root PATH=/bin TMP
 chmod 755 initrd/bin/C
 (cd initrd && find . | cpio -o -H newc --quiet | gzip -1) > initrd.gz
 truncate -s 8G data.img
+older=()
+[ -z "${BOOT_TEST_UPGRADE_FROM:-}" ] || older=(-drive "file=$(readlink -f "$BOOT_TEST_UPGRADE_FROM"),format=raw,if=virtio,readonly=on")
 
 qemu=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
   --inputs-from "$flake" nixpkgs#qemu_kvm)
@@ -298,6 +428,6 @@ timeout "${BOOT_TEST_TIMEOUT:-1200}" "$qemu/bin/qemu-system-x86_64" -enable-kvm 
   -nographic -no-reboot -serial mon:stdio -serial "unix:$work/debug.sock,server=on,wait=off" \
   -kernel "$img/runtime/bzImage" -initrd initrd.gz -append "console=ttyS0 panic=-1 loglevel=4" \
   -drive "file=$img/root/root.img,format=raw,if=virtio,readonly=on" \
-  -drive file=data.img,format=raw,if=virtio \
+  -drive file=data.img,format=raw,if=virtio "${older[@]}" \
   -netdev user,id=n0,ipv6-net=2001:db8:1::/64 -device virtio-net-pci,netdev=n0 | tee "$work/console.log"
 grep -aq "boot-test: PASS" "$work/console.log"

@@ -77,7 +77,7 @@ expect it. *Decide*: a product choice (listed again at the end).
 
 | Item | Proposal |
 | :--- | :--- |
-| ARM app translation (native bridge) | Recommend keeping; owner to confirm. Checked 2026-10-21: the stock ReDroid 14 image every runtime uses today already includes Google's `libndk_translation` and advertises `x86_64,arm64-v8a`, in about 22 MiB of its 1,574 MiB. Virtroid's own catalogue only lists apps with x86_64 code (2,408 of its 4,473 apps have native code), but F-Droid inside the runtime installs ARM-only apps through translation. SimpleX Chat is one: it ships ARM builds only, so it is not in the catalogue and runs today only because of translation. Leaving it out would break those apps for current users. The cost is a proprietary binary, not size. |
+| ARM app translation (native bridge) | Keep (owner, 2026-10-22): Google's for now, Digitalis if it passes our tests (see Decisions). Checked 2026-10-21: the stock ReDroid 14 image every runtime uses today already includes Google's `libndk_translation` and advertises `x86_64,arm64-v8a`, in about 22 MiB of its 1,574 MiB. Virtroid's own catalogue only lists apps with x86_64 code (2,408 of its 4,473 apps have native code), but F-Droid inside the runtime installs ARM-only apps through translation. SimpleX Chat is one: it ships ARM builds only, so it is not in the catalogue and runs today only because of translation. Leaving it out would break those apps for current users. The cost is a proprietary binary, not size. |
 | Fonts | Cut the Noto CJK fonts (owner, 2026-10-21): the largest font files; Chinese, Japanese and Korean text then shows as boxes. |
 | Ahead-of-time compilation of system apps | Keep full dexpreopt: a slightly bigger image, but apps start faster on every fresh VM. |
 | Dalvik heap settings | Match the runtime's memory limit (3 GiB today) instead of ReDroid's 6 GiB phone profile. |
@@ -90,7 +90,7 @@ Made 2026-10-21:
 - **Built-in apps:** a small set: a browser, Files (`DocumentsUI`), a gallery
   (Glimpse) and a calculator. Everything else comes from F-Droid.
 - **CJK fonts:** left out.
-- **ARM translation:** checked; it is already in use (SimpleX needs it), so the recommendation is to keep it. Awaiting the owner's confirmation.
+- **ARM translation:** kept (owner, 2026-10-22); SimpleX and other ARM-only apps need it. Google's `libndk_translation` for now, as in image 16; try the open-source Digitalis on the build host first (see the [plan](README.md), milestone 4).
 
 Still open:
 

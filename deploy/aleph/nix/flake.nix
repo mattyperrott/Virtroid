@@ -31,6 +31,7 @@
       kernel = pkgs.callPackage ./kernel.nix {
         inherit alephNix;
         extraFragment = ../kernel-virtroid.fragment;
+        patches = [ ../kernel-ashmem.patch ];
       };
 
       # virtnoded and viewercrypt, built from this repository's backend.
@@ -52,6 +53,8 @@
       # named localhost/virtroid-runtime, which no registry can serve.
       runtimeImageSpec = builtins.fromJSON (builtins.readFile "${assets}/runtime-image.json");
       runtimeImageRef = "localhost/virtroid-runtime:${runtimeImageSpec.tag}";
+      # The Android release the image runs; personas claim it.
+      runtimeAndroidRelease = runtimeImageSpec.androidRelease or "";
       runtimeImageTar =
         if builtins.pathExists "${assets}/runtime-image.tar"
         then "${assets}/runtime-image.tar"
@@ -65,7 +68,7 @@
         };
 
       rootfs = pkgs.callPackage ./rootfs.nix {
-        inherit virtroid-node assets runtimeImageTar runtimeImageRef;
+        inherit virtroid-node assets runtimeImageTar runtimeImageRef runtimeAndroidRelease;
         vmInit = ./vm-init.sh;
       };
 

@@ -2,12 +2,24 @@
 
 Status: planned. Nothing here has been built yet. Written 2026-10-21.
 
-Every runtime VM image so far carries stock ReDroid 14
+Every runtime VM image up to 15 carries stock ReDroid 14
 (`redroid/redroid:14.0.0_64only-latest`, pinned in the deployment's
-`runtime-image.json`), whose Android security patch level is 2024-05-05. This
-plan replaces it with an Android image of our own: current security patches,
-no Google, the apps Virtroid needs built in, a location provider fed by the
-node, and a container that needs fewer privileges.
+`runtime-image.json`), whose Android security patch level is 2024-05-05.
+Image 16 moves, as a stopgap, to ReDroid's last Android 16 image (patch
+2025-06-05) with Google's ARM translation added
+([`deploy/aleph/build-runtime-image.sh`](../aleph/build-runtime-image.sh)),
+because ReDroid's own image dropped it. Android 16 also needs three things
+from the VM kernel that Android 14 did not, now in place
+([`deploy/aleph/kernel-virtroid.fragment`](../aleph/kernel-virtroid.fragment)):
+loop devices for its APEX packages, writes to mounted block devices (apexd
+holds each loop open while mounting it), and ashmem, ported from the Android
+Common Kernel ([`deploy/aleph/kernel-ashmem.patch`](../aleph/kernel-ashmem.patch)),
+because Android 16 uses memfd only on kernels with Android's ashmem ioctls
+on memfd. The image built from this plan relies on the same kernel. This
+plan replaces both with an
+Android image of our own: current security patches, no Google, the apps
+Virtroid needs built in, a location provider fed by the node, and a container
+that needs fewer privileges.
 
 ## Where it fits
 
@@ -89,6 +101,16 @@ new VM image to measure and approve.
    boots, resolves names (through Tor) and starts the viewer.
 4. **Virtroid's apps and debloat.** The built-in apps above; check the F-Droid
    catalogue's common apps and SimpleX still work.
+   - **ARM translation without Google.** Try
+     [Digitalis](https://github.com/DigitalisX64/digitalis) (Apache-2.0), an
+     open ARM64 backend for AOSP's own translator, Berberis, built on Android
+     16, in place of Google's closed `libndk_translation`. Upstream Berberis
+     translates only RISC-V. Digitalis has no releases or published test
+     results yet and says nothing about containers, and building it needs a
+     full Android tree, so it is tried on this build host. It replaces
+     Google's binary only if the boot test passes with
+     `BOOT_TEST_APKS` holding SimpleX's ARM build and the F-Droid apps with
+     ARM-only code that runtimes use; otherwise the image keeps Google's.
 5. **Location.** The GNSS HAL and the node's feed; check that a map app shows
    the runtime's place and that `isMock()` is false.
 6. **Hardening.** Unprivileged container, the BPF setting, `hardened_malloc`.

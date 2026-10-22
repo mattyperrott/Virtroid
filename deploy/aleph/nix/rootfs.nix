@@ -1,4 +1,4 @@
-{ pkgs, lib, virtroid-node, assets, runtimeImageTar, runtimeImageRef, vmInit, ... }:
+{ pkgs, lib, virtroid-node, assets, runtimeImageTar, runtimeImageRef, runtimeAndroidRelease, vmInit, ... }:
 
 # The read-only root of a Virtroid runtime VM: Docker, cryptsetup, nftables,
 # adb, Tor, virtnoded, the Android runtime image and the pinned apps, and
@@ -127,9 +127,10 @@ pkgs.runCommand "virtroid-rootfs.erofs" {
   install -m 0600 ${assets}/node.env etc/virtroid/node.env
   install -m 0644 ${torrc} etc/tor/torrc
   install -m 0644 ${runtimeImageTar} usr/share/virtroid/runtime-image.tar
-  # The image this root carries is the only one the node may run.
-  printf 'NODE_RUNTIME_IMAGE=%s\nNODE_REQUIRE_DIGESTED_RUNTIME_IMAGE=false\n' '${runtimeImageRef}' \
-    > etc/virtroid/runtime.env
+  # The image this root carries is the only one the node may run, and its
+  # Android release is the one personas claim.
+  printf 'NODE_RUNTIME_IMAGE=%s\nNODE_REQUIRE_DIGESTED_RUNTIME_IMAGE=false\nNODE_RUNTIME_ANDROID_RELEASE=%s\n' \
+    '${runtimeImageRef}' '${runtimeAndroidRelease}' > etc/virtroid/runtime.env
   cp -r ${assets}/apks usr/share/virtroid/apks
   chmod -R u+w,go-w usr/share/virtroid/apks
 

@@ -191,3 +191,19 @@ CONFIG_UDMABUF=y
 # Alarm timers (AlarmManager's CLOCK_*_ALARM) need an RTC.
 CONFIG_RTC_CLASS=y
 CONFIG_RTC_DRV_CMOS=y
+
+# Android 15 and later mount their system components (APEXes) from loop
+# devices. A runtime container sees only the device nodes that exist when it
+# starts, so the kernel creates them at boot: Android 16 asks for 39.
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_BLK_DEV_LOOP_MIN_COUNT=64
+# apexd keeps each loop device open for writing while it mounts it; since
+# Linux 6.8 that mount fails (EBUSY) unless writes to mounted devices are
+# allowed, as on stock and Android kernels.
+CONFIG_BLK_DEV_WRITE_MOUNTED=y
+
+# Android 16 falls back to /dev/ashmem: memfd would need Android's ashmem
+# ioctls on memfd, which only Android kernels have. The driver comes from
+# kernel-ashmem.patch (Android Common Kernel's C ashmem, ported to 6.18).
+CONFIG_STAGING=y
+CONFIG_ASHMEM=y
