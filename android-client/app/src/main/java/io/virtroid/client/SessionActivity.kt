@@ -35,6 +35,7 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionViewerBinding
+import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.SnapshotRollbackException
@@ -291,6 +292,7 @@ class SessionActivity : AppCompatActivity() {
         }
         binding.sessionSurfaceContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updateViewerGestureExclusion()
+            rememberViewerArea()
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.sessionRoot) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -704,6 +706,19 @@ class SessionActivity : AppCompatActivity() {
         }
         val rect = Rect(0, 0, container.width, container.height)
         ViewCompat.setSystemGestureExclusionRects(container, listOf(rect))
+    }
+
+    /**
+     * Remembers the stream's area once the system bars are hidden, so the
+     * runtime's screen is sized to fill it from its next start.
+     */
+    private fun rememberViewerArea() {
+        val container = binding.sessionSurfaceContainer
+        val insets = ViewCompat.getRootWindowInsets(container) ?: return
+        if (insets.isVisible(WindowInsetsCompat.Type.statusBars()) || insets.isVisible(WindowInsetsCompat.Type.navigationBars())) {
+            return
+        }
+        DeviceRuntimeProfile.rememberViewerArea(this, container.width, container.height)
     }
 
     private fun hideSystemBars() {
