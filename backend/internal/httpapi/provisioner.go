@@ -72,19 +72,19 @@ func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID
 // provisioningStage describes, for the app, where a VM is on its way up.
 func provisioningStage(vm store.ProvisionedVM) string {
 	if vm.Desired != "present" {
-		return "Replacing a private server that failed to start"
+		return "Replacing a server that failed to start"
 	}
 	switch vm.State {
 	case store.ProvisionedVMRequested:
 		return "Requesting your private server"
 	case store.ProvisionedVMCreating:
-		return "Creating your private server"
+		return "Setting up your private server"
 	case store.ProvisionedVMUnlocking:
-		return "Verifying the server's hardware attestation"
+		return "Checking your server's hardware"
 	case store.ProvisionedVMBooting:
-		return "Starting the secure node"
+		return "Starting your server"
 	case store.ProvisionedVMReady:
-		return "Private server ready"
+		return "Your private server is ready"
 	}
 	return "Preparing your private server"
 }

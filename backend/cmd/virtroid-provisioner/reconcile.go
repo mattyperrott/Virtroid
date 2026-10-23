@@ -213,7 +213,7 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 		if !pending.SubmittedAt.IsZero() && r.now().Sub(pending.SubmittedAt) < createSettles {
 			// A create may have gone out before a restart or a failed CLI run:
 			// wait for the listing to show it rather than create a second one.
-			r.noteProgress(ctx, vm.ID, "Waiting for Aleph to confirm the server request")
+			r.noteProgress(ctx, vm.ID, "Waiting for the cloud to confirm the request")
 			return nil
 		}
 		target, ok := r.pickCRN(vm.Region, all)
@@ -270,12 +270,12 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			return r.controlPlane.Report(ctx, vm.ID, vmReport{Failure: err.Error()})
 		}
 		if err != nil {
-			r.noteProgress(ctx, vm.ID, "Waiting for the VM's attestation agent to answer")
+			r.noteProgress(ctx, vm.ID, "Waiting for the server to answer")
 			return fmt.Errorf("unlock (will retry): %w", err)
 		}
 		delete(r.lastUnlock, vm.ID)
 		log.Printf("provisioner: vm=%s attested and unlocked", vm.ID)
-		r.lastProgress[vm.ID] = "Attested and unlocked; starting Docker and the Android image"
+		r.lastProgress[vm.ID] = "Hardware checked; starting Android"
 		return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateBooting, Progress: r.lastProgress[vm.ID]})
 
 	case vmStateBooting, vmStateReady:
@@ -360,7 +360,7 @@ func (r *reconciler) watchBoot(ctx context.Context, vm provisionedVM) error {
 		})
 	}
 	log.Printf("provisioner: vm=%s restarted; attesting and unlocking it again", vm.ID)
-	r.noteProgress(ctx, vm.ID, "The server restarted; attesting and unlocking it again")
+	r.noteProgress(ctx, vm.ID, "The server restarted; checking its hardware again")
 	err = r.unlock(ctx, vm)
 	if errors.Is(err, errAttestation) {
 		log.Printf("provisioner: vm=%s failed attestation after a restart; retiring it", vm.ID)

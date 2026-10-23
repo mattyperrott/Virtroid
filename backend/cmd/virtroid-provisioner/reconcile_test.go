@@ -553,19 +553,19 @@ func TestCreatingVMReportsProgressOnlyWhenItChanges(t *testing.T) {
 	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: vmStateCreating, Desired: "present", ItemHash: hash, CRNHash: crnA}}}
 	aleph := &fakeAleph{instances: []alephInstance{{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA}}}
 	r := testReconciler(t, cp, aleph)
-	progress := &fakeProgress{note: "The compute node is downloading the VM image"}
+	progress := &fakeProgress{note: "Downloading the system image"}
 	r.progress = progress
 	for i := 0; i < 3; i++ {
 		if err := r.runOnce(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	progress.note = "Booting the VM and checking its root disk"
+	progress.note = "Booting and checking the system image"
 	if err := r.runOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(cp.reports) != 2 || cp.reports[0].report.Progress != "The compute node is downloading the VM image" ||
-		cp.reports[1].report.Progress != "Booting the VM and checking its root disk" || cp.reports[1].report.State != "" {
+	if len(cp.reports) != 2 || cp.reports[0].report.Progress != "Downloading the system image" ||
+		cp.reports[1].report.Progress != "Booting and checking the system image" || cp.reports[1].report.State != "" {
 		t.Fatalf("reports = %+v, want two progress notes", cp.reports)
 	}
 }
@@ -579,10 +579,10 @@ func TestComputeNodeStatusDescriptions(t *testing.T) {
 		return execution.describe()
 	}
 	for raw, want := range map[string]string{
-		`{"allocation":{"state":"downloading"},"status":{}}`:                                  "The compute node is downloading the VM image",
-		`{"allocation":{"state":"started"},"status":{"preparing_at":"x"}}`:                    "Preparing the VM's disks",
-		`{"allocation":{},"status":{"preparing_at":"x","prepared_at":"x","starting_at":"x"}}`: "Booting the VM and checking its root disk",
-		`{"running":true,"allocation":{},"status":{"started_at":"x"}}`:                        "VM booted; waiting for its network address",
+		`{"allocation":{"state":"downloading"},"status":{}}`:                                  "Downloading the system image",
+		`{"allocation":{"state":"started"},"status":{"preparing_at":"x"}}`:                    "Preparing its disks",
+		`{"allocation":{},"status":{"preparing_at":"x","prepared_at":"x","starting_at":"x"}}`: "Booting and checking the system image",
+		`{"running":true,"allocation":{},"status":{"started_at":"x"}}`:                        "Booted; waiting for its network address",
 	} {
 		if got := text(raw); got != want {
 			t.Errorf("describe(%s) = %q, want %q", raw, got, want)

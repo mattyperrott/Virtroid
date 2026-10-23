@@ -77,11 +77,11 @@ func (p *alephProgress) nodeURL(ctx context.Context, itemHash string) string {
 
 func (p *alephProgress) Progress(ctx context.Context, itemHash string) string {
 	if p.nodeURL(ctx, itemHash) == "" {
-		return "Waiting for Aleph to pick a compute node"
+		return "Finding a machine for it"
 	}
 	execution, ok := p.execution(ctx, itemHash)
 	if !ok {
-		return "Waiting for the compute node to pick up the VM"
+		return "Waiting for the machine to take it"
 	}
 	return execution.describe()
 }
@@ -128,19 +128,19 @@ func (e crnExecution) describe() string {
 		if len(message) > 120 {
 			message = message[:120]
 		}
-		return fmt.Sprintf("The compute node hit a problem and is retrying (attempt %d): %s", e.Allocation.Attempts+1, message)
+		return fmt.Sprintf("The machine hit a problem; retrying (attempt %d): %s", e.Allocation.Attempts+1, message)
 	case e.Running || e.Status.StartedAt != nil:
-		return "VM booted; waiting for its network address"
+		return "Booted; waiting for its network address"
 	case e.Status.StartingAt != nil:
-		return "Booting the VM and checking its root disk"
+		return "Booting and checking the system image"
 	case e.Status.PreparedAt != nil:
-		return "VM prepared; starting it"
+		return "Disks ready; booting"
 	case e.Status.PreparingAt != nil:
-		return "Preparing the VM's disks"
+		return "Preparing its disks"
 	case strings.EqualFold(e.Allocation.State, "downloading"):
-		return "The compute node is downloading the VM image"
+		return "Downloading the system image"
 	case e.Allocation.State != "":
-		return "The compute node is " + strings.ToLower(e.Allocation.State) + " the VM"
+		return "The machine reports: " + strings.ToLower(e.Allocation.State)
 	}
-	return "Waiting for the compute node"
+	return "Waiting for the machine"
 }
