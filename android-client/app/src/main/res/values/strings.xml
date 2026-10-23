@@ -221,6 +221,7 @@
     <string name="runtime_host_provisioning_detail">the first start takes a few minutes_</string>
     <string name="runtime_host_provisioning_step_done">[ok] %1$s</string>
     <string name="runtime_host_provisioning_step">[..] %1$s</string>
+    <string name="runtime_host_deleting_detail">starting your private server to erase this runtime\'s data_</string>
     <string name="confidential_runtime_unverified">Your private server could not prove it is secure, so Virtroid did not connect. (%1$s)</string>
 
     <string name="bottom_runtimes">Runtimes</string>

@@ -17,6 +17,7 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withResumed
 import androidx.lifecycle.withStarted
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
@@ -78,6 +79,10 @@ class MainActivity : AppCompatActivity() {
     // Runtimes waiting for their private server, and what the server last said.
     private val runtimeHostProgress = mutableMapOf<String, RuntimeHostProgress>()
     private val runtimeHostEvents = mutableMapOf<String, List<String>>()
+    // Runtimes whose private server is being started only to erase them.
+    private val runtimeHostDeletions = mutableSetOf<String>()
+    // A delete the controls screen handed over before the list loaded.
+    private var pendingDeleteRuntimeId: String? = null
     private val reportedRuntimeErrors = mutableMapOf<String, String>()
     private val locallyStoppingRuntimeIds = mutableSetOf<String>()
     private val locallyStoppingRuntimeStartedAtMs = mutableMapOf<String, Long>()
@@ -142,6 +147,8 @@ class MainActivity : AppCompatActivity() {
 
         handleRuntimeLifecycleIntent(intent)
         if (savedInstanceState == null) {
+            // Not when recreated: the delete already ran.
+            handleRuntimeDeleteIntent(intent)
             UpdatePrompt.check(this, quiet = true)
         }
         refreshRuntimes()
@@ -151,6 +158,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleRuntimeLifecycleIntent(intent)
+        handleRuntimeDeleteIntent(intent)
         refreshRuntimes(showBusy = false)
     }
 
@@ -220,6 +228,7 @@ class MainActivity : AppCompatActivity() {
                 if (showBusy) {
                     setBusy(false)
                 }
+                startPendingDelete()
             }.onFailure { error ->
                 // The screen closed while it waited: nothing failed.
                 if (error is CancellationException) return@onFailure
@@ -365,7 +374,9 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeSubtitleText.text = if (isLocallyStopping) {
             getString(R.string.runtime_connectivity_stopping)
         } else if (isWaitingForHost) {
-            getString(R.string.runtime_connectivity_starting)
+            getString(
+                if (runtime.id in runtimeHostDeletions) R.string.runtime_connectivity_deleting else R.string.runtime_connectivity_starting,
+            )
         } else {
             state?.connectivityLabel(isLive) ?: runtime.connectivityLabel(isLive)
         }
@@ -488,7 +499,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (state?.canWipe != false) {
                     retryWhileRuntimeHostProvisioning(
-                        onWaiting = { _, progress -> showRuntimeHostProgress(runtime, progress) },
+                        onWaiting = { _, progress -> showRuntimeHostProgress(runtime, progress, deleting = true) },
                         beforeAttempt = { withStarted { } },
                     ) {
                         api.wipeRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
@@ -499,7 +510,7 @@ class MainActivity : AppCompatActivity() {
                     activeSessionStore.clear()
                 }
                 retryWhileRuntimeHostProvisioning(
-                    onWaiting = { _, progress -> showRuntimeHostProgress(runtime, progress) },
+                    onWaiting = { _, progress -> showRuntimeHostProgress(runtime, progress, deleting = true) },
                     beforeAttempt = { withStarted { } },
                 ) {
                     api.deleteRuntime(currentBaseUrl(), accountId, deviceId, runtime.id, blobAccessKey)
@@ -782,15 +793,18 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun showRuntimeHostProgress(runtime: RuntimeSummary, progress: RuntimeHostProgress) {
+    /** [deleting]: the server is started only to erase the runtime, which the card says. */
+    private fun showRuntimeHostProgress(runtime: RuntimeSummary, progress: RuntimeHostProgress, deleting: Boolean = false) {
         runtimeHostProgress[runtime.id] = progress
+        if (deleting) runtimeHostDeletions += runtime.id
         // Each step once: the server's note on what it is doing, or before
         // there is one, the stage.
         val step = progress.detail.ifBlank { progress.stage.ifBlank { getString(R.string.runtime_host_provisioning_title) } }
         val steps = runtimeHostEvents[runtime.id].orEmpty()
         if (step != steps.lastOrNull()) {
             runtimeHostEvents[runtime.id] = (steps + step).takeLast(3)
-            appLogs.info("Private server for ${runtime.name}: $step (${formatElapsed(progress.elapsedSeconds)})", "runtime")
+            val purpose = if (deleting) "Deleting ${runtime.name}, private server" else "Private server for ${runtime.name}"
+            appLogs.info("$purpose: $step (${formatElapsed(progress.elapsedSeconds)})", "runtime")
         }
         if (latestRuntimes.isNotEmpty()) {
             renderRuntimes(latestRuntimes)
@@ -800,6 +814,7 @@ class MainActivity : AppCompatActivity() {
     private fun clearRuntimeHostProgress(runtimeId: String) {
         if (runtimeHostProgress.remove(runtimeId) != null) {
             runtimeHostEvents.remove(runtimeId)
+            runtimeHostDeletions.remove(runtimeId)
             if (latestRuntimes.isNotEmpty()) {
                 renderRuntimes(latestRuntimes)
             }
@@ -809,10 +824,15 @@ class MainActivity : AppCompatActivity() {
     private fun RuntimeSummary.hostProvisioningMilestone(): RuntimeProvisioningMilestone? {
         val progress = runtimeHostProgress[id] ?: return null
         val steps = runtimeHostEvents[id].orEmpty()
+        val deleting = id in runtimeHostDeletions
         return RuntimeProvisioningMilestone(
-            title = progress.stage.ifBlank { getString(R.string.runtime_host_provisioning_title) },
+            title = if (deleting) {
+                getString(R.string.runtime_lifecycle_title_deleting)
+            } else {
+                progress.stage.ifBlank { getString(R.string.runtime_host_provisioning_title) }
+            },
             command = getString(R.string.runtime_host_provisioning_command, formatElapsed(progress.elapsedSeconds)),
-            detail = getString(R.string.runtime_host_provisioning_detail),
+            detail = getString(if (deleting) R.string.runtime_host_deleting_detail else R.string.runtime_host_provisioning_detail),
             events = steps
                 .mapIndexed { index, step ->
                     val done = index < steps.lastIndex
@@ -898,6 +918,8 @@ class MainActivity : AppCompatActivity() {
             runCatching { request() }
                 .onSuccess { refreshRuntimes() }
                 .onFailure {
+                    // The screen closed while it waited: nothing failed.
+                    if (it is CancellationException) return@onFailure
                     setBusy(false)
                     showError(it)
                 }
@@ -1296,6 +1318,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Runs a delete the controls screen confirmed. It runs here so the
+     * runtime's card shows its progress: the account's private server may
+     * first have to start, which takes minutes.
+     */
+    private fun handleRuntimeDeleteIntent(intent: Intent?) {
+        pendingDeleteRuntimeId = intent
+            ?.getStringExtra(EXTRA_DELETE_RUNTIME_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: return
+        if (latestRuntimes.isNotEmpty()) startPendingDelete()
+    }
+
+    /** Starts the delete handed over by the controls screen, once the runtime is listed. */
+    private fun startPendingDelete() {
+        val runtimeId = pendingDeleteRuntimeId ?: return
+        pendingDeleteRuntimeId = null
+        val runtime = latestRuntimes.firstOrNull { it.id == runtimeId } ?: return
+        // A new intent arrives before the screen is back in front, and the
+        // delete may first ask to unlock the account key.
+        lifecycleScope.launch { withResumed { deleteRuntime(runtime) } }
+    }
+
     private fun markRuntimeLocallyStopping(runtimeId: String) {
         locallyStoppingRuntimeIds.add(runtimeId)
         locallyStoppingRuntimeStartedAtMs[runtimeId] = System.currentTimeMillis()
@@ -1351,6 +1396,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         val DEFAULT_CONTROL_PLANE_URL = BuildConfig.DEFAULT_CONTROL_PLANE_URL
         private const val EXTRA_STOPPING_RUNTIME_ID = "io.virtroid.client.extra.STOPPING_RUNTIME_ID"
+        private const val EXTRA_DELETE_RUNTIME_ID = "io.virtroid.client.extra.DELETE_RUNTIME_ID"
         const val DEFAULT_SESSION_BIT_RATE = 4_000_000
         private const val CONNECT_WAIT_MAX_MS = 10 * 60 * 1_000L
         private const val LOCAL_STOPPING_MARKER_GRACE_MS = 45_000L
@@ -1359,6 +1405,13 @@ class MainActivity : AppCompatActivity() {
         fun createRuntimeStoppingIntent(context: Context, runtimeId: String): Intent {
             return Intent(context, MainActivity::class.java)
                 .putExtra(EXTRA_STOPPING_RUNTIME_ID, runtimeId)
+        }
+
+        /** Back to the runtime list, which deletes the runtime (already confirmed). */
+        fun createRuntimeDeleteIntent(context: Context, runtimeId: String): Intent {
+            return Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_DELETE_RUNTIME_ID, runtimeId)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
     }
 }

@@ -543,38 +543,12 @@ class ControlsActivity : AppCompatActivity() {
             message = getString(R.string.controls_delete_confirm_body),
             confirmLabel = getString(R.string.controls_confirm),
             destructive = true,
-            onConfirmed = delete@{
-                val accountId = sessionStore.accountId ?: return@delete
-                val deviceId = sessionStore.deviceId ?: return@delete
-                lifecycleScope.launch {
-                    runCatching {
-                        val blobAccessKey = requireBlobAccessKey(accountId, deviceId)
-                        // The account's private server may first have to be
-                        // started to receive the keys for the wipe.
-                        retryWhileRuntimeHostProvisioning(
-                            onWaiting = { _, _ -> },
-                            beforeAttempt = { withStarted { } },
-                        ) {
-                            api.wipeRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
-                        }
-                        snapshotRollbackGuard.clearRuntime(accountId, current.id)
-                        identityPasswordStore.saveConfigured(accountId, deviceId)
-                        activeSessionStore.loadForRuntime(current.id)?.let {
-                            activeSessionStore.clear()
-                        }
-                        retryWhileRuntimeHostProvisioning(
-                            onWaiting = { _, _ -> },
-                            beforeAttempt = { withStarted { } },
-                        ) {
-                            api.deleteRuntime(sessionStore.baseUrl, accountId, deviceId, current.id, blobAccessKey)
-                        }
-                        snapshotRollbackGuard.clearRuntime(accountId, current.id)
-                    }.onSuccess {
-                        finishToRuntimeList()
-                    }.onFailure {
-                        toast(it.virtroidDisplayMessage(this@ControlsActivity))
-                    }
-                }
+            onConfirmed = {
+                // The runtime list deletes it, where the runtime's card shows
+                // the progress: the account's private server may first have
+                // to start to receive the keys for the wipe.
+                startActivity(MainActivity.createRuntimeDeleteIntent(this, current.id))
+                finish()
             },
         )
     }
