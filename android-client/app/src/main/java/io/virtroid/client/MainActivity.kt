@@ -43,6 +43,7 @@ import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import io.virtroid.client.security.showConfirmation
 import io.virtroid.client.push.NotificationRelayManager
 import io.virtroid.client.ui.VirtroidMotion
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -220,6 +221,8 @@ class MainActivity : AppCompatActivity() {
                     setBusy(false)
                 }
             }.onFailure { error ->
+                // The screen closed while it waited: nothing failed.
+                if (error is CancellationException) return@onFailure
                 appLogs.error(error.message ?: getString(R.string.status_error), "runtime")
                 if (showBusy) {
                     setBusy(false)
@@ -654,6 +657,7 @@ class MainActivity : AppCompatActivity() {
                         SessionActivity.createIntent(this@MainActivity, activeSession),
                     )
                 }.onFailure { error ->
+                    if (error is CancellationException) return@launch
                     setBusy(false)
                     appLogs.error(error.message ?: getString(R.string.status_error), "session")
                     showSessionPrepareError(error, runtime)
@@ -779,17 +783,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRuntimeHostProgress(runtime: RuntimeSummary, progress: RuntimeHostProgress) {
-        val previous = runtimeHostProgress[runtime.id]
         runtimeHostProgress[runtime.id] = progress
-        val stage = progress.stage.ifBlank { getString(R.string.runtime_host_provisioning) }
-        val line = if (progress.detail.isBlank()) stage else "$stage: ${progress.detail}"
-        val previousLine = previous?.let { old ->
-            val oldStage = old.stage.ifBlank { getString(R.string.runtime_host_provisioning) }
-            if (old.detail.isBlank()) oldStage else "$oldStage: ${old.detail}"
-        }
-        if (line != previousLine) {
-            runtimeHostEvents[runtime.id] = (runtimeHostEvents[runtime.id].orEmpty() + line).takeLast(3)
-            appLogs.info("Private server for ${runtime.name}: $line (${formatElapsed(progress.elapsedSeconds)})", "runtime")
+        // Each step once: the server's note on what it is doing, or before
+        // there is one, the stage.
+        val step = progress.detail.ifBlank { progress.stage.ifBlank { getString(R.string.runtime_host_provisioning_title) } }
+        val steps = runtimeHostEvents[runtime.id].orEmpty()
+        if (step != steps.lastOrNull()) {
+            runtimeHostEvents[runtime.id] = (steps + step).takeLast(3)
+            appLogs.info("Private server for ${runtime.name}: $step (${formatElapsed(progress.elapsedSeconds)})", "runtime")
         }
         if (latestRuntimes.isNotEmpty()) {
             renderRuntimes(latestRuntimes)
@@ -807,18 +808,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun RuntimeSummary.hostProvisioningMilestone(): RuntimeProvisioningMilestone? {
         val progress = runtimeHostProgress[id] ?: return null
+        val steps = runtimeHostEvents[id].orEmpty()
         return RuntimeProvisioningMilestone(
             title = progress.stage.ifBlank { getString(R.string.runtime_host_provisioning_title) },
-            command = getString(
-                R.string.runtime_host_provisioning_command,
-                progress.state.ifBlank { "requested" },
-                progress.region.ifBlank { "-" },
-                formatElapsed(progress.elapsedSeconds),
-            ),
-            detail = progress.detail.takeIf { it.isNotBlank() }
-                ?: getString(R.string.runtime_host_provisioning_detail),
-            events = runtimeHostEvents[id].orEmpty()
-                .map { getString(R.string.runtime_host_provisioning_event, it) }
+            command = getString(R.string.runtime_host_provisioning_command, formatElapsed(progress.elapsedSeconds)),
+            detail = getString(R.string.runtime_host_provisioning_detail),
+            events = steps
+                .mapIndexed { index, step ->
+                    val done = index < steps.lastIndex
+                    getString(if (done) R.string.runtime_host_provisioning_step_done else R.string.runtime_host_provisioning_step, step)
+                }
                 .ifEmpty { listOf(getString(R.string.runtime_progress_event_waiting)) },
         )
     }

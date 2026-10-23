@@ -37,7 +37,10 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
                 }
             }
         }
-        NotificationRelayManager(this).ensureRegistered()
+        // The process may be starting in the background (an update, a
+        // service restart), where the relay can't start: the first screen
+        // to open starts it (onActivityStarted).
+        NotificationRelayManager(this).ensureRegistered(startRelay = false)
         registerActivityLifecycleCallbacks(this)
         // Camera captures wait in the cache only until they're sent to the
         // runtime; one left by a crash or a kill goes now.

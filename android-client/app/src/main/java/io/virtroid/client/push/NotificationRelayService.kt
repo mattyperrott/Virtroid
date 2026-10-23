@@ -219,7 +219,7 @@ class NotificationRelayService : Service() {
         val intent = Intent()
             .setComponent(ComponentName(this, LauncherActivity::class.java))
             .setPackage(packageName)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val pendingIntent = PendingIntent.getActivity(
             this,
             event.eventId.hashCode(),
@@ -478,8 +478,8 @@ class NotificationRelayService : Service() {
 
         /**
          * Starts the relay as a foreground service. Android 12+ refuses that while
-         * the app is in the background, e.g. when its process starts after a reboot
-         * or an update; the relay then starts the next time the app is opened.
+         * the app is in the background, except from the reboot and update
+         * broadcasts; the relay then starts the next time the app is opened.
          */
         fun start(context: Context, action: String? = null): Boolean {
             val appContext = context.applicationContext
@@ -489,8 +489,8 @@ class NotificationRelayService : Service() {
                 ContextCompat.startForegroundService(appContext, intent)
                 true
             } catch (error: IllegalStateException) {
-                AppLogStore.get(appContext).warn(
-                    "Notification relay start deferred until the app is opened: ${error.message}",
+                AppLogStore.get(appContext).info(
+                    "Runtime notifications resume when Virtroid is next opened: Android doesn't let it start the relay from the background.",
                     "notifications",
                 )
                 false

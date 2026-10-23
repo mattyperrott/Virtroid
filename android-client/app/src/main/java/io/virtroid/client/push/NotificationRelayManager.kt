@@ -15,9 +15,14 @@ class NotificationRelayManager(context: Context) {
     private val appContext = context.applicationContext
     private val identityStore = NotificationRelayIdentityStore(appContext)
 
-    fun ensureRegistered() {
+    /**
+     * Registers this device for runtime notifications and, with [startRelay],
+     * starts the relay. Android refuses that start while the app is in the
+     * background, so a process starting there leaves it to the first screen.
+     */
+    fun ensureRegistered(startRelay: Boolean = true) {
         val previousIdentity = identityStore.load()
-        previousIdentity?.let { startService() }
+        if (startRelay && previousIdentity != null) startService()
 
         val session = SessionStore(appContext)
         val accountId = session.accountId?.trim().orEmpty()
@@ -32,7 +37,7 @@ class NotificationRelayManager(context: Context) {
         val registrationKey = listOf(baseUrl, accountId, deviceId, encryptionPublicKey, relayPublicKey).joinToString("\u0000")
 
         identityStore.save(baseUrl, accountId, deviceId)
-        startService()
+        if (startRelay) startService()
         synchronized(registrationLock) {
             if (registeredKey == registrationKey || !registrationsInFlight.add(registrationKey)) return
         }

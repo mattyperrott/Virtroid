@@ -29,6 +29,7 @@ import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -268,6 +269,8 @@ class NewRuntimeActivity : AppCompatActivity() {
                     setResult(RESULT_OK)
                     finish()
                 }.onFailure {
+                    // The screen closed while it waited: nothing failed.
+                    if (it is CancellationException) return@launch
                     appLogs.error(it.message ?: getString(R.string.status_error), "runtime")
                     binding.provisionRuntimeButton.isEnabled = entitlement?.canCreateRuntime ?: false
                     renderProvisionMilestone(

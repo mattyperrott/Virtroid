@@ -37,6 +37,7 @@ import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import io.virtroid.client.security.showConfirmation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -406,6 +407,8 @@ class ControlsActivity : AppCompatActivity() {
                     runtime = it
                     runtimeState = null
                 }.onFailure {
+                    // The screen closed while it waited: nothing failed.
+                    if (it is CancellationException) return@launch
                     toast(it.virtroidDisplayMessage(this@ControlsActivity))
                     loadRuntime()
                 }

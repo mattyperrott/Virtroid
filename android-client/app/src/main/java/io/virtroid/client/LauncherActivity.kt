@@ -14,6 +14,13 @@ class LauncherActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableSecureWindow()
+        // Opened from a notification while the app is already running: show
+        // what is open. Routing again would clear the task, cancelling a
+        // runtime start that is waiting for its server, or a session.
+        if (!isTaskRoot) {
+            finish()
+            return
+        }
 
         val appLockStore = AppLockStore(this)
         if (appLockStore.shouldRequireUnlockOnLaunch()) {
