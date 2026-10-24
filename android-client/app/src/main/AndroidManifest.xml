@@ -76,6 +76,7 @@
             android:exported="false" />
         <activity
             android:name=".SessionActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:exported="false" />
         <activity
             android:name=".CameraCaptureActivity"

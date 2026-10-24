@@ -6,6 +6,7 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.os.Build
@@ -56,6 +57,9 @@ import org.client.scrcpy.crypto.ViewerEncryption
 class SessionActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionViewerBinding
     private var sessionHost: ScrcpySessionHost? = null
+    // The playing stream's size, to fit it again when the viewer area changes.
+    private var streamWidth = 0
+    private var streamHeight = 0
     private val api = VirtroidApi()
     private var viewerAddress: String = ""
     private var relayHost: String = ""
@@ -290,9 +294,14 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionSurfaceView.setOnTouchListener { view, event ->
             sessionHost?.sendTouch(event, view.width, view.height) ?: false
         }
-        binding.sessionSurfaceContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+        binding.sessionSurfaceContainer.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
             updateViewerGestureExclusion()
             rememberViewerArea()
+            // Rotation and window resizes change the area without a new
+            // stream: fit the one playing to it.
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                refitStream()
+            }
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.sessionRoot) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -384,6 +393,14 @@ class SessionActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        hideSystemBars()
+    }
+
+    // The manifest keeps this screen through rotation and resizes rather than
+    // recreating it, which would drop the stream and reconnect from scratch.
+    // The surface container's layout listener refits the stream.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
         hideSystemBars()
     }
 
@@ -661,7 +678,18 @@ class SessionActivity : AppCompatActivity() {
         sessionHost?.sendKey(keyCode)
     }
 
+    /** Fits the playing stream to the viewer area again, after the area changed. */
+    private fun refitStream() {
+        if (streamWidth > 0 && streamHeight > 0) {
+            applyRemoteSurfaceBounds(streamWidth, streamHeight)
+        }
+    }
+
     private fun applyRemoteSurfaceBounds(remoteWidth: Int, remoteHeight: Int) {
+        if (remoteWidth > 0 && remoteHeight > 0) {
+            streamWidth = remoteWidth
+            streamHeight = remoteHeight
+        }
         val container = binding.sessionSurfaceContainer
         if (container.width == 0 || container.height == 0) {
             container.post { applyRemoteSurfaceBounds(remoteWidth, remoteHeight) }
