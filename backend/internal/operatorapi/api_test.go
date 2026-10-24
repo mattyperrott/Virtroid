@@ -3,6 +3,7 @@ package operatorapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -194,5 +195,49 @@ func TestLoginRateLimit(t *testing.T) {
 		if recorder.Code != want {
 			t.Fatalf("attempt %d status = %d, want %d", attempt+1, recorder.Code, want)
 		}
+	}
+}
+
+func TestLoginLimiterForgetsExpiredClients(t *testing.T) {
+	limiter := newLoginLimiter(2)
+	start := time.Unix(1_700_000_000, 0)
+	for i := range 500 {
+		limiter.allow(fmt.Sprintf("198.51.%d.%d", i/256, i%256), start)
+	}
+	// A minute later every entry has expired; the next attempt sweeps them.
+	limiter.allow("203.0.113.9", start.Add(2*time.Minute))
+	if got := len(limiter.attempt); got != 1 {
+		t.Fatalf("limiter kept %d clients, want 1", got)
+	}
+}
+
+func TestLoginLimiterCountsIPv6PerSlash64(t *testing.T) {
+	limiter := newLoginLimiter(2)
+	now := time.Unix(1_700_000_000, 0)
+	if !limiter.allow("2001:db8:1:2::1", now) || !limiter.allow("2001:db8:1:2::ffff", now) {
+		t.Fatal("first two attempts from the /64 refused")
+	}
+	if limiter.allow("2001:db8:1:2:abcd::9", now) {
+		t.Fatal("a third address in the same /64 got a fresh allowance")
+	}
+	if !limiter.allow("2001:db8:1:3::1", now) {
+		t.Fatal("another /64 was refused")
+	}
+}
+
+func TestLoginLimiterStopsGrowingUnderASpray(t *testing.T) {
+	limiter := newLoginLimiter(5)
+	now := time.Unix(1_700_000_000, 0)
+	for i := range maxLoginLimiterKeys + 500 {
+		limiter.allow(fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255), now)
+	}
+	if got := len(limiter.attempt); got > maxLoginLimiterKeys {
+		t.Fatalf("limiter grew to %d clients", got)
+	}
+	if limiter.allow("192.0.2.200", now) {
+		t.Fatal("a new client was admitted while the limiter was full")
+	}
+	if !limiter.allow("192.0.2.200", now.Add(2*time.Minute)) {
+		t.Fatal("a new client was refused after the old entries expired")
 	}
 }

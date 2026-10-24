@@ -16,6 +16,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -572,10 +573,19 @@ func clientIP(r *http.Request, trustProxy bool) string {
 	return r.RemoteAddr
 }
 
+// maxLoginLimiterKeys bounds how many clients the login limiter tracks at
+// once, so a spray of source addresses can't grow it without limit.
+const maxLoginLimiterKeys = 10_000
+
+// loginLimiter allows a few operator login attempts per client a minute.
+// A client's entry is dropped once its attempts expire, IPv6 clients count
+// per /64 (one site's allocation), and while it already tracks
+// maxLoginLimiterKeys clients a new one is refused until entries expire.
 type loginLimiter struct {
-	mu      sync.Mutex
-	limit   int
-	attempt map[string][]time.Time
+	mu        sync.Mutex
+	limit     int
+	attempt   map[string][]time.Time
+	lastSweep time.Time
 }
 
 func newLoginLimiter(limit int) *loginLimiter {
@@ -588,9 +598,22 @@ func newLoginLimiter(limit int) *loginLimiter {
 func (l *loginLimiter) allow(key string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	key = limiterClientKey(key)
 	cutoff := now.Add(-time.Minute)
-	kept := l.attempt[key][:0]
-	for _, attempt := range l.attempt[key] {
+	if len(l.attempt) >= maxLoginLimiterKeys || now.Sub(l.lastSweep) >= time.Minute {
+		for client, attempts := range l.attempt {
+			if len(attempts) == 0 || !attempts[len(attempts)-1].After(cutoff) {
+				delete(l.attempt, client)
+			}
+		}
+		l.lastSweep = now
+	}
+	previous, known := l.attempt[key]
+	if !known && len(l.attempt) >= maxLoginLimiterKeys {
+		return false
+	}
+	kept := previous[:0]
+	for _, attempt := range previous {
 		if attempt.After(cutoff) {
 			kept = append(kept, attempt)
 		}
@@ -601,4 +624,22 @@ func (l *loginLimiter) allow(key string, now time.Time) bool {
 	}
 	l.attempt[key] = append(kept, now)
 	return true
+}
+
+// limiterClientKey is the client an address counts as: itself for IPv4, its
+// /64 for IPv6, since one site holds a whole /64.
+func limiterClientKey(address string) string {
+	ip, err := netip.ParseAddr(address)
+	if err != nil {
+		return address
+	}
+	ip = ip.Unmap()
+	if ip.Is4() {
+		return ip.String()
+	}
+	prefix, err := ip.WithZone("").Prefix(64)
+	if err != nil {
+		return address
+	}
+	return prefix.String()
 }
