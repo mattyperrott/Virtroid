@@ -3,6 +3,7 @@ package io.virtroid.client
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
+import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -70,6 +71,10 @@ class UnlockActivity : AppCompatActivity() {
         appSettings = AppSettingsStore(this)
         appLogs = AppLogStore.get(this)
         returnToPrevious = intent.getBooleanExtra(EXTRA_RETURN_TO_PREVIOUS, false)
+        if (returnToPrevious) {
+            // Back leaves the app instead of revealing the screen beneath.
+            onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
+        }
         if (!appLockStore.isEnabled() || !appLockStore.hasCredential()) {
             launchOnboarding()
             return
@@ -173,6 +178,15 @@ class UnlockActivity : AppCompatActivity() {
     private fun toggleUnlockMode() {
         showingPassphrase = !showingPassphrase
         renderMode()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // A second lock screen left in the task after another one unlocked
+        // the app has nothing left to guard.
+        if (returnToPrevious && appLockStore.isUnlocked()) {
+            finish()
+        }
     }
 
     private fun renderMode() {

@@ -69,19 +69,26 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
 
     override fun onActivityResumed(activity: Activity) {
         activity.applyScreenCaptureProtection()
-        if (!wasBackgrounded || activity.excludedFromResumeLock()) {
+        if (activity.excludedFromResumeLock()) {
             return
         }
 
-        wasBackgrounded = false
         val lockStore = AppLockStore(activity)
-        if (lockStore.shouldLockAfterBackground()) {
-            lockStore.clearUnlocked()
-            IdentityPasswordStore(activity).clearUnlocked()
-            AppLogStore.get(activity).info("App locked after background resume", "auth")
+        if (wasBackgrounded) {
+            wasBackgrounded = false
+            if (lockStore.shouldLockAfterBackground()) {
+                lockStore.clearUnlocked()
+                IdentityPasswordStore(activity).clearUnlocked()
+                AppLogStore.get(activity).info("App locked after background resume", "auth")
+            }
+        }
+        // Locked until the unlock screen succeeds: a screen reached any other
+        // way (Back from the unlock screen, say) asks again.
+        if (lockStore.isEnabled() && lockStore.hasCredential() && !lockStore.isUnlocked()) {
             activity.startActivity(
                 Intent(activity, UnlockActivity::class.java)
-                    .putExtra(UnlockActivity.EXTRA_RETURN_TO_PREVIOUS, true),
+                    .putExtra(UnlockActivity.EXTRA_RETURN_TO_PREVIOUS, true)
+                    .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             )
         }
     }
