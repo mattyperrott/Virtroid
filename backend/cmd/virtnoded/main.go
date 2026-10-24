@@ -1454,6 +1454,13 @@ func validateRuntimeImportContent(body []byte) error {
 	if bytes.HasPrefix(body, []byte("dex\n")) {
 		return errors.New("executable Android artifacts must be installed from the approved catalog")
 	}
+	// archive/zip allocates a record for every central-directory entry while
+	// opening an archive, before the count below can be checked: count them
+	// with bounded memory first. What the preflight can't read as a ZIP,
+	// archive/zip can't open either.
+	if err := validateZipCentralDirectoryEntryLimit(bytes.NewReader(body), int64(len(body)), maxRuntimeImportZipEntries); err != nil && !errors.Is(err, zip.ErrFormat) {
+		return fmt.Errorf("imported archive rejected: %w", err)
+	}
 	archive, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		return nil
@@ -4170,18 +4177,18 @@ func validateZipCentralDirectoryEntryLimit(archive io.ReaderAt, archiveSize int6
 
 	// Keep this decision exactly aligned with archive/zip.readDirectoryEnd.
 	// These sentinel fields make archive/zip consult ZIP64 metadata before it
-	// allocates File records. APKM limits never require ZIP64, so rejecting it is
+	// allocates File records. APKMs and runtime imports never need ZIP64, so rejecting it is
 	// both simpler and safer than maintaining a second, subtly divergent parser.
 	if recordsTotal == ^uint64(0)>>48 ||
 		directorySize == ^uint64(0)>>48 ||
 		directoryOffset == uint64(^uint32(0)) {
-		return errors.New("ZIP64 APKM archives are not supported")
+		return errors.New("ZIP64 archives are not supported")
 	}
 	if diskNumber != 0 || directoryDiskNumber != 0 || recordsOnDisk != recordsTotal {
 		return errors.New("multi-disk ZIP archives are not supported")
 	}
 	if recordsTotal > uint64(maxEntries) {
-		return fmt.Errorf("APKM contains more than %d archive entries", maxEntries)
+		return fmt.Errorf("ZIP contains more than %d archive entries", maxEntries)
 	}
 	if directorySize > uint64(directoryEndOffset) || directoryOffset > uint64(^uint64(0)>>1) {
 		return zip.ErrFormat
@@ -4227,7 +4234,7 @@ func validateZipCentralDirectoryEntryLimit(archive io.ReaderAt, archiveSize int6
 		}
 		entryCount++
 		if entryCount > maxEntries {
-			return fmt.Errorf("APKM contains more than %d archive entries", maxEntries)
+			return fmt.Errorf("ZIP contains more than %d archive entries", maxEntries)
 		}
 		variableLength := int64(binary.LittleEndian.Uint16(header[28:30])) +
 			int64(binary.LittleEndian.Uint16(header[30:32])) +

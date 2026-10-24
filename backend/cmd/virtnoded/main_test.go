@@ -130,8 +130,33 @@ func TestValidateRuntimeImportContentRejectsExcessiveZipEntries(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateRuntimeImportContent(payload.Bytes()); err == nil {
+	err := validateRuntimeImportContent(payload.Bytes())
+	if err == nil {
 		t.Fatal("accepted an archive with excessive entry cardinality")
+	}
+	// The bounded preflight rejects it, before archive/zip allocates a record per entry.
+	if !strings.HasPrefix(err.Error(), "imported archive rejected:") {
+		t.Fatalf("rejected after parsing instead of by the preflight: %v", err)
+	}
+}
+
+func TestValidateRuntimeImportContentAcceptsOrdinaryArchive(t *testing.T) {
+	var payload bytes.Buffer
+	writer := zip.NewWriter(&payload)
+	for index := 0; index < 3; index++ {
+		entry, err := writer.Create(fmt.Sprintf("photo-%d.jpg", index))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte("jpeg")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRuntimeImportContent(payload.Bytes()); err != nil {
+		t.Fatalf("ordinary archive rejected: %v", err)
 	}
 }
 
