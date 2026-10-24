@@ -408,10 +408,13 @@ type nodeAgent struct {
 	// snapshotFloors is, per runtime, the newest snapshot generation a phone
 	// has seen, sent sealed with its keys. No older snapshot is restored, and
 	// new ones are numbered above it.
-	snapshotFloors   map[string]int64
-	siaAccounts      siaAccounts
-	callbackNonceMu  sync.Mutex
-	callbackNonces   map[string]time.Time
+	snapshotFloors  map[string]int64
+	siaAccounts     siaAccounts
+	callbackNonceMu sync.Mutex
+	callbackNonces  map[string]time.Time
+	// startedAt is when this process started. Used nonces are only kept in
+	// memory, so a callback signed before then could be replayed: refuse it.
+	startedAt        time.Time
 	relaySlots       chan struct{}
 	relayLeaseMu     sync.Mutex
 	relayLeases      map[string]*relayLease
@@ -455,6 +458,7 @@ func main() {
 		},
 		docker:        dockerHTTPClient(),
 		relaySlots:    make(chan struct{}, maxConcurrentRelaySessions),
+		startedAt:     time.Now(),
 		observability: telemetry,
 	}
 	defer node.clearAllCachedRuntimeBlobKeys()
@@ -1046,6 +1050,12 @@ func (n *nodeAgent) requireControlPlaneCallback(w http.ResponseWriter, r *http.R
 	callbackTime := time.Unix(timestamp, 0)
 	if skew := now.Sub(callbackTime); skew > 5*time.Minute || skew < -5*time.Minute {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback timestamp is outside the allowed window"})
+		return false
+	}
+	// The nonces used before a restart are gone, so a callback signed before
+	// this process started can't be told apart from a replay.
+	if callbackTime.Before(n.startedAt.Truncate(time.Second)) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback predates this node's start"})
 		return false
 	}
 	limit := nodeCallbackBodyLimit(r.URL.Path)

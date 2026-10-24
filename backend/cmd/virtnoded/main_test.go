@@ -1266,3 +1266,42 @@ func TestRelaySessionKeepsOneTunnel(t *testing.T) {
 		t.Fatalf("claims left after every tunnel ended: %d", len(n.relayLeases))
 	}
 }
+
+func TestRequireControlPlaneCallbackRejectsCallbackFromBeforeRestart(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	publicKey, err := nodeauth.PublicKeyMaterial(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("PublicKeyMaterial: %v", err)
+	}
+	body := []byte(`{"runtime_id":"runtime-1"}`)
+	signed := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/viewer/prepare", bytes.NewReader(body))
+		timestamp := strconv.FormatInt(time.Now().Add(-30*time.Second).Unix(), 10)
+		if err := callbackauth.ApplySignedHeaders(req, privateKey, body, timestamp, "fedcba9876543210"); err != nil {
+			t.Fatalf("ApplySignedHeaders: %v", err)
+		}
+		return req
+	}
+	// Signed 30 seconds ago, within the freshness window, but before a
+	// restart 10 seconds ago wiped the used nonces: refused.
+	restarted := &nodeAgent{
+		cfg:       config.NodeConfig{ControlPlaneCallbackPublicKey: publicKey},
+		startedAt: time.Now().Add(-10 * time.Second),
+	}
+	response := httptest.NewRecorder()
+	if restarted.requireControlPlaneCallback(response, signed()) || response.Code != http.StatusUnauthorized {
+		t.Fatalf("callback from before the restart accepted: status=%d", response.Code)
+	}
+	// The same callback reaching a node that was already running is fine.
+	running := &nodeAgent{
+		cfg:       config.NodeConfig{ControlPlaneCallbackPublicKey: publicKey},
+		startedAt: time.Now().Add(-time.Hour),
+	}
+	response = httptest.NewRecorder()
+	if !running.requireControlPlaneCallback(response, signed()) {
+		t.Fatalf("callback refused by a running node: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
