@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"virtroid/backend/internal/tron"
 )
@@ -54,6 +55,11 @@ func (g tronGrid) account(ctx context.Context, address string) (accountBalance, 
 }
 
 // nowBlock is the newest block, which new transactions name.
+// usdtSent lists the confirmed USDT transfers address made since the given time.
+func (g tronGrid) usdtSent(ctx context.Context, address string, since time.Time) ([]usdtTransfer, error) {
+	return g.transfersFrom(ctx, address, since)
+}
+
 func (g tronGrid) nowBlock(ctx context.Context) (tron.BlockRef, error) {
 	var block struct {
 		BlockID     string `json:"blockID"`

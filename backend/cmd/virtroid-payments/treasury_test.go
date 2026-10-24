@@ -35,10 +35,24 @@ type fakeChain struct {
 	balances map[string]accountBalance
 	sent     []sentTx
 	outcomes map[string]bool
+	outgoing []usdtTransfer
+	sentErr  error
 }
 
 func (f *fakeChain) account(_ context.Context, address string) (accountBalance, error) {
 	return f.balances[address], nil
+}
+func (f *fakeChain) usdtSent(_ context.Context, _ string, since time.Time) ([]usdtTransfer, error) {
+	if f.sentErr != nil {
+		return nil, f.sentErr
+	}
+	var transfers []usdtTransfer
+	for _, transfer := range f.outgoing {
+		if !transfer.BlockTime.Before(since) {
+			transfers = append(transfers, transfer)
+		}
+	}
+	return transfers, nil
 }
 func (f *fakeChain) nowBlock(context.Context) (tron.BlockRef, error) {
 	return tron.BlockRef{Number: 87105266, ID: make([]byte, 32)}, nil
@@ -363,5 +377,55 @@ func TestSmallNeedBuysTheSmallestSwap(t *testing.T) {
 	}
 	if !h.logged("would swap 25.000000 USDT for about 0.01250000 eth:eth") || budget != 375_000_000 {
 		t.Fatalf("budget=%d logs=%q", budget, h.logs)
+	}
+}
+
+func TestDailyCapCountsTransfersTheExchangeLeavesOut(t *testing.T) {
+	h := newHarness(t, treasuryLive)
+	h.chain.balances[h.treasury] = accountBalance{TRXSun: 200_000_000, USDTMicro: 1_000_000_000}
+	h.control.sia.ConfirmedHastings = "0"
+	// SimpleSwap reports nothing, but the treasury sent 450 USDT two hours ago.
+	h.chain.outgoing = []usdtTransfer{{TxID: "aa", AmountMicro: 450_000_000, BlockTime: time.Now().Add(-2 * time.Hour)}}
+	if err := h.t.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.swaps.created) != 1 || h.swaps.created[0]["amount"] != "50.000000" {
+		t.Fatalf("created = %v, want one 50 USDT swap: the chain shows 450 of the 500 USDT cap spent", h.swaps.created)
+	}
+}
+
+func TestNoSwapsWhenTheTreasuryTransfersCantBeRead(t *testing.T) {
+	h := newHarness(t, treasuryLive)
+	h.chain.balances[h.treasury] = accountBalance{TRXSun: 200_000_000, USDTMicro: 1_000_000_000}
+	h.control.sia.ConfirmedHastings = "0"
+	h.chain.sentErr = errors.New("trongrid unavailable")
+	_ = h.t.cycle(context.Background())
+	if len(h.swaps.created) != 0 {
+		t.Fatalf("swapped without knowing what was already sent: %v", h.swaps.created)
+	}
+}
+
+func TestSentSinceCountsUnconfirmedPaymentsOnce(t *testing.T) {
+	h := newHarness(t, treasuryLive)
+	now := time.Now()
+	h.t.paid = []exchangePayment{
+		{txID: "confirmed", micro: 100_000_000, at: now.Add(-time.Hour)},
+		{txID: "pending", micro: 40_000_000, at: now.Add(-time.Minute)},
+		{txID: "old", micro: 300_000_000, at: now.Add(-30 * time.Hour)},
+	}
+	h.chain.outgoing = []usdtTransfer{
+		{TxID: "CONFIRMED", AmountMicro: 100_000_000, BlockTime: now.Add(-time.Hour)},
+		{TxID: "before-restart", AmountMicro: 200_000_000, BlockTime: now.Add(-5 * time.Hour)},
+	}
+	sent, err := h.t.sentSince(context.Background(), h.treasury, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 100 + 200 confirmed, plus the 40 not on chain yet; the 30-hour-old payment is outside the day.
+	if sent != 340_000_000 {
+		t.Fatalf("sent = %d, want 340000000", sent)
+	}
+	if len(h.t.paid) != 2 {
+		t.Fatalf("kept %d payments, want the 2 from the last day", len(h.t.paid))
 	}
 }

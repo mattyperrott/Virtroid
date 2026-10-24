@@ -76,8 +76,22 @@ func (g *requestGate) wait(ctx context.Context) error {
 // transfersTo lists confirmed USDT transfers to address since the given time,
 // newest first, following TronGrid's pages.
 func (g tronGrid) transfersTo(ctx context.Context, address string, since time.Time) ([]usdtTransfer, error) {
+	return g.transfers(ctx, address, since, true)
+}
+
+// transfersFrom lists confirmed USDT transfers from address since the given
+// time, newest first.
+func (g tronGrid) transfersFrom(ctx context.Context, address string, since time.Time) ([]usdtTransfer, error) {
+	return g.transfers(ctx, address, since, false)
+}
+
+func (g tronGrid) transfers(ctx context.Context, address string, since time.Time, incoming bool) ([]usdtTransfer, error) {
 	query := url.Values{}
-	query.Set("only_to", "true")
+	if incoming {
+		query.Set("only_to", "true")
+	} else {
+		query.Set("only_from", "true")
+	}
 	query.Set("only_confirmed", "true")
 	query.Set("limit", "200")
 	query.Set("contract_address", tron.USDTContract)
@@ -89,6 +103,7 @@ func (g tronGrid) transfersTo(ctx context.Context, address string, since time.Ti
 			Data    []struct {
 				TransactionID  string `json:"transaction_id"`
 				BlockTimestamp int64  `json:"block_timestamp"`
+				From           string `json:"from"`
 				To             string `json:"to"`
 				Type           string `json:"type"`
 				Value          string `json:"value"`
@@ -109,7 +124,11 @@ func (g tronGrid) transfersTo(ctx context.Context, address string, since time.Ti
 			return nil, errors.New("trongrid reported a failure")
 		}
 		for _, item := range response.Data {
-			if item.Type != "Transfer" || item.To != address || item.TokenInfo.Address != tron.USDTContract || item.TokenInfo.Decimals != 6 {
+			party := item.From
+			if incoming {
+				party = item.To
+			}
+			if item.Type != "Transfer" || party != address || item.TokenInfo.Address != tron.USDTContract || item.TokenInfo.Decimals != 6 {
 				continue
 			}
 			amount, err := strconv.ParseInt(item.Value, 10, 64)

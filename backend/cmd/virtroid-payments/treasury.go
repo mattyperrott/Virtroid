@@ -98,6 +98,7 @@ type siaWalletState struct {
 
 type treasuryChain interface {
 	account(ctx context.Context, address string) (accountBalance, error)
+	usdtSent(ctx context.Context, address string, since time.Time) ([]usdtTransfer, error)
 	nowBlock(ctx context.Context) (tron.BlockRef, error)
 	broadcast(ctx context.Context, rawData, signature []byte) (string, error)
 	txOutcome(ctx context.Context, txID string) (bool, bool, error)
@@ -138,6 +139,16 @@ type treasury struct {
 	logf    func(format string, args ...any)
 	pending map[string]pendingTx
 	told    bool
+	// paid is what this process paid exchanges in the last day, until the
+	// chain shows it confirmed.
+	paid []exchangePayment
+}
+
+// exchangePayment is USDT the treasury sent an exchange.
+type exchangePayment struct {
+	txID  string
+	micro int64
+	at    time.Time
 }
 
 func newTreasury(cfg treasuryConfig, wallet treasuryWallet, control treasuryControl, chain treasuryChain, swaps swapService, credits creditSource, eth etherSource) *treasury {
@@ -255,8 +266,15 @@ func (t *treasury) convert(ctx context.Context, treasuryAddress string) error {
 	if err != nil {
 		return fmt.Errorf("treasury balance: %w", err)
 	}
-	// SimpleSwap's own record of this partner's exchanges sets the daily cap
-	// and what is in flight, so a restart forgets neither.
+	// What the treasury sent in the last day counts against the daily cap from
+	// records SimpleSwap can't change: its confirmed USDT transfers on chain,
+	// and this process's payments not confirmed yet. SimpleSwap's own history
+	// of this partner's exchanges counts too, whichever is larger, and says
+	// what is in flight. A restart forgets none of it.
+	sentToday, err := t.sentSince(ctx, treasuryAddress, now.Add(-24*time.Hour))
+	if err != nil {
+		return fmt.Errorf("treasury transfers (no swaps until they can be read): %w", err)
+	}
 	exchanges, err := t.swaps.recent(ctx, now.Add(-24*time.Hour))
 	if err != nil {
 		return fmt.Errorf("recent exchanges (no swaps until they can be read): %w", err)
@@ -278,9 +296,10 @@ func (t *treasury) convert(ctx context.Context, treasuryAddress string) error {
 			inFlight[exchange.to().String()] = true
 		}
 	}
-	budget := min(t.cfg.MaxDailyMicro-swappedToday, balance.USDTMicro)
+	spentToday := max(swappedToday, sentToday)
+	budget := min(t.cfg.MaxDailyMicro-spentToday, balance.USDTMicro)
 	t.logf("treasury: holds %s USDT and %s TRX; %s USDT swapped in the last day; %s USDT may be swapped now",
-		microToDecimal(balance.USDTMicro), sunToTRX(balance.TRXSun), microToDecimal(swappedToday), microToDecimal(max(budget, 0)))
+		microToDecimal(balance.USDTMicro), sunToTRX(balance.TRXSun), microToDecimal(spentToday), microToDecimal(max(budget, 0)))
 
 	needs := t.needs(ctx, balance, treasuryAddress)
 	if len(needs) > 0 && balance.TRXSun < t.cfg.SweepFeeSun {
@@ -367,8 +386,36 @@ func (t *treasury) swap(ctx context.Context, need swapNeed, treasuryAddress stri
 	if err != nil {
 		return fmt.Errorf("pay exchange %s: %w", exchange.ID, err)
 	}
+	t.paid = append(t.paid, exchangePayment{txID: strings.ToLower(txID), micro: amount, at: t.now()})
 	t.logf("treasury: paid exchange %s (%s USDT, transaction %s)", exchange.ID, microToDecimal(amount), txID)
 	return nil
+}
+
+// sentSince is the USDT the treasury sent since the given time: its confirmed
+// transfers on chain, plus this process's payments the chain doesn't show yet.
+func (t *treasury) sentSince(ctx context.Context, treasuryAddress string, since time.Time) (int64, error) {
+	transfers, err := t.chain.usdtSent(ctx, treasuryAddress, since)
+	if err != nil {
+		return 0, err
+	}
+	confirmed := make(map[string]bool, len(transfers))
+	var total int64
+	for _, transfer := range transfers {
+		confirmed[strings.ToLower(transfer.TxID)] = true
+		total += transfer.AmountMicro
+	}
+	kept := t.paid[:0]
+	for _, payment := range t.paid {
+		if payment.at.Before(since) {
+			continue
+		}
+		kept = append(kept, payment)
+		if !confirmed[payment.txID] {
+			total += payment.micro
+		}
+	}
+	t.paid = kept
+	return total, nil
 }
 
 // needs lists what is running low, cheapest to fix first.
