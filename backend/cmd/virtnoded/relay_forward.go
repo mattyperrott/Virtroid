@@ -110,6 +110,12 @@ func (n *nodeAgent) forwardRelayToNode(w http.ResponseWriter, r *http.Request, s
 		upstream.Close()
 		return
 	}
+	// The remote node accepted the token: this is the session's tunnel now.
+	release := n.claimRelaySession(sessionID, func() {
+		_ = clientConn.Close()
+		_ = upstream.Close()
+	})
+	defer release()
 	statusLine := "HTTP/1.1 200 Connection Established\r\n\r\n"
 	if r.Method != http.MethodConnect {
 		statusLine = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: virtroid-relay\r\n\r\n"

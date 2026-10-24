@@ -1245,3 +1245,24 @@ func TestConfidentialNodeNeverSetsUpUnsealedNotifications(t *testing.T) {
 		t.Fatalf("without the phone's key = %v, want errNotificationKeyPending", err)
 	}
 }
+
+func TestRelaySessionKeepsOneTunnel(t *testing.T) {
+	n := &nodeAgent{}
+	var stopped []string
+	releaseFirst := n.claimRelaySession("session-a", func() { stopped = append(stopped, "first") })
+	releaseOther := n.claimRelaySession("session-b", func() { stopped = append(stopped, "other") })
+	releaseSecond := n.claimRelaySession("session-a", func() { stopped = append(stopped, "second") })
+	if len(stopped) != 1 || stopped[0] != "first" {
+		t.Fatalf("stopped = %v, want the session's earlier tunnel only", stopped)
+	}
+	// The ended tunnel giving up its claim must not drop its replacement's.
+	releaseFirst()
+	if n.relayLeases["session-a"] == nil {
+		t.Fatal("the replaced tunnel's release removed the live tunnel's claim")
+	}
+	releaseSecond()
+	releaseOther()
+	if len(n.relayLeases) != 0 {
+		t.Fatalf("claims left after every tunnel ended: %d", len(n.relayLeases))
+	}
+}

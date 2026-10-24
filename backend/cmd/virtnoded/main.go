@@ -413,6 +413,8 @@ type nodeAgent struct {
 	callbackNonceMu  sync.Mutex
 	callbackNonces   map[string]time.Time
 	relaySlots       chan struct{}
+	relayLeaseMu     sync.Mutex
+	relayLeases      map[string]*relayLease
 	heartbeatStateMu sync.RWMutex
 	lastHeartbeatAt  time.Time
 	lastHeartbeatOK  bool
@@ -1583,6 +1585,11 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 		upstream.Close()
 		return
 	}
+	release := n.claimRelaySession(sessionID, func() {
+		_ = clientConn.Close()
+		_ = upstream.Close()
+	})
+	defer release()
 
 	statusLine := "HTTP/1.1 200 Connection Established\r\n\r\n"
 	if r.Method != http.MethodConnect {
@@ -1619,6 +1626,38 @@ func (n *nodeAgent) handleRelaySession(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(clientConn, io.LimitReader(upstream, maxRelayBytesPerDirection))
 	_ = clientConn.Close()
 	<-clientToRuntimeDone
+}
+
+// relayLease is a session's live relay tunnel.
+type relayLease struct {
+	stop func()
+}
+
+// claimRelaySession records a session's live tunnel and ends any earlier one.
+// A viewer opens one tunnel per session and a reconnect replaces it, so a
+// session holds at most one of the node's relay slots however many relay
+// tokens it is issued. Only a tunnel whose token was accepted claims, so
+// nobody else can end it. The returned func gives the claim up when the
+// tunnel ends.
+func (n *nodeAgent) claimRelaySession(sessionID string, stop func()) func() {
+	lease := &relayLease{stop: stop}
+	n.relayLeaseMu.Lock()
+	if n.relayLeases == nil {
+		n.relayLeases = make(map[string]*relayLease)
+	}
+	previous := n.relayLeases[sessionID]
+	n.relayLeases[sessionID] = lease
+	n.relayLeaseMu.Unlock()
+	if previous != nil {
+		previous.stop()
+	}
+	return func() {
+		n.relayLeaseMu.Lock()
+		if n.relayLeases[sessionID] == lease {
+			delete(n.relayLeases, sessionID)
+		}
+		n.relayLeaseMu.Unlock()
+	}
 }
 
 func (n *nodeAgent) acquireRelaySlot() bool {
