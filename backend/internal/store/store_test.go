@@ -4557,3 +4557,50 @@ func TestValidRegionSealedChecksShapeOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestRecoveryRefusesVersion2Envelopes(t *testing.T) {
+	credential := accountRecoveryCredentialForTest(t)
+	credentialRow := func() *sqlmock.Rows {
+		now := time.Now()
+		return sqlmock.NewRows([]string{
+			"account_id", "version", "kdf_algorithm", "kdf_salt", "kdf_iterations",
+			"envelope_algorithm", "envelope_iv", "envelope_ciphertext",
+			"recovery_public_key", "blob_key_verifier", "created_at", "updated_at",
+			"kdf_memory_kib", "auth_verifier",
+		}).AddRow(
+			credential.AccountID, AccountRecoveryVersion, credential.KDFAlgorithm, credential.KDFSalt, credential.KDFIterations,
+			credential.EnvelopeAlgorithm, credential.EnvelopeIV, credential.EnvelopeCiphertext,
+			credential.RecoveryPublicKey, credential.BlobKeyVerifier, now, now,
+			0, "",
+		)
+	}
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	st := &Store{db: db}
+	// Recovery start: the envelope stays on the server, and nothing else runs.
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM account_recovery_credentials").WithArgs(credential.AccountID).WillReturnRows(credentialRow())
+	mock.ExpectRollback()
+	got, _, err := st.CreateAccountRecoveryChallenge(
+		context.Background(), credential.AccountID, "22222222-2222-2222-2222-222222222222",
+		"Phone", "public-key", nil,
+	)
+	if !errors.Is(err, ErrRecoveryUpgradeRequired) {
+		t.Fatalf("recovery start for a version 2 credential = %v", err)
+	}
+	if got.EnvelopeCiphertext != "" {
+		t.Fatal("the version 2 envelope was returned")
+	}
+	// The parameters lookup refuses it too.
+	mock.ExpectQuery("FROM account_recovery_credentials").WithArgs(credential.AccountID).WillReturnRows(credentialRow())
+	if _, err := st.AccountRecoveryParameters(context.Background(), credential.AccountID); !errors.Is(err, ErrRecoveryUpgradeRequired) {
+		t.Fatalf("parameters for a version 2 credential = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}

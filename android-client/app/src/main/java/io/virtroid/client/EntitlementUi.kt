@@ -97,6 +97,7 @@ internal fun Throwable.virtroidDisplayMessage(context: Context): String {
         "bootstrap_invite_required" -> context.getString(R.string.onboarding_invite_required)
         "bootstrap_invite_invalid" -> context.getString(R.string.onboarding_invite_invalid)
         "account_recovery_unavailable" -> context.getString(R.string.identity_recovery_unavailable)
+        "account_recovery_upgrade_required" -> context.getString(R.string.identity_recovery_upgrade_required)
         else -> when {
             rawMessage.contains("viewer prepare", ignoreCase = true) ||
                 rawMessage.contains("viewer service", ignoreCase = true) ||

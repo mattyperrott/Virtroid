@@ -1163,6 +1163,8 @@ func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusConflict, "recovery_device_exists", err.Error())
 		case errors.Is(err, store.ErrRecoveryLoginRequired):
 			writeAPIError(w, http.StatusBadRequest, "recovery_login_required", err.Error())
+		case errors.Is(err, store.ErrRecoveryUpgradeRequired):
+			writeAPIError(w, http.StatusConflict, "account_recovery_upgrade_required", err.Error())
 		case errors.Is(err, store.ErrRecoveryLoginFailed):
 			writeAPIError(w, http.StatusUnauthorized, "recovery_password_incorrect", err.Error())
 		case errors.Is(err, store.ErrRecoveryLocked):
@@ -1180,8 +1182,9 @@ func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
 }
 
 // accountRecoveryParameters tells a recovering phone how to derive its keys
-// from the identity password: salt and Argon2id cost for version 3, which
-// then needs the login key to fetch the envelope; for version 2, only that.
+// from the identity password: the salt and Argon2id cost, after which the
+// login key fetches the envelope. A version 2 credential is refused until a
+// phone signed in to the account upgrades it.
 func (a *API) accountRecoveryParameters(w http.ResponseWriter, r *http.Request) {
 	if ok, retryAfter := a.bootstrapLimiter.allow("recovery|" + bootstrapClientKey(r, a.cfg.TrustProxyHeaders)); !ok {
 		if retryAfter > 0 {
@@ -1201,6 +1204,8 @@ func (a *API) accountRecoveryParameters(w http.ResponseWriter, r *http.Request) 
 	switch {
 	case errors.Is(err, store.ErrRecoveryNotConfigured):
 		writeAPIError(w, http.StatusNotFound, "account_recovery_unavailable", "account recovery is unavailable")
+	case errors.Is(err, store.ErrRecoveryUpgradeRequired):
+		writeAPIError(w, http.StatusConflict, "account_recovery_upgrade_required", err.Error())
 	case err != nil:
 		writeInternalAPIError(w, "account_recovery_lookup_failed", err)
 	default:

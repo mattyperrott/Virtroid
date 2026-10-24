@@ -489,6 +489,7 @@
     <string name="identity_recovery_confirm">Recover</string>
     <string name="identity_recovery_success">Identity recovered on this phone</string>
     <string name="identity_recovery_unavailable">Recovery is not enabled for this account yet. On an existing trusted phone, update Virtroid and unlock the blob identity once.</string>
+    <string name="identity_recovery_upgrade_required">This account\'s recovery needs an upgrade first. Open Virtroid on a phone still signed in to the account, unlock it once, then try again.</string>
     <string name="provisioning_previous_waiting">Waiting for identity task</string>
     <string name="provisioning_previous_descriptor">ready for local provisioning</string>
     <string name="provisioning_done">DONE</string>

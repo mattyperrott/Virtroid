@@ -145,6 +145,7 @@ var (
 	ErrRecoveryLoginFailed        = errors.New("the identity password is incorrect")
 	ErrRecoveryLoginRequired      = errors.New("this account's recovery needs the login key from its identity password")
 	ErrRecoveryLocked             = errors.New("too many wrong identity passwords; recovery is paused for an hour")
+	ErrRecoveryUpgradeRequired    = errors.New("this account's recovery must first be upgraded from a phone still signed in to it")
 	ErrRecoveryDowngrade          = errors.New("account recovery cannot go back to an older version")
 	ErrNotificationSubscription   = errors.New("notification subscription is invalid")
 	ErrNotificationDelivery       = errors.New("notification delivery is invalid")
@@ -2503,19 +2504,24 @@ func (s *Store) CreateAccountRecoveryChallenge(
 	if err != nil {
 		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
 	}
-	if credential.Version >= AccountRecoveryArgonVersion {
-		if len(authKey) == 0 {
-			return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, ErrRecoveryLoginRequired
-		}
-		if err := checkRecoveryLoginKey(ctx, tx, credential, authKey); err != nil {
-			if errors.Is(err, ErrRecoveryLoginFailed) {
-				// The failure count must stick even though nothing else does.
-				if commitErr := tx.Commit(); commitErr != nil {
-					return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, commitErr
-				}
+	// The envelope this returns can be tested against password guesses
+	// offline, so it goes out only once the login key has proved the
+	// password, which version 2 has no way to do. A phone still signed in
+	// upgrades a version 2 credential on its next unlock.
+	if credential.Version < AccountRecoveryArgonVersion {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, ErrRecoveryUpgradeRequired
+	}
+	if len(authKey) == 0 {
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, ErrRecoveryLoginRequired
+	}
+	if err := checkRecoveryLoginKey(ctx, tx, credential, authKey); err != nil {
+		if errors.Is(err, ErrRecoveryLoginFailed) {
+			// The failure count must stick even though nothing else does.
+			if commitErr := tx.Commit(); commitErr != nil {
+				return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, commitErr
 			}
-			return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
 		}
+		return AccountRecoveryCredential{}, AccountRecoveryChallenge{}, err
 	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1)`, deviceID).Scan(&exists); err != nil {
@@ -2569,13 +2575,16 @@ func (s *Store) AccountRecoveryParameters(ctx context.Context, accountID string)
 	if err != nil {
 		return AccountRecoveryParameters{}, err
 	}
-	parameters := AccountRecoveryParameters{Version: credential.Version, KDFAlgorithm: credential.KDFAlgorithm}
-	if credential.Version >= AccountRecoveryArgonVersion {
-		parameters.KDFSalt = credential.KDFSalt
-		parameters.KDFIterations = credential.KDFIterations
-		parameters.KDFMemoryKiB = credential.KDFMemoryKiB
+	if credential.Version < AccountRecoveryArgonVersion {
+		return AccountRecoveryParameters{}, ErrRecoveryUpgradeRequired
 	}
-	return parameters, nil
+	return AccountRecoveryParameters{
+		Version:       credential.Version,
+		KDFAlgorithm:  credential.KDFAlgorithm,
+		KDFSalt:       credential.KDFSalt,
+		KDFIterations: credential.KDFIterations,
+		KDFMemoryKiB:  credential.KDFMemoryKiB,
+	}, nil
 }
 
 func getAccountRecoveryCredentialForUpdate(ctx context.Context, tx *sql.Tx, accountID string) (AccountRecoveryCredential, error) {
