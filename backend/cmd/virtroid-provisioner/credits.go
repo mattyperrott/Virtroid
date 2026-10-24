@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -85,6 +86,9 @@ func (d cliDriver) BuyCredits(ctx context.Context, amountETH string) (string, er
 	return lastLines(string(out), 4), nil
 }
 
+// maxEthRPCResponseBytes bounds an eth_getBalance answer.
+const maxEthRPCResponseBytes = 64 << 10
+
 type ethBalanceReader struct {
 	url    string
 	client *http.Client
@@ -104,21 +108,39 @@ func (e ethBalanceReader) balanceWei(ctx context.Context, address string) (*big.
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ETH RPC answered status %d", resp.StatusCode)
+	}
 	var response struct {
 		Result string `json:"result"`
 		Error  *struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	// The RPC service is outside our control: a balance answer is tiny, so
+	// read no more than this, and never a huge string into memory.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxEthRPCResponseBytes)).Decode(&response); err != nil {
 		return nil, err
 	}
 	if response.Error != nil {
-		return nil, errors.New(response.Error.Message)
+		return nil, errors.New(shorten(response.Error.Message, 200))
 	}
-	wei, ok := new(big.Int).SetString(strings.TrimPrefix(response.Result, "0x"), 16)
+	// A 256-bit balance is at most 64 hex digits.
+	digits := strings.TrimPrefix(response.Result, "0x")
+	if digits == "" || len(digits) > 64 {
+		return nil, fmt.Errorf("unreadable ETH balance %q", shorten(response.Result, 80))
+	}
+	wei, ok := new(big.Int).SetString(digits, 16)
 	if !ok {
 		return nil, fmt.Errorf("unreadable ETH balance %q", response.Result)
 	}
 	return wei, nil
+}
+
+// shorten keeps an untrusted message to at most n bytes for a log or error.
+func shorten(text string, n int) string {
+	if len(text) <= n {
+		return text
+	}
+	return text[:n] + "…"
 }

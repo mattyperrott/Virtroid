@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -42,5 +45,44 @@ func TestCreditBuyerWaitsForEnoughETH(t *testing.T) {
 	b.runOnce(context.Background())
 	if len(*bought) != 0 || len(*logs) != 0 {
 		t.Fatalf("bought=%v logs=%q", *bought, *logs)
+	}
+}
+
+func TestBalanceWeiBoundsTheRPCAnswer(t *testing.T) {
+	answers := map[string]func(http.ResponseWriter){
+		"/huge": func(w http.ResponseWriter) {
+			// A string far past the read limit: decoding must stop, not buffer it.
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x`))
+			chunk := bytes.Repeat([]byte("f"), 1<<20)
+			for range 8 {
+				_, _ = w.Write(chunk)
+			}
+			_, _ = w.Write([]byte(`"}`))
+		},
+		"/long": func(w http.ResponseWriter) {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x` + strings.Repeat("f", 65) + `"}`))
+		},
+		"/status": func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
+		},
+		"/ok": func(w http.ResponseWriter) {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0xde0b6b3a7640000"}`))
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		answers[r.URL.Path](w)
+	}))
+	defer server.Close()
+	for _, path := range []string{"/huge", "/long", "/status"} {
+		reader := ethBalanceReader{url: server.URL + path, client: server.Client()}
+		if _, err := reader.balanceWei(context.Background(), "0x0000000000000000000000000000000000000001"); err == nil {
+			t.Fatalf("%s: accepted", path)
+		}
+	}
+	reader := ethBalanceReader{url: server.URL + "/ok", client: server.Client()}
+	wei, err := reader.balanceWei(context.Background(), "0x0000000000000000000000000000000000000001")
+	if err != nil || wei.String() != "1000000000000000000" {
+		t.Fatalf("balance = %v, %v", wei, err)
 	}
 }
