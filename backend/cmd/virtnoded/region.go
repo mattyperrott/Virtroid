@@ -17,10 +17,11 @@ import (
 	"time"
 )
 
-// A runtime's region is where its Android believes it is: a place (for the
-// GNSS HAL of the custom AOSP image, which will read it from the node) and
-// that place's timezone, applied now. Phones seal it with a key derived from
-// the runtime's viewer key, so the control plane storing it learns neither.
+// A runtime's region is where its Android believes it is: a place, served to
+// the custom AOSP image's GNSS HAL by the runtime's location feed (gnss.go),
+// and that place's timezone, applied here. Phones seal it with a key derived
+// from the runtime's viewer key, so the control plane storing it learns
+// neither.
 const (
 	sealedRegionMagic       = "VRTREG1\n"
 	sealedRegionNonceSize   = 12
@@ -138,6 +139,8 @@ type regionAttempt struct {
 // change. Without a region the runtime keeps whatever timezone it has.
 func (n *nodeAgent) ensureRuntimeRegion(ctx context.Context, runtime runtimeAssignment, containerName string) error {
 	if runtime.RegionSealed == nil || strings.TrimSpace(*runtime.RegionSealed) == "" {
+		// A region taken away takes the place with it: no fix from now on.
+		n.gnss.set(runtime.ID, nil)
 		return nil
 	}
 	digest := regionDigest(*runtime.RegionSealed)
@@ -161,6 +164,7 @@ func (n *nodeAgent) applyRuntimeRegion(ctx context.Context, runtime runtimeAssig
 	if err != nil {
 		return err
 	}
+	n.gnss.set(runtime.ID, &gnssPlace{latitude: region.Latitude, longitude: region.Longitude})
 	// Automatic detection would replace a manual zone if it ever had a
 	// signal to go on; the runtime's zone is the one its owner chose.
 	if _, err := n.execInContainerCapture(ctx, containerName, "0", nil, []string{"settings", "put", "global", "auto_time_zone", "0"}); err != nil {

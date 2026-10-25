@@ -137,7 +137,7 @@ C /bin/ls -la \$A
 for f in scrcpy-server.jar virtroid-viewercrypt virtroid-viewer.sh virtroid-viewer.rc; do
   C /bin/test -s \$A/\$f || fail "virtnoded did not write \$A/\$f"
 done
-C /bin/mkdir -p /srv/virtroid/runtimes/smoke/data
+C /bin/mkdir -p /srv/virtroid/runtimes/smoke/data /srv/virtroid/runtimes/smoke/gnss
 echo "boot-test: starting a runtime container as virtnoded does (limits, mounts, arguments)"
 . /mnt/lower/etc/virtroid/node.env 2>/dev/null || true
 # A Tor runtime, set up as virtnoded does: its bridge joins the firewall's Tor
@@ -155,6 +155,7 @@ C /bin/docker run -d --name smoke --privileged --network virtroid-guest-smoke \
   -v \$A/virtroid-viewercrypt:/opt/virtroid/virtroid-viewercrypt:ro \
   -v \$A/virtroid-viewer.sh:/vendor/bin/virtroid-viewer.sh:ro \
   -v \$A/virtroid-viewer.rc:/vendor/etc/init/virtroid-viewer.rc:ro \
+  -v /srv/virtroid/runtimes/smoke/gnss:/opt/virtroid/gnss:ro \
   "\$NODE_RUNTIME_IMAGE" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \
   androidboot.redroid_gpu_node=auto androidboot.redroid_fps=30 androidboot.redroid_width=720 \
   androidboot.redroid_height=1280 androidboot.redroid_dpi=320 || fail "docker run"
@@ -180,6 +181,11 @@ fi
 memory "Android booted"
 echo "boot-test: Android booted: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.fingerprint | \$B tr -d '\r')"
 echo "boot-test: Android security patch: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.version.security_patch | \$B tr -d '\r')"
+# The location feed's directory, mounted as virtnoded mounts it: Android sees
+# it, and even its root can't write to it (deploy/aosp/gnss-feed.md).
+gnss=\$(C /bin/docker exec smoke /system/bin/sh -c 'test -d /opt/virtroid/gnss && echo mounted; touch /opt/virtroid/gnss/w 2>/dev/null && echo writable' 2>/dev/null | \$B tr '\n' ' ')
+echo "boot-test: location feed directory: \$gnss"
+case "\$gnss" in *writable*) fail "Android can write the location feed directory";; *mounted*) ;; *) fail "the location feed directory is missing in Android";; esac
 # An image that offers arm64 must be able to run it: ARM-only apps (SimpleX
 # ships no x86_64 build) load through the native bridge, and ARM executables
 # through the kernel's binfmt_misc handler, which Android's init registers.

@@ -414,8 +414,10 @@ type nodeAgent struct {
 	callbackNonces  map[string]time.Time
 	// startedAt is when this process started. Used nonces are only kept in
 	// memory, so a callback signed before then could be replayed: refuse it.
-	startedAt        time.Time
-	relaySlots       chan struct{}
+	startedAt  time.Time
+	relaySlots chan struct{}
+	// gnss serves each running runtime's place to its GNSS HAL.
+	gnss             *gnssFeeds
 	relayLeaseMu     sync.Mutex
 	relayLeases      map[string]*relayLease
 	heartbeatStateMu sync.RWMutex
@@ -458,6 +460,7 @@ func main() {
 		},
 		docker:        dockerHTTPClient(),
 		relaySlots:    make(chan struct{}, maxConcurrentRelaySessions),
+		gnss:          newGNSSFeeds(gnssSocketUID, gnssSocketGID),
 		startedAt:     time.Now(),
 		observability: telemetry,
 	}
@@ -2015,6 +2018,10 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			}
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Selected app install failed: %v.", installErr))
 		}
+		// Opens the feed again after a node restart; open already, nothing.
+		if err := n.gnss.start(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Location feed not started: %v.", err))
+		}
 		if regionErr := n.ensureRuntimeRegion(ctx, runtime, containerName); regionErr != nil {
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Runtime region not applied yet: %v.", regionErr))
 		}
@@ -2068,6 +2075,10 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 
 	persona := buildSessionPersona(runtime)
 	personaJSON := marshalSessionPersona(persona)
+	// The feed's directory must exist before the container that mounts it.
+	if err := n.gnss.start(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Location feed not started: %v.", err))
+	}
 	if !hadContainer {
 		if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
 			return fmt.Errorf("pull runtime image: %w", err)
@@ -2114,6 +2125,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 }
 
 func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAssignment, containerName string) error {
+	n.gnss.stop(runtime.ID)
 	var cleanupErrors []error
 	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove tainted runtime container: %w", err))
@@ -2130,6 +2142,8 @@ func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAs
 }
 
 func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAssignment, clearWipe bool) error {
+	// A stopped runtime has no place to be.
+	n.gnss.stop(runtime.ID)
 	containerName := containerNameForRuntime(runtime.ID)
 	_, inspectErr := n.inspectContainer(ctx, containerName)
 	hadContainer := inspectErr == nil
@@ -2262,6 +2276,7 @@ func (n *nodeAgent) discardUncommittedBlob(persisted *persistedBlob) error {
 }
 
 func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) error {
+	n.gnss.stop(runtime.ID)
 	masterKey, err := n.runtimeBlobKeyWithContext(ctx, runtime)
 	if err != nil {
 		return fmt.Errorf("verify runtime blob key before wipe: %w", err)
@@ -2302,6 +2317,7 @@ func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) 
 }
 
 func (n *nodeAgent) deleteRuntime(ctx context.Context, runtime runtimeAssignment) error {
+	n.gnss.stop(runtime.ID)
 	containerName := containerNameForRuntime(runtime.ID)
 	if err := n.stopAndRemoveContainer(ctx, containerName); err != nil && !errors.Is(err, errContainerNotFound) {
 		return err
@@ -2989,6 +3005,7 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 				n.viewerCryptPath() + ":" + viewerCryptMountPath + ":ro",
 				n.viewerScriptPath() + ":" + viewerScriptMountPath + ":ro",
 				n.viewerInitPath() + ":" + viewerInitMountPath + ":ro",
+				gnssFeedDir(n.cfg.RuntimeRoot, runtime.ID) + ":" + gnssFeedMountPath + ":ro",
 			},
 			"PortBindings": map[string]any{
 				"5555/tcp": []map[string]string{

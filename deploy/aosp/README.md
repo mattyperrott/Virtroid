@@ -51,13 +51,13 @@ They apply cleanly. Whether they boot has not been tested.
    Virtroid runtime agent as a system app, a launcher (Lawnchair is the
    recommendation; Niagara and Hyperion are proprietary and can't ship),
    F-Droid with its privileged extension, a WebView, a browser and a keyboard.
-2. **A location provider.** A GNSS HAL (from AOSP's default or Cuttlefish
-   GNSS HAL) that reads fixes from a socket the node serves in the runtime's
-   data directory, the way the viewer's socket works today. The node already
-   opens each runtime's sealed region (`backend/cmd/virtnoded/region.go`); it
-   would send that position about once a second. Apps then see an ordinary
-   GPS fix, not a mock location (`Location.isMock()` is false), and the
-   region's coordinates, set in the app, finally reach apps.
+2. **A location provider.** AOSP's default GNSS HAL, patched to read fixes
+   from a socket the node serves for each runtime. The node side is done
+   (`backend/cmd/virtnoded/gnss.go`): it serves the place from the runtime's
+   sealed region in the HAL's own fixed-location format, and the image's part
+   is in [gnss-feed.md](gnss-feed.md). Apps then see an ordinary GPS fix, not
+   a mock location (`Location.isMock()` is false), and the region's
+   coordinates, set in the app, finally reach apps.
 3. **Fewer container privileges.** Containers run with `Privileged: true`
    today. Find what Android needs (binder devices, `netd`'s iptables, BPF,
    some mounts) and grant only that: named capabilities, the device nodes, a
@@ -111,8 +111,9 @@ new VM image to measure and approve.
      Google's binary only if the boot test passes with
      `BOOT_TEST_APKS` holding SimpleX's ARM build and the F-Droid apps with
      ARM-only code that runtimes use; otherwise the image keeps Google's.
-5. **Location.** The GNSS HAL and the node's feed; check that a map app shows
-   the runtime's place and that `isMock()` is false.
+5. **Location.** The GNSS HAL reading the node's feed, as
+   [gnss-feed.md](gnss-feed.md) sets out; check that a map app shows the
+   runtime's place and that `isMock()` is false.
 6. **Hardening.** Unprivileged container, the BPF setting, `hardened_malloc`.
 7. **Release.** A VM image carrying it, through the usual release, then a
    written monthly rebuild runbook.

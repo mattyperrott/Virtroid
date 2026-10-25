@@ -62,6 +62,31 @@ func TestOpenSealedRegionReadsOnlyThisRuntimesRegion(t *testing.T) {
 	}
 }
 
+func TestOpenSealedRegionChecksCoordinates(t *testing.T) {
+	material := bytes.Repeat([]byte{0x42}, 32)
+	runtimeID := "11111111-1111-1111-1111-111111111111"
+	key := runtimeRegionKey(material, runtimeID)
+	open := func(latitude, longitude string) error {
+		plaintext := `{"version":1,"latitude":` + latitude + `,"longitude":` + longitude + `,"timezone":"UTC"}`
+		_, err := openSealedRegion(key, runtimeID, sealRegionForTest(t, key, runtimeID, plaintext))
+		return err
+	}
+	// The edges of the globe are places too.
+	for _, coordinates := range [][2]string{{"90", "180"}, {"-90", "-180"}, {"0", "0"}, {"-33.8688", "151.2093"}} {
+		if err := open(coordinates[0], coordinates[1]); err != nil {
+			t.Fatalf("%v refused: %v", coordinates, err)
+		}
+	}
+	for _, coordinates := range [][2]string{
+		{"90.0000001", "0"}, {"-90.5", "0"}, {"0", "180.0000001"}, {"0", "-181"},
+		{"1e400", "0"}, {"0", "-1e400"}, {`"52.52"`, "13.4"},
+	} {
+		if err := open(coordinates[0], coordinates[1]); err == nil {
+			t.Fatalf("%v accepted", coordinates)
+		}
+	}
+}
+
 func TestTimezoneNamePattern(t *testing.T) {
 	for _, name := range []string{"UTC", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5", "America/Port-au-Prince"} {
 		if !timezoneNamePattern.MatchString(name) {
