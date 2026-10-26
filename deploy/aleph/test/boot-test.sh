@@ -438,7 +438,10 @@ chmod 755 initrd/init
 printf '#!/bin/busybox sh\nexec /bin/busybox env -i HOME=/run/root PATH=/bin TMPDIR=/run/tmp /bin/busybox chroot /proc/$(/bin/busybox cat /guest.pid)/root "$@"\n' > initrd/bin/C
 chmod 755 initrd/bin/C
 (cd initrd && find . | cpio -o -H newc --quiet | gzip -1) > initrd.gz
-truncate -s 8G data.img
+# Sparse. Room for two runtime images and their data: the upgrade check loads
+# the older image beside this one, and our own Android build alone fills
+# about 4 GiB once Docker has stored and unpacked it.
+truncate -s 16G data.img
 older=()
 [ -z "${BOOT_TEST_UPGRADE_FROM:-}" ] || older=(-drive "file=$(readlink -f "$BOOT_TEST_UPGRADE_FROM"),format=raw,if=virtio,readonly=on")
 
