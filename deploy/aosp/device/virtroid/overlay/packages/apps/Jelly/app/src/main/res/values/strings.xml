@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The browser searches and starts with DuckDuckGo, from its own list,
+     instead of Google. -->
+<resources>
+    <string name="default_search_engine" translatable="false">https://duckduckgo.com/?q={searchTerms}</string>
+    <string name="default_home_page" translatable="false">https://duckduckgo.com</string>
+</resources>

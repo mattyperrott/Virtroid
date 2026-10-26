@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No captive portal probes to Google's connectivitycheck servers: a
+         runtime's network is the VM's, never behind a portal
+         (patches/frameworks/base). -->
+    <integer name="def_captive_portal_mode">0</integer>
+    <!-- The clock is the VM's. Android setting it from the network would
+         change the whole VM's clock, which a privileged container can. -->
+    <bool name="def_auto_time">false</bool>
+</resources>

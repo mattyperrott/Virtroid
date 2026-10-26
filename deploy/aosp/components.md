@@ -126,6 +126,9 @@ Still open:
 - **Built in:** F-Droid 1.23.2 as F-Droid signed it, its privileged
   extension built from source, and the runtime agent the node pins. The
   keyboard is AOSP's LatinIME.
+- **No Google endpoints by default:** captive portal probes off, network
+  time from the NTP pool, the browser on DuckDuckGo. What remains of Google
+  is the ARM translator's binary (Digitalis would replace it).
 - **Trade-off to review:** a runtime without Bluetooth declares fewer
   features than any phone, which apps can read, while personas claim real
   phone models.

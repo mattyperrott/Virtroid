@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Network time from the NTP pool's Android zone, not Google's
+     time.android.com. -->
+<resources>
+    <string-array translatable="false" name="config_ntpServers">
+        <item>ntp://2.android.pool.ntp.org</item>
+    </string-array>
+</resources>
