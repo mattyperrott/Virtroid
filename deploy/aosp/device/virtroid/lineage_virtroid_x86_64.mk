@@ -50,3 +50,12 @@ PRODUCT_PACKAGES += \
     F-Droid \
     F-DroidPrivilegedExtension \
     VirtroidRuntimeAgent
+
+# Location: AOSP's default GNSS HAL reads each fix from the socket the node
+# serves for the runtime (deploy/aosp/gnss-feed.md, patches/hardware/
+# interfaces), so apps see an ordinary GPS fix.
+PRODUCT_PACKAGES += com.android.hardware.gnss
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.location.gps.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.location.gps.xml
+PRODUCT_VENDOR_PROPERTIES += \
+    debug.location.fixedlocation.devname=/opt/virtroid/gnss/gnss.sock

@@ -1,0 +1,128 @@
+From 4dc78d08d0f3f92a7196fc68a73db626da7b6c6a Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 19:43:23 +0000
+Subject: [PATCH] gnss: read a location feed served on a Unix socket
+
+The default GNSS HAL reads its fix from the file debug.location.fixedlocation.devname names. Virtroid's node serves each runtime's place on a Unix socket instead (deploy/aosp/gnss-feed.md): connect() to a socket path, and when the node closes the connection without a record (no place), stop reporting the cached fix. With no fix there is none to report, rather than a made-up default position. The service runs as gps, which owns the node's socket, instead of nobody.
+
+Change-Id: I1c50d345e93fd22830caebfe2f3feab91974e385
+---
+ gnss/aidl/default/Gnss.cpp                    |  5 +--
+ gnss/aidl/default/gnss-default.rc             |  4 +-
+ .../common/utils/default/DeviceFileReader.cpp | 41 ++++++++++++++++++-
+ 3 files changed, 44 insertions(+), 6 deletions(-)
+
+diff --git a/gnss/aidl/default/Gnss.cpp b/gnss/aidl/default/Gnss.cpp
+index e1c2ee0..b1a3cfd 100644
+--- a/gnss/aidl/default/Gnss.cpp
++++ b/gnss/aidl/default/Gnss.cpp
+@@ -125,11 +125,10 @@ ScopedAStatus Gnss::setCallback(const std::shared_ptr<IGnssCallback>& callback)
+ 
+                 auto currentLocation = getLocationFromHW();
+                 mGnssPowerIndication->notePowerConsumption();
++                // Without a fix from the location source there is none to
++                // report: no made-up default position.
+                 if (currentLocation != nullptr) {
+                     this->reportLocation(*currentLocation);
+-                } else {
+-                    const auto location = Utils::getMockLocation();
+-                    this->reportLocation(location);
+                 }
+                 mReportedLocationCount += 1;
+                 mThreadBlocker.wait_for(std::chrono::milliseconds(mMinIntervalMs));
+diff --git a/gnss/aidl/default/gnss-default.rc b/gnss/aidl/default/gnss-default.rc
+index d47b3a5..6f8fca5 100644
+--- a/gnss/aidl/default/gnss-default.rc
++++ b/gnss/aidl/default/gnss-default.rc
+@@ -1,4 +1,4 @@
+ service vendor.gnss-default /apex/com.android.hardware.gnss/bin/hw/android.hardware.gnss-service.example
+     class hal
+-    user nobody
+-    group nobody
++    user gps
++    group gps
+diff --git a/gnss/common/utils/default/DeviceFileReader.cpp b/gnss/common/utils/default/DeviceFileReader.cpp
+index 91e75eb..8052578 100644
+--- a/gnss/common/utils/default/DeviceFileReader.cpp
++++ b/gnss/common/utils/default/DeviceFileReader.cpp
+@@ -15,11 +15,37 @@
+  */
+ #include "DeviceFileReader.h"
+ 
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++#include <unistd.h>
++
+ namespace android {
+ namespace hardware {
+ namespace gnss {
+ namespace common {
+ 
++// A Unix stream socket the location source serves: Virtroid's node answers
++// each connection once and closes it.
++static int connectToSocket(const std::string& path) {
++    struct sockaddr_un addr;
++    if (path.size() >= sizeof(addr.sun_path)) {
++        return -1;
++    }
++    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
++    if (fd == -1) {
++        return -1;
++    }
++    memset(&addr, 0, sizeof(addr));
++    addr.sun_family = AF_UNIX;
++    memcpy(addr.sun_path, path.c_str(), path.size());
++    if (connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == -1) {
++        close(fd);
++        return -1;
++    }
++    return fd;
++}
++
+ void DeviceFileReader::getDataFromDeviceFile(const std::string& command, int mMinIntervalMs) {
+     char inputBuffer[INPUT_BUFFER_SIZE];
+     std::string deviceFilePath = "";
+@@ -33,7 +59,11 @@ void DeviceFileReader::getDataFromDeviceFile(const std::string& command, int mMi
+     }
+ 
+     int gnss_fd, epoll_fd;
+-    if ((gnss_fd = open(deviceFilePath.c_str(), O_RDWR | O_NONBLOCK)) == -1) {
++    struct stat sb;
++    const bool isSocket = stat(deviceFilePath.c_str(), &sb) == 0 && S_ISSOCK(sb.st_mode);
++    gnss_fd = isSocket ? connectToSocket(deviceFilePath)
++                       : open(deviceFilePath.c_str(), O_RDWR | O_NONBLOCK);
++    if (gnss_fd == -1) {
+         return;
+     }
+     if (write(gnss_fd, command.c_str(), command.size()) <= 0) {
+@@ -67,13 +97,17 @@ void DeviceFileReader::getDataFromDeviceFile(const std::string& command, int mMi
+ 
+     // Handle event and write data to string buffer.
+     int bytes_read = -1;
++    bool answered_empty = true;
++    bool closed = false;
+     std::string inputStr = "";
+     while (true) {
+         memset(inputBuffer, 0, INPUT_BUFFER_SIZE);
+         bytes_read = read(gnss_fd, &inputBuffer, INPUT_BUFFER_SIZE);
+         if (bytes_read <= 0) {
++            closed = bytes_read == 0;
+             break;
+         }
++        answered_empty = false;
+         s_buffer_ += std::string(inputBuffer, bytes_read);
+     }
+     close(gnss_fd);
+@@ -85,6 +119,11 @@ void DeviceFileReader::getDataFromDeviceFile(const std::string& command, int mMi
+         inputStr = s_buffer_.substr(0, pos);
+         s_buffer_ = s_buffer_.substr(pos + 4);
+     } else {
++        // A socket closed without a record means the source has no fix now
++        // (the runtime has no place): stop reporting the last one.
++        if (isSocket && closed && answered_empty) {
++            data_[command].clear();
++        }
+         return;
+     }
+ 

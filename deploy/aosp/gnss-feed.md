@@ -11,7 +11,7 @@ milestone 5).
 | Sealed region (city or coordinates), chosen in the app | Done. Sealed on the phone, opened only by the runtime's node. |
 | Timezone from the region | Done, works on today's stock ReDroid images. |
 | Node side of the location feed (this contract) | Done in `backend/cmd/virtnoded/gnss.go`. Ships with the next VM image. |
-| Android side: a GNSS HAL reading the feed | **Not built.** Needs the custom image. |
+| Android side: a GNSS HAL reading the feed | Built into the custom image (`patches/hardware/interfaces`, `device/virtroid`); not yet checked end to end. |
 | Apps seeing the runtime's place as GPS | **Not yet.** Only once a runtime runs the custom image. |
 
 Until a runtime runs the custom image, the node serves the feed and nothing
