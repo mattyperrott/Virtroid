@@ -10,6 +10,7 @@
 # listens. Test-only changes, all in a tmpfs overlay over the verified root:
 # virtnoded runs with NODE_SNP_ATTESTATION=off and no reachable control plane.
 #   BOOT_TEST_DEBUG=1   keep a failed VM up with a shell on ttyS1 (see vmsh)
+#   BOOT_TEST_KEEP=1    keep a passing VM up too, to inspect the runtime
 #   BOOT_TEST_SED=EXPR  sed expression applied to the overlay copy of /sbin/init
 #   BOOT_TEST_DIR       work directory (default /var/tmp/virtroid-boot-test)
 #   BOOT_TEST_APKS=DIR  install every APK in DIR; each app must start and keep
@@ -18,6 +19,11 @@
 #                       fresh data with the APKs installed, then boot this
 #                       image on that data, as a saved runtime's first start
 #                       on a new Android version does
+#   BOOT_TEST_RUNTIME_IMAGE=TAR  a runtime image (docker save) to test in
+#                       place of the one built into IMAGE_DIR, so a new
+#                       Android build is tested without rebuilding the VM
+#                       image. Only the image's own runtime is measured: a
+#                       pass with this tests Android, not the release.
 set -euo pipefail
 
 img="$(cd "${1:?usage: boot-test.sh IMAGE_DIR}" && pwd)"
@@ -31,6 +37,20 @@ zcat "$img/runtime/initrd" | (cd initrd && cpio -idm --quiet)
 if [ -n "${BOOT_TEST_APKS:-}" ]; then
   mkdir -p initrd/apks
   cp "$BOOT_TEST_APKS"/*.apk initrd/apks/
+fi
+# Extra disks follow the root (vda) and data (vdb) in this order.
+extra_disks=()
+runtime_disk=""
+older_disk=""
+next_disk=c
+if [ -n "${BOOT_TEST_RUNTIME_IMAGE:-}" ]; then
+  extra_disks+=(-drive "file=$(readlink -f "$BOOT_TEST_RUNTIME_IMAGE"),format=raw,if=virtio,readonly=on")
+  runtime_disk=/dev/vd$next_disk
+  next_disk=d
+fi
+if [ -n "${BOOT_TEST_UPGRADE_FROM:-}" ]; then
+  extra_disks+=(-drive "file=$(readlink -f "$BOOT_TEST_UPGRADE_FROM"),format=raw,if=virtio,readonly=on")
+  older_disk=/dev/vd$next_disk
 fi
 roothash=$(cat "$img/root/roothash")
 offset=$(cat "$img/root/hash-offset")
@@ -115,6 +135,13 @@ for i in \$(\$B seq 1 300); do
 done
 C /bin/docker image inspect "\$NODE_RUNTIME_IMAGE" >/dev/null 2>&1 || fail "runtime image never loaded"
 echo "boot-test: docker up, image loaded"
+under_test=""
+if [ -n "$runtime_disk" ]; then
+  under_test=\$(C /bin/docker load -i $runtime_disk | \$B sed -n 's/^Loaded image: //p' | \$B head -1)
+  [ -n "\$under_test" ] || fail "could not load the runtime image under test"
+  echo "boot-test: testing \$under_test, not the VM image's own runtime"
+  NODE_RUNTIME_IMAGE=\$under_test
+fi
 \$B sleep 5
 echo "boot-test: --- nft ruleset (virtroid) ---"
 C /bin/nft list table inet virtroid
@@ -153,6 +180,7 @@ C /bin/adb start-server >/dev/null 2>&1 || fail "start the adb server"
 authorize_adb /srv/virtroid/runtimes/smoke/data
 echo "boot-test: starting a runtime container as virtnoded does (limits, mounts, arguments)"
 . /mnt/lower/etc/virtroid/node.env 2>/dev/null || true
+[ -z "\$under_test" ] || NODE_RUNTIME_IMAGE=\$under_test
 # A Tor runtime, set up as virtnoded does: its bridge joins the firewall's Tor
 # set before it exists. Nothing from it is forwarded, so Android resolving a
 # name below proves its DNS went through Tor.
@@ -388,9 +416,9 @@ booted_on() { # booted_on PORT TRIES: Android finished booting
   done
   return 1
 }
-if [ -b /dev/vdc ]; then
+if [ -n "$older_disk" ] && [ -b "$older_disk" ]; then
   C /bin/docker rm -f smoke >/dev/null
-  old=\$(C /bin/docker load -i /dev/vdc | \$B sed -n 's/^Loaded image: //p' | \$B head -1)
+  old=\$(C /bin/docker load -i $older_disk | \$B sed -n 's/^Loaded image: //p' | \$B head -1)
   [ -n "\$old" ] || fail "could not load the older image"
   C /bin/mkdir -p /srv/virtroid/runtimes/upgrade/data
   android upgrade-old "\$old" 15556
@@ -431,6 +459,10 @@ fi
 echo "boot-test: --- virtnoded log ---"
 C /bin/cat /run/virtnoded.log | \$B tail -8
 echo "boot-test: PASS"
+if [ -n "${BOOT_TEST_KEEP:-}" ]; then
+  echo "boot-test: kept up, debug shell on ttyS1"
+  while true; do \$B sh </dev/ttyS1 >/dev/ttyS1 2>&1; done
+fi
 \$B poweroff -f
 EOF
 chmod 755 initrd/init
@@ -442,8 +474,6 @@ chmod 755 initrd/bin/C
 # the older image beside this one, and our own Android build alone fills
 # about 4 GiB once Docker has stored and unpacked it.
 truncate -s 16G data.img
-older=()
-[ -z "${BOOT_TEST_UPGRADE_FROM:-}" ] || older=(-drive "file=$(readlink -f "$BOOT_TEST_UPGRADE_FROM"),format=raw,if=virtio,readonly=on")
 
 qemu=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
   --inputs-from "$flake" nixpkgs#qemu_kvm)
@@ -451,6 +481,6 @@ timeout "${BOOT_TEST_TIMEOUT:-1200}" "$qemu/bin/qemu-system-x86_64" -enable-kvm 
   -nographic -no-reboot -serial mon:stdio -serial "unix:$work/debug.sock,server=on,wait=off" \
   -kernel "$img/runtime/bzImage" -initrd initrd.gz -append "console=ttyS0 panic=-1 loglevel=4" \
   -drive "file=$img/root/root.img,format=raw,if=virtio,readonly=on" \
-  -drive file=data.img,format=raw,if=virtio "${older[@]}" \
+  -drive file=data.img,format=raw,if=virtio "${extra_disks[@]}" \
   -netdev user,id=n0,ipv6-net=2001:db8:1::/64 -device virtio-net-pci,netdev=n0 | tee "$work/console.log"
 grep -aq "boot-test: PASS" "$work/console.log"
