@@ -103,3 +103,26 @@ Still open:
    Privacy Browser.
 2. **The look:** launcher, wallpaper, theme colours, icons and fonts, from
    the owner's design.
+
+## Applied in the image (2026-10-26)
+
+`device/virtroid` applies this list; each round is boot-tested.
+
+- **Cut** (`Android.mk`, by overriding the packages): every *Cut* above that
+  the image had (Updater, DeskClock, Contacts, Messaging, Gallery2, the print
+  services, screensavers, live wallpapers, ManagedProvisioning, EasterEgg,
+  MusicFX, CaptivePortalLogin, the CJK fonts), plus LineageOS's command-line
+  tools (vim, nano, htop, rsync), which nothing here needs. *Test* cuts,
+  second round: the phone stack (TeleService, rild, Stk, SimAppDialog),
+  Bluetooth (ReDroid's simulated HAL, the MIDI service, and the feature no
+  longer declared, so its service never starts; the Bluetooth APEX stays,
+  as it carries the android.bluetooth classes apps link against),
+  LineageParts, and the boot animation. Cell broadcast
+  and the Wi-Fi HAL stub were already absent.
+- **Kept, unlike the list:** Provision. It is what marks a runtime set up at
+  first boot, in place of LineageOS's setup wizard (left out). The
+  *Decide* items (Jelly, LineageOS's themes and wallpapers) stay until
+  decided.
+- **Trade-off to review:** a runtime without Bluetooth declares fewer
+  features than any phone, which apps can read, while personas claim real
+  phone models.

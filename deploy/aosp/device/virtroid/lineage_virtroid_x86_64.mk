@@ -6,14 +6,22 @@
 #
 # LineageOS's mini phone configuration already leaves out the apps
 # components.md cuts from the full one (Aperture, AudioFX, Camelot, Etar,
-# Recorder, Seedvault, Twelve). The rest of components.md's cuts come later,
-# so a failure to build or boot points at the combination itself.
+# Recorder, Seedvault, Twelve); Android.mk cuts the rest, including the
+# phone stack, Bluetooth and LineageParts.
 #
 
 # Runtimes start ready to use: AOSP's Provision marks the device set up at
 # first boot, as in ReDroid's image, instead of LineageOS's setup wizard
 # (patches/vendor/lineage).
 TARGET_EXCLUDES_LINEAGE_SETUPWIZARD := true
+
+# Ours come before what the makefiles below inherit, so they win: the first
+# copy of a file is the one used.
+#
+# The features a runtime declares: AOSP's handheld list without Bluetooth
+# and printing, which the image doesn't have.
+PRODUCT_COPY_FILES += \
+    device/virtroid/handheld_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
 
 $(call inherit-product, device/redroid/redroid_x86_64_only.mk)
 $(call inherit-product, vendor/lineage/config/common_mini_phone.mk)
@@ -27,3 +35,6 @@ PRODUCT_DEVICE := redroid_x86_64_only
 # (ro.adb.secure=0 applies to debuggable builds alone): the node puts its
 # public key in the runtime's /data/misc/adb/adb_keys before each start.
 PRODUCT_SYSTEM_DEFAULT_PROPERTIES += persist.sys.usb.config=adb
+
+# components.md's cuts (Android.mk).
+PRODUCT_PACKAGES += VirtroidRemovePackages
