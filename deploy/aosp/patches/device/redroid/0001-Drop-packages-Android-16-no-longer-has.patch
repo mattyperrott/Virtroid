@@ -1,0 +1,38 @@
+From ede3ede7d1a9793a89d4128e07630c21a4a70e9b Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 00:21:10 +0000
+Subject: [PATCH] Drop packages Android 16 no longer has
+
+Android 16 QPR2 has no HIDL Wi-Fi service, no HIDL ClearKey DRM service and no separate composer 2.1 -impl library (the composer service loads hwcomposer.redroid itself). A plain AOSP build skips the names silently, so ReDroid's own Android 16 image lacks them too; LineageOS fails the build on them.
+---
+ redroid.mk | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/redroid.mk b/redroid.mk
+index 7e6c7d2..6dcf2f6 100644
+--- a/redroid.mk
++++ b/redroid.mk
+@@ -61,9 +61,6 @@ PRODUCT_PACKAGES += \
+     rild
+ 
+ # WiFi required by SystemUI
+-PRODUCT_PACKAGES += \
+-    android.hardware.wifi@1.0-service
+-
+ PRODUCT_COPY_FILES += \
+     frameworks/native/data/etc/android.hardware.wifi.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.xml \
+ 
+@@ -74,13 +71,11 @@ PRODUCT_PACKAGES += \
+     android.hardware.audio.service \
+     android.hardware.audio@7.0-impl \
+     android.hardware.audio.effect@7.0-impl \
+-    android.hardware.drm@1.4-service-lazy.clearkey \
+     android.hardware.gatekeeper@1.0-service.software \
+     android.hardware.graphics.allocator@2.0-service \
+     android.hardware.graphics.allocator@2.0-impl \
+     android.hardware.graphics.mapper@2.0-impl-2.1 \
+     android.hardware.graphics.composer@2.1-service \
+-    android.hardware.graphics.composer@2.1-impl \
+     android.hardware.health-service.example \
+     android.hardware.keymaster@4.1-service \
+     android.hardware.power-service.example \

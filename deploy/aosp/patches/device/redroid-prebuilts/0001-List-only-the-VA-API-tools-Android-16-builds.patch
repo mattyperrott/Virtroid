@@ -1,0 +1,21 @@
+From f0f7da48fb95718c89163cb85e0326fe82f74029 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 00:21:11 +0000
+Subject: [PATCH] List only the VA-API tools Android 16 builds
+
+Android.mk defines avcenc, h264encode, hevcencode, jpegenc, vp8enc and vp9enc only before Android 15, so ReDroid's Android 16 image ships vainfo alone; LineageOS fails the build on the missing names.
+---
+ prebuilts.mk | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/prebuilts.mk b/prebuilts.mk
+index a137cdc..b1f3b8f 100644
+--- a/prebuilts.mk
++++ b/prebuilts.mk
+@@ -17,4 +17,5 @@ PRODUCT_PACKAGES += \
+ 
+ 
+ # vaapi
+-PRODUCT_PACKAGES += avcenc h264encode hevcencode jpegenc vp8enc vp9enc vainfo
++# Android.mk defines the encoder tools only before Android 15.
++PRODUCT_PACKAGES += vainfo

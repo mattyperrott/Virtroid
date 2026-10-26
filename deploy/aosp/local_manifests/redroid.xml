@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ReDroid's device trees for Android 16, pinned, added to LineageOS's
+  manifest. These are the projects of ReDroid's own local manifest
+  (remote-android/local_manifests, branch 15.0.0, which has no Android 16
+  branch), with device/redroid on its redroid-16.0.0 branch.
+-->
+<manifest>
+  <remote name="redroid" fetch="https://github.com/remote-android/" />
+  <project path="device/redroid" name="device_redroid" remote="redroid" groups="redroid" revision="f12358e83fef301eee116d7e1d3d4f54e75ec237" upstream="redroid-16.0.0" />
+  <project path="device/redroid-prebuilts" name="device_redroid-prebuilts" remote="redroid" groups="redroid" revision="6248d6a71db7222d1b1c4545b90e3850dffca55f" upstream="master" clone-depth="1" />
+  <project path="hardware/redroid/c2" name="redroid-c2" remote="redroid" groups="redroid" revision="98c7c28bb134ea05e020fc29440c809672b6eb3e" upstream="master" />
+  <project path="hardware/redroid/omx" name="redroid-omx" remote="redroid" groups="redroid" revision="c1917368fdc999f67574d070488245d357d06dd7" upstream="master" />
+  <project path="vendor/redroid" name="vendor_redroid" remote="redroid" groups="redroid" revision="1686c1825c146891d06004e35e7c362b58d3f1bc" upstream="master" />
+</manifest>

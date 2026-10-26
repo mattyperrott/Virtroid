@@ -1,0 +1,43 @@
+From 44ceeaf712975252440bdf692a406a638ef0142d Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 09:47:02 +0000
+Subject: [PATCH] apexd: fall back to /dev/loopN
+
+Android 16 QPR2's apexd opens loop devices only as /dev/block/loopN, which ueventd creates; android-16.0.0_r2, which ReDroid's Android 16 image is built from, also tried /dev/loopN. A container has no ueventd creating /dev/block nodes but sees the kernel's /dev/loopN, so QPR2's apexd activates no APEX there and init reboots (bootstrap-apexd-failed). Restore r2's fallback.
+
+Change-Id: I20f2474b53ba1f5df70b30b700b5b453fb2a9c52
+---
+ apexd/apexd_loop.cpp | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/apexd/apexd_loop.cpp b/apexd/apexd_loop.cpp
+index c31c5dc..0b4b719 100644
+--- a/apexd/apexd_loop.cpp
++++ b/apexd/apexd_loop.cpp
+@@ -448,7 +448,10 @@ static Result<LoopbackDeviceUniqueFd> ConfigureLoopDevice(
+ }
+ 
+ static Result<EmptyLoopDevice> WaitForLoopDevice(int num) {
+-  std::string device = StringPrintf("/dev/block/loop%d", num);
++  std::vector<std::string> candidate_devices = {
++      StringPrintf("/dev/block/loop%d", num),
++      StringPrintf("/dev/loop%d", num),
++  };
+ 
+   // apexd-bootstrap runs in parallel with ueventd to optimize boot time. In
+   // rare cases apexd would try attempt to mount an apex before ueventd created
+@@ -465,9 +468,11 @@ static Result<EmptyLoopDevice> WaitForLoopDevice(int num) {
+     attempts = 3u;
+   }
+   for (size_t i = 0; i != attempts; ++i) {
+-    unique_fd sysfs_fd(open(device.c_str(), O_RDWR | O_CLOEXEC));
+-    if (sysfs_fd.get() != -1) {
+-      return EmptyLoopDevice{std::move(sysfs_fd), std::move(device)};
++    for (const auto& device : candidate_devices) {
++      unique_fd sysfs_fd(open(device.c_str(), O_RDWR | O_CLOEXEC));
++      if (sysfs_fd.get() != -1) {
++        return EmptyLoopDevice{std::move(sysfs_fd), device};
++      }
+     }
+     PLOG(WARNING) << "Loop device " << num << " not ready. Waiting 50ms...";
+     usleep(50000);

@@ -1,0 +1,39 @@
+From a22d558df1097697f1505a7496ba5d149f854e0d Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 11:15:43 +0000
+Subject: [PATCH] NetBpfLoad: allow programs and maps loaded before it
+
+Android 16 QPR2's NetBpfLoad, when it runs as root, stops (status 32 or 33) unless it is the first to load any BPF program or map into the kernel; android-16.0.0_r2, which ReDroid's Android 16 image is built from, has no such check. A container shares its kernel with the host's own programs (Docker's device filters, for one) and other containers', so the check fails there and init reboots (bpfloader-failed). Warn instead.
+
+Change-Id: I6b833e13fa120e78b5dc4aaa3e3f4e69d37380a8
+---
+ bpf/loader/NetBpfLoad.cpp | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index 29854a5..0efdb1c 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -1822,18 +1822,17 @@ static int doLoad(char** argv, char * const envp[]) {
+     }
+ 
+     if (runningAsRoot) {  // implies U QPR3+ and kernel 4.14+
+-        // There should not be any programs or maps yet
++        // There should not be any programs or maps yet, except in a container,
++        // whose kernel the host and other containers have loaded programs into.
+         errno = 0;
+         uint32_t progId = bpfGetNextProgId(0);  // expect 0 with errno == ENOENT
+         if (progId || errno != ENOENT) {
+-            ALOGE("bpfGetNextProgId(zero) returned %u (errno %d)", progId, errno);
+-            return 32;
++            ALOGW("bpfGetNextProgId(zero) returned %u (errno %d)", progId, errno);
+         }
+         errno = 0;
+         uint32_t mapId = bpfGetNextMapId(0);  // expect 0 with errno == ENOENT
+         if (mapId || errno != ENOENT) {
+-            ALOGE("bpfGetNextMapId(zero) returned %u (errno %d)", mapId, errno);
+-            return 33;
++            ALOGW("bpfGetNextMapId(zero) returned %u (errno %d)", mapId, errno);
+         }
+     } else if (isAtLeastKernelVersion(4, 14)) {  // implies S through U QPR2
+         // bpfGetNext{Prog,Map}Id require 4.14+

@@ -1,0 +1,30 @@
+From 7bd8053c5ecfa507b8c3c23351553ab683621b27 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 14:26:49 +0000
+Subject: [PATCH] config: let a product leave out the setup wizard
+
+TARGET_EXCLUDES_LINEAGE_SETUPWIZARD := true leaves LineageSetupWizard out, and with it its override of AOSP's Provision, which then marks the device set up at first boot. Virtroid's runtimes start ready to use, with no one at a setup screen.
+
+Change-Id: I682b9adcc561b0a5e93ebf79155c11a197254a68
+---
+ config/common.mk | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/config/common.mk b/config/common.mk
+index f927424..dc1e188 100644
+--- a/config/common.mk
++++ b/config/common.mk
+@@ -149,9 +149,12 @@ endif
+ 
+ ifeq ($(PRODUCT_IS_AUTOMOTIVE),)
+ PRODUCT_PACKAGES += \
+-    LineageParts \
++    LineageParts
++ifneq ($(TARGET_EXCLUDES_LINEAGE_SETUPWIZARD),true)
++PRODUCT_PACKAGES += \
+     LineageSetupWizard
+ endif
++endif
+ 
+ PRODUCT_PACKAGES += \
+     LineageSettingsProvider \

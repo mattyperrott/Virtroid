@@ -1,0 +1,28 @@
+From 355eae19a108c5925e14cc1b458dbe55b9444495 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 08:25:05 +0000
+Subject: [PATCH] libprocessgroup: carry on when a cgroup controller can't be
+ set up
+
+Android 16 QPR2 made CgroupSetup() stop at the first controller it can't set up; android-16.0.0_r2, which ReDroid's Android 16 image is built from, warned and went on to the next. In a container on a cgroup v2 host the v1 blkio controller can't be mounted, so QPR2 stops before it creates the system and apps hierarchies, every service then fails to start, and init reboots (bootstrap-apexd-failed). Restore r2's loop.
+
+Change-Id: I337751f6acc8e1c04d675ac6b46d2cb45d07c4c7
+---
+ libprocessgroup/setup/cgroup_map_write.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/libprocessgroup/setup/cgroup_map_write.cpp b/libprocessgroup/setup/cgroup_map_write.cpp
+index 899b4e9..63a9d61 100644
+--- a/libprocessgroup/setup/cgroup_map_write.cpp
++++ b/libprocessgroup/setup/cgroup_map_write.cpp
+@@ -291,8 +291,8 @@ bool CgroupSetup() {
+         }
+ 
+         if (!SetupCgroup(descriptor)) {
+-            LOG(ERROR) << "Failed to setup " << name << " cgroup";
+-            return false;
++            // issue a warning and proceed with the next cgroup
++            LOG(WARNING) << "Failed to setup " << name << " cgroup";
+         }
+     }
+ 
