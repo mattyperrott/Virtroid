@@ -129,6 +129,12 @@ Still open:
 - **No Google endpoints by default:** captive portal probes off, network
   time from the NTP pool, the browser on DuckDuckGo. What remains of Google
   is the ARM translator's binary (Digitalis would replace it).
+- **Checked on a running runtime (2026-10-27):** none of the cut packages
+  installed; Bluetooth and printing not declared; fonts 82 → 26 MB; F-Droid's
+  extension holds the install permission; LatinIME is the default keyboard;
+  captive portal mode 0, automatic time off, NTP from the pool. The runtime
+  used 1,348 MiB after boot, against 2,136 MiB for the image before the cuts
+  (one boot test each).
 - **Trade-off to review:** a runtime without Bluetooth declares fewer
   features than any phone, which apps can read, while personas claim real
   phone models.

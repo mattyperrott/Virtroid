@@ -11,7 +11,7 @@ milestone 5).
 | Sealed region (city or coordinates), chosen in the app | Done. Sealed on the phone, opened only by the runtime's node. |
 | Timezone from the region | Done, works on today's stock ReDroid images. |
 | Node side of the location feed (this contract) | Done in `backend/cmd/virtnoded/gnss.go`. Ships with the next VM image. |
-| Android side: a GNSS HAL reading the feed | Built into the custom image (`patches/hardware/interfaces`, `device/virtroid`); not yet checked end to end. |
+| Android side: a GNSS HAL reading the feed | Built into the custom image (`patches/hardware/interfaces`, `device/virtroid`). Checked 2026-10-27 with a stand-in feed (below); not yet with the node's own. |
 | Apps seeing the runtime's place as GPS | **Not yet.** Only once a runtime runs the custom image. |
 
 Until a runtime runs the custom image, the node serves the feed and nothing
@@ -125,6 +125,17 @@ The node answers once and closes:
   - coordinates never reach the logs;
   - coordinates are checked: the globe's edges pass, out-of-range, overflowing
     or non-numeric values fail.
+- **Image side (2026-10-27, by hand, on a boot test's kept runtime):** a
+  stand-in server on a socket, with the property pointed at it, and a small
+  app asking for GPS:
+  - with a place, the app got a fix a second (9 in 8 s), ordinary `gps`
+    fixes at the place, and `dumpsys location` kept the last one;
+  - answering empty, then no socket at all: no fix, and no default position.
+
+  The HAL waits 20 ms for an answer, so a feed that answers later gives no
+  fix: a stand-in that ran a command per request was too slow. Open: the
+  fixes carry `satellites=0`, which apps that read satellites used in a fix
+  can see.
 - **End to end (milestone 5, needs the custom image):** extend
   `deploy/aleph/test/boot-test.sh`:
   - with a sealed region, `dumpsys location` shows a `gps` fix within a few
