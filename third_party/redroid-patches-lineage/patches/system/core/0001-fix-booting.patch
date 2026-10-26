@@ -96,9 +96,18 @@ index dbae8a7..7f99be2 100644
  
      char* raw_con = nullptr;
 diff --git a/libcutils/ashmem-dev.cpp b/libcutils/ashmem-dev.cpp
-index 0874655..6c98b1b 100644
+index 0874655..e1ad583 100644
 --- a/libcutils/ashmem-dev.cpp
 +++ b/libcutils/ashmem-dev.cpp
+@@ -131,7 +131,7 @@ static bool __init_ashmem_rdev() {
+     }
+ 
+     struct stat st;
+-    if (TEMP_FAILURE_RETRY(stat(ashmem_device_path.c_str(), &st)) == -1) {
++    if (TEMP_FAILURE_RETRY(stat("/dev/ashmem", &st)) == -1) {
+         ALOGE("Unable to stat ashmem device: %m");
+         return false;
+     }
 @@ -156,7 +156,7 @@ int __ashmem_open() {
          return -1;
      }
