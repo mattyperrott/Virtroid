@@ -14,6 +14,7 @@
 #
 #   src/                  the LineageOS tree
 #   redroid-patches/      ReDroid's patches, at the commit below
+#   prebuilts/            the APKs device/virtroid/prebuilt.sha256 pins
 #   ccache/               the compiler cache
 #   out/<build id>/       each build's image and the inputs that made it:
 #                         runtime-image.tar and runtime-image.json go into the
@@ -67,7 +68,7 @@ stage_sync() {
       --git-lfs --no-clone-bundle --depth=1 -g default,-darwin
   fi
   mkdir -p .repo/local_manifests
-  cp "${here}/local_manifests/redroid.xml" .repo/local_manifests/redroid.xml
+  cp "${here}"/local_manifests/*.xml .repo/local_manifests/
   log "sync ${branch}"
   repo sync -c -j"${jobs}" --jobs-checkout="${jobs}" --no-clone-bundle --no-tags \
     --optimized-fetch --force-sync --retry-fetches=3
@@ -129,6 +130,33 @@ stage_patch() {
 
   rm -rf device/virtroid
   cp -a "${here}/device/virtroid" device/virtroid
+  place_prebuilts device/virtroid
+}
+
+# Puts each APK prebuilt.sha256 pins into DEVICE/prebuilt: fetched once into
+# $root/prebuilts (or put there by hand, for "local"), and refused unless its
+# SHA-256 matches.
+place_prebuilts() {
+  local device_dir="$1"
+  mkdir -p "${root}/prebuilts" "${device_dir}/prebuilt"
+  grep -v '^\s*#' "${device_dir}/prebuilt.sha256" | while read -r sha name source; do
+    [ -n "${sha}" ] || continue
+    local cached="${root}/prebuilts/${name}"
+    if [ ! -f "${cached}" ]; then
+      if [ "${source}" = local ]; then
+        echo "missing ${cached}: put ${name} there (see prebuilt.sha256)" >&2
+        exit 1
+      fi
+      curl -sS -L --fail -o "${cached}.part" "${source}"
+      mv "${cached}.part" "${cached}"
+    fi
+    if ! echo "${sha}  ${cached}" | sha256sum -c --quiet -; then
+      echo "${cached} does not match prebuilt.sha256" >&2
+      exit 1
+    fi
+    cp "${cached}" "${device_dir}/prebuilt/${name}"
+    log "prebuilt ${name} (${sha:0:12})"
+  done
 }
 
 # In a subshell: envsetup.sh sets variables of its own (src among them) that

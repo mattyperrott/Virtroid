@@ -1,0 +1,11 @@
+# The APKs Android.bp builds in: SHA-256, file name, and where
+# build-lineage.sh gets each (a URL, or "local": put it in
+# $LINEAGE_ROOT/prebuilts/ yourself).
+#
+# F-Droid 1.23.2 (versionCode 1023052), F-Droid's suggested release, signed
+# with F-Droid's key (43238d51...c9ccab, the only client the privileged
+# extension trusts).
+985f5181d48bb6bafd54083a048b391271e0ab28385881cc41294fb01a222762  F-Droid.apk  https://f-droid.org/repo/org.fdroid.fdroid_1023052.apk
+# The runtime agent 0.1.0, signed with Virtroid's release key: the APK the
+# VM image's assets carry and node.env pins (NODE_NOTIFICATION_AGENT_APK_SHA256).
+f4fb0185a904d7080bd9c182dd73ecfcb9eb9d4aa9e6d1d9052cc0052ced5f91  virtroid-runtime-agent.apk  local

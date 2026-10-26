@@ -1,0 +1,32 @@
+// Apps built into the image as their publishers signed them, unchanged.
+// build-lineage.sh puts each APK in prebuilt/ after checking it against
+// prebuilt.sha256; the APKs are not in git.
+
+// The F-Droid client. Its native code is stored uncompressed and it asks
+// not to have it extracted, so a bundled copy runs as signed.
+android_app_import {
+    name: "F-Droid",
+    apk: "prebuilt/F-Droid.apk",
+    presigned: true,
+    // Installed exactly as signed: the build must not realign or re-sign it.
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}
+
+// Virtroid's runtime agent (notification forwarding), the APK the node pins
+// and provisions. The node still installs it over adb and provisions it; a
+// bundled copy is there from the first boot.
+android_app_import {
+    name: "VirtroidRuntimeAgent",
+    apk: "prebuilt/virtroid-runtime-agent.apk",
+    presigned: true,
+    // Installed exactly as signed: the build must not realign or re-sign it.
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}

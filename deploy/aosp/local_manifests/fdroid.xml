@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  F-Droid Privileged Extension, built from source and signed with the
+  image's key, as its README describes for ROMs. It installs and removes
+  apps for the F-Droid client signed with F-Droid's key, and only that.
+-->
+<manifest>
+  <remote name="gitlab" fetch="https://gitlab.com/" />
+  <project path="packages/apps/F-DroidPrivilegedExtension" name="fdroid/privileged-extension" remote="gitlab" groups="virtroid" revision="4debff3b21222e8e36382c89450dae57c598f8fa" upstream="refs/tags/0.2.14" />
+</manifest>

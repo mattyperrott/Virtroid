@@ -1,0 +1,73 @@
+From 61839c60d6a3d3633c40c78696f3ce354c0084f1 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Mon, 26 Oct 2026 19:22:32 +0000
+Subject: [PATCH] Build with Soong
+
+Android 16 no longer reads Android.mk files under packages/, so the same two modules (the privileged app and its privapp-permissions file) are described in Android.bp instead.
+---
+ app/src/main/Android.bp | 26 ++++++++++++++++++++++++++
+ app/src/main/Android.mk | 22 ----------------------
+ 2 files changed, 26 insertions(+), 22 deletions(-)
+ create mode 100644 app/src/main/Android.bp
+ delete mode 100644 app/src/main/Android.mk
+
+diff --git a/app/src/main/Android.bp b/app/src/main/Android.bp
+new file mode 100644
+index 0000000..8ff11a5
+--- /dev/null
++++ b/app/src/main/Android.bp
+@@ -0,0 +1,26 @@
++// Builds the extension into a ROM, as Android.mk did: Android 16 no longer
++// reads Android.mk files under packages/.
++
++prebuilt_etc {
++    name: "permissions_org.fdroid.fdroid.privileged.xml",
++    src: "permissions_org.fdroid.fdroid.privileged.xml",
++    sub_dir: "permissions",
++}
++
++android_app {
++    name: "F-DroidPrivilegedExtension",
++    srcs: [
++        "java/**/*.java",
++        "aidl/**/I*.aidl",
++    ],
++    aidl: {
++        local_include_dirs: ["aidl"],
++    },
++    privileged: true,
++    sdk_version: "current",
++    // Keep IPackageInstallObserver and IPackageDeleteObserver.
++    optimize: {
++        enabled: false,
++    },
++    required: ["permissions_org.fdroid.fdroid.privileged.xml"],
++}
+diff --git a/app/src/main/Android.mk b/app/src/main/Android.mk
+deleted file mode 100644
+index 3959145..0000000
+--- a/app/src/main/Android.mk
++++ /dev/null
+@@ -1,22 +0,0 @@
+-LOCAL_PATH := $(call my-dir)
+-
+-include $(CLEAR_VARS)
+-LOCAL_MODULE := permissions_org.fdroid.fdroid.privileged.xml
+-LOCAL_MODULE_CLASS := ETC
+-LOCAL_MODULE_TAGS := optional
+-LOCAL_MODULE_PATH := $(TARGET_OUT_ETC)/permissions
+-LOCAL_SRC_FILES := $(LOCAL_MODULE)
+-include $(BUILD_PREBUILT)
+-
+-include $(CLEAR_VARS)
+-LOCAL_PACKAGE_NAME := F-DroidPrivilegedExtension
+-LOCAL_MODULE_TAGS := optional
+-LOCAL_PRIVILEGED_MODULE := true
+-LOCAL_SDK_VERSION := current
+-# Keep IPackageInstallObserver and IPackageDeleteObserver
+-LOCAL_PROGUARD_ENABLED := disabled
+-LOCAL_SRC_FILES := $(call all-java-files-under, java) \
+-                   $(call all-Iaidl-files-under, aidl)
+-LOCAL_AIDL_INCLUDES := $(LOCAL_PATH)/aidl
+-LOCAL_REQUIRED_MODULES := permissions_org.fdroid.fdroid.privileged.xml
+-include $(BUILD_PACKAGE)

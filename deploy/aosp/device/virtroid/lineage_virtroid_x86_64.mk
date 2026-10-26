@@ -38,3 +38,11 @@ PRODUCT_SYSTEM_DEFAULT_PROPERTIES += persist.sys.usb.config=adb
 
 # components.md's cuts (Android.mk).
 PRODUCT_PACKAGES += VirtroidRemovePackages
+
+# Built in: F-Droid with its privileged extension (local_manifests/fdroid.xml),
+# and the runtime agent (Android.bp). The keyboard is AOSP's LatinIME, which
+# LineageOS's configuration already includes.
+PRODUCT_PACKAGES += \
+    F-Droid \
+    F-DroidPrivilegedExtension \
+    VirtroidRuntimeAgent
