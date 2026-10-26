@@ -55,8 +55,9 @@ class UnlockActivity : AppCompatActivity() {
         setContentView(binding.root)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
+        // The keyboard counts as a bar, so the passphrase field centres above it.
         ViewCompat.setOnApplyWindowInsetsListener(binding.unlockRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
             view.updatePadding(
                 left = 24 + bars.left,
                 top = 28 + bars.top,
