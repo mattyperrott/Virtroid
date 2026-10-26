@@ -118,6 +118,11 @@ class UnlockActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             val rows = (0 until binding.pinPad.childCount).map { binding.pinPad.getChildAt(it) }
             VirtroidMotion.riseIn(listOf(binding.pinHeader) + rows)
+            // With fingerprint unlock set up, ask for it straight away; "Use PIN"
+            // in the prompt leaves the pad, whose fingerprint key asks again.
+            if (canUseBiometric()) {
+                binding.root.post { unlockWithBiometric() }
+            }
         }
     }
 
@@ -213,13 +218,16 @@ class UnlockActivity : AppCompatActivity() {
         renderBiometric()
     }
 
-    private fun renderBiometric() {
-        val canUseBiometric = appSettings.biometricUnlockEnabled &&
+    private fun canUseBiometric(): Boolean =
+        appSettings.biometricUnlockEnabled &&
             appLockStore.canUseBiometricUnlock() &&
             appLockStore.mode == AppLockStore.LockMode.PIN &&
             BiometricManager.from(this).canAuthenticate(BIOMETRIC_AUTHENTICATORS) ==
             BiometricManager.BIOMETRIC_SUCCESS
-        binding.buttonFingerprint.isInvisible = !showingPassphrase || !canUseBiometric
+
+    /** The fingerprint key sits in the PIN pad, so it shows only with the pad. */
+    private fun renderBiometric() {
+        binding.buttonFingerprint.isInvisible = showingPassphrase || !canUseBiometric()
     }
 
     private fun unlockWithBiometric() {
