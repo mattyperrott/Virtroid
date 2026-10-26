@@ -147,9 +147,14 @@ class AppLockStore(context: Context) {
         appLogs.warn("App lock credential cleared with local identity reset", "auth")
     }
 
-    fun shouldRequireUnlockOnLaunch(): Boolean {
-        return isEnabled() && hasCredential() && !isUnlocked()
-    }
+    fun shouldRequireUnlockOnLaunch(): Boolean = isLocked()
+
+    /**
+     * The app lock is engaged: the local vault, and the account in it, stay
+     * hidden until the unlock screen succeeds. A screen that finds no account
+     * while locked is waiting for that screen, not missing an account.
+     */
+    fun isLocked(): Boolean = isEnabled() && hasCredential() && !isUnlocked()
 
     fun noteAppBackgrounded() {
         prefs.edit()

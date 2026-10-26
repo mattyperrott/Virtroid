@@ -25,6 +25,7 @@ import io.virtroid.client.api.WalletEntry
 import io.virtroid.client.api.WalletSummary
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenWalletBinding
+import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
@@ -77,7 +78,10 @@ class WalletActivity : AppCompatActivity() {
         val accountId = sessionStore.accountId
         val deviceId = sessionStore.deviceId
         if (accountId.isNullOrBlank() || deviceId.isNullOrBlank()) {
-            finish()
+            // Locked, not missing: stay open behind the unlock screen.
+            if (!AppLockStore(this).isLocked()) {
+                finish()
+            }
             return
         }
         runCatching { api.getWallet(sessionStore.baseUrl, accountId, deviceId) }

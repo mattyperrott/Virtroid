@@ -32,6 +32,7 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.RuntimeCardBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
+import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.BlobKeyEnvelopeCrypto
 import io.virtroid.client.update.UpdatePrompt
 import io.virtroid.client.security.IdentityKeyManager
@@ -193,6 +194,11 @@ class MainActivity : AppCompatActivity() {
         val accountId = sessionStore.accountId
         val deviceId = sessionStore.deviceId
         if (accountId.isNullOrBlank() || deviceId.isNullOrBlank()) {
+            // Locked, not missing: the unlock screen is opening (the app locks
+            // as this screen resumes), and this refreshes again after it.
+            if (AppLockStore(this).isLocked()) {
+                return
+            }
             startActivity(Intent(this, OnboardingActivity::class.java))
             finish()
             return
