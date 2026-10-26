@@ -138,6 +138,19 @@ for f in scrcpy-server.jar virtroid-viewercrypt virtroid-viewer.sh virtroid-view
   C /bin/test -s \$A/\$f || fail "virtnoded did not write \$A/\$f"
 done
 C /bin/mkdir -p /srv/virtroid/runtimes/smoke/data /srv/virtroid/runtimes/smoke/gnss
+# As virtnoded does (adb_key.go): the VM's adb key is the only one a
+# runtime's adbd accepts, which a user build's adbd requires.
+authorize_adb() {
+  C /bin/mkdir -p \$1/misc/adb
+  C /bin/cp /run/root/.android/adbkey.pub \$1/misc/adb/adb_keys || fail "authorize the adb key in \$1"
+  C /bin/chown 1000:9998 \$1/misc
+  C /bin/chown -R 1000:2000 \$1/misc/adb
+  C /bin/chmod 1771 \$1/misc
+  C /bin/chmod 2750 \$1/misc/adb
+  C /bin/chmod 0640 \$1/misc/adb/adb_keys
+}
+C /bin/adb start-server >/dev/null 2>&1 || fail "start the adb server"
+authorize_adb /srv/virtroid/runtimes/smoke/data
 echo "boot-test: starting a runtime container as virtnoded does (limits, mounts, arguments)"
 . /mnt/lower/etc/virtroid/node.env 2>/dev/null || true
 # A Tor runtime, set up as virtnoded does: its bridge joins the firewall's Tor
@@ -396,6 +409,7 @@ if [ -b /dev/vdc ]; then
   C /bin/docker stop -t 60 upgrade-old >/dev/null
   C /bin/docker rm upgrade-old >/dev/null
   C /bin/adb disconnect 127.0.0.1:15556 >/dev/null 2>&1
+  authorize_adb /srv/virtroid/runtimes/upgrade/data
   android upgrade-new "\$NODE_RUNTIME_IMAGE" 15557
   booted_on 15557 150 || {
     C /bin/docker logs --tail 40 upgrade-new 2>&1 | \$B sed 's/^/boot-test:   /'

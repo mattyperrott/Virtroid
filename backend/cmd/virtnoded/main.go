@@ -2079,6 +2079,15 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	if err := n.gnss.start(n.cfg.RuntimeRoot, runtime.ID); err != nil {
 		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Location feed not started: %v.", err))
 	}
+	// adbd reads its authorized keys when the node connects, so this VM's key
+	// goes in before Android starts.
+	adbKey, err := nodeADBPublicKey(ctx, n.cfg.ADBPath)
+	if err != nil {
+		return err
+	}
+	if err := authorizeADBKey(dataDir, adbKey, os.Lchown); err != nil {
+		return fmt.Errorf("authorize the node's adb key: %w", err)
+	}
 	if !hadContainer {
 		if err := n.ensureImage(ctx, runtime.AndroidImage); err != nil {
 			return fmt.Errorf("pull runtime image: %w", err)
