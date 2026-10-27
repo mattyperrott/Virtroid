@@ -41,6 +41,10 @@ PRODUCT_DEVICE := redroid_x86_64_only
 # public key in the runtime's /data/misc/adb/adb_keys before each start.
 PRODUCT_SYSTEM_DEFAULT_PROPERTIES += persist.sys.usb.config=adb
 
+# No kernel audit: with SELinux off there is nothing to audit, and in a
+# container the audit configuration is the host's (patches/system/logging).
+PRODUCT_SYSTEM_DEFAULT_PROPERTIES += ro.logd.auditd=false
+
 # components.md's cuts (Android.mk).
 PRODUCT_PACKAGES += VirtroidRemovePackages
 

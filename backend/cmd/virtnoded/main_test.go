@@ -1078,6 +1078,9 @@ func TestCreateContainerUsesBoundedLocalLogging(t *testing.T) {
 	}}
 	var requestBody map[string]any
 	node.docker = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/images/") {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"Config":{}}`)), Header: make(http.Header)}, nil
+		}
 		if req.Method != http.MethodPost || req.URL.Path != "/containers/create" {
 			t.Fatalf("Docker request = %s %s, want POST /containers/create", req.Method, req.URL.Path)
 		}

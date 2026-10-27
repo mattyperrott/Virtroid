@@ -65,12 +65,13 @@ doesn't compile with the tree's clang. Whether they boot has not been tested.
    coordinates, set in the app, finally reach apps. With each fix comes the
    sky a phone there would see (the real satellites' orbits, built into the
    node), its NMEA, and the GNSS chip of the phone the persona claims.
-3. **Fewer container privileges.** Containers run with `Privileged: true`
-   today. Find what Android needs (binder devices, `netd`'s iptables, BPF,
-   some mounts) and grant only that: named capabilities, the device nodes, a
-   seccomp profile. Also drop the requirement the stock image's `bpfloader`
-   imposes, that `kernel.unprivileged_bpf_disabled` can be set to 0, so the
-   VM can lock it at 1 (`deploy/aleph/nix/vm-init.sh`).
+3. **Fewer container privileges.** Our image runs without `Privileged:
+   true`: [Container confinement](#container-confinement). Stock ReDroid
+   still needs it. Still open: whether our image needs
+   `kernel.unprivileged_bpf_disabled` settable to 0, which stock ReDroid's
+   `bpfloader` does, so the VM can lock it at 1
+   (`deploy/aleph/nix/vm-init.sh`); unprivileged, the container can't set
+   it through Docker's read-only `/proc/sys`.
 4. **Hardening that ports to a container.** GrapheneOS's `hardened_malloc`
    first. Its other changes (network permission toggle, exec spawning) are
    frameworks patches to assess one by one.
@@ -199,6 +200,85 @@ setting (2026-10-27).
   design's clock, status chips and readouts on the home screen are the
   runtime agent's widget, still to build.
 
+## Container confinement
+
+Our image runs without `--privileged` (2026-10-27). Privileged, a runtime
+gets every device of the VM, including its disks and the device-mapper
+volumes (the encrypted data volume all its runtimes share among them), a
+writable sysfs and `/proc/sys`, and every capability, including setting
+the VM's clock: root in Android is root on the VM. The image's label
+`io.virtroid.container-profile=unprivileged-1` (set by `build-lineage.sh`'s
+package stage) tells virtnoded it boots without that, and the node then
+gives its container (`backend/cmd/virtnoded/runtime_container.go`):
+
+- **Capabilities:** what the image's services declare (init gives each its
+  own) and init's own for mounts, devices and cgroups. Not `SYS_MODULE`,
+  `SYS_RAWIO`, `SYS_TIME`, `MAC_ADMIN` or `MAC_OVERRIDE`, nor `SYSLOG`
+  (the VM's kernel log, which holds every runtime's) or `AUDIT_CONTROL`.
+- **Devices:** the ones a privileged runtime was seen to open: ashmem, the
+  kernel log for writing only, the system DMA heap, FUSE, tun, loop-control
+  and the loop devices, and a cgroup rule for the binder major (binderfs is
+  mounted by Android itself). None of the VM's disks, device-mapper volumes
+  or serial lines. A runtime can see the loop devices other runtimes'
+  APEXes sit on, which hold only the image's own files.
+- **Cgroups:** its own subtree, writable (`writable-cgroups`), which init
+  splits into its services' and apps' groups.
+- **Seccomp:** everything the capabilities allow, except calls that reach
+  past the container: shutting down a filesystem (`/data` is the VM's data
+  volume), opening files by handle (anywhere on that volume), loading
+  kernels or modules, setting the clock, swap, process accounting and raw
+  I/O.
+- **sysfs and `/proc`:** Docker's, read-only and masked.
+
+The image needed four changes for it: apexd no longer fails when it can't
+set a loop device's read-ahead (`patches/system/apex` 0002); logd asks for
+neither `SYSLOG` nor `AUDIT_CONTROL` (`patches/system/logging`, with
+`ro.logd.auditd=false`), and NetBpfLoad not for `SYSLOG`
+(`patches/packages/modules/Connectivity` 0002), since init can't start a
+service whose capabilities the container doesn't have and bpfloader's
+failure reboots Android; and init no longer shuts down
+`/data`'s filesystem at a reboot (`patches/system/core` 0002, see
+[Risks](#risks)). The VM's kernel runs no usermode helpers
+(`CONFIG_STATIC_USERMODEHELPER`) and makes 128 loop devices, 40 per runtime
+(`deploy/aleph/kernel-virtroid.fragment`). `boot-test.sh` starts its own
+runtimes the same way (a node test keeps the two in step) and checks that
+the runtime can't open the VM's disks or volumes, read its kernel log, set
+its clock, or write sysfs.
+
+**What it doesn't stop.** The container keeps `CAP_SYS_ADMIN` in the VM's
+own user namespace, and SELinux is off, so a process that gets Android's
+root (an app exploiting a system service, say) can still mount a fresh
+sysfs or procfs and change the VM's settings: sysctls, or unbinding the
+VM's disks from their driver. The kernel log, the disks themselves, the
+clock and the usermode-helper hooks (`kernel.modprobe`, core dumps) are out
+of its reach. Closing the rest means a user namespace for each runtime:
+[User namespaces](#user-namespaces).
+
+### User namespaces
+
+The next milestone: each runtime's root maps to an unprivileged range of
+the VM's users, so its capabilities cover only its own namespaces. What it
+takes:
+
+1. **APEXes.** apexd mounts each APEX's ext4 image from a loop device,
+   which a user namespace can't. Have the node mount the image's APEXes
+   once per VM, read-only, and patch apexd to bind those mounts instead
+   (which also frees the 40 loop devices each runtime holds).
+2. **netd's BPF programs.** Loading them needs `CAP_BPF` and `NET_ADMIN`
+   outside the namespace. Either the node loads them for the runtime, or
+   BPF tokens (Linux 6.9 and later) delegate a bpffs; to be tried.
+3. **One range per runtime.** Docker maps every container through one
+   daemon-wide range (`userns-remap`), so all runtimes' roots would be the
+   same VM user and could reach each other's files. Distinct ranges mean
+   starting runtimes through containerd or runc directly, or idmapped
+   mounts of each runtime's data; to be chosen.
+4. **Data ownership.** Existing runtimes' files are owned by the VM's real
+   ids: map them at the first start (idmapped mounts) or chown them once.
+5. **Device nodes and mounts** Android makes itself (`mknod`, configfs):
+   check each fails harmlessly, as most already do in the container.
+6. **The check:** `boot-test.sh` with the runtime unable to mount sysfs or
+   procfs, write any sysctl, or see another runtime's files.
+
 ## Milestones
 
 1. **Done.** Base chosen; ReDroid patches checked and the 4 failures ported.
@@ -303,7 +383,9 @@ setting (2026-10-27).
    location check passed end to end, from a sealed region to an app's GPS
    fix with its satellites, not mock. Still to check: a map app showing the
    runtime's place.
-6. **Hardening.** Unprivileged container, the BPF setting, `hardened_malloc`.
+6. **Hardening.** Unprivileged container: built (2026-10-27), see
+   [Container confinement](#container-confinement); user namespaces next.
+   Still open: the BPF setting and `hardened_malloc`.
 7. **Release.** A VM image carrying it, through the usual release, then a
    written monthly rebuild runbook.
 
@@ -324,7 +406,8 @@ setting (2026-10-27).
   unknown, and milestone 2 settles it.
 - SELinux stays off inside the container, as with stock ReDroid (the kernel
   config notes why), so Android's app sandbox relies on users, seccomp and
-  the container's limits. Item 3 matters more because of that.
+  the container's limits, and a root exploit in Android reaches the
+  container's capabilities: [what confinement doesn't stop](#container-confinement).
 - A privileged container can shut down the VM's data filesystem. When
   Android reboots it can't unmount `/data`, so init calls the filesystem
   shutdown ioctl on it, and `/data` is a bind mount of the VM's encrypted

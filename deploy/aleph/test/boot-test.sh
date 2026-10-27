@@ -230,12 +230,37 @@ authorize_adb /srv/virtroid/runtimes/smoke/data
 echo "boot-test: starting a runtime container as virtnoded does (limits, mounts, arguments)"
 . /mnt/lower/etc/virtroid/node.env 2>/dev/null || true
 [ -z "\$under_test" ] || NODE_RUNTIME_IMAGE=\$under_test
+# How virtnoded confines a runtime (backend/cmd/virtnoded/runtime_container.go,
+# whose tests check these match): an image labelled unprivileged-1 gets only
+# these capabilities and the devices Android uses, its own cgroups and this
+# seccomp profile; any other image runs --privileged.
+runtime_caps="CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER FSETID KILL SETGID SETUID SETPCAP SETFCAP NET_BIND_SERVICE NET_RAW NET_ADMIN SYS_CHROOT MKNOD AUDIT_WRITE SYS_ADMIN SYS_RESOURCE SYS_NICE SYS_PTRACE IPC_LOCK SYS_BOOT WAKE_ALARM BLOCK_SUSPEND BPF PERFMON"
+C /bin/bash -c 'cat > /run/runtime-seccomp.json' <<'SECCOMP'
+{"architectures":["SCMP_ARCH_X86_64","SCMP_ARCH_X86","SCMP_ARCH_X32"],"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"action":"SCMP_ACT_ERRNO","args":[{"index":1,"op":"SCMP_CMP_MASKED_EQ","value":4294967295,"valueTwo":2147768445}],"errnoRet":1,"names":["ioctl"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["open_by_handle_at"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["kexec_load","kexec_file_load","init_module","finit_module","delete_module"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["settimeofday","clock_settime","clock_settime64","clock_adjtime","clock_adjtime64","stime"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["swapon","swapoff","acct","iopl","ioperm","syslog"]}]}
+SECCOMP
+# confine IMAGE: virtnoded's docker run options for a runtime of IMAGE,
+# quoted for eval.
+confine() {
+  if [ "\$(C /bin/docker image inspect -f '{{index .Config.Labels "io.virtroid.container-profile"}}' "\$1" 2>/dev/null)" != unprivileged-1 ]; then
+    echo --privileged
+    return
+  fi
+  opts="--cap-drop ALL"
+  for c in \$runtime_caps; do opts="\$opts --cap-add \$c"; done
+  for d in /dev/ashmem /dev/fuse /dev/loop-control /dev/dma_heap/system /dev/net/tun \$(\$B ls /dev | \$B grep '^loop[0-9][0-9]*\$' | \$B sed 's#^#/dev/#'); do
+    [ -e "\$d" ] && opts="\$opts --device \$d"
+  done
+  binder=\$(\$B awk '/^Character/ {c = 1} /^Block/ {c = 0} c && \$2 == "binder" {print \$1}' /proc/devices)
+  echo "\$opts --device /dev/kmsg:/dev/kmsg:w --device-cgroup-rule 'c \$binder:* rwm' --security-opt seccomp=/run/runtime-seccomp.json --security-opt writable-cgroups=true"
+}
+smoke_confinement=\$(confine "\$NODE_RUNTIME_IMAGE")
+echo "boot-test: runtime confinement: \$(echo "\$smoke_confinement" | \$B cut -c1-60)..."
 # A Tor runtime, set up as virtnoded does: its bridge joins the firewall's Tor
 # set before it exists. Nothing from it is forwarded, so Android resolving a
 # name below proves its DNS went through Tor.
 C /bin/nft add element inet virtroid tor_bridges '{ "vrt-smoke" }' || fail "add the Tor bridge"
 C /bin/docker network create -o com.docker.network.bridge.name=vrt-smoke virtroid-guest-smoke >/dev/null || fail "runtime network"
-C /bin/docker run -d --name smoke --privileged --network virtroid-guest-smoke \
+eval "C /bin/docker run -d --name smoke \$smoke_confinement" --network virtroid-guest-smoke \
   -p 127.0.0.1:15555:5555 \
   --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
   --cpus 2 --pids-limit \${NODE_RUNTIME_PIDS_LIMIT:-4096} --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
@@ -276,6 +301,15 @@ echo "boot-test: Android security patch: \$(C /bin/adb -s 127.0.0.1:15555 shell 
 gnss=\$(C /bin/docker exec smoke /system/bin/sh -c 'test -d /opt/virtroid/gnss && echo mounted; touch /opt/virtroid/gnss/w 2>/dev/null && echo writable' 2>/dev/null | \$B tr '\n' ' ')
 echo "boot-test: location feed directory: \$gnss"
 case "\$gnss" in *writable*) fail "Android can write the location feed directory";; *mounted*) ;; *) fail "the location feed directory is missing in Android";; esac
+# Unprivileged, Android reaches none of the VM: its disks and device-mapper
+# volumes (the data volume every runtime shares), whose nodes Android's
+# ueventd makes but can't open, its kernel log, its clock (setting the time
+# it already has), or its sysfs.
+if [ "\$smoke_confinement" != --privileged ]; then
+  reach=\$(C /bin/docker exec smoke /system/bin/sh -c 'for d in /dev/vd? /dev/dm-? /dev/block/vd? /dev/block/dm-? /dev/mapper/control; do [ -e \$d ] && toybox head -c 1 \$d >/dev/null 2>&1 && echo \$d; done; toybox timeout 3 toybox head -c 1 /dev/kmsg >/dev/null 2>&1 && echo kernel-log; date -s "\$(date "+%Y-%m-%d %H:%M:%S")" >/dev/null 2>&1 && echo clock; grep -q " /sys sysfs rw" /proc/mounts && echo sysfs' 2>/dev/null | \$B tr '\n' ' ')
+  echo "boot-test: unprivileged runtime reaches: \${reach:-none of the VM}"
+  [ -z "\$reach" ] || fail "an unprivileged runtime reaches the VM: \$reach"
+fi
 # An image that offers arm64 must be able to run it: ARM-only apps (SimpleX
 # ships no x86_64 build) load through the native bridge, and ARM executables
 # through the kernel's binfmt_misc handler, which Android's init registers.
@@ -451,7 +485,7 @@ fi
 # BOOT_TEST_UPGRADE_FROM (the third disk): Android from the older image
 # writes its data, then this image boots on the same data.
 android() { # android NAME IMAGE PORT
-  C /bin/docker run -d --name "\$1" --privileged -p 127.0.0.1:\$3:5555 \
+  eval "C /bin/docker run -d --name \$1 \$(confine "\$2")" -p 127.0.0.1:\$3:5555 \
     --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
     --cpus 2 --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
     -v /srv/virtroid/runtimes/upgrade/data:/data "\$2" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \

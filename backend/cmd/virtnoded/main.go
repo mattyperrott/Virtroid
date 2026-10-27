@@ -417,13 +417,16 @@ type nodeAgent struct {
 	startedAt  time.Time
 	relaySlots chan struct{}
 	// gnss serves each running runtime's place to its GNSS HAL.
-	gnss             *gnssFeeds
-	relayLeaseMu     sync.Mutex
-	relayLeases      map[string]*relayLease
-	heartbeatStateMu sync.RWMutex
-	lastHeartbeatAt  time.Time
-	lastHeartbeatOK  bool
-	observability    *observability.Service
+	gnss *gnssFeeds
+	// runtimeDevRoot and procDevicesPath stand in for /dev and /proc/devices
+	// in tests (runtime_container.go).
+	runtimeDevRoot, procDevicesPath string
+	relayLeaseMu                    sync.Mutex
+	relayLeases                     map[string]*relayLease
+	heartbeatStateMu                sync.RWMutex
+	lastHeartbeatAt                 time.Time
+	lastHeartbeatOK                 bool
+	observability                   *observability.Service
 }
 
 type runtimeAppInstallState struct {
@@ -2984,6 +2987,10 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 		fmt.Sprintf("androidboot.redroid_dpi=%d", runtime.DensityDpi),
 	}
 	cmd = append(cmd, personaOverrideProps(persona)...)
+	profile, err := n.runtimeContainerProfile(ctx, runtimeImage)
+	if err != nil {
+		return fmt.Errorf("read the runtime image's container profile: %w", err)
+	}
 	body := map[string]any{
 		"Image": runtimeImage,
 		"Cmd":   cmd,
@@ -2995,7 +3002,6 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 			"5555/tcp": map[string]any{},
 		},
 		"HostConfig": map[string]any{
-			"Privileged":     true,
 			"Memory":         resources.MemoryBytes,
 			"MemorySwap":     resources.MemoryBytes,
 			"NanoCpus":       resources.NanoCPUs,
@@ -3026,6 +3032,9 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 				},
 			},
 		},
+	}
+	if err := n.confineRuntime(body["HostConfig"].(map[string]any), profile); err != nil {
+		return err
 	}
 	if networkName = strings.TrimSpace(networkName); networkName != "" {
 		body["HostConfig"].(map[string]any)["NetworkMode"] = networkName

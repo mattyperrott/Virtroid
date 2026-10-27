@@ -1,0 +1,39 @@
+From c9114d02025ca6afbea8567fe6aef2156181d508 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 27 Oct 2026 09:50:10 +0000
+Subject: [PATCH] logd: ask for no kernel log or audit capabilities
+
+In a container both act on the host: SYSLOG reads its kernel log, which holds every container's, and AUDIT_CONTROL configures its audit. A user build reads no kernel log (klogd is off unless debuggable), and with no SELinux there is nothing to audit (ro.logd.auditd=false), so logd and auditctl run without them, and init no longer opens /proc/kmsg for logd. A container that doesn't grant them could not start logd at all.
+
+Change-Id: I66aea3f9be55782b2e4d25c3629fbeef21ed850e
+---
+ logd/logd.rc | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/logd/logd.rc b/logd/logd.rc
+index a8fac0c..c7a3d16 100644
+--- a/logd/logd.rc
++++ b/logd/logd.rc
+@@ -2,11 +2,9 @@ service logd /system/bin/logd
+     socket logd stream 0666 logd logd
+     socket logdr seqpacket 0666 logd logd
+     socket logdw dgram+passcred 0222 logd logd
+-    file /proc/kmsg r
+     file /dev/kmsg w
+     user logd
+     group logd system package_info readproc
+-    capabilities SYSLOG AUDIT_CONTROL
+     priority 10
+     task_profiles ServiceCapacityLow
+     onrestart setprop logd.ready false
+@@ -24,7 +22,6 @@ service logd-auditctl /system/bin/auditctl -r ${persist.logd.audit.rate:-5}
+     disabled
+     user logd
+     group logd
+-    capabilities AUDIT_CONTROL
+ 
+ on fs
+     write /dev/event-log-tags "# content owned by logd
+-- 
+2.43.0
+

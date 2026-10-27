@@ -1,0 +1,32 @@
+From cef2b54267cf03ed5d06141c61d856d8a6dd11a0 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 27 Oct 2026 09:50:10 +0000
+Subject: [PATCH] apexd: carry on when a loop device's read-ahead can't be set
+
+Setting the read-ahead only tunes the loop device, as the scheduler and the queue depth do, and those failures are already warnings. In a container sysfs is read-only, so the write fails: keep the kernel's default and go on, instead of failing to activate every APEX.
+
+Change-Id: Ic0329ffcaf051abf2ee33b3a486ef7e43ca2687a
+---
+ apexd/apexd_loop.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/apexd/apexd_loop.cpp b/apexd/apexd_loop.cpp
+index 0b4b719..10c99a5 100644
+--- a/apexd/apexd_loop.cpp
++++ b/apexd/apexd_loop.cpp
+@@ -601,9 +601,11 @@ Result<LoopbackDeviceUniqueFd> CreateAndConfigureLoopDevice(
+     LOG(WARNING) << qd_status.error();
+   }
+ 
++  // Like the scheduler and the queue depth, read-ahead only tunes the device:
++  // in a container, where sysfs is read-only, it keeps the kernel's default.
+   Result<void> read_ahead_status = ConfigureReadAhead(loop_device->name);
+   if (!read_ahead_status.ok()) {
+-    return read_ahead_status.error();
++    LOG(WARNING) << read_ahead_status.error();
+   }
+ 
+   return loop_device;
+-- 
+2.43.0
+

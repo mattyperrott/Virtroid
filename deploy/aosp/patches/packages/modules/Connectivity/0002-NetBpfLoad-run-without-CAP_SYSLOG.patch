@@ -1,0 +1,28 @@
+From a7b89d396ee2338ba0c04206f13a522d5efdbb19 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 27 Oct 2026 10:40:58 +0000
+Subject: [PATCH] NetBpfLoad: run without CAP_SYSLOG
+
+NetBpfLoad reads no kernel log, yet its service asked for SYSLOG, and init can't start a service whose capabilities its container lacks; bpfloader failing then reboots Android. In a container SYSLOG would let it read the host's kernel log, which holds every container's, so the service asks for CHOWN, SYS_ADMIN and NET_ADMIN alone.
+
+Change-Id: I85240ad33109efa4de139ad325ac01a227f57f2f
+---
+ bpf/loader/netbpfload.35rc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bpf/loader/netbpfload.35rc b/bpf/loader/netbpfload.35rc
+index a23bd60..629a596 100644
+--- a/bpf/loader/netbpfload.35rc
++++ b/bpf/loader/netbpfload.35rc
+@@ -2,7 +2,7 @@
+ # Note that 'capabilities SYSLOG' lacks sepolicy prior to 25Q4
+ service bpfloader /apex/com.android.tethering/bin/netbpfload
+     # netbpfload will do network bpf loading, then execute /system/bin/bpfloader
+-    capabilities CHOWN SYS_ADMIN NET_ADMIN SYSLOG
++    capabilities CHOWN SYS_ADMIN NET_ADMIN
+     # The following group memberships are a workaround for lack of DAC_OVERRIDE
+     # and allow us to open (among other things) files that we created and are
+     # no longer root owned (due to CHOWN) but still have group read access to
+-- 
+2.43.0
+
