@@ -24,10 +24,25 @@
 #                       Android build is tested without rebuilding the VM
 #                       image. Only the image's own runtime is measured: a
 #                       pass with this tests Android, not the release.
+#   BOOT_TEST_NODE=BINARY  a virtnoded to run in place of IMAGE_DIR's, so a
+#                       node change is tested without rebuilding the VM image
+#                       (CGO_ENABLED=0 GOOS=linux go build ./cmd/virtnoded).
+#                       Like the runtime image, only the image's own is
+#                       measured: a pass with this tests the node, not the
+#                       release.
+#   BOOT_TEST_GNSS_PROBE=APK  the location check (deploy/aosp/gnss-feed.md),
+#                       for an image with Virtroid's GNSS HAL: a stand-in
+#                       control plane (backend/cmd/standin-control-plane)
+#                       gives the node a runtime with a sealed region, the
+#                       node starts it, and the probe app
+#                       (deploy/aosp/test/gnss-probe) must get GPS fixes at
+#                       the place with the satellites used in them, then at a
+#                       new place, then none without a region.
 set -euo pipefail
 
 img="$(cd "${1:?usage: boot-test.sh IMAGE_DIR}" && pwd)"
-flake="git+file://$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)?dir=deploy/aleph/nix"
+repo="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+flake="git+file://${repo}?dir=deploy/aleph/nix"
 work="${BOOT_TEST_DIR:-/var/tmp/virtroid-boot-test}"
 rm -rf "$work"
 mkdir -p "$work/initrd"
@@ -56,6 +71,34 @@ roothash=$(cat "$img/root/roothash")
 offset=$(cat "$img/root/hash-offset")
 node_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null |
   openssl pkcs8 -topk8 -nocrypt -outform DER | base64 -w0)
+
+# BOOT_TEST_NODE runs on the image's root in place of its virtnoded; with a
+# runtime image under test, the node runs that image, by its tag.
+[ -z "${BOOT_TEST_NODE:-}" ] || cp "$BOOT_TEST_NODE" initrd/virtnoded-under-test
+node_env="NODE_SNP_ATTESTATION=off"
+if [ -n "${BOOT_TEST_RUNTIME_IMAGE:-}" ]; then
+  runtime_tag=$(tar -xOf "$BOOT_TEST_RUNTIME_IMAGE" manifest.json | sed -n 's/.*"RepoTags":\["\([^"]*\)".*/\1/p')
+  [ -n "$runtime_tag" ] || { echo "boot-test: no tag in $BOOT_TEST_RUNTIME_IMAGE" >&2; exit 1; }
+  node_env="$node_env NODE_RUNTIME_IMAGE=$runtime_tag"
+fi
+# The location check's stand-in control plane, on this host, which the VM
+# reaches at QEMU's 10.0.2.2. Without the check the node has none.
+control_plane=https://control.invalid
+location_runtime=0b0c7e57-6e55-4c1a-9a1e-10ca7e0b0057
+location_container=virtroid-0b0c7e576e554c1a
+standin=""
+if [ -n "${BOOT_TEST_GNSS_PROBE:-}" ]; then
+  cp "$BOOT_TEST_GNSS_PROBE" initrd/gnss-probe.apk
+  go=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
+    --inputs-from "$flake" nixpkgs-go#go_1_27)/bin/go
+  (cd "$repo/backend" && GOTOOLCHAIN=local GOPROXY=off CGO_ENABLED=0 GOCACHE="$work/go-cache" GOPATH="$work/go" \
+    "$go" build -o "$work/standin" ./cmd/standin-control-plane)
+  "$work/standin" -listen 127.0.0.1:18580 -node-key "$node_key" -node-id smoke-node \
+    -runtime "$location_runtime" -image "${runtime_tag:-image}" >"$work/standin.log" 2>&1 &
+  standin=$!
+  trap 'kill "$standin" 2>/dev/null' EXIT
+  control_plane=http://10.0.2.2:18580
+fi
 
 cat > initrd/init <<EOF
 #!/bin/busybox sh
@@ -90,8 +133,13 @@ for m in dm-mod dm-bufio dm-verity dm-crypt; do \$B insmod /lib/modules/\$m.ko |
 # Test-only edits to the overlay copy of /sbin/init, from BOOT_TEST_SED.
 [ -n "${BOOT_TEST_SED:-}" ] && \$B sed -i "${BOOT_TEST_SED:-}" /mnt/root/sbin/init
 real=\$(\$B readlink /mnt/lower/bin/virtnoded)
+if [ -f /virtnoded-under-test ]; then
+  \$B cp /virtnoded-under-test /mnt/root/bin/virtnoded-under-test
+  \$B chmod 755 /mnt/root/bin/virtnoded-under-test
+  real=/bin/virtnoded-under-test
+fi
 \$B rm /mnt/root/bin/virtnoded
-printf '#!/bin/bash\nNODE_SNP_ATTESTATION=off %s >/run/virtnoded.log 2>&1 &\nexec sleep infinity\n' "\$real" > /mnt/root/bin/virtnoded
+printf '#!/bin/bash\n%s %s >/run/virtnoded.log 2>&1 &\nexec sleep infinity\n' '$node_env' "\$real" > /mnt/root/bin/virtnoded
 \$B chmod 755 /mnt/root/bin/virtnoded
 
 S=/mnt/root/tmp/secrets
@@ -99,11 +147,12 @@ S=/mnt/root/tmp/secrets
 printf %s smoke-node > \$S/virtroid_node_id
 printf %s '$node_key' > \$S/virtroid_node_key
 printf %s snp-eu > \$S/virtroid_region
-printf %s https://control.invalid > \$S/virtroid_control_plane
+printf %s '$control_plane' > \$S/virtroid_control_plane
 if [ -d /apks ]; then
   \$B mkdir -p /mnt/root/tmp/apks
   \$B cp /apks/*.apk /mnt/root/tmp/apks/
 fi
+[ -f /gnss-probe.apk ] && \$B cp /gnss-probe.apk /mnt/root/tmp/gnss-probe.apk
 \$B mount -t proc proc /mnt/root/proc
 \$B mount -t sysfs sys /mnt/root/sys
 \$B mount -o bind /dev /mnt/root/dev
@@ -459,6 +508,74 @@ if [ -n "$older_disk" ] && [ -b "$older_disk" ]; then
     [ -n "\$pid" ] || fail "\$pkg did not run after the upgrade"
   done
 fi
+# BOOT_TEST_GNSS_PROBE: the node itself starts a runtime from the stand-in
+# control plane, opens its sealed region and serves its place; an app in it
+# must see ordinary GPS fixes there (deploy/aosp/gnss-feed.md).
+if C /bin/test -f /tmp/gnss-probe.apk; then
+  echo "boot-test: --- location: the node runs a runtime with a sealed region ---"
+  # One Android at a time fits the VM.
+  C /bin/docker rm -f smoke upgrade-new >/dev/null 2>&1
+  SP=http://10.0.2.2:18580
+  ct=$location_container
+  post() { \$B wget -q -O /dev/null --header 'Content-Type: application/json' --post-data "\$2" "\$SP\$1" || fail "the stand-in control plane refused \$1"; }
+  state() { \$B wget -q -O - "\$SP/test/runtime" 2>/dev/null; }
+  X() { \$B timeout 60 C /bin/docker exec "\$ct" /system/bin/sh -c "\$1" 2>/dev/null | \$B tr -d '\r'; }
+  post /test/region '{"latitude":35.6762,"longitude":139.6503,"timezone":"Asia/Tokyo"}'
+  post /test/run '{}'
+  for i in \$(\$B seq 1 150); do
+    state | \$B grep -q '^connection online' && break
+    \$B sleep 4
+  done
+  state | \$B tail -8 | \$B cut -c1-200 | \$B sed 's/^/boot-test:   /'
+  state | \$B grep -q '^connection online' || { C /bin/tail -20 /run/virtnoded.log; fail "the node did not bring its runtime online"; }
+  echo "boot-test: location: the node's runtime is a \$(X 'getprop ro.product.model'), timezone \$(X 'getprop persist.sys.timezone')"
+  C /bin/docker cp /tmp/gnss-probe.apk "\$ct:/data/local/tmp/gnss-probe.apk" >/dev/null || fail "could not copy the probe into the runtime"
+  X 'pm install -r -g /data/local/tmp/gnss-probe.apk' | \$B grep -q Success || fail "could not install the probe"
+  X 'logcat -c'
+  X 'am start -W -n io.virtroid.gnssprobe/.Probe' >/dev/null
+  # near LAT LON: the probe's last fix is from GPS, not mock, within about
+  # 50 m of the place, with at least 8 satellites used in it.
+  near() {
+    X 'logcat -d -s GnssProbe' | \$B grep ' fix ' | \$B tail -1 | \$B awk -v lat=\$1 -v lon=\$2 '{
+      for (i = 1; i <= NF; i++) { n = index(\$i, "="); if (n) v[substr(\$i, 1, n - 1)] = substr(\$i, n + 1) }
+    } END {
+      dlat = v["lat"] - lat; dlon = v["lon"] - lon
+      if (dlat < 0) dlat = -dlat; if (dlon < 0) dlon = -dlon
+      exit !(v["provider"] == "gps" && v["mock"] == "false" && v["satellites"] + 0 >= 8 && dlat < 0.0005 && dlon < 0.0005)
+    }'
+  }
+  for i in \$(\$B seq 1 30); do near 35.6762 139.6503 && break; \$B sleep 2; done
+  probed=\$(X 'logcat -d -s GnssProbe')
+  echo "\$probed" | \$B grep -E ' (receiver|fix|sky|nmea) ' | \$B tail -4 | \$B cut -c1-260 | \$B sed 's/^/boot-test:   /'
+  near 35.6762 139.6503 || fail "no GPS fix at the place, with the satellites used in it"
+  receiver=\$(echo "\$probed" | \$B sed -n 's/.* receiver name=\(.*\) year=\([0-9]*\) .*/\1, \2/p' | \$B tail -1)
+  echo "boot-test: location: apps see GNSS hardware \${receiver:-none}"
+  case "\$receiver" in ''|null*|*Cuttlefish*|*', 0') fail "apps see no real GNSS hardware";; esac
+  sky=\$(echo "\$probed" | \$B grep ' sky ' | \$B tail -1)
+  echo "\$sky" | \$B awk '{ for (i = 1; i <= NF; i++) { n = index(\$i, "="); if (n) v[substr(\$i, 1, n - 1)] = substr(\$i, n + 1) } } END { exit !(v["signals"] + 0 >= 20 && v["used"] + 0 >= 8) }' ||
+    fail "the sky apps see is too thin: \$sky"
+  nmea=\$(echo "\$probed" | \$B grep ' nmea ' | \$B tail -1)
+  for sentence in GGA GSA GSV RMC; do
+    echo "\$nmea" | \$B grep -q "\$sentence=" || fail "no \$sentence in the NMEA apps see: \$nmea"
+  done
+  # The owner picks another place: the node takes it at its next reconcile.
+  post /test/region '{"latitude":51.5074,"longitude":-0.1278,"timezone":"Europe/London"}'
+  for i in \$(\$B seq 1 45); do near 51.5074 -0.1278 && break; \$B sleep 2; done
+  near 51.5074 -0.1278 || fail "no GPS fix at the new place"
+  echo "boot-test: location: moved to the new place, timezone \$(X 'getprop persist.sys.timezone')"
+  [ "\$(X 'getprop persist.sys.timezone')" = Europe/London ] || fail "the timezone did not follow the region"
+  # And a region taken away leaves no fix.
+  post /test/region/remove '{}'
+  fixes=1
+  for i in \$(\$B seq 1 10); do
+    X 'logcat -c'
+    \$B sleep 6
+    fixes=\$(X 'logcat -d -s GnssProbe' | \$B grep -c ' fix ')
+    [ "\$fixes" = 0 ] && break
+  done
+  echo "boot-test: location: without a region, \$fixes fixes in 6 s"
+  [ "\$fixes" = 0 ] || fail "fixes go on without a region"
+fi
 echo "boot-test: --- virtnoded log ---"
 C /bin/cat /run/virtnoded.log | \$B tail -8
 echo "boot-test: PASS"
@@ -478,13 +595,16 @@ chmod 755 initrd/bin/C
 # about 4 GiB once Docker has stored and unpacked it. A runtime image under
 # test (BOOT_TEST_RUNTIME_IMAGE) is a third.
 truncate -s "$([ -n "$runtime_disk" ] && echo 24G || echo 16G)" data.img
+# The location check's runtime keeps the node's minimum free space as well.
+[ -z "$standin" ] || truncate -s 32G data.img
 
 qemu=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
   --inputs-from "$flake" nixpkgs#qemu_kvm)
-timeout "${BOOT_TEST_TIMEOUT:-1200}" "$qemu/bin/qemu-system-x86_64" -enable-kvm -cpu host -smp 2 -m 4096 \
+timeout "${BOOT_TEST_TIMEOUT:-$([ -n "$standin" ] && echo 2100 || echo 1200)}" "$qemu/bin/qemu-system-x86_64" -enable-kvm -cpu host -smp 2 -m 4096 \
   -nographic -no-reboot -serial mon:stdio -serial "unix:$work/debug.sock,server=on,wait=off" \
   -kernel "$img/runtime/bzImage" -initrd initrd.gz -append "console=ttyS0 panic=-1 loglevel=4" \
   -drive "file=$img/root/root.img,format=raw,if=virtio,readonly=on" \
   -drive file=data.img,format=raw,if=virtio "${extra_disks[@]}" \
   -netdev user,id=n0,ipv6-net=2001:db8:1::/64 -device virtio-net-pci,netdev=n0 | tee "$work/console.log"
+[ -z "$standin" ] || sed 's/^/boot-test: stand-in: /' "$work/standin.log" | tail -15
 grep -aq "boot-test: PASS" "$work/console.log"

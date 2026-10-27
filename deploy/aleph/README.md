@@ -174,7 +174,10 @@ with Nix for builds (a small Aleph VM works).
    arguments, and passes once Android boots and the viewer listens. It also
    checks that an image offering arm64 can run it, and with
    `BOOT_TEST_APKS=DIR` installs those APKs (SimpleX's ARM build, say) and
-   requires each app to keep running.
+   requires each app to keep running. With our own Android image,
+   `BOOT_TEST_GNSS_PROBE=APK` adds the location check: the node itself starts
+   a runtime from a stand-in control plane with a sealed region, and an app
+   in it must see GPS fixes there (`deploy/aosp/gnss-feed.md`).
    `initrd-test.sh` boots the measured initrd itself, with a stand-in for the
    attestation agent, and passes when virtnoded starts and stops for want of
    SEV-SNP. With `BOOT_TEST_DEBUG=1`, a failed `boot-test.sh` VM stays up and

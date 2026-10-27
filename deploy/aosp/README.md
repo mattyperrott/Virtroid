@@ -298,9 +298,11 @@ setting (2026-10-27).
      Google's binary only if the boot test passes with
      `BOOT_TEST_APKS` holding SimpleX's ARM build and the F-Droid apps with
      ARM-only code that runtimes use; otherwise the image keeps Google's.
-5. **Location.** The GNSS HAL reading the node's feed, as
-   [gnss-feed.md](gnss-feed.md) sets out; check that a map app shows the
-   runtime's place and that `isMock()` is false.
+5. **Location.** Done 2026-10-27 (build 16): the GNSS HAL reads the node's
+   feed, as [gnss-feed.md](gnss-feed.md) sets out, and the boot test's
+   location check passed end to end, from a sealed region to an app's GPS
+   fix with its satellites, not mock. Still to check: a map app showing the
+   runtime's place.
 6. **Hardening.** Unprivileged container, the BPF setting, `hardened_malloc`.
 7. **Release.** A VM image carrying it, through the usual release, then a
    written monthly rebuild runbook.

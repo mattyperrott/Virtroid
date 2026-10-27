@@ -12,7 +12,7 @@ milestone 5).
 | Timezone from the region | Done, works on today's stock ReDroid images. |
 | Node side of the location feed (this contract) | Done in `backend/cmd/virtnoded/gnss.go`, with the sky, NMEA and receiver (`gnss_sky.go`, `gnss_nmea.go`, `gnss_receiver.go`). Ships with the next VM image. |
 | Android side: a GNSS HAL reading the feed | Built into the custom image (`patches/hardware/interfaces` 0001 and 0002, `device/virtroid`). |
-| Apps seeing the runtime's place as GPS | **Not yet.** Only once a runtime runs the custom image. |
+| Apps seeing the runtime's place as GPS | Checked end to end on the node's own feed (below). Reaches owners once a VM image carries the custom image and this node. |
 
 Until a runtime runs the custom image, the node serves the feed and nothing
 reads it: stock ReDroid has no HAL that does. Location for apps comes from
@@ -216,13 +216,26 @@ NavIC's among them everywhere).
   fix: a stand-in that ran a command per request was too slow. Those fixes
   carried `satellites=0`; patch 0002 has the HAL report the node's sky with
   every fix.
-- **End to end (milestone 5, needs the custom image):** extend
-  `deploy/aleph/test/boot-test.sh`:
-  - with a sealed region, `dumpsys location` shows a `gps` fix within a few
-    metres of the place, not marked mock;
-  - after a change of region, the new place;
-  - without a region, no fix;
-  - a map app shows the place.
+- **End to end:** `deploy/aleph/test/boot-test.sh` with
+  `BOOT_TEST_GNSS_PROBE` (the probe app in `deploy/aosp/test/gnss-probe`,
+  built with its `build.sh` on the build host). A stand-in control plane
+  (`backend/cmd/standin-control-plane`) gives the node a runtime with a
+  region sealed as the phone seals it; the node starts the runtime, opens
+  the region and serves the feed, and the probe app in the runtime must see:
+  - a GPS fix within about 50 m of the place, not mock, with 8 or more
+    satellites used in it;
+  - a GNSS hardware name and year that are a phone's;
+  - a sky of 20 or more signals, and NMEA with GGA, GSA, GSV and RMC;
+  - after the owner picks another place, a fix there and its timezone;
+  - without a region, no fix.
+
+  Passed 2026-10-27 with build 16 and this node (`BOOT_TEST_NODE`) on an
+  existing VM image. The runtime's persona was a Galaxy A52s; apps saw its
+  chip (`qcom,SM_KODIAK,MPSS.HI.4.3.3.c3-…`, 2019), fixes 3 m from the
+  place, not mock, with `satellites=45` (53 signals from GPS, SBAS, GLONASS,
+  QZSS, BeiDou and Galileo over Tokyo), NMEA with GGA, GSA, GSV, RMC and VTG,
+  then fixes in London with its timezone, and none once the region was gone.
+  Not yet checked: a map app showing the place.
 
 ## Privacy
 
@@ -237,6 +250,10 @@ NavIC's among them everywhere).
 
 - **Altitude:** the node sends 0. A real phone at a city's altitude reports
   more; a terrain lookup on the phone could add it to the sealed region.
+- **Measurement corrections:** the default HAL's corrections interface
+  still advertises line-of-sight, excess path length and reflecting plane
+  support, while the HAL itself doesn't claim corrections; a phone shows
+  either both or neither. Have that interface report no capabilities.
 - **Raw measurements:** the HAL advertises them, as every phone does, but
   reports none, rather than the default HAL's made-up ones. The node could
   derive pseudoranges and Doppler from the sky and send them in the format

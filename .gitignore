@@ -17,6 +17,7 @@
 /deploy/vps/restic-password
 /backend/falco-forwarder
 /backend/lifecycleqa
+/backend/standin-control-plane
 /backend/viewercrypt
 /backend/virtnoded
 /backend/virtroid-viewercrypt
@@ -24,6 +25,7 @@
 /backend/virtroid-admin
 /backend/cmd/*/falco-forwarder
 /backend/cmd/*/lifecycleqa
+/backend/cmd/*/standin-control-plane
 /backend/cmd/*/viewercrypt
 /backend/cmd/*/virtnoded
 /backend/cmd/*/virtroid-admin
@@ -35,3 +37,4 @@
 /.impeccable/
 /PRODUCT.md
 /assets/social/*
+/deploy/aosp/test/gnss-probe/gnss-probe.apk
