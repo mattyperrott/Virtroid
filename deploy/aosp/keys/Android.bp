@@ -1,0 +1,222 @@
+// Virtroid's certificates for modules that name one of their own
+// (keys.mk overrides each). Written by deploy/aosp/make-release-keys.sh.
+
+android_app_certificate {
+    name: "virtroid.com.android.adbd",
+    certificate: "com.android.adbd",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.adservices",
+    certificate: "com.android.adservices",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.adservices.api",
+    certificate: "com.android.adservices.api",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.appsearch",
+    certificate: "com.android.appsearch",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.appsearch.apk",
+    certificate: "com.android.appsearch.apk",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.art",
+    certificate: "com.android.art",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.bt",
+    certificate: "com.android.bt",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.configinfrastructure",
+    certificate: "com.android.configinfrastructure",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.connectivity.resources",
+    certificate: "com.android.connectivity.resources",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.conscrypt",
+    certificate: "com.android.conscrypt",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.crashrecovery",
+    certificate: "com.android.crashrecovery",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.devicelock",
+    certificate: "com.android.devicelock",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.extservices",
+    certificate: "com.android.extservices",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.federatedcompute",
+    certificate: "com.android.federatedcompute",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.hardware",
+    certificate: "com.android.hardware",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.health.connect.backuprestore",
+    certificate: "com.android.health.connect.backuprestore",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.healthconnect.controller",
+    certificate: "com.android.healthconnect.controller",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.healthfitness",
+    certificate: "com.android.healthfitness",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.hotspot2.osulogin",
+    certificate: "com.android.hotspot2.osulogin",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.i18n",
+    certificate: "com.android.i18n",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.ipsec",
+    certificate: "com.android.ipsec",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.media",
+    certificate: "com.android.media",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.media.swcodec",
+    certificate: "com.android.media.swcodec",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.mediaprovider",
+    certificate: "com.android.mediaprovider",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.neuralnetworks",
+    certificate: "com.android.neuralnetworks",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.nfcservices",
+    certificate: "com.android.nfcservices",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.os.statsd",
+    certificate: "com.android.os.statsd",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.permission",
+    certificate: "com.android.permission",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.profiling",
+    certificate: "com.android.profiling",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.resolv",
+    certificate: "com.android.resolv",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.rkpd",
+    certificate: "com.android.rkpd",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.runtime",
+    certificate: "com.android.runtime",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.safetycenter.resources",
+    certificate: "com.android.safetycenter.resources",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.scheduling",
+    certificate: "com.android.scheduling",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.sdkext",
+    certificate: "com.android.sdkext",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.telephonycore",
+    certificate: "com.android.telephonycore",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.tzdata",
+    certificate: "com.android.tzdata",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.uprobestats",
+    certificate: "com.android.uprobestats",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.uwb",
+    certificate: "com.android.uwb",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.uwb.resources",
+    certificate: "com.android.uwb.resources",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.virt",
+    certificate: "com.android.virt",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.wifi",
+    certificate: "com.android.wifi",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.wifi.dialog",
+    certificate: "com.android.wifi.dialog",
+}
+
+android_app_certificate {
+    name: "virtroid.com.android.wifi.resources",
+    certificate: "com.android.wifi.resources",
+}

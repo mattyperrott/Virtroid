@@ -119,6 +119,9 @@ Still open:
   as it carries the android.bluetooth classes apps link against),
   LineageParts, and the boot animation. Cell broadcast
   and the Wi-Fi HAL stub were already absent.
+- **Cut with the release keys (2026-10-27):** the CTS shims, an APEX and two
+  apps that only Android's compatibility tests use, which come prebuilt with
+  Google's test keys (README.md, release keys).
 - **Kept, unlike the list:** Provision. It is what marks a runtime set up at
   first boot, in place of LineageOS's setup wizard (left out). The
   *Decide* items (Jelly, LineageOS's themes and wallpapers) stay until

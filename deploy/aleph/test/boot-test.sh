@@ -421,6 +421,9 @@ if [ -n "$older_disk" ] && [ -b "$older_disk" ]; then
   old=\$(C /bin/docker load -i $older_disk | \$B sed -n 's/^Loaded image: //p' | \$B head -1)
   [ -n "\$old" ] || fail "could not load the older image"
   C /bin/mkdir -p /srv/virtroid/runtimes/upgrade/data
+  # A user build as the older image (our own, before release keys) accepts
+  # only authorized adb keys too.
+  authorize_adb /srv/virtroid/runtimes/upgrade/data
   android upgrade-old "\$old" 15556
   booted_on 15556 90 || fail "the older image \$old did not boot"
   echo "boot-test: upgrade: \$old booted, Android \$(C /bin/adb -s 127.0.0.1:15556 shell getprop ro.build.version.release | \$B tr -d '\r')"
@@ -472,8 +475,9 @@ chmod 755 initrd/bin/C
 (cd initrd && find . | cpio -o -H newc --quiet | gzip -1) > initrd.gz
 # Sparse. Room for two runtime images and their data: the upgrade check loads
 # the older image beside this one, and our own Android build alone fills
-# about 4 GiB once Docker has stored and unpacked it.
-truncate -s 16G data.img
+# about 4 GiB once Docker has stored and unpacked it. A runtime image under
+# test (BOOT_TEST_RUNTIME_IMAGE) is a third.
+truncate -s "$([ -n "$runtime_disk" ] && echo 24G || echo 16G)" data.img
 
 qemu=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
   --inputs-from "$flake" nixpkgs#qemu_kvm)

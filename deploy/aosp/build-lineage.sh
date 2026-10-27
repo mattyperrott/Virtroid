@@ -15,6 +15,8 @@
 #   src/                  the LineageOS tree
 #   redroid-patches/      ReDroid's patches, at the commit below
 #   prebuilts/            the APKs device/virtroid/prebuilt.sha256 pins
+#   keys/                 the private halves of our release keys
+#                         (make-release-keys.sh); nothing else has them
 #   ccache/               the compiler cache
 #   out/<build id>/       each build's image and the inputs that made it:
 #                         runtime-image.tar and runtime-image.json go into the
@@ -131,6 +133,43 @@ stage_patch() {
   rm -rf device/virtroid
   cp -a "${here}/device/virtroid" device/virtroid
   place_prebuilts device/virtroid
+  place_keys vendor/lineage-priv/keys
+}
+
+# Puts our release keys where LineageOS's configuration reads them: keys/'s
+# public halves, keys.mk and Android.bp from here, each private half from
+# $root/keys. Refuses a public half without its private one, or one that
+# doesn't match it, so the build never signs with a key we don't hold.
+place_keys() {
+  local dest="$1"
+  local private="${root}/keys"
+  [ -d "${private}" ] || { echo "no ${private}: run make-release-keys.sh ${private} first" >&2; exit 1; }
+  rm -rf "${dest}"
+  mkdir -p "${dest}"
+  cp "${here}/keys/keys.mk" "${here}/keys/Android.bp" "${dest}/"
+  local cert name
+  for cert in "${here}"/keys/*.x509.pem; do
+    name="$(basename "${cert}" .x509.pem)"
+    [ -f "${private}/${name}.pk8" ] || { echo "no private key ${private}/${name}.pk8" >&2; exit 1; }
+    if [ "$(openssl x509 -in "${cert}" -noout -pubkey)" != "$(openssl pkey -inform DER -in "${private}/${name}.pk8" -pubout)" ]; then
+      echo "${private}/${name}.pk8 doesn't match keys/${name}.x509.pem" >&2
+      exit 1
+    fi
+    cp "${cert}" "${private}/${name}.pk8" "${dest}/"
+  done
+  local pub
+  for pub in "${here}"/keys/*.avbpubkey; do
+    name="$(basename "${pub}" .avbpubkey)"
+    [ -f "${private}/${name}.pem" ] || { echo "no private key ${private}/${name}.pem" >&2; exit 1; }
+    python3 external/avb/avbtool.py extract_public_key --key "${private}/${name}.pem" --output "${dest}/${name}.avbpubkey"
+    if ! cmp -s "${pub}" "${dest}/${name}.avbpubkey"; then
+      echo "${private}/${name}.pem doesn't match keys/${name}.avbpubkey" >&2
+      exit 1
+    fi
+    cp "${private}/${name}.pem" "${dest}/"
+  done
+  chmod -R go-rwx "${dest}"
+  log "release keys: $(ls "${dest}" | grep -c '\.pk8$') certificates, $(ls "${dest}" | grep -c '\.avbpubkey$') payload keys"
 }
 
 # Puts each APK prebuilt.sha256 pins into DEVICE/prebuilt: fetched once into
@@ -179,6 +218,9 @@ stage_package() {
     echo "no images in ${product_out}: run the build stage first" >&2
     exit 1
   fi
+  # Nothing signed with a key we don't hold goes out.
+  log "check signatures"
+  python3 -I "${here}/check-signatures.py" "${src}" "${product_out}" "${here}/keys" "${here}/device/virtroid/prebuilt.sha256"
   local id
   id="$(date -u +%Y%m%dT%H%M%SZ)-${variant}"
   local out="${root}/out/${id}"

@@ -44,6 +44,13 @@ LOCAL_OVERRIDES_PACKAGES += \
     LineageParts \
     bootanimation.zip \
     bootanimation-dark.zip
+# The CTS shims, prebuilts that only Android's compatibility tests use. They
+# come signed with Google's test keys, which our release keys can't replace
+# in a prebuilt.
+LOCAL_OVERRIDES_PACKAGES += \
+    com.android.apex.cts.shim.v1_prebuilt \
+    CtsShimPrebuilt \
+    CtsShimPrivPrebuilt
 LOCAL_UNINSTALLABLE_MODULE := true
 LOCAL_CERTIFICATE := PRESIGNED
 LOCAL_SRC_FILES := /dev/null

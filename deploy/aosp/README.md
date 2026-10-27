@@ -1,8 +1,9 @@
 # Custom Android image: build plan
 
 Status: first build done; boot test and upgrade from today's runtime data
-passed (milestones 2 and 3, 2026-10-26). Not released: test keys, nothing
-cut yet (milestone 4).
+passed (milestones 2 and 3, 2026-10-26). Cuts and built-in apps applied
+(milestone 4, [components.md](components.md)); signed with our own release
+keys (2026-10-27, [below](#release-keys)). Not released.
 Written 2026-10-21.
 
 Every runtime VM image up to 15 carries stock ReDroid 14
@@ -93,6 +94,58 @@ not match byte for byte.
 
 Monthly security patches mean a rebuild about once a month, each becoming a
 new VM image to measure and approve.
+
+## Release keys
+
+The image is signed with our own keys, not AOSP's public test keys
+(2026-10-27). With test keys anyone can sign an app with the platform's
+certificate and claim its privileges, or `android.uid.system` itself.
+
+- **The keys.** `make-release-keys.sh` made 53 certificates (the default,
+  releasekey; the named ones such as platform, shared, media and
+  networkstack; one per certificate a module kept in its own directory) and
+  35 APEX payload keys, all 4096-bit RSA. The subject is a plain
+  `CN=Android`: apps can read the system's certificates, so naming Virtroid
+  would label every runtime.
+- **Where they live.** The private halves only in the build host's
+  `$LINEAGE_ROOT/keys` (mode 700), plus an encrypted backup the owner keeps
+  with a passphrase only they know. They are not kept offline: whoever
+  controls the build host can already put anything into the next image, so
+  keys held elsewhere would add little. The public halves are in
+  [keys/](keys/), in git.
+- **How the build uses them.** LineageOS signs in the build from
+  `vendor/lineage-priv/keys`, where `build-lineage.sh`'s patch stage puts
+  both halves after checking each pair matches. `keys.mk` makes releasekey
+  the default certificate (so the build is tagged `release-keys`), named
+  certificates and APEX payload keys come from the same directory, and
+  `PRODUCT_CERTIFICATE_OVERRIDES` swaps the certificates modules keep in
+  their own directories. Recovery's OTA keys are cleared: a runtime never
+  installs an update package.
+- **The check.** A key the build can't find in our directory falls back to
+  the module's own test key without a word, so the package stage runs
+  `check-signatures.py`: every APK and APEX in the image, and every APK inside
+  each APEX, must carry one of our certificates and payload keys, or be a
+  pinned prebuilt that keeps its publisher's signature (F-Droid, the runtime
+  agent). The first signed build passed: 146 checked, none other.
+- **Runtimes keep their data across the change.** Android accepts a new
+  signature on a system package, and on a shared user ID such as
+  `android.uid.system`, when it comes from the system image, and keeps the
+  data. `boot-test.sh` checked it (`BOOT_TEST_RUNTIME_IMAGE` with
+  `BOOT_TEST_UPGRADE_FROM`): from our test-key build's data with SimpleX
+  installed, the signed build booted, logged "signature changed; retaining
+  data" for 108 system packages, recorded our platform certificate for
+  `android`, SystemUI and Settings, kept SimpleX and its data, and ran it.
+  Nothing crashed, and F-Droid's extension kept its install permission.
+  From stock ReDroid 16's data, as today's runtimes have it, the same: 90
+  system packages changed signature with their data kept, and the apps the
+  image cuts were dropped with theirs.
+- **When Android adds a module.** A new APEX or module certificate makes the
+  check fail and name it; add it to `make-release-keys.sh` and run it again,
+  which only adds keys. Never replace a key: each change is another
+  migration of every runtime's system signatures.
+- **Left out.** The CTS shims (an APEX and two apps that only Android's
+  compatibility tests use) come prebuilt with Google's test keys, which a
+  prebuilt can't be re-signed away from, so the image drops them.
 
 ## Milestones
 
@@ -224,9 +277,9 @@ new VM image to measure and approve.
   data volume, which Docker's storage and every other runtime share. The
   first boot test hit it (milestone 3); without `CAP_SYS_ADMIN` (item 3) the
   ioctl fails.
-- The image is signed with AOSP's public test keys, as stock ReDroid is, so
-  anyone can sign an app that shares the platform's signature and claims
-  its privileges. A release image needs our own release keys (LineageOS's
-  "signing builds" procedure), kept offline like the measurement key.
+- The release keys sit on the build host ([Release keys](#release-keys)).
+  Whoever takes them can sign an app that every runtime treats as part of
+  the platform, which is the same trust the build host already holds over
+  the next image.
 - Some apps check for a certified Google device and won't run without one;
   that is true today and stays true.
