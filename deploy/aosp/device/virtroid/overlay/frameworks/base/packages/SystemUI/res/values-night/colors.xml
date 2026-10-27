@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A runtime can't blur behind the shade, so SystemUI always paints it
+         with this fallback: near black, as in Virtroid's design, rather than
+         a dark tint of the accent. -->
+    <color name="shade_panel_fallback">@android:color/system_surface_dim_dark</color>
+</resources>

@@ -102,7 +102,10 @@ Still open:
    builds, large); or a thin browser on the system WebView, such as Jelly or
    Privacy Browser.
 2. **The look:** launcher, wallpaper, theme colours, icons and fonts, from
-   the owner's design.
+   the owner's design. Applied so far (2026-10-27, [README.md](README.md),
+   look): LineageOS's own launcher, the lime accent on grey surfaces, one
+   Quick Settings tile shape, one-colour icons and a black wallpaper; fonts
+   unchanged.
 
 ## Applied in the image (2026-10-26)
 

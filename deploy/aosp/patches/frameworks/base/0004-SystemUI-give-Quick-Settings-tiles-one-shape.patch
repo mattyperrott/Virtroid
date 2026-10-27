@@ -1,0 +1,45 @@
+From 7eb3edb401b8d4e7cdfc134d91933bccf4eeb7b6 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 27 Oct 2026 03:17:43 +0000
+Subject: [PATCH 4/4] SystemUI: give Quick Settings tiles one shape
+
+A tile kept its rounded corners while on and became a pill or circle while off. Every tile now keeps one shape, with smaller corners (12dp, 10dp for the icon); its colour still says whether it is on.
+
+Change-Id: I470cae536a68d097af890bde1c4b4501c716bef4
+---
+ .../qs/panels/ui/compose/infinitegrid/Tile.kt        | 12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/qs/panels/ui/compose/infinitegrid/Tile.kt b/packages/SystemUI/src/com/android/systemui/qs/panels/ui/compose/infinitegrid/Tile.kt
+index 1d254bff9..004171ce7 100644
+--- a/packages/SystemUI/src/com/android/systemui/qs/panels/ui/compose/infinitegrid/Tile.kt
++++ b/packages/SystemUI/src/com/android/systemui/qs/panels/ui/compose/infinitegrid/Tile.kt
+@@ -479,8 +479,8 @@ data class TileColors(
+ )
+ 
+ private object TileDefaults {
+-    val ActiveIconCornerRadius = 16.dp
+-    val ActiveTileCornerRadius = 24.dp
++    val ActiveIconCornerRadius = 10.dp
++    val ActiveTileCornerRadius = 12.dp
+ 
+     /** An active tile uses the active color as background */
+     @Composable
+@@ -592,12 +592,8 @@ private object TileDefaults {
+     ): State<RoundedCornerShape> {
+         val animatedCornerRadius by
+             animateDpAsState(
+-                targetValue =
+-                    if (state == STATE_ACTIVE) {
+-                        activeCornerRadius
+-                    } else {
+-                        InactiveCornerRadius
+-                    },
++                // One shape whatever the state: the colour already says whether a tile is on.
++                targetValue = activeCornerRadius,
+                 label = label,
+             )
+ 
+-- 
+2.43.0
+

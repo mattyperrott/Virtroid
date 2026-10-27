@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Themed icons as in Virtroid's design: a light grey glyph on a dark
+         grey square, from the system's neutral colours, rather than the
+         accent on a tint of it. -->
+    <color name="themed_icon_color">@android:color/system_neutral1_50</color>
+    <color name="themed_icon_background_color">@android:color/system_neutral1_900</color>
+    <color name="themed_icon_adaptive_background_color">@android:color/system_neutral1_900</color>
+</resources>
