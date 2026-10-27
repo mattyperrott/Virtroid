@@ -7,8 +7,8 @@ import "slices"
 // getGnssHardwareModelName and getGnssYearOfHardware), the systems and
 // signals it tracks, and whether it measures carrier phase. From the GPSTest
 // database (crowd-sourced from the GPSTest app), as each phone reported it on
-// Android 16 near the build the persona claims (June 2025), or on its latest
-// Android where the phone has no Android 16.
+// the Android 16 build its persona claims (persona.go), or the nearest one
+// the database has.
 
 // gnssSignal is one signal a receiver tracks from a satellite.
 type gnssSignal struct {
@@ -46,18 +46,14 @@ var (
 	gnssMainSystems = []gnssConstellation{gnssGPS, gnssGLONASS, gnssGalileo, gnssBeiDou, gnssQZSS}
 	withIRNSS       = append(slices.Clone(gnssMainSystems), gnssIRNSS)
 	withSBAS        = append(slices.Clone(gnssMainSystems), gnssSBAS)
-	withIRNSSSBAS   = append(slices.Clone(withIRNSS), gnssSBAS)
 
-	gnssBroadcomBCM4776 = gnssReceiver{name: "Broadcom, BCM4776, GLL ver. 154.20.24 625212", year: 2020,
+	gnssBroadcomBCM4776 = gnssReceiver{name: "Broadcom, BCM4776, GLL ver. 154.20.24 650028", year: 2020,
 		systems: withIRNSS, dualFrequency: true, carrierPhase: true}
-	gnssPixel8a = gnssReceiver{name: "S.LSI,K041,SPOTNAV_4.15.4_3_250220_R2_258342", year: 2023,
+	gnssPixel8a = gnssReceiver{name: "S.LSI,K041,SPOTNAV_4.15.4_13_251118_R1_299506", year: 2023,
 		systems: gnssMainSystems, beidouB1C: true, carrierPhase: true}
-	gnssPixel9 = gnssReceiver{name: "S.LSI,K042,SPOTNAV_4.15.3_12_250327_R1_263396", year: 2023,
+	gnssPixel9 = gnssReceiver{name: "S.LSI,K042,SPOTNAV_4.15.1_62_251117_R1_299155", year: 2023,
 		systems: gnssMainSystems, dualFrequency: true, beidouB1C: true, carrierPhase: true}
 	gnssQualcommGen9 = gnssReceiver{name: "Qualcomm GNSS GEN9", year: 2022,
-		systems: withSBAS, dualFrequency: true, beidouB1C: true}
-	// Qualcomm's AIDL HAL as OnePlus, Motorola and Sony ship it.
-	gnssQualcommAIDL = gnssReceiver{name: "aidl-impl", year: 2018,
 		systems: withSBAS, dualFrequency: true, beidouB1C: true}
 
 	gnssReceivers = map[string]gnssReceiver{
@@ -70,17 +66,21 @@ var (
 		"Pixel 9 Pro": gnssPixel9,
 		"SM-S901B": {name: "S.LSI,K040,SPOTNAV_4.6.2_7_E23", year: 2021,
 			systems: gnssMainSystems, carrierPhase: true},
-		"SM-A528B": {name: "qcom,SM_KODIAK,MPSS.HI.4.3.3.c3-00065.1-LC_ALL_PACK-1.7816.315,", year: 2019,
-			systems: withSBAS},
 		"SM-S918B": gnssQualcommGen9,
 		"SM-S928B": func() gnssReceiver { r := gnssQualcommGen9; r.year = 2023; return r }(),
-		"2201116SG": {name: "qcom;MPSS.HI.4.3.1.c4-00041-MANNAR_GEN_PACK-1.42847.10.50349.11;", year: 2018,
-			systems: withSBAS},
-		"CPH2413": {name: "qcom;MPSS.DE.2.0-00906-WAIPIO_GEN_PACK-1.15816.148.25084.3;", year: 2018,
-			systems: withIRNSSSBAS, dualFrequency: true, beidouB1C: true},
-		"CPH2449":  gnssQualcommAIDL,
-		"XT2301-4": gnssQualcommAIDL,
-		"XQ-DQ54":  func() gnssReceiver { r := gnssQualcommAIDL; r.dualFrequency = false; return r }(),
+		"SM-A556B": {name: "S.LSI,K044,SPOTNAV_4.14.16_99_MR_Rs", year: 2021,
+			systems: gnssMainSystems, beidouB1C: true, carrierPhase: true},
+		"2312DRA50G": {name: "qcom;MPSS.DE.3.1.1.c1-00021-NETRANI_GENALL_PACK-1.79677.71;", year: 2016,
+			systems: withSBAS, beidouB1C: true},
+		"CPH2581": {name: "qcom;MPSS.DE.5.0-02708-LANAI_GEN_PACK-1;", year: 2023,
+			systems: withSBAS, dualFrequency: true, beidouB1C: true},
+		"CPH2653": {name: "qcom;MPSS.DE.7.0-02698-PAKALA_GEN_PACK-1;", year: 2023,
+			systems: withSBAS, dualFrequency: true, beidouB1C: true},
+		"motorola edge 60 pro": {name: "MTK_MNLD_default,MNL_VER_default", year: 2020,
+			systems: withSBAS, dualFrequency: true, beidouB1C: true, carrierPhase: true},
+		// Qualcomm's AIDL HAL as Sony ships it, reporting no L5 band.
+		"XQ-EC54": {name: "aidl-impl", year: 2023,
+			systems: withSBAS, beidouB1C: true},
 		"A065": {name: "qcom;MPSS.DE.2.0-01026.2-WAIPIO_GEN_PACK-1.134215.10.142897.3;", year: 2019,
 			systems: gnssMainSystems, dualFrequency: true, beidouB1C: true},
 	}

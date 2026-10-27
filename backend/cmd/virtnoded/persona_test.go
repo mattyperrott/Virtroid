@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -52,10 +54,143 @@ func TestPersonaClaimsTheImagesAndroidRelease(t *testing.T) {
 		PersonaVersion: 4,
 		AndroidVersion: "android-14",
 	})
-	if persona.Release != "16" {
-		t.Fatalf("release = %q, want the image's 16", persona.Release)
+	if persona.Release != "16" || !strings.Contains(persona.Fingerprint, ":16/"+persona.BuildID+"/") {
+		t.Fatalf("persona = %+v, want the image's Android 16", persona)
 	}
-	if !strings.HasPrefix(persona.BuildID, "BP2A.250605.") || !strings.Contains(persona.Fingerprint, ":16/BP2A.250605.") {
-		t.Fatalf("Android 16 build metadata = %+v", persona)
+}
+
+// Phones personas once claimed Android 16 on, which never shipped it
+// (Xperia 1 V and edge 40 pro: no Android 16 build found).
+var phonesWithoutAndroid16 = []string{"SM-A528B", "2201116SG", "CPH2413", "XQ-DQ54", "XT2301-4"}
+
+func TestPersonasClaimOnlyReleasesTheirPhonesGot(t *testing.T) {
+	t.Setenv("NODE_RUNTIME_ANDROID_RELEASE", "16")
+	claimed := map[string]bool{}
+	for index := 0; index < 2000; index++ {
+		persona := buildSessionPersona(runtimeAssignment{ID: fmt.Sprintf("runtime-%d", index), PersonaVersion: 1})
+		build, ok := catalogPhone(t, persona.Model).Builds["16"]
+		if !ok || persona.Release != "16" || persona.BuildID != build.ID || persona.Incremental != build.Incremental {
+			t.Fatalf("persona %+v claims a build its phone never shipped on Android 16", persona)
+		}
+		claimed[persona.Model] = true
 	}
+	for _, template := range personaCatalog {
+		if _, ok := template.Builds["16"]; ok && !claimed[template.Model] {
+			t.Fatalf("no persona claims the %s", template.Model)
+		}
+	}
+	for _, model := range phonesWithoutAndroid16 {
+		if claimed[model] {
+			t.Fatalf("a persona claims Android 16 on the %s", model)
+		}
+	}
+}
+
+func catalogPhone(t *testing.T, model string) personaTemplate {
+	t.Helper()
+	for _, template := range personaCatalog {
+		if template.Model == model {
+			return template
+		}
+	}
+	t.Fatalf("%q is not in the catalog", model)
+	return personaTemplate{}
+}
+
+// Each vendor's Android 16 builds have their own shape, which an app
+// comparing build properties with the model would expect.
+func TestPersonaBuildsLookLikeTheirVendors(t *testing.T) {
+	aosp := `[A-Z]P[1-4]A\.\d{6}\.\d{3}(\.[A-Z]\d)?`
+	for _, template := range personaCatalog {
+		for release, build := range template.Builds {
+			if release != "16" {
+				t.Fatalf("%s: no vendor shapes for Android %s builds yet", template.Model, release)
+			}
+			p := newSessionPersona(template, build, release, 1, "SERIAL")
+			product := template.Product
+			if template.FingerprintProduct != "" {
+				product = template.FingerprintProduct
+			}
+			if want := fmt.Sprintf("%s/%s/%s:16/%s/%s:user/release-keys", template.Brand, product, template.Device, p.BuildID, p.Incremental); p.Fingerprint != want {
+				t.Fatalf("%s fingerprint %q, want %q", template.Model, p.Fingerprint, want)
+			}
+			if !regexp.MustCompile(`^\S+-user 16 ` + regexp.QuoteMeta(p.BuildID) + ` \S+ release-keys$`).MatchString(p.Description) {
+				t.Fatalf("%s description %q", template.Model, p.Description)
+			}
+			shape := func(field, value, pattern string) {
+				t.Helper()
+				if !regexp.MustCompile("^(" + pattern + ")$").MatchString(value) {
+					t.Fatalf("%s %s %q does not match %s", template.Model, field, value, pattern)
+				}
+			}
+			defaultDescription := product + "-user 16 " + p.BuildID + " " + p.Incremental + " release-keys"
+			switch template.Brand {
+			case "google":
+				shape("build ID", p.BuildID, aosp)
+				shape("incremental", p.Incremental, `\d{8}`)
+				shape("display ID", p.DisplayID, regexp.QuoteMeta(p.BuildID))
+				shape("description", p.Description, regexp.QuoteMeta(defaultDescription))
+			case "samsung":
+				// Model code, region, update type, bootloader, One UI, year
+				// (Y 2025, Z 2026), month, build: S928BXXS6DZI1.
+				shape("build ID", p.BuildID, aosp)
+				shape("incremental", p.Incremental, strings.TrimPrefix(template.Model, "SM-")+`XX[SU][0-9A-Z][A-Z][YZ][A-L][0-9A-Z]`)
+				shape("display ID", p.DisplayID, regexp.QuoteMeta(p.BuildID+"."+p.Incremental))
+				shape("description", p.Description, regexp.QuoteMeta(template.Device)+`\w+-user 16 `+regexp.QuoteMeta(p.BuildID+" "+p.Incremental)+` release-keys`)
+			case "Redmi", "Xiaomi", "POCO":
+				// HyperOS 3, W for Android 16, then device, region and XM.
+				shape("build ID", p.BuildID, aosp)
+				shape("incremental", p.Incremental, `OS3\.0\.\d+\.0\.W[A-Z]{4}XM`)
+				shape("display ID", p.DisplayID, regexp.QuoteMeta(p.BuildID))
+				shape("description", p.Description, `missi-user 16 `+regexp.QuoteMeta(p.BuildID)+` \S+ release-keys`)
+			case "OnePlus":
+				shape("build ID", p.BuildID, aosp)
+				shape("incremental", p.Incremental, `[A-Z]\.R4T\d\.[0-9a-f]{6,7}([_-][0-9a-f]{5,7}){2}`)
+				shape("display ID", p.DisplayID, regexp.QuoteMeta(template.Model)+`_16\.0\.\d+\.\d{3}\(EX01\)`)
+				shape("description", p.Description, `qssi_64-user 16 `+regexp.QuoteMeta(p.BuildID)+` \d{13} release-keys`)
+			case "motorola":
+				// W for Android 16, 36 its API level.
+				shape("build ID", p.BuildID, `W1[A-Z]{2,4}36[A-Z]?\.\d+(-\d+)+`)
+				shape("incremental", p.Incremental, `[0-9a-f]{5,6}-[0-9a-f]{5,7}`)
+				shape("display ID", p.DisplayID, regexp.QuoteMeta(p.BuildID))
+				shape("description", p.Description, regexp.QuoteMeta(defaultDescription))
+			case "Sony":
+				// 69.2.A.4.90 is 069002A0040090, then a release stamp.
+				shape("build ID", p.BuildID, `\d{2}\.\d\.A\.\d\.\d+`)
+				var major, minor, patch, number int
+				if _, err := fmt.Sscanf(p.BuildID, "%d.%d.A.%d.%d", &major, &minor, &patch, &number); err != nil {
+					t.Fatal(err)
+				}
+				shape("incremental", p.Incremental, fmt.Sprintf(`%03d%03dA%03d%04d\d{11}`, major, minor, patch, number))
+				shape("display ID", p.DisplayID, regexp.QuoteMeta(p.BuildID+" release-keys"))
+				shape("description", p.Description, regexp.QuoteMeta(defaultDescription))
+			case "Nothing":
+				// The incremental is the build time, yymmddhhmm, which the
+				// display ID repeats after Nothing OS's version.
+				shape("build ID", p.BuildID, `BQ2A\.\d{6}\.\d{3}-`+aosp)
+				shape("incremental", p.Incremental, `\d{10}`)
+				shape("display ID", p.DisplayID, `B4\.\d-`+p.Incremental[:6]+`-`+p.Incremental[6:])
+				shape("description", p.Description, `qssi_64-user 16 `+regexp.QuoteMeta(p.BuildID+" "+p.Incremental)+` release-keys`)
+			default:
+				t.Fatalf("%s: no Android 16 shapes for brand %q", template.Model, template.Brand)
+			}
+		}
+	}
+}
+
+func TestPersonaPropsCarryTheBuild(t *testing.T) {
+	t.Setenv("NODE_RUNTIME_ANDROID_RELEASE", "16")
+	for index := 0; index < 200; index++ {
+		persona := buildSessionPersona(runtimeAssignment{ID: fmt.Sprintf("runtime-%d", index), PersonaVersion: 1})
+		if persona.Brand != "samsung" {
+			continue
+		}
+		props := strings.Join(personaOverrideProps(persona), "\n")
+		if !strings.Contains(props, "\nro.build.id="+persona.BuildID+"\n") ||
+			!strings.Contains(props, "\nro.build.display.id="+persona.BuildID+"."+persona.Incremental+"\n") {
+			t.Fatalf("props %q", props)
+		}
+		return
+	}
+	t.Fatal("no Samsung persona")
 }

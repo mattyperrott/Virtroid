@@ -308,11 +308,11 @@ func TestGNSSLocationRecordCarriesTheSky(t *testing.T) {
 }
 
 func TestGNSSReceiverRecordNamesTheChip(t *testing.T) {
-	record := gnssReceiverRecord(gnssReceiverFor("SM-A528B"))
+	record := gnssReceiverRecord(gnssReceiverFor("2312DRA50G"))
 	lines := strings.Split(strings.TrimSuffix(record, gnssRecordEnd), "\n")
 	fields := strings.SplitN(lines[0], ",", 4)
-	if len(fields) != 4 || fields[0] != "Receiver" || fields[1] != "2019" || fields[2] != "0" ||
-		fields[3] != "qcom,SM_KODIAK,MPSS.HI.4.3.3.c3-00065.1-LC_ALL_PACK-1.7816.315," {
+	if len(fields) != 4 || fields[0] != "Receiver" || fields[1] != "2016" || fields[2] != "0" ||
+		fields[3] != "qcom;MPSS.DE.3.1.1.c1-00021-NETRANI_GENALL_PACK-1.79677.71;" {
 		t.Fatalf("receiver line %q", lines[0])
 	}
 	signals := map[string]bool{}
