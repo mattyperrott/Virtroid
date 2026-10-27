@@ -203,27 +203,104 @@ func TestPersonaPropsCarryTheBuild(t *testing.T) {
 	t.Fatal("no Samsung persona")
 }
 
+// initProps reads init arguments as ReDroid's init does (fs_mgr's
+// ImportKernelCmdlineFromString over its arguments joined by spaces): pieces
+// split at spaces outside double quotes, the quotes dropped, and the first
+// value of a property kept.
+func initProps(t *testing.T, args []string) map[string]string {
+	t.Helper()
+	cmdline := strings.Join(args, " ")
+	props := map[string]string{}
+	for base := 0; ; {
+		end := -1
+		for at := base; ; {
+			i := strings.IndexAny(cmdline[at:], ` "`)
+			if i < 0 {
+				break
+			}
+			at += i
+			if cmdline[at] == ' ' {
+				end = at
+				break
+			}
+			j := strings.IndexByte(cmdline[at+1:], '"')
+			if j < 0 {
+				break
+			}
+			at += j + 2
+		}
+		piece := cmdline[base:]
+		if end >= 0 {
+			piece = cmdline[base:end]
+		}
+		key, value, ok := strings.Cut(strings.ReplaceAll(piece, `"`, ""), "=")
+		if !ok {
+			t.Fatalf("init reads %q as a property of its own in %q", piece, cmdline)
+		}
+		if _, seen := props[key]; seen {
+			t.Fatalf("%s given twice", key)
+		}
+		props[key] = value
+		if end < 0 {
+			return props
+		}
+		base = end + 1
+	}
+}
+
+// Init has to read every property a persona sets whole, including the build
+// dates and descriptions with spaces in them.
+func TestPersonaPropsReachInitWhole(t *testing.T) {
+	t.Setenv("NODE_RUNTIME_ANDROID_RELEASE", "16")
+	spaced := 0
+	for index := 0; index < 400; index++ {
+		persona := buildSessionPersona(runtimeAssignment{ID: fmt.Sprintf("init-%d", index), PersonaVersion: 1})
+		read := initProps(t, personaOverrideProps(persona))
+		props := personaProps(persona)
+		if len(read) != len(props) {
+			t.Fatalf("init reads %d properties of %d", len(read), len(props))
+		}
+		for _, prop := range props {
+			key, value, _ := strings.Cut(prop, "=")
+			if read[key] != value {
+				t.Fatalf("init reads %s=%q, want %q", key, read[key], value)
+			}
+			if strings.Contains(value, " ") {
+				spaced++
+			}
+		}
+	}
+	if spaced == 0 {
+		t.Fatal("no persona value has a space in it")
+	}
+}
+
 // Everything Build.getFingerprintedPartitions and Build.TIME report has to
 // name the claimed phone; none of it may still carry the image's own build
 // identity underneath.
 func TestPersonaPropsCoverEveryPartition(t *testing.T) {
 	t.Setenv("NODE_RUNTIME_ANDROID_RELEASE", "16")
 	persona := buildSessionPersona(runtimeAssignment{ID: "partition-runtime", PersonaVersion: 1})
-	props := "\n" + strings.Join(personaOverrideProps(persona), "\n") + "\n"
-	for _, part := range fingerprintedPartitions {
-		for _, want := range []string{
-			"\nro." + part + ".build.fingerprint=" + persona.Fingerprint + "\n",
-			"\nro." + part + ".build.id=" + persona.BuildID + "\n",
-			"\nro." + part + ".build.version.incremental=" + persona.Incremental + "\n",
-			"\nro." + part + ".build.date.utc=" + strconv.FormatInt(persona.BuildDateUTC, 10) + "\n",
-			"\nro.product." + part + ".model=" + persona.Model + "\n",
-			"\nro.product." + part + ".device=" + persona.Device + "\n",
+	read := initProps(t, personaOverrideProps(persona))
+	for _, part := range buildPartitions {
+		for key, want := range map[string]string{
+			"ro." + part + ".build.fingerprint":         persona.Fingerprint,
+			"ro." + part + ".build.id":                  persona.BuildID,
+			"ro." + part + ".build.version.incremental": persona.Incremental,
+			"ro." + part + ".build.date":                persona.BuildDate,
+			"ro." + part + ".build.date.utc":            strconv.FormatInt(persona.BuildDateUTC, 10),
+			"ro.product." + part + ".model":             persona.Model,
+			"ro.product." + part + ".device":            persona.Device,
 		} {
-			if !strings.Contains(props, want) {
-				t.Fatalf("partition %s missing %q in:\n%s", part, want, props)
+			if read[key] != want {
+				t.Fatalf("%s=%q, want %q", key, read[key], want)
 			}
 		}
 	}
+	if flavor := read["ro.build.flavor"]; flavor != persona.Product+"-user" {
+		t.Fatalf("ro.build.flavor=%q for product %s", flavor, persona.Product)
+	}
+	props := strings.Join(personaOverrideProps(persona), "\n")
 	// The image names itself virtroid-lineage / lineage_*_x86_64, built by
 	// eng.ubuntu; nothing a persona sets may still say so.
 	for _, leak := range []string{"virtroid", "lineage", "eng.ubuntu"} {
@@ -243,15 +320,15 @@ func TestPersonaCarriesABuildDateHostAndUser(t *testing.T) {
 		if persona.BuildHost == "" || persona.BuildUser == "" || persona.BuildHost == "virtroid-lineage" {
 			t.Fatalf("persona build host/user wrong: %+v", persona)
 		}
-		props := "\n" + strings.Join(personaOverrideProps(persona), "\n") + "\n"
-		for _, want := range []string{
-			"\nro.build.date.utc=" + strconv.FormatInt(persona.BuildDateUTC, 10) + "\n",
-			"\nro.build.date=" + persona.BuildDate + "\n",
-			"\nro.build.host=" + persona.BuildHost + "\n",
-			"\nro.build.user=" + persona.BuildUser + "\n",
+		read := initProps(t, personaOverrideProps(persona))
+		for key, want := range map[string]string{
+			"ro.build.date.utc": strconv.FormatInt(persona.BuildDateUTC, 10),
+			"ro.build.date":     persona.BuildDate,
+			"ro.build.host":     persona.BuildHost,
+			"ro.build.user":     persona.BuildUser,
 		} {
-			if !strings.Contains(props, want) {
-				t.Fatalf("props missing %q:\n%s", want, props)
+			if read[key] != want {
+				t.Fatalf("%s=%q, want %q", key, read[key], want)
 			}
 		}
 	}

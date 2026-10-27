@@ -295,12 +295,27 @@ const (
 	personaBuildType = "user"
 )
 
-// fingerprintedPartitions are the partitions Build.getFingerprintedPartitions
-// reports; each carries its own ro.<partition>.build.* and
-// ro.product.<partition>.*, which the image otherwise fills with its own.
-var fingerprintedPartitions = []string{"system", "system_ext", "product", "vendor", "odm", "bootimage"}
+// buildPartitions are the partitions that carry their own
+// ro.<partition>.build.* and ro.product.<partition>.*, which the image
+// otherwise fills with its own: those Build.getFingerprintedPartitions
+// reports, and vendor_dlkm, which ReDroid's device has too.
+var buildPartitions = []string{"system", "system_ext", "product", "vendor", "odm", "bootimage", "vendor_dlkm"}
 
+// personaOverrideProps are the persona's properties as arguments to ReDroid's
+// init, which reads its arguments as a kernel command line: split at spaces
+// outside double quotes, and the quotes dropped. A value with spaces (a build
+// date, a description) goes in quotes, or init keeps only its first word.
 func personaOverrideProps(persona sessionPersona) []string {
+	props := personaProps(persona)
+	for i, prop := range props {
+		if key, value, _ := strings.Cut(prop, "="); strings.Contains(value, " ") {
+			props[i] = key + `="` + value + `"`
+		}
+	}
+	return props
+}
+
+func personaProps(persona sessionPersona) []string {
 	utc := strconv.FormatInt(persona.BuildDateUTC, 10)
 	props := []string{
 		"ro.product.brand=" + persona.Brand,
@@ -314,6 +329,7 @@ func personaOverrideProps(persona sessionPersona) []string {
 		"ro.build.version.incremental=" + persona.Incremental,
 		"ro.build.fingerprint=" + persona.Fingerprint,
 		"ro.build.description=" + persona.Description,
+		"ro.build.flavor=" + persona.Product + "-" + personaBuildType,
 		"ro.build.tags=" + personaBuildTags,
 		"ro.build.type=" + personaBuildType,
 		"ro.build.date=" + persona.BuildDate,
@@ -322,12 +338,12 @@ func personaOverrideProps(persona sessionPersona) []string {
 		"ro.build.user=" + persona.BuildUser,
 		"ro.serialno=" + persona.Serial,
 	}
-	// Every fingerprinted partition carries the one build, so the partitions
+	// Every partition carries the one build, so the partitions
 	// Build.getFingerprintedPartitions lists and the ro.product.<partition>.*
 	// an app reads all name the claimed phone, not the image beneath it. Real
 	// phones diverge here (vendor on an older release, an OEM's own system
 	// product); presenting one consistent build is left as a later step.
-	for _, part := range fingerprintedPartitions {
+	for _, part := range buildPartitions {
 		props = append(props,
 			"ro.product."+part+".brand="+persona.Brand,
 			"ro.product."+part+".manufacturer="+persona.Manufacturer,
