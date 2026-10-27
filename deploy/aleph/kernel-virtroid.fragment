@@ -194,9 +194,10 @@ CONFIG_RTC_DRV_CMOS=y
 
 # Android 15 and later mount their system components (APEXes) from loop
 # devices. A runtime container sees only the device nodes that exist when it
-# starts, so the kernel creates them at boot: Android 16 asks for 39.
+# starts, so the kernel creates them at boot: Android 16 asks for 39, and
+# our image for 40, for each runtime.
 CONFIG_BLK_DEV_LOOP=y
-CONFIG_BLK_DEV_LOOP_MIN_COUNT=64
+CONFIG_BLK_DEV_LOOP_MIN_COUNT=128
 # apexd keeps each loop device open for writing while it mounts it; since
 # Linux 6.8 that mount fails (EBUSY) unless writes to mounted devices are
 # allowed, as on stock and Android kernels.
@@ -207,3 +208,10 @@ CONFIG_BLK_DEV_WRITE_MOUNTED=y
 # kernel-ashmem.patch (Android Common Kernel's C ashmem, ported to 6.18).
 CONFIG_STAGING=y
 CONFIG_ASHMEM=y
+
+# No usermode helpers: the kernel never runs a program of its own accord. A
+# runtime's root can mount a fresh procfs and write kernel.modprobe, whose
+# program the kernel would otherwise run as the VM's root the next time it
+# asks for a module. Modules load only from the initrd, by path.
+CONFIG_STATIC_USERMODEHELPER=y
+CONFIG_STATIC_USERMODEHELPER_PATH=""
