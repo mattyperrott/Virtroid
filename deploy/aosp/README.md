@@ -62,7 +62,9 @@ doesn't compile with the tree's clang. Whether they boot has not been tested.
    sealed region in the HAL's own fixed-location format, and the image's part
    is in [gnss-feed.md](gnss-feed.md). Apps then see an ordinary GPS fix, not
    a mock location (`Location.isMock()` is false), and the region's
-   coordinates, set in the app, finally reach apps.
+   coordinates, set in the app, finally reach apps. With each fix comes the
+   sky a phone there would see (the real satellites' orbits, built into the
+   node), its NMEA, and the GNSS chip of the phone the persona claims.
 3. **Fewer container privileges.** Containers run with `Privileged: true`
    today. Find what Android needs (binder devices, `netd`'s iptables, BPF,
    some mounts) and grant only that: named capabilities, the device nodes, a

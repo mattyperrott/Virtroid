@@ -10,8 +10,8 @@ milestone 5).
 | :--- | :--- |
 | Sealed region (city or coordinates), chosen in the app | Done. Sealed on the phone, opened only by the runtime's node. |
 | Timezone from the region | Done, works on today's stock ReDroid images. |
-| Node side of the location feed (this contract) | Done in `backend/cmd/virtnoded/gnss.go`. Ships with the next VM image. |
-| Android side: a GNSS HAL reading the feed | Built into the custom image (`patches/hardware/interfaces`, `device/virtroid`). Checked 2026-10-27 with a stand-in feed (below); not yet with the node's own. |
+| Node side of the location feed (this contract) | Done in `backend/cmd/virtnoded/gnss.go`, with the sky, NMEA and receiver (`gnss_sky.go`, `gnss_nmea.go`, `gnss_receiver.go`). Ships with the next VM image. |
+| Android side: a GNSS HAL reading the feed | Built into the custom image (`patches/hardware/interfaces` 0001 and 0002, `device/virtroid`). |
 | Apps seeing the runtime's place as GPS | **Not yet.** Only once a runtime runs the custom image. |
 
 Until a runtime runs the custom image, the node serves the feed and nothing
@@ -62,10 +62,15 @@ For each fix the HAL:
 
 The node answers once and closes:
 
-- **With a place:** one record, then the terminator `\n\n\n\n`:
+- **With a place:** one record, then the terminator `\n\n\n\n`, with no
+  newline before it (the HAL would keep it for the next record):
 
   ```
   Fix,GPS,<lat>,<lon>,0.0,0.0,<accuracy m>,0.0,<unix ms>,0.5,90.0,0
+  Sv,<constellation>,<svid>,<C/N0>,<baseband C/N0>,<elevation>,<azimuth>,<carrier Hz>,<flags>
+  ...
+  Nmea,$GNGGA,...*hh
+  ...
   ```
 
   The fields are `Fix, Provider, LatitudeDegrees, LongitudeDegrees,
@@ -77,8 +82,64 @@ The node answers once and closes:
     mark the runtime as not a phone.
   - The node knows no altitude, speed or bearing, so they are 0.
   - The HAL stamps elapsed realtime itself, so the last field is 0.
+  - The first line is all AOSP's parser reads, so an image without patch
+    0002 still gets its fix.
+  - Each `Sv` line is one signal the device tracks ([the sky](#the-sky)):
+    Android's `GnssConstellationType` and satellite number, signal strength
+    (dB-Hz), elevation and azimuth (degrees), carrier frequency and
+    `GnssSvFlags`. The HAL reports them with every fix, so a fix carries the
+    satellites used in it (`satellites` in its extras) whether or not an app
+    listens for the satellite status.
+  - Each `Nmea` line is an NMEA 0183 sentence describing the same fix and
+    sky (GGA, GSA and GSV for each system, RMC, VTG), which the HAL hands to
+    apps listening for NMEA.
+- **`CMD_GET_RECEIVER`**, which the HAL asks once as Android starts it: the
+  receiver of the phone the persona claims, then the terminator:
+
+  ```
+  Receiver,<year>,<flags>,<hardware model name>
+  Signal,<constellation>,<carrier Hz>,<code type>
+  ...
+  ```
+
+  The name comes last, as it can hold commas; flag 1 is carrier phase. The
+  HAL reports the name and year (`LocationManager.getGnssHardwareModelName`
+  and `getGnssYearOfHardware`), the signals (`GnssCapabilities`), and only
+  the capabilities it backs with real data. Without an answer it reports no
+  name at all, rather than AOSP's own, which names an emulator.
 - **No place, or any other command** (including `CMD_GET_RAWMEASUREMENT`):
   no data. The HAL reads that as "no fix".
+
+## The sky
+
+The satellites a phone at the place would track now, so the HAL never
+reports the default HAL's fixed list (13 satellites that never move,
+NavIC's among them everywhere).
+
+- **Orbits.** The real ones, built into the node
+  (`backend/cmd/virtnoded/assets/gnss-orbits.csv`): CelesTrak's mean
+  elements for the GNSS satellites, joined with the IGS satellite metadata
+  for each satellite's PRN, GLONASS slot and frequency channel, and the
+  signals its block sends. `deploy/aleph/refresh-gnss-orbits.py` rewrites
+  the file; run it at each VM image release. The node moves the orbits on
+  with Kepler's equation and the Earth's oblateness. Against the US Coast
+  Guard's GPS almanac (2026-10-27) the worst satellite was 0.5° off in the
+  sky on the day, 1.2° a week on and about 4° a month on, so every runtime
+  at a place sees about the sky a phone there would.
+- **The receiver.** Each persona's phone tracks what its chip does
+  (`gnss_receiver.go`, from the GPSTest database as each phone reported it
+  on Android 16): GPS, GLONASS, Galileo, BeiDou and QZSS; the L5 band on
+  dual-frequency chips; BeiDou B1C on Samsung LSI and Qualcomm; SBAS
+  satellites on Qualcomm, never used in the fix; NavIC only on chips that
+  have it, and only where its beam reaches (India and around).
+- **Signal strength.** About 26 dB-Hz near the horizon to 45 overhead, less
+  on the L5 band (held only on satellites strong enough) and from GLONASS,
+  with an offset of its own for the device's antenna and each satellite, and
+  a slow wander. Satellites are tracked from 5° above the horizon and used
+  in the fix from 10°.
+- **Fixed per device.** The strengths and which L5 signals are held follow
+  from the persona (its serial and model): another start, another device.
+- Without a place there is no sky: the HAL reports no satellites.
 
 ## When the place changes
 
@@ -111,11 +172,21 @@ The node answers once and closes:
 5. **Run it as `gps`.** The example's own `.rc` runs it as `nobody`; ship an
    `.rc` with `user gps` and `group gps`, so it can reach the socket.
 6. **Have location on by default** (`location_mode`), as a phone ships.
+7. **Report the source's sky, NMEA and receiver** (patch 0002), with the sky
+   on every fix.
+8. **Make up nothing.** The default HAL fills in wherever it has no data of
+   its own, and each made-up value marks an emulator: the satellite list,
+   the "$TEST" NMEA line, the hardware name "Google, Cuttlefish, AIDL v3",
+   raw measurements, navigation messages, batched fixes at a fixed
+   position, and a debug position in Mountain View. Patch 0002 reports none
+   of them, and advertises only the capabilities it backs (no antenna info,
+   satellite PVT or correlation vectors, which none of the personas' phones
+   report either).
 
 ## How it's checked
 
-- **Node side (now):** `backend/cmd/virtnoded/gnss_test.go` and
-  `region_test.go`:
+- **Node side:** `backend/cmd/virtnoded/gnss_test.go`, `gnss_sky_test.go`
+  and `region_test.go`:
   - the record matches the HAL's parser, stays on the globe, and wanders
     only a few metres;
   - only `CMD_GET_LOCATION` with a place gets a fix;
@@ -124,7 +195,16 @@ The node answers once and closes:
   - the socket is closed to other users;
   - coordinates never reach the logs;
   - coordinates are checked: the globe's edges pass, out-of-range, overflowing
-    or non-numeric values fail.
+    or non-numeric values fail;
+  - the built-in orbits cover every system, and every persona's phone has
+    its receiver;
+  - the sky looks like a phone outdoors at six places through the day (5 to
+    14 GPS satellites, 15 or more used, believable strengths and DOP),
+    follows the receiver and the place (QZSS high over Tokyo, none from
+    London; NavIC only near India), is the same sky for every device with
+    strengths of their own, and moves and wanders without jumps;
+  - the NMEA sentences carry valid checksums and fit in 82 characters, and
+    describe the fix and every tracked signal.
 - **Image side (2026-10-27, by hand, on a boot test's kept runtime):** a
   stand-in server on a socket, with the property pointed at it, and a small
   app asking for GPS:
@@ -133,9 +213,9 @@ The node answers once and closes:
   - answering empty, then no socket at all: no fix, and no default position.
 
   The HAL waits 20 ms for an answer, so a feed that answers later gives no
-  fix: a stand-in that ran a command per request was too slow. Open: the
-  fixes carry `satellites=0`, which apps that read satellites used in a fix
-  can see.
+  fix: a stand-in that ran a command per request was too slow. Those fixes
+  carried `satellites=0`; patch 0002 has the HAL report the node's sky with
+  every fix.
 - **End to end (milestone 5, needs the custom image):** extend
   `deploy/aleph/test/boot-test.sh`:
   - with a sealed region, `dumpsys location` shows a `gps` fix within a few
@@ -157,6 +237,10 @@ The node answers once and closes:
 
 - **Altitude:** the node sends 0. A real phone at a city's altitude reports
   more; a terrain lookup on the phone could add it to the sealed region.
+- **Raw measurements:** the HAL advertises them, as every phone does, but
+  reports none, rather than the default HAL's made-up ones. The node could
+  derive pseudoranges and Doppler from the sky and send them in the format
+  AOSP's replay parser reads (`CMD_GET_RAWMEASUREMENT`).
 - **Whether the fix should wander at all** is a product choice; it is one
   function in `gnss.go`.
 - If the socket patch to the HAL proves awkward, the alternative is a
