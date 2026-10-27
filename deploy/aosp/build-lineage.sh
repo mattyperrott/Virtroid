@@ -102,12 +102,12 @@ stage_patch() {
   local projects
   projects="$(patch_list | cut -f1 | sort -u)"
   cd "${src}"
-  # Back to the manifest's revisions first, so a re-run applies each patch once.
+  # Back to the manifest's revisions first, so a re-run applies each patch
+  # once: every project, so one whose patches were dropped since loses them.
   for project in ${projects}; do
     git -C "${project}" am --abort >/dev/null 2>&1 || true
   done
-  # shellcheck disable=SC2086
-  repo sync -l -d -q ${projects}
+  repo sync -l -d -q -j"${jobs}"
   local git=(git -c user.name="Virtroid build" -c user.email=build@virtroid.invalid)
   patch_list | while IFS=$'\t' read -r project patch kind; do
     local name
