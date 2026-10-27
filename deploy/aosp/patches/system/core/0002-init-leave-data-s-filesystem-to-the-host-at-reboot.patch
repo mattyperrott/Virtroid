@@ -1,0 +1,59 @@
+From a333f0ebb910d77727c319cb5c7353cddc04425d Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 27 Oct 2026 09:00:29 +0000
+Subject: [PATCH] init: leave /data's filesystem to the host at reboot
+
+In a container /data is a bind mount of the host's filesystem, which init can't unmount at reboot; it then shut the whole filesystem down with EXT4_IOC_SHUTDOWN (or F2FS's), and with it the storage of the host and of every other container on it. Sync, warn and leave it to the host.
+
+Change-Id: I92d1061f2fd617ea259eff0b0d3644851e5284fa
+---
+ init/reboot.cpp | 33 ++++++---------------------------
+ 1 file changed, 6 insertions(+), 27 deletions(-)
+
+diff --git a/init/reboot.cpp b/init/reboot.cpp
+index 559282e..7dc1c51 100644
+--- a/init/reboot.cpp
++++ b/init/reboot.cpp
+@@ -998,33 +998,12 @@ static void DoReboot(unsigned int cmd, const std::string& reason,
+     if (!is_thermal_shutdown) std::this_thread::sleep_for(100ms);
+ 
+     // Reboot regardless of umount status. If umount fails, fsck after reboot will fix it.
+-    std::string data_fs_type = GetDataFsType();
+-    if (!data_fs_type.empty()) {
+-        // Do not delete: Critical log for reboot_fs_integrity_test.
+-        KLOG_WARNING(LOG_TAG, "Umount /data failed, try to use ioctl to shutdown");
+-        if (data_fs_type == "f2fs") {
+-            uint32_t flag = F2FS_GOING_DOWN_FULLSYNC;
+-            unique_fd fd(TEMP_FAILURE_RETRY(open("/data", O_RDONLY)));
+-            LOG(INFO) << "Invoking F2FS_IOC_SHUTDOWN during shutdown";
+-            int ret = ioctl(fd.get(), F2FS_IOC_SHUTDOWN, &flag);
+-            if (ret) {
+-                PLOG(ERROR) << "Shutdown /data: ";
+-            } else {
+-                LOG(INFO) << "Shutdown /data";
+-            }
+-        } else if (data_fs_type == "ext4") {
+-            uint32_t flag = EXT4_GOING_FLAGS_DEFAULT;
+-            unique_fd fd(TEMP_FAILURE_RETRY(open("/data", O_RDONLY)));
+-            LOG(INFO) << "Invoking EXT4_IOC_SHUTDOWN during shutdown";
+-            int ret = ioctl(fd.get(), EXT4_IOC_SHUTDOWN, &flag);
+-            if (ret) {
+-                PLOG(ERROR) << "Shutdown /data: ";
+-            } else {
+-                LOG(INFO) << "Shutdown /data";
+-            }
+-        } else {
+-            LOG(ERROR) << "Unknown /data fs type: " << data_fs_type;
+-        }
++    // In a container /data can't be unmounted: it is a bind mount of the
++    // host's filesystem, which the host and every other container share, and
++    // shutting that filesystem down takes their storage with it. Synced above,
++    // it is left to the host.
++    if (!GetDataFsType().empty()) {
++        KLOG_WARNING(LOG_TAG, "Umount /data failed; leaving its filesystem to the host");
+     }
+ 
+     LogShutdownTime(stat, t);
+-- 
+2.43.0
+

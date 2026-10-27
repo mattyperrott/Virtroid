@@ -330,7 +330,13 @@ setting (2026-10-27).
   shutdown ioctl on it, and `/data` is a bind mount of the VM's encrypted
   data volume, which Docker's storage and every other runtime share. The
   first boot test hit it (milestone 3); without `CAP_SYS_ADMIN` (item 3) the
-  ioctl fails.
+  ioctl fails. Hit again 2026-10-27, when a test container failed early and
+  rebooted: `EXT4-fs (dm-1): shut down requested`, and every file under
+  `/srv/virtroid` gave I/O errors until the VM restarted. Our image no longer
+  does it (`patches/system/core` 0002: init leaves `/data`'s filesystem to
+  the host): with build 17, Android rebooting in a privileged runtime left
+  the VM's storage intact. Stock ReDroid 16, which runtimes run today, never
+  reached the ioctl in the same test, so they were not exposed.
 - The release keys sit on the build host ([Release keys](#release-keys)).
   Whoever takes them can sign an app that every runtime treats as part of
   the platform, which is the same trust the build host already holds over
