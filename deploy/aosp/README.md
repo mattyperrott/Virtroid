@@ -81,6 +81,20 @@ doesn't compile with the tree's clang. Whether they boot has not been tested.
    a single uniform persona instead, because the x86_64 CPU contradicts any
    phone model the persona claims.
 
+   What apps read without a permission must not name Virtroid. The
+   image's own build properties name ReDroid's device
+   (`lineage_redroid_x86_64`) with a neutral build user, host and number,
+   where they named our product and build host (`Build.HOST` was
+   `virtroid-lineage`). The partition fingerprints, build date, host and
+   user stay the image's own, as in live runtimes, and so does the security
+   patch level. Still naming
+   Virtroid, in live runtimes as well, for the next milestone: the
+   viewer's mounts, files and properties (`/opt/virtroid`,
+   `virtroid.viewer.*`, the `virtroid_viewer` service), the GNSS socket's
+   path, and the runtime agent's package (`io.virtroid.runtimeagent`).
+   ReDroid itself still shows (`ro.hardware=redroid`, the raw
+   `build.prop` files), as it does today.
+
 ## Build host
 
 A full Android build needs about 32 GB of RAM (64 GB is comfortable), about
@@ -286,7 +300,8 @@ takes:
    [`build-lineage.sh`](build-lineage.sh) on the build host (OVH, 6 cores,
    64 GB): `lineage-23.2` with ReDroid's device trees pinned in
    [`local_manifests/redroid.xml`](local_manifests/redroid.xml), as product
-   `lineage_virtroid_x86_64` ([`device/virtroid`](device/virtroid):
+   `lineage_virtroid_x86_64`, since renamed `lineage_redroid_x86_64` so
+   the image's properties don't name Virtroid ([`device/virtroid`](device/virtroid):
    ReDroid's `redroid_x86_64_only` with LineageOS's mini phone
    configuration), an x86_64 user build packaged as `runtime-image.tar` and
    `runtime-image.json`. About 3 h 40 min from clean. Beyond ReDroid's

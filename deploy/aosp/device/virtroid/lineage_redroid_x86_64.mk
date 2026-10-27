@@ -31,7 +31,10 @@ PRODUCT_PACKAGE_OVERLAYS += device/virtroid/overlay
 $(call inherit-product, device/redroid/redroid_x86_64_only.mk)
 $(call inherit-product, vendor/lineage/config/common_mini_phone.mk)
 
-PRODUCT_NAME := lineage_virtroid_x86_64
+# The product's name goes into every build.prop and fingerprint, which apps
+# can read: it names ReDroid's device, as the image's other properties do,
+# and not Virtroid.
+PRODUCT_NAME := lineage_redroid_x86_64
 PRODUCT_DEVICE := redroid_x86_64_only
 
 # adb: the node drives each runtime over adb (installs, shell, the viewer),

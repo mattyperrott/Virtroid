@@ -32,7 +32,7 @@ root="${LINEAGE_ROOT:-/srv/lineage}"
 src="${root}/src"
 branch="lineage-23.2"
 release="bp4a"
-product="lineage_virtroid_x86_64"
+product="lineage_redroid_x86_64"
 device="redroid_x86_64_only"
 redroid_patches_url="https://github.com/remote-android/redroid-patches.git"
 redroid_patches_commit="a5c70c0dd89c12b5027c902ab4182f31d38f3bb7"
@@ -208,6 +208,12 @@ stage_build() (
   # shellcheck disable=SC1091
   source build/envsetup.sh
   lunch "${product}-${release}-${variant}" || exit 1
+  # A neutral build user, host and number. They go into every build.prop
+  # and fingerprint, which apps can read, and by default name the build
+  # host and its user (ro.build.host, an eng.<user> incremental).
+  export BUILD_USERNAME=android-build BUILD_HOSTNAME=localhost
+  BUILD_NUMBER="$(date -u +%Y%m%d%H)"
+  export BUILD_NUMBER
   log "build ${product}-${release}-${variant} with ${jobs} jobs"
   m -j"${jobs}" || exit 1
 )
