@@ -2019,7 +2019,8 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Selected app install failed: %v.", installErr))
 		}
 		// Opens the feed again after a node restart; open already, nothing.
-		if err := n.gnss.start(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+		// The persona is the one the container started with.
+		if err := n.gnss.start(n.cfg.RuntimeRoot, runtime.ID, buildSessionPersona(runtime)); err != nil {
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Location feed not started: %v.", err))
 		}
 		if regionErr := n.ensureRuntimeRegion(ctx, runtime, containerName); regionErr != nil {
@@ -2076,7 +2077,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	persona := buildSessionPersona(runtime)
 	personaJSON := marshalSessionPersona(persona)
 	// The feed's directory must exist before the container that mounts it.
-	if err := n.gnss.start(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+	if err := n.gnss.start(n.cfg.RuntimeRoot, runtime.ID, persona); err != nil {
 		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", fmt.Sprintf("Location feed not started: %v.", err))
 	}
 	// adbd reads its authorized keys when the node connects, so this VM's key

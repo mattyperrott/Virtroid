@@ -152,6 +152,13 @@ with Nix for builds (a small Aleph VM works).
      builds it from both pinned sources and writes `runtime-image.tar` and
      `runtime-image.json` (whose `androidRelease` the personas claim).
 
+   Refresh the satellite orbits built into the node, from which each
+   runtime's GPS sky is drawn (`deploy/aosp/gnss-feed.md`), and commit them:
+   they drift from the real sky by a few degrees a month.
+   ```bash
+   deploy/aleph/refresh-gnss-orbits.py
+   ```
+
    Then, on the builder:
    ```bash
    deploy/aleph/build-image.sh /path/to/assets out

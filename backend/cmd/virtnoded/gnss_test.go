@@ -27,6 +27,14 @@ func gnssRoot(t *testing.T) string {
 	return root
 }
 
+// testGNSSPersona is a phone with a dual-frequency receiver.
+var testGNSSPersona = sessionPersona{Model: "Pixel 8", Serial: "TESTSERIAL01"}
+
+// gnssFixRecord is a location record with no sky, as for the place alone.
+func gnssFixRecord(place gnssPlace, now time.Time, noise gnssNoise) string {
+	return gnssLocationRecord(newGNSSFix(place, now, noise), nil)
+}
+
 func testGNSSFeeds() *gnssFeeds {
 	feeds := newGNSSFeeds(-1, -1)
 	feeds.now = func() time.Time { return time.UnixMilli(1_790_000_000_000) }
@@ -120,7 +128,7 @@ func TestGNSSFixStaysOnTheGlobe(t *testing.T) {
 func TestGNSSFeedAnswersOnlyALocationRequestWithAPlace(t *testing.T) {
 	root := gnssRoot(t)
 	feeds := testGNSSFeeds()
-	if err := feeds.start(root, "rt"); err != nil {
+	if err := feeds.start(root, "rt", testGNSSPersona); err != nil {
 		t.Fatal(err)
 	}
 	defer feeds.stop("rt")
@@ -152,7 +160,7 @@ func TestGNSSFeedsKeepRuntimesApart(t *testing.T) {
 	root := gnssRoot(t)
 	feeds := testGNSSFeeds()
 	for _, runtimeID := range []string{"rt-a", "rt-b"} {
-		if err := feeds.start(root, runtimeID); err != nil {
+		if err := feeds.start(root, runtimeID, testGNSSPersona); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -186,7 +194,7 @@ func TestGNSSFeedsKeepRuntimesApart(t *testing.T) {
 func TestGNSSFeedRefusesRuntimeIDsThatLeaveItsDirectory(t *testing.T) {
 	feeds := testGNSSFeeds()
 	for _, runtimeID := range []string{"", ".", "..", "../rt", "a/b", `a\b`} {
-		if err := feeds.start(gnssRoot(t), runtimeID); err == nil {
+		if err := feeds.start(gnssRoot(t), runtimeID, testGNSSPersona); err == nil {
 			t.Fatalf("runtime id %q accepted", runtimeID)
 		}
 	}
@@ -207,7 +215,7 @@ func TestGNSSFeedReplacesASocketLeftByAnEarlierNode(t *testing.T) {
 	_ = stale.Close()
 
 	feeds := testGNSSFeeds()
-	if err := feeds.start(root, "rt"); err != nil {
+	if err := feeds.start(root, "rt", testGNSSPersona); err != nil {
 		t.Fatalf("start over a stale socket: %v", err)
 	}
 	defer feeds.stop("rt")
@@ -216,7 +224,7 @@ func TestGNSSFeedReplacesASocketLeftByAnEarlierNode(t *testing.T) {
 		t.Fatalf("latitude = %v", latitude)
 	}
 	// Starting an open feed again changes nothing.
-	if err := feeds.start(root, "rt"); err != nil {
+	if err := feeds.start(root, "rt", testGNSSPersona); err != nil {
 		t.Fatal(err)
 	}
 	if latitude, _, _, _ := parseFix(t, askGNSS(t, root, "rt", gnssGetLocation)); latitude != 51.5074 {
@@ -227,7 +235,7 @@ func TestGNSSFeedReplacesASocketLeftByAnEarlierNode(t *testing.T) {
 func TestGNSSSocketIsClosedToOtherUsers(t *testing.T) {
 	root := gnssRoot(t)
 	feeds := testGNSSFeeds()
-	if err := feeds.start(root, "rt"); err != nil {
+	if err := feeds.start(root, "rt", testGNSSPersona); err != nil {
 		t.Fatal(err)
 	}
 	defer feeds.stop("rt")
@@ -248,7 +256,7 @@ func TestGNSSFeedLogsNoPlace(t *testing.T) {
 
 	root := gnssRoot(t)
 	feeds := testGNSSFeeds()
-	if err := feeds.start(root, "rt"); err != nil {
+	if err := feeds.start(root, "rt", testGNSSPersona); err != nil {
 		t.Fatal(err)
 	}
 	feeds.set("rt", &gnssPlace{latitude: 40.4168, longitude: -3.7038})
@@ -269,7 +277,7 @@ func TestGNSSFeedLogsNoPlace(t *testing.T) {
 func TestRuntimeWithoutARegionHasNoFix(t *testing.T) {
 	root := gnssRoot(t)
 	node := &nodeAgent{gnss: testGNSSFeeds()}
-	if err := node.gnss.start(root, "rt"); err != nil {
+	if err := node.gnss.start(root, "rt", testGNSSPersona); err != nil {
 		t.Fatal(err)
 	}
 	defer node.gnss.stop("rt")
@@ -287,7 +295,7 @@ func TestRuntimeWithoutARegionHasNoFix(t *testing.T) {
 
 func TestNodeWithoutFeedsIgnoresThem(t *testing.T) {
 	var feeds *gnssFeeds
-	if err := feeds.start(gnssRoot(t), "rt"); err != nil {
+	if err := feeds.start(gnssRoot(t), "rt", testGNSSPersona); err != nil {
 		t.Fatal(err)
 	}
 	feeds.set("rt", &gnssPlace{})

@@ -20,7 +20,9 @@ import (
 // sealed region) on a socket the custom Android image's GNSS HAL reads, so
 // apps see an ordinary GPS fix rather than a mock location. It speaks the
 // fixed-location protocol of AOSP's default GNSS HAL (hardware/interfaces
-// gnss/common/utils/default: DeviceFileReader, FixLocationParser);
+// gnss/common/utils/default: DeviceFileReader, FixLocationParser), with the
+// sky the device tracks (gnss_sky.go), its NMEA (gnss_nmea.go) and its
+// receiver (gnss_receiver.go) added for the image's patched HAL;
 // deploy/aosp/gnss-feed.md is the contract. Until a runtime runs that image,
 // nothing reads it: stock ReDroid has no HAL that does.
 const (
@@ -37,6 +39,9 @@ const (
 	gnssSocketMode = 0o660
 
 	gnssGetLocation = "CMD_GET_LOCATION"
+	// gnssGetReceiver asks what the device's GNSS chip is (gnss_receiver.go),
+	// which the HAL reports when Android starts it.
+	gnssGetReceiver = "CMD_GET_RECEIVER"
 	gnssRecordEnd   = "\n\n\n\n"
 	// The HAL waits 20 ms for an answer each second; a client that sends
 	// nothing is dropped well before it could hold a handler for long.
@@ -64,6 +69,7 @@ type gnssFeeds struct {
 type gnssFeed struct {
 	dir      string
 	listener *net.UnixListener
+	device   gnssDevice
 	place    atomic.Pointer[gnssPlace]
 	clients  chan struct{}
 	done     chan struct{}
@@ -78,8 +84,9 @@ func gnssFeedDir(runtimeRoot, runtimeID string) string {
 }
 
 // start opens the runtime's feed if it isn't open, with no place yet: until
-// one is set the feed answers with no fix.
-func (g *gnssFeeds) start(runtimeRoot, runtimeID string) error {
+// one is set the feed answers with no fix. The persona is the phone the
+// runtime claims to be, whose GNSS receiver the feed describes.
+func (g *gnssFeeds) start(runtimeRoot, runtimeID string, persona sessionPersona) error {
 	if g == nil {
 		return nil
 	}
@@ -115,7 +122,8 @@ func (g *gnssFeeds) start(runtimeRoot, runtimeID string) error {
 			return fmt.Errorf("hand the location socket to the GNSS HAL: %w", err)
 		}
 	}
-	feed := &gnssFeed{dir: dir, listener: listener, clients: make(chan struct{}, gnssMaxClients), done: make(chan struct{})}
+	feed := &gnssFeed{dir: dir, listener: listener, device: newGNSSDevice(persona),
+		clients: make(chan struct{}, gnssMaxClients), done: make(chan struct{})}
 	g.feeds[runtimeID] = feed
 	go g.serve(feed)
 	return nil
@@ -178,15 +186,15 @@ func (g *gnssFeeds) serve(feed *gnssFeed) {
 		go func() {
 			defer handlers.Done()
 			defer func() { <-feed.clients }()
-			g.answer(conn, feed.place.Load())
+			g.answer(conn, feed.device, feed.place.Load())
 		}()
 	}
 }
 
-// answer reads one command and, for a location request with a place set,
-// writes one fix record. Anything else gets no data, which the HAL reads as
-// no fix.
-func (g *gnssFeeds) answer(conn *net.UnixConn, place *gnssPlace) {
+// answer reads one command and writes one record: for a location request
+// with a place set, the fix and its sky; for a receiver request, the
+// receiver. Anything else gets no data, which the HAL reads as no fix.
+func (g *gnssFeeds) answer(conn *net.UnixConn, device gnssDevice, place *gnssPlace) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(gnssClientTimeout))
 	command := make([]byte, 0, gnssMaxCommandBytes)
@@ -198,10 +206,13 @@ func (g *gnssFeeds) answer(conn *net.UnixConn, place *gnssPlace) {
 			break
 		}
 	}
-	if string(command) != gnssGetLocation || place == nil {
-		return
+	switch {
+	case string(command) == gnssGetLocation && place != nil:
+		fix := newGNSSFix(*place, g.now(), g.noise())
+		_, _ = io.WriteString(conn, gnssLocationRecord(fix, gnssSky(device, *place, fix.time, gnssOrbits)))
+	case string(command) == gnssGetReceiver:
+		_, _ = io.WriteString(conn, gnssReceiverRecord(device.receiver))
 	}
-	_, _ = io.WriteString(conn, gnssFixRecord(*place, g.now(), g.noise()))
 }
 
 // gnssNoise is how one fix differs from the exact place, as a real receiver's
@@ -224,13 +235,13 @@ func realisticGNSSNoise() gnssNoise {
 	}
 }
 
-// gnssFixRecord is one fix in the format FixLocationParser reads:
-// Fix,Provider,LatitudeDegrees,LongitudeDegrees,AltitudeMeters,SpeedMps,
-// AccuracyMeters,BearingDegrees,UnixTimeMillis,SpeedAccuracyMps,
-// BearingAccuracyDegrees,ElapsedRealtimeNanos, ended by the HAL's record
-// terminator. The node knows no altitude, speed or bearing, so they are 0;
-// the HAL stamps elapsed realtime itself, so the last field is 0.
-func gnssFixRecord(place gnssPlace, now time.Time, noise gnssNoise) string {
+// gnssFix is one fix: where the receiver puts the place this time.
+type gnssFix struct {
+	latitude, longitude, accuracyMeters float64
+	time                                time.Time
+}
+
+func newGNSSFix(place gnssPlace, now time.Time, noise gnssNoise) gnssFix {
 	const metersPerDegree = 111_320.0
 	latitude := place.latitude + noise.northMeters/metersPerDegree
 	latitude = math.Max(-90, math.Min(90, latitude))
@@ -243,6 +254,57 @@ func gnssFixRecord(place gnssPlace, now time.Time, noise gnssNoise) string {
 	} else if longitude < -180 {
 		longitude += 360
 	}
-	return fmt.Sprintf("Fix,GPS,%.7f,%.7f,0.0,0.0,%.1f,0.0,%d,0.5,90.0,0%s",
-		latitude, longitude, noise.accuracyMeters, now.UnixMilli(), gnssRecordEnd)
+	// The record carries 7 decimals, and NMEA describes the same fix.
+	latitude = math.Round(latitude*1e7) / 1e7
+	longitude = math.Round(longitude*1e7) / 1e7
+	return gnssFix{latitude: latitude, longitude: longitude, accuracyMeters: math.Round(noise.accuracyMeters*10) / 10,
+		time: time.UnixMilli(now.UnixMilli())}
+}
+
+// line is the fix in the format FixLocationParser reads:
+// Fix,Provider,LatitudeDegrees,LongitudeDegrees,AltitudeMeters,SpeedMps,
+// AccuracyMeters,BearingDegrees,UnixTimeMillis,SpeedAccuracyMps,
+// BearingAccuracyDegrees,ElapsedRealtimeNanos. The node knows no altitude,
+// speed or bearing, so they are 0; the HAL stamps elapsed realtime itself,
+// so the last field is 0.
+func (f gnssFix) line() string {
+	return fmt.Sprintf("Fix,GPS,%.7f,%.7f,0.0,0.0,%.1f,0.0,%d,0.5,90.0,0",
+		f.latitude, f.longitude, f.accuracyMeters, f.time.UnixMilli())
+}
+
+// gnssLocationRecord answers a location request: the fix on the first line,
+// which is all an older HAL reads, then a line per tracked signal,
+// Sv,Constellation,Svid,Cn0DbHz,BasebandCn0DbHz,ElevationDegrees,
+// AzimuthDegrees,CarrierFrequencyHz,SvFlags, and a line per NMEA sentence,
+// Nmea,<sentence>, ended by the HAL's record terminator.
+func gnssLocationRecord(fix gnssFix, sky []gnssSatellite) string {
+	lines := []string{fix.line()}
+	for _, satellite := range sky {
+		lines = append(lines, fmt.Sprintf("Sv,%d,%d,%.1f,%.1f,%.1f,%.1f,%.0f,%d", satellite.constellation, satellite.svid,
+			satellite.cn0, satellite.basebandCN0, satellite.elevation, satellite.azimuth, satellite.signal.carrierHz,
+			satellite.flags))
+	}
+	for _, sentence := range gnssNMEA(fix, sky) {
+		lines = append(lines, "Nmea,"+sentence)
+	}
+	// No newline before the terminator: the HAL would keep it for the next
+	// record, whose first line would then be empty.
+	return strings.Join(lines, "\n") + gnssRecordEnd
+}
+
+// gnssReceiverRecord answers a receiver request:
+// Receiver,YearOfHardware,Flags,ModelName (the name last, as it may hold
+// commas; flag 1 is carrier phase), then a line per signal it can track,
+// Signal,Constellation,CarrierFrequencyHz,CodeType.
+func gnssReceiverRecord(receiver gnssReceiver) string {
+	flags := 0
+	if receiver.carrierPhase {
+		flags |= 1
+	}
+	lines := []string{fmt.Sprintf("Receiver,%d,%d,%s", receiver.year, flags, receiver.name)}
+	for _, signalType := range receiver.signalTypes() {
+		lines = append(lines, fmt.Sprintf("Signal,%d,%.0f,%s", signalType.constellation, signalType.signal.carrierHz,
+			signalType.signal.code))
+	}
+	return strings.Join(lines, "\n") + gnssRecordEnd
 }
