@@ -193,6 +193,19 @@ Lawnchair, with the owner's settings built in, is to carry the look.
 - **Battery.** The status bar shows a battery with a "?", as a container has
   none, and Android 16's battery icon can't be hidden by a setting.
 
+## Compiled code
+
+Android 16's garbage collector needs the kernel's userfaultfd, which the VM
+kernel leaves out, and code compiled for it can't run under the concurrent
+copying collector ART falls back to. A ReDroid build has no kernel to go
+by, so it compiled for the newer one: at boot ART threw away every odex in
+the image and the boot image itself, and the framework, SystemUI and the
+launcher ran interpreted (stock ReDroid 16 does the same in our VM). The
+image is built for the concurrent copying collector
+(`PRODUCT_ENABLE_UFFD_GC := false`), so what the build compiles is what
+runs: the boot image, and SystemUI and the launcher compiled with `speed`,
+as LineageOS lists them.
+
 ## Container confinement
 
 Our image runs without `--privileged` (2026-10-27). Privileged, a runtime

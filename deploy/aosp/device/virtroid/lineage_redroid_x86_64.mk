@@ -49,6 +49,14 @@ PRODUCT_SYSTEM_DEFAULT_PROPERTIES += persist.sys.usb.config=adb
 # container the audit configuration is the host's (patches/system/logging).
 PRODUCT_SYSTEM_DEFAULT_PROPERTIES += ro.logd.auditd=false
 
+# ART's concurrent copying garbage collector, which is what a runtime gets:
+# the newer one needs the kernel's userfaultfd, which the VM kernel leaves
+# out, and code compiled for one can't run under the other. With no kernel
+# in the build to go by, the build compiled for the newer one, so ART threw
+# away every odex in the image at boot and ran SystemUI, the launcher and
+# Settings interpreted.
+PRODUCT_ENABLE_UFFD_GC := false
+
 # components.md's cuts (Android.mk).
 PRODUCT_PACKAGES += VirtroidRemovePackages
 
