@@ -7,9 +7,4 @@
     <!-- The clock is the VM's. Android setting it from the network would
          change the whole VM's clock, which a privileged container can. -->
     <bool name="def_auto_time">false</bool>
-    <!-- Virtroid's lime as the system colour a runtime starts with, a preset
-         the owner can change in Settings (patches/frameworks/base). The same
-         as theming_defaults, which SystemUI applies only if it gets there
-         before Provision marks the runtime set up. -->
-    <string name="def_theme_customization_overlay_packages" translatable="false">{\"android.theme.customization.color_source\":\"preset\",\"android.theme.customization.system_palette\":\"AFD135\",\"android.theme.customization.accent_color\":\"AFD135\",\"android.theme.customization.theme_style\":\"TONAL_SPOT\"}</string>
 </resources>

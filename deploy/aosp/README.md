@@ -166,53 +166,18 @@ certificate and claim its privileges, or `android.uid.system` itself.
 
 ## Look
 
-The owner's design (mockups and a design note, kept outside the repo) is the
-guide, done the way Android intends where it can be: overlays and default
-settings in `device/virtroid`, and small patches where Android has no
-setting (2026-10-27).
+Android's own look (2026-10-28). The colour theme, tile shape and icon
+patches of 2026-10-27 were dropped once the owner saw them on a phone;
+Lawnchair, with the owner's settings built in, is to carry the look.
 
-- **Colours.** Virtroid's lime (#AFD135) is the system colour a runtime
-  starts with: `theming_defaults`, and SettingsProvider's default theme
-  setting (patches/frameworks/base 0002), because SystemUI applies the first
-  only until Provision marks the runtime set up, almost at once in a
-  container. Android's own styles tint every surface and all text from that
-  colour, which made panels olive and text yellow; the design has grey
-  surfaces with the lime only as the accent. A device can now ask for that
-  (`config_themeGreySurfaces`, patches/frameworks/libs/systemui and
-  frameworks/base 0003): grey neutral palettes, the seed colour itself as
-  the accent, and no hue but the seed's. With TONAL_SPOT that gives the
-  design's own tones: background #0e0e0e, cards #1f1f1f, text #e5e5e5,
-  accent #b2d438. Settings' pages and cards sit a step darker than
-  Android's (SettingsLib's colours). LineageOS's black theme stays off, as
-  it tints text with the accent.
-- **Quick Settings.** Android 16 shows a tile's state by its shape: rounded
-  corners when on, a pill or circle when off. Every tile now keeps one shape,
-  with the design's smaller corners (frameworks/base 0004); its colour still
-  shows the state. A runtime can't blur behind the shade, so SystemUI paints
-  a fallback colour, a dark tint of the accent, with translucent tiles meant
-  for a blur: the fallback is now near black and the tiles a solid grey.
-- **Icons.** Themed icons are on by default (patches/packages/apps/Launcher3):
-  a light grey glyph on a dark grey square (iconloader's colours), in AOSP's
-  rounded-square shape (`config_icon_mask`). Settings' home page draws every
-  category in the accent on a dark tint of it, not one colour each.
-- **Home screen.** Browser, F-Droid, Files and Settings in the dock, Gallery
-  and Calculator above it, on a black wallpaper.
-- **Fingerprint.** Apps can read the system colours, so every runtime
-  sharing the lime lets an app tell it runs on Virtroid: a decision, not an
-  oversight.
-- **Checked on a running runtime (build 15).** From first boot: Quick
-  Settings #0e0e0e with #1f1f1f tiles and every tile the same shape;
-  Settings #0e0e0e with #191919 cards, text #e3e3e3, icons #b2d438; home
-  icons #ededed on #1b1b1b over black; LineageOS's black theme off.
-- **Not like the design yet.** Navigation stays 3-button: with gesture
-  navigation, the swipe up for the runtime's home would trigger the viewing
-  phone's own home, which the app can't exclude. The status bar shows a
-  battery with a "?", as a container has none, and Android 16's battery icon
-  can't be hidden by a setting. Glyphs are each app's own, filled; the
-  design's outline icons would mean drawing replacements app by app. An on
-  tile is a lime fill, not the design's dark tint with a lime outline. The
-  design's clock, status chips and readouts on the home screen are the
-  runtime agent's widget, still to build.
+- **Home screen.** LineageOS's own launcher: Browser, F-Droid, Files and
+  Settings in the dock, Gallery and Calculator above it, on a black
+  wallpaper.
+- **Navigation** stays 3-button: with gesture navigation, the swipe up for
+  the runtime's home would trigger the viewing phone's own home, which the
+  app can't exclude.
+- **Battery.** The status bar shows a battery with a "?", as a container has
+  none, and Android 16's battery icon can't be hidden by a setting.
 
 ## Container confinement
 

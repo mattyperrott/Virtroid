@@ -23,9 +23,8 @@ TARGET_EXCLUDES_LINEAGE_SETUPWIZARD := true
 PRODUCT_COPY_FILES += \
     device/virtroid/handheld_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
 # No Google endpoints by default (captive portal probes off, network time
-# from the NTP pool, the browser on DuckDuckGo), and Virtroid's look: grey
-# surfaces with the lime accent, one-colour icons and a black wallpaper
-# (overlay/).
+# from the NTP pool, the browser on DuckDuckGo), and the home screen's
+# layout on a black wallpaper (overlay/).
 PRODUCT_PACKAGE_OVERLAYS += device/virtroid/overlay
 
 $(call inherit-product, device/redroid/redroid_x86_64_only.mk)

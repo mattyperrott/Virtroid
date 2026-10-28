@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Settings' pages and cards one step darker than Android's, as in
-         Virtroid's design: near black behind dark grey cards. -->
-    <color name="settingslib_materialColorSurfaceContainer">@android:color/system_surface_dim_dark</color>
-    <color name="settingslib_materialColorSurfaceBright">@android:color/system_surface_container_dark</color>
-</resources>

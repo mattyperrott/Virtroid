@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Virtroid's design: grey surfaces and text, with the lime only as the
-         accent, instead of Monet tinting every surface from it
-         (patches/frameworks/base, patches/frameworks/libs/systemui). -->
-    <bool name="config_themeGreySurfaces">true</bool>
-</resources>

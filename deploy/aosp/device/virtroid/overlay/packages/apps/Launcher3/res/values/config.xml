@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Themed (monochrome) icons on the home screen from the start
-         (patches/packages/apps/Launcher3). -->
-    <bool name="config_default_themed_icons">true</bool>
-</resources>

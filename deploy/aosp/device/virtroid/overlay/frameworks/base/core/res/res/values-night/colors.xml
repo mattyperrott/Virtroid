@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Quick Settings tiles, the shade's buttons and notifications sit on
-         this. Android's is a translucent dark layer meant for a blurred
-         shade; a runtime can't blur, and on its near-black fallback
-         (SystemUI's shade_panel_fallback) the layer would vanish. A solid
-         grey a step above, as in Virtroid's design. -->
-    <color name="surface_effect_1">@android:color/system_surface_container_high_dark</color>
-</resources>
