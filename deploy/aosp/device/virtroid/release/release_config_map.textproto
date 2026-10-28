@@ -1,0 +1,8 @@
+# The image's own flag values on top of the bp4a release's: build/make's
+# release_config.mk reads every device/*/release/release_config_map.textproto,
+# and a release config named here adds its value sets to that release's,
+# after them, so these win.
+description: "Virtroid's runtime image"
+# Where flags declared here would live; it declares none, but every map
+# names one.
+default_containers: "system_ext"

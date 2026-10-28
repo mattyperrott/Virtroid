@@ -1,0 +1,6 @@
+flag_value {
+  package: "com.android.systemui"
+  name: "qs_compose_fragment_early_expansion"
+  state: DISABLED
+  permission: READ_ONLY
+}

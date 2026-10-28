@@ -1,0 +1,12 @@
+// The notification shade as Android 16 first shipped it (bp2a): QPR1 and
+// QPR2 turned on a blurred shade, quick settings in Compose and a shader
+// that pushes the app back behind the shade. A runtime has no GPU, so the
+// CPU draws every frame of those, and measured against stock ReDroid 16 the
+// shade opened about 230 ms later, with single frames past two seconds.
+aconfig_values {
+    name: "aconfig-values-virtroid-bp4a-com.android.systemui-all",
+    package: "com.android.systemui",
+    srcs: [
+        "*_flag_values.textproto",
+    ],
+}

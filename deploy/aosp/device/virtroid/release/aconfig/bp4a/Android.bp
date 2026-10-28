@@ -1,0 +1,6 @@
+aconfig_value_set {
+    name: "aconfig_value_set-virtroid-bp4a",
+    srcs: [
+        "*/Android.bp",
+    ],
+}

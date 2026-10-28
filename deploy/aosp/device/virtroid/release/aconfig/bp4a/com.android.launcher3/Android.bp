@@ -1,0 +1,10 @@
+// The launcher without QPR1's blur behind the app drawer and overview: with
+// no GPU the CPU draws the blur too, and measured against stock ReDroid 16
+// the launcher's frames spent twice as long drawing.
+aconfig_values {
+    name: "aconfig-values-virtroid-bp4a-com.android.launcher3-all",
+    package: "com.android.launcher3",
+    srcs: [
+        "*_flag_values.textproto",
+    ],
+}

@@ -1,0 +1,8 @@
+// The image's own flag values for the bp4a release (release_configs/,
+// aconfig/bp4a/).
+release_config_contributions {
+    name: "release_config_contributions-virtroid",
+    srcs: [
+        "release_configs/*.textproto",
+    ],
+}

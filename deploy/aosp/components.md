@@ -103,8 +103,9 @@ Still open:
    Privacy Browser.
 2. **The look:** launcher, wallpaper, theme colours, icons and fonts, from
    the owner's design. Applied so far (2026-10-28, [README.md](README.md),
-   look): Android's own, with LineageOS's launcher and a black wallpaper;
-   Lawnchair with the owner's settings is next.
+   look): Android's own, with LineageOS's launcher (without its blur), a
+   black wallpaper and the notification shade as Android 16 first shipped
+   it; Lawnchair with the owner's settings is next.
 
 ## Applied in the image (2026-10-26)
 

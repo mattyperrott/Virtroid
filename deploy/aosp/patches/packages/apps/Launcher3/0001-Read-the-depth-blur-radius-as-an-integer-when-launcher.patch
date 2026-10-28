@@ -1,0 +1,44 @@
+From e3b993398ff425255677f5f9bf8d5ad9553d957d Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 28 Oct 2026 02:16:58 +0000
+Subject: [PATCH] Read the depth blur radius as an integer when launcher blur
+ is off
+
+With all_apps_blur and enable_overview_background_wallpaper_blur both
+off, ScalingWorkspaceRevealAnim read R.integer.max_depth_blur_radius with
+getDimensionPixelSize, which throws Resources.NotFoundException ("type
+#0x10 is not valid"), and the launcher crashed each time it came back
+home from an app. BaseDepthController and LauncherBackAnimationController
+already read it with getInteger.
+
+Change-Id: Ifc8bf2d583ba9893c4aeb0e6b0673e6e7330fe72
+---
+ .../quickstep/util/ScalingWorkspaceRevealAnim.kt     | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/quickstep/src/com/android/quickstep/util/ScalingWorkspaceRevealAnim.kt b/quickstep/src/com/android/quickstep/util/ScalingWorkspaceRevealAnim.kt
+index 7aec25f..9c36d1f 100644
+--- a/quickstep/src/com/android/quickstep/util/ScalingWorkspaceRevealAnim.kt
++++ b/quickstep/src/com/android/quickstep/util/ScalingWorkspaceRevealAnim.kt
+@@ -186,13 +186,11 @@ class ScalingWorkspaceRevealAnim(
+ 
+             // Add a blur animation to the scrim layer.
+             var maxBlurRadius =
+-                launcher.resources.getDimensionPixelSize(
+-                    if (Flags.allAppsBlur() || Flags.enableOverviewBackgroundWallpaperBlur()) {
+-                        R.dimen.max_depth_blur_radius_enhanced
+-                    } else {
+-                        R.integer.max_depth_blur_radius
+-                    }
+-                )
++                if (Flags.allAppsBlur() || Flags.enableOverviewBackgroundWallpaperBlur()) {
++                    launcher.resources.getDimensionPixelSize(R.dimen.max_depth_blur_radius_enhanced)
++                } else {
++                    launcher.resources.getInteger(R.integer.max_depth_blur_radius)
++                }
+             val blurAnimator = ValueAnimator.ofFloat(1f, 0f)
+             blurAnimator.setInterpolator(BLUR_INTERPOLATOR)
+             blurAnimator.addUpdateListener {
+-- 
+2.43.0
+

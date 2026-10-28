@@ -170,6 +170,20 @@ Android's own look (2026-10-28). The colour theme, tile shape and icon
 patches of 2026-10-27 were dropped once the owner saw them on a phone;
 Lawnchair, with the owner's settings built in, is to carry the look.
 
+- **Notification shade.** As Android 16 first shipped it (bp2a). QPR1 and
+  QPR2 turned on a blurred shade, quick settings in Compose and a shader that
+  pushes the app back behind the shade (SystemUI's notification_shade_blur,
+  qs_ui_refactor_compose_fragment, qs_compose_fragment_early_expansion,
+  spatial_model_app_pushback and spatial_model_pushback_in_shader). A runtime
+  has no GPU, so the CPU draws every frame of them: in the same VM as stock
+  ReDroid 16, the shade opened about 230 ms later, and SystemUI's slowest
+  frames took over two seconds against under one. These flags are fixed
+  when the image is built, so `device/virtroid/release` turns them off for
+  the bp4a release, along with the launcher's blur behind the app drawer
+  and overview (all_apps_blur, enable_overview_background_wallpaper_blur),
+  which doubled the time its frames took to draw. With both off, the
+  launcher misread its blur radius and crashed each time it came back home
+  from an app; `patches/packages/apps/Launcher3` fixes that.
 - **Home screen.** LineageOS's own launcher: Browser, F-Droid, Files and
   Settings in the dock, Gallery and Calculator above it, on a black
   wallpaper.

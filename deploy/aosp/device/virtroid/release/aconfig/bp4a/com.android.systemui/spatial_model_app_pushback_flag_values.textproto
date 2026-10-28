@@ -1,0 +1,6 @@
+flag_value {
+  package: "com.android.systemui"
+  name: "spatial_model_app_pushback"
+  state: DISABLED
+  permission: READ_ONLY
+}
