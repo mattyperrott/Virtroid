@@ -49,7 +49,7 @@ expect it. *Decide*: a product choice (listed again at the end).
 | Contacts, Dialer, Messaging | Cut | No phone or SIM. |
 | AudioFX, LiveDisplay | Cut | No speakers or display hardware to tune. |
 | Lineage Health (charging control), FlipFlap | Cut | No battery, no cover. |
-| LineageParts and Trust | Test | Lineage's Settings pages; Settings may depend on them. |
+| LineageParts and Trust | Cut | Lineage's Settings pages; Settings runs without them. |
 | Lineage themes and wallpapers | Decide | Depends on the design. |
 
 ## Cut: AOSP's phone apps and services
@@ -121,7 +121,10 @@ Still open:
   longer declared, so its service never starts; the Bluetooth APEX stays,
   as it carries the android.bluetooth classes apps link against),
   LineageParts, and the boot animation. Cell broadcast
-  and the Wi-Fi HAL stub were already absent.
+  and the Wi-Fi HAL stub were already absent. Without LineageParts,
+  LineageOS's Trust service had nowhere to send its notifications ("Discover
+  Trust" on every new runtime led nowhere), so it no longer starts
+  (`overlay/lineage-sdk`, 2026-10-28).
 - **Cut with the release keys (2026-10-27):** the CTS shims, an APEX and two
   apps that only Android's compatibility tests use, which come prebuilt with
   Google's test keys (README.md, release keys).

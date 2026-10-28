@@ -13,6 +13,7 @@
 #   BOOT_TEST_KEEP=1    keep a passing VM up too, to inspect the runtime
 #   BOOT_TEST_SED=EXPR  sed expression applied to the overlay copy of /sbin/init
 #   BOOT_TEST_DIR       work directory (default /var/tmp/virtroid-boot-test)
+#   BOOT_TEST_VCPUS=N   the VM's vCPUs (default 2, as the provisioner's VMs)
 #   BOOT_TEST_APKS=DIR  install every APK in DIR; each app must start and keep
 #                       running (for ARM-only apps such as SimpleX's)
 #   BOOT_TEST_UPGRADE_FROM=TAR  an older runtime image (docker save): boot it on
@@ -634,7 +635,7 @@ truncate -s "$([ -n "$runtime_disk" ] && echo 24G || echo 16G)" data.img
 
 qemu=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
   --inputs-from "$flake" nixpkgs#qemu_kvm)
-timeout "${BOOT_TEST_TIMEOUT:-$([ -n "$standin" ] && echo 2100 || echo 1200)}" "$qemu/bin/qemu-system-x86_64" -enable-kvm -cpu host -smp 2 -m 4096 \
+timeout "${BOOT_TEST_TIMEOUT:-$([ -n "$standin" ] && echo 2100 || echo 1200)}" "$qemu/bin/qemu-system-x86_64" -enable-kvm -cpu host -smp "${BOOT_TEST_VCPUS:-2}" -m 4096 \
   -nographic -no-reboot -serial mon:stdio -serial "unix:$work/debug.sock,server=on,wait=off" \
   -kernel "$img/runtime/bzImage" -initrd initrd.gz -append "console=ttyS0 panic=-1 loglevel=4" \
   -drive "file=$img/root/root.img,format=raw,if=virtio,readonly=on" \

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- LineageOS's services without Trust. Its only screens are in
+         LineageParts, which components.md cuts, so the "Discover Trust"
+         notification it posted on every new runtime led nowhere. -->
+    <string-array name="config_externalLineageServices">
+        <item>org.lineageos.platform.internal.ProfileManagerService</item>
+        <item>org.lineageos.platform.internal.LineageHardwareService</item>
+        <item>org.lineageos.platform.internal.display.LiveDisplayService</item>
+        <item>org.lineageos.platform.internal.LineageSettingsService</item>
+        <item>org.lineageos.platform.internal.LineageGlobalActionsService</item>
+        <item>org.lineageos.platform.internal.health.HealthInterfaceService</item>
+    </string-array>
+</resources>

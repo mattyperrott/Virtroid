@@ -1,0 +1,59 @@
+From 724291b055a6be2946a6588d2e7a8ef902e63ee3 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 28 Oct 2026 08:42:34 +0000
+Subject: [PATCH] C2SoftAvcEnc: encode at libavc's fastest preset
+
+With no hardware encoder, the software AVC encoder is what streams the
+device's screen to its viewer, and at IVE_NORMAL it took more CPU than
+anything else while the screen moved: in a 2-CPU container, about 180 ms
+of CPU per second over a run of app drawer and notification shade
+gestures, ahead of SurfaceFlinger (160 ms) and the launcher (120 ms).
+
+IVE_FASTEST drops 4x4 intra modes, half-pel motion search and deblocking,
+and lets motion search stop early. Screen content is mostly still, with
+sharp edges and few small motions, so little of that buys visible quality
+at a streaming bit rate.
+---
+ media/codec2/components/avc/C2SoftAvcEnc.h |  6 +++++-
+ msg                                        | 12 ++++++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+ create mode 100644 msg
+
+diff --git a/media/codec2/components/avc/C2SoftAvcEnc.h b/media/codec2/components/avc/C2SoftAvcEnc.h
+index 63a7398..3ff7bd7 100644
+--- a/media/codec2/components/avc/C2SoftAvcEnc.h
++++ b/media/codec2/components/avc/C2SoftAvcEnc.h
+@@ -47,7 +47,11 @@ namespace android {
+ #define DEFAULT_NUM_CORES           1
+ #define DEFAULT_NUM_CORES_PRE_ENC   0
+ #define DEFAULT_FPS                 30
+-#define DEFAULT_ENC_SPEED           IVE_NORMAL
++// libavc's fastest preset: no 4x4 intra modes, no half-pel motion search,
++// no deblocking, and early exits in motion search. With no hardware encoder,
++// this encoder is what streams the screen, and at the normal preset it took
++// more CPU than anything else while the screen moved.
++#define DEFAULT_ENC_SPEED           IVE_FASTEST
+ 
+ #define DEFAULT_MEM_REC_CNT         0
+ #define DEFAULT_RECON_ENABLE        0
+diff --git a/msg b/msg
+new file mode 100644
+index 0000000..2bf17fe
+--- /dev/null
++++ b/msg
+@@ -0,0 +1,12 @@
++C2SoftAvcEnc: encode at libavc's fastest preset
++
++With no hardware encoder, the software AVC encoder is what streams the
++device's screen to its viewer, and at IVE_NORMAL it took more CPU than
++anything else while the screen moved: in a 2-CPU container, about 180 ms
++of CPU per second over a run of app drawer and notification shade
++gestures, ahead of SurfaceFlinger (160 ms) and the launcher (120 ms).
++
++IVE_FASTEST drops 4x4 intra modes, half-pel motion search and deblocking,
++and lets motion search stop early. Screen content is mostly still, with
++sharp edges and few small motions, so little of that buys visible quality
++at a streaming bit rate.
+-- 
+2.56.0
+
