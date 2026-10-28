@@ -454,8 +454,13 @@ func parseEnvDuration(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+// parseEnvCSV splits key's comma-separated value, or fallback when key is
+// unset. Set but empty, key is an empty list.
 func parseEnvCSV(key, fallback string) []string {
-	value := envOrDefault(key, fallback)
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		value = fallback
+	}
 	if value == "" {
 		return nil
 	}

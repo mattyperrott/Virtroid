@@ -166,6 +166,25 @@ func TestRenterdPasswordFileFailsClosed(t *testing.T) {
 	}
 }
 
+func TestNodeDefaultAppsCanBeNone(t *testing.T) {
+	t.Setenv("NODE_DEFAULT_APP_PACKAGES", "")
+	os.Unsetenv("NODE_DEFAULT_APP_PACKAGES")
+	if got := LoadNode().DefaultAppPackages; len(got) != 1 || got[0] != "org.fdroid.basic" {
+		t.Fatalf("unset: DefaultAppPackages = %q, want [org.fdroid.basic]", got)
+	}
+
+	// An image with its own app store sets it empty.
+	t.Setenv("NODE_DEFAULT_APP_PACKAGES", "")
+	if got := LoadNode().DefaultAppPackages; len(got) != 0 {
+		t.Fatalf("empty: DefaultAppPackages = %q, want none", got)
+	}
+
+	t.Setenv("NODE_DEFAULT_APP_PACKAGES", "org.example.a, org.example.b,org.example.a")
+	if got := LoadNode().DefaultAppPackages; len(got) != 2 || got[0] != "org.example.a" || got[1] != "org.example.b" {
+		t.Fatalf("list: DefaultAppPackages = %q, want [org.example.a org.example.b]", got)
+	}
+}
+
 func TestNodeDiskHeadroomDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("NODE_MIN_FREE_DISK_BYTES", "")
 	t.Setenv("NODE_MIN_FREE_DISK_PERCENT", "")
