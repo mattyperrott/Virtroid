@@ -209,6 +209,21 @@ image is built for the concurrent copying collector
 runs: the boot image, and SystemUI and the launcher compiled with `speed`,
 as LineageOS lists them.
 
+## Screen encoder
+
+A runtime has no hardware encoder, so the viewer's stream comes from
+Android's software AVC encoder, and while the screen moves it takes more
+CPU than anything but SurfaceFlinger. Three patches in
+`patches/frameworks/av` cut it by half in a 2-vCPU VM (2026-10-28, builds
+26 to 28), with the first frame of each gesture as soon as before:
+
+- 0001 encodes at libavc's fastest preset (no 4x4 intra modes, half-pel
+  motion search or deblocking), which suits mostly still screen content.
+- 0002 converts the virtual display's RGBA to YUV a row at a time, byte for
+  byte as before; Android's per-pixel loop was a third of the encoder's CPU.
+- 0003 encodes on one thread. libavc started a second thread for every
+  frame, and the two waited on each other by spinning on `sched_yield`.
+
 ## Container confinement
 
 Our image runs without `--privileged` (2026-10-27). Privileged, a runtime

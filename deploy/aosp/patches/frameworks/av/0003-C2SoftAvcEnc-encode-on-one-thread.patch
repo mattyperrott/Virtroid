@@ -1,0 +1,56 @@
+From 900b1927a29da7220de8725b20d387fdc6a31db6 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 28 Oct 2026 13:03:50 +0000
+Subject: [PATCH] C2SoftAvcEnc: encode on one thread
+
+For each core past the first, libavc starts a thread for every frame and
+joins it when the frame is done, and the threads wait on each other's
+rows of macroblocks by spinning on sched_yield. In a 2-CPU device
+streaming its screen while SurfaceFlinger composes it, the second thread
+rarely has a CPU to itself: sched_yield and the scheduler were about 13%
+of the encoder's CPU, and every frame started a new thread.
+
+Encode on one thread whatever the CPU count, as DEFAULT_NUM_CORES says.
+---
+ media/codec2/components/avc/C2SoftAvcEnc.cpp | 18 ++++--------------
+ 1 file changed, 4 insertions(+), 14 deletions(-)
+
+diff --git a/media/codec2/components/avc/C2SoftAvcEnc.cpp b/media/codec2/components/avc/C2SoftAvcEnc.cpp
+index 1e7b275..81afded 100644
+--- a/media/codec2/components/avc/C2SoftAvcEnc.cpp
++++ b/media/codec2/components/avc/C2SoftAvcEnc.cpp
+@@ -583,19 +583,6 @@ namespace {
+ // From external/libavc/encoder/ih264e_bitstream.h
+ constexpr uint32_t MIN_STREAM_SIZE = 0x800;
+ 
+-static size_t GetCPUCoreCount() {
+-    long cpuCoreCount = 1;
+-#if defined(_SC_NPROCESSORS_ONLN)
+-    cpuCoreCount = sysconf(_SC_NPROCESSORS_ONLN);
+-#else
+-    // _SC_NPROC_ONLN must be defined...
+-    cpuCoreCount = sysconf(_SC_NPROC_ONLN);
+-#endif
+-    CHECK(cpuCoreCount >= 1);
+-    ALOGV("Number of CPU cores: %ld", cpuCoreCount);
+-    return (size_t)cpuCoreCount;
+-}
+-
+ }  // namespace
+ 
+ C2SoftAvcEnc::C2SoftAvcEnc(
+@@ -663,7 +650,10 @@ void  C2SoftAvcEnc::initEncParams() {
+     mMemRecords = nullptr;
+     mNumMemRecords = DEFAULT_MEM_REC_CNT;
+     mHeaderGenerated = 0;
+-    mNumCores = GetCPUCoreCount();
++    // One thread, whatever the CPU count. For each extra core libavc starts a
++    // thread for every frame, and the threads wait on each other's rows of
++    // macroblocks by spinning on sched_yield.
++    mNumCores = DEFAULT_NUM_CORES;
+     mArch = DEFAULT_ARCH;
+     mSliceMode = DEFAULT_SLICE_MODE;
+     mSliceParam = DEFAULT_SLICE_PARAM;
+-- 
+2.56.0
+
