@@ -186,7 +186,10 @@ Lawnchair, with the owner's settings built in, is to carry the look.
   from an app; `patches/packages/apps/Launcher3` fixes that.
 - **Home screen.** LineageOS's own launcher: Browser, F-Droid, Files and
   Settings in the dock, Gallery and Calculator above it, on a black
-  wallpaper.
+  wallpaper. The wallpaper doesn't zoom out behind the opening shade
+  (`config_wallpaperMaxScale` in the framework overlay): each step of that
+  zoom had SurfaceFlinger redraw the viewer's screen on the CPU while
+  SystemUI drew the shade, and on black it can't be seen.
 - **Navigation** stays 3-button: with gesture navigation, the swipe up for
   the runtime's home would trigger the viewing phone's own home, which the
   app can't exclude.

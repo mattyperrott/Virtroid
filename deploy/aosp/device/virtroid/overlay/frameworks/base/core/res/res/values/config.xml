@@ -5,4 +5,11 @@
     <string-array translatable="false" name="config_ntpServers">
         <item>ntp://2.android.pool.ntp.org</item>
     </string-array>
+
+    <!-- The wallpaper stays still as the notification shade comes down.
+         Android zooms it out a little behind the shade; with no GPU, each
+         step of the zoom has SurfaceFlinger redraw the viewer's whole screen
+         on the CPU while SystemUI is drawing the shade, and on a black
+         wallpaper the zoom can't be seen. -->
+    <item name="config_wallpaperMaxScale" format="float" type="dimen">1</item>
 </resources>
