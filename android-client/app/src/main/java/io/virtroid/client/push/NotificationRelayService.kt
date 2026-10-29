@@ -42,6 +42,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
+import kotlin.random.Random
 
 class NotificationRelayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -103,7 +104,11 @@ class NotificationRelayService : Service() {
                     stopSelf()
                     return@launch
                 }
-                runCatching { consumeStream(identity) }
+                // A stream that got going and later broke (a read timeout on a
+                // dead connection, say) starts the backoff over, like one
+                // that ended cleanly.
+                var established = false
+                runCatching { consumeStream(identity) { established = true } }
                     .onSuccess {
                         retryDelayMs = INITIAL_RETRY_DELAY_MS
                         consecutiveFailures = 0
@@ -117,14 +122,20 @@ class NotificationRelayService : Service() {
                             }
                         }
                     }
+                if (established) {
+                    retryDelayMs = INITIAL_RETRY_DELAY_MS
+                    consecutiveFailures = 0
+                }
                 if (!currentCoroutineContext().isActive) return@launch
-                delay(retryDelayMs)
+                // Jitter, so phones that lost the server together don't all
+                // come back in the same second.
+                delay(retryDelayMs / 2 + Random.nextLong(retryDelayMs))
                 retryDelayMs = (retryDelayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
             }
         }
     }
 
-    private fun consumeStream(identity: NotificationRelayIdentityStore.RelayIdentity) {
+    private fun consumeStream(identity: NotificationRelayIdentityStore.RelayIdentity, onEstablished: () -> Unit) {
         val path = "/api/v1/me/notification-stream"
         val request = signedRequest(identity, path, "GET")
         val call = STREAM_CLIENT.newCall(request)
@@ -135,8 +146,13 @@ class NotificationRelayService : Service() {
                 val contentType = response.header("Content-Type").orEmpty().lowercase()
                 if (!contentType.startsWith("text/event-stream")) throw IOException("unexpected stream response")
                 val source = response.body?.source() ?: throw IOException("empty notification stream")
+                var first = true
                 while (!source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
+                    if (first) {
+                        first = false
+                        onEstablished()
+                    }
                     if (line.startsWith(SSE_DATA_PREFIX)) {
                         processDelivery(identity, line.removePrefix(SSE_DATA_PREFIX))
                     }
@@ -463,10 +479,15 @@ class NotificationRelayService : Service() {
         private val SECURITY_SOURCES = setOf("falco", "suricata")
         private val SECURITY_SEVERITIES = setOf("notice", "warning", "critical")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        // The server sends a keepalive every 15 s (notificationStreamHeartbeat
+        // in backend/internal/httpapi/notifications.go). Three missed ones
+        // mean the connection is dead even if TCP never said so (Wi-Fi that
+        // lost its upstream, a NAT reset), so reconnect instead of waiting
+        // forever.
         private val STREAM_CLIENT = OkHttpClient.Builder()
             .certificatePinner(TlsPins.certificatePinner())
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .build()
         private val ACK_CLIENT = OkHttpClient.Builder()
