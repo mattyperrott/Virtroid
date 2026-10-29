@@ -19,8 +19,19 @@ import (
 // with the key configured in PROVISIONER_PUBLIC_KEY.
 const provisionerRequestID = "virtroid-provisioner"
 
-// How long the app should wait before asking again while its VM is prepared.
-const provisioningRetryAfter = 5 * time.Second
+// How long the app should wait before asking again while its VM is prepared:
+// shorter once the VM is booting, when its node is seconds from reporting in.
+const (
+	provisioningRetryAfter        = 5 * time.Second
+	provisioningBootingRetryAfter = 2 * time.Second
+)
+
+func provisioningRetryAfterFor(vm store.ProvisionedVM) time.Duration {
+	if vm.Desired == "present" && (vm.State == "booting" || vm.State == "ready") {
+		return provisioningBootingRetryAfter
+	}
+	return provisioningRetryAfter
+}
 
 func (a *API) provisioningPolicy() store.ProvisioningPolicy {
 	return store.ProvisioningPolicy{
@@ -55,7 +66,7 @@ func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID
 		writeInternalAPIError(w, "runtime_vm_request_failed", err)
 		return
 	}
-	retryAfter := int(provisioningRetryAfter / time.Second)
+	retryAfter := int(provisioningRetryAfterFor(vm) / time.Second)
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 		"error":               "your private runtime server is being prepared",

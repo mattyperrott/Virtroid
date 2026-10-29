@@ -5,8 +5,14 @@ import kotlinx.coroutines.delay
 
 internal const val RUNTIME_HOST_PROVISIONING_CODE = "runtime_host_provisioning"
 
-/** How often to ask again while the server prepares the user's private runtime server. */
+/**
+ * How often to ask again while the server prepares the user's private runtime
+ * server, when it does not say. It says retry_after_seconds, shorter once the
+ * VM is booting; that is clamped to the range below.
+ */
 internal const val RUNTIME_HOST_PROVISIONING_RETRY_MS = 5_000L
+internal const val RUNTIME_HOST_PROVISIONING_MIN_RETRY_MS = 1_000L
+internal const val RUNTIME_HOST_PROVISIONING_MAX_RETRY_MS = 10_000L
 
 /** Stop waiting before the server's own setup timeout gives up on the VM. */
 internal const val RUNTIME_HOST_PROVISIONING_MAX_WAIT_MS = 25 * 60_000L
@@ -18,17 +24,24 @@ internal data class RuntimeHostProgress(
     val detail: String,
     val region: String,
     val elapsedSeconds: Long,
+    val retryAfterMs: Long = RUNTIME_HOST_PROVISIONING_RETRY_MS,
 )
 
 internal fun VirtroidApiException.runtimeHostProgress(): RuntimeHostProgress? {
     if (code != RUNTIME_HOST_PROVISIONING_CODE) return null
     val body = details ?: return RuntimeHostProgress("", "", "", "", 0)
+    val retryAfterSeconds = body.optLong("retry_after_seconds", 0L)
     return RuntimeHostProgress(
         state = body.optString("vm_state"),
         stage = body.optString("vm_stage"),
         detail = body.optString("vm_progress"),
         region = body.optString("vm_region"),
         elapsedSeconds = body.optLong("vm_elapsed_seconds"),
+        retryAfterMs = if (retryAfterSeconds > 0) {
+            (retryAfterSeconds * 1000).coerceIn(RUNTIME_HOST_PROVISIONING_MIN_RETRY_MS, RUNTIME_HOST_PROVISIONING_MAX_RETRY_MS)
+        } else {
+            RUNTIME_HOST_PROVISIONING_RETRY_MS
+        },
     )
 }
 
@@ -62,7 +75,7 @@ internal suspend fun <T> retryWhileRuntimeHostProvisioning(
             }
             attempt++
             onWaiting(attempt, progress)
-            sleep(RUNTIME_HOST_PROVISIONING_RETRY_MS)
+            sleep(progress.retryAfterMs)
         }
     }
 }

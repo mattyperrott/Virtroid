@@ -384,3 +384,22 @@ func raiseRuntimeLimit(t *testing.T, accountID string) {
 		t.Fatalf("raise runtime limit: %v", err)
 	}
 }
+
+func TestProvisioningRetryAfterShortensOnceTheVMBoots(t *testing.T) {
+	cases := []struct {
+		state, desired string
+		want           time.Duration
+	}{
+		{"requested", "present", provisioningRetryAfter},
+		{"creating", "present", provisioningRetryAfter},
+		{"unlocking", "present", provisioningRetryAfter},
+		{"booting", "present", provisioningBootingRetryAfter},
+		{"ready", "present", provisioningBootingRetryAfter},
+		{"booting", "absent", provisioningRetryAfter},
+	}
+	for _, c := range cases {
+		if got := provisioningRetryAfterFor(store.ProvisionedVM{State: c.state, Desired: c.desired}); got != c.want {
+			t.Errorf("%s/%s: retry after %v, want %v", c.state, c.desired, got, c.want)
+		}
+	}
+}

@@ -82,6 +82,38 @@ class RuntimeHostProvisioningTest {
     }
 
     @Test
+    fun waitsAsLongAsTheServerAsksWithinBounds() = runBlocking {
+        fun asking(seconds: Long?) = VirtroidApiException(
+            503,
+            RUNTIME_HOST_PROVISIONING_CODE,
+            "being prepared",
+            JSONObject().put("code", RUNTIME_HOST_PROVISIONING_CODE).apply {
+                if (seconds != null) put("retry_after_seconds", seconds)
+            },
+        )
+        val sleeps = mutableListOf<Long>()
+        var calls = 0
+        retryWhileRuntimeHostProvisioning(
+            onWaiting = { _, _ -> },
+            nowMs = { 0L },
+            sleep = { sleeps += it },
+        ) {
+            calls++
+            when (calls) {
+                1 -> throw asking(2)
+                2 -> throw asking(null)
+                3 -> throw asking(0)
+                4 -> throw asking(600)
+                else -> "started"
+            }
+        }
+        assertEquals(
+            listOf(2_000L, RUNTIME_HOST_PROVISIONING_RETRY_MS, RUNTIME_HOST_PROVISIONING_RETRY_MS, RUNTIME_HOST_PROVISIONING_MAX_RETRY_MS),
+            sleeps,
+        )
+    }
+
+    @Test
     fun elapsedTimeFormatting() {
         assertEquals("45s", formatElapsed(45))
         assertEquals("2m 05s", formatElapsed(125))
