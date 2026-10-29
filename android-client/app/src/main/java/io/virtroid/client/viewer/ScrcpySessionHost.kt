@@ -81,7 +81,7 @@ class ScrcpySessionHost(
                     return@thread
                 }
 
-                val resolution = service.get_remote_device_resolution()
+                val resolution = service.get_stream_size()
                 displayLandscape = displayWidth > displayHeight
                 callback.onConnected(resolution[0], resolution[1])
             }
@@ -149,9 +149,8 @@ class ScrcpySessionHost(
     }
 
     override fun loadNewRotation() {
-        val resolution = scrcpy?.get_remote_device_resolution() ?: return
-        displayLandscape = displayWidth > displayHeight
-        callback.onConnected(resolution[0], resolution[1])
+        val size = scrcpy?.get_stream_size() ?: return
+        callback.onStreamResized(size[0], size[1])
     }
 
     override fun errorDisconnect(reason: String) {
@@ -168,6 +167,9 @@ class ScrcpySessionHost(
 
     interface Callback {
         fun onConnected(remoteWidth: Int, remoteHeight: Int)
+
+        /** The runtime's picture changed shape mid-stream (its display rotated). */
+        fun onStreamResized(remoteWidth: Int, remoteHeight: Int)
         fun onFirstVideoFrame()
         fun onPhysicalMicrophoneStateChanged(active: Boolean, detail: String)
         fun onDisconnected(message: String)

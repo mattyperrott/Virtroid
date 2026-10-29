@@ -134,6 +134,12 @@ class SessionActivity : AppCompatActivity() {
             }
         }
 
+        override fun onStreamResized(remoteWidth: Int, remoteHeight: Int) {
+            runOnUiThread {
+                applyRemoteSurfaceBounds(remoteWidth, remoteHeight)
+            }
+        }
+
         override fun onFirstVideoFrame() {
             runOnUiThread {
                 viewerSurfaceResumeJob?.cancel()

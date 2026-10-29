@@ -21,6 +21,7 @@ import io.virtroid.client.R;
 import io.virtroid.client.security.TlsPins;
 
 import org.client.scrcpy.decoder.AudioDecoder;
+import org.client.scrcpy.decoder.H264Sps;
 import org.client.scrcpy.decoder.VideoDecoder;
 import org.client.scrcpy.crypto.NodeKeyPin;
 import org.client.scrcpy.crypto.ViewerEncryption;
@@ -86,7 +87,9 @@ public class Scrcpy extends Service {
     private final AtomicBoolean updateAvailable = new AtomicBoolean(false);
     private final FirstFrameGate firstVideoFrameGate = new FirstFrameGate();
     private final IBinder mBinder = new MyServiceBinder();
-    private boolean first_time = true;
+    // The encoded picture's {width, height} from the latest SPS, or null
+    // before one arrives. It turns landscape when the runtime rotates.
+    private volatile int[] streamSize = null;
     // How far the picture is behind the quickest frame seen this session:
     // the time video spends queued on the way, or -1 before any frame.
     private volatile long streamBehindMs = -1;
@@ -176,7 +179,7 @@ public class Scrcpy extends Service {
     public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayFallbackHost, int relayFallbackPort, String relayToken, String viewerPublicKey, int viewerProtocol, String viewerKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
-        first_time = true;
+        streamSize = null;
         remote_dev_resolution[0] = 0;
         remote_dev_resolution[1] = 0;
         firstVideoFrameGate.reset();
@@ -447,6 +450,12 @@ public class Scrcpy extends Service {
         return remote_dev_resolution;
     }
 
+    /** The stream's current picture size, or the device size before its first SPS. */
+    public int[] get_stream_size() {
+        int[] size = streamSize;
+        return size != null ? size.clone() : remote_dev_resolution.clone();
+    }
+
     private volatile String activeEndpointHost = "";
     private volatile int activeEndpointPort;
     private volatile String activeEndpointPin = "";
@@ -541,7 +550,6 @@ public class Scrcpy extends Service {
                             ((int) (buf[i * 4 + 3]) & 0xFF);
                 }
                 if (remote_dev_resolution[0] > remote_dev_resolution[1]) {
-                    first_time = false;
                     int i = remote_dev_resolution[0];
                     remote_dev_resolution[0] = remote_dev_resolution[1];
                     remote_dev_resolution[1] = i;
@@ -771,34 +779,34 @@ public class Scrcpy extends Service {
                     if (MediaPacket.Type.getType(packet[0]) == MediaPacket.Type.VIDEO) {
                         VideoPacket videoPacket = VideoPacket.readHead(packet);
                         // byte[] data = videoPacket.data;
+                        // Configure the decoder when a surface is (re)attached, and on every
+                        // CONFIG: the encoder restarts with a new one when the runtime's
+                        // display rotates or the encoder retries. The surface stays the
+                        // same across a rotation, so reconfigure on it straight away.
                         if (videoPacket.flag == VideoPacket.Flag.CONFIG || updateAvailable.get()) {
-                            if (!updateAvailable.get()) {
+                            updateAvailable.set(false);
+                            if (videoPacket.flag == VideoPacket.Flag.CONFIG) {
                                 int dataLength = packet.length - videoPacket.headLength();
                                 byte[] data = new byte[dataLength];
                                 System.arraycopy(packet, videoPacket.headLength(), data, 0, dataLength);
                                 streamSettings = VideoPacket.getStreamSettings(data);
-                                if (!first_time) {
-                                    if (serviceCallbacks != null) {
+                                int[] picture = H264Sps.pictureSize(streamSettings.sps);
+                                int[] shown = get_stream_size();
+                                if (picture != null) {
+                                    streamSize = picture;
+                                    // Refit the view when the picture's shape changes.
+                                    if ((picture[0] > picture[1]) != (shown[0] > shown[1]) && serviceCallbacks != null) {
                                         serviceCallbacks.loadNewRotation();
                                     }
-                                    while (!updateAvailable.get()) {
-                                        // Waiting for new surface
-                                        try {
-                                            Thread.sleep(100);
-                                        } catch (InterruptedException e) {
-                                            debugLog("wait for surface interrupted", e);
-                                        }
-                                    }
-
                                 }
                             }
-                            updateAvailable.set(false);
                             if (streamSettings != null) {
                                 // Configure the decoder for the encoded stream dimensions, not the local view size.
+                                int[] picture = get_stream_size();
                                 videoDecoder.configure(
                                         surface,
-                                        remote_dev_resolution[0],
-                                        remote_dev_resolution[1],
+                                        picture[0],
+                                        picture[1],
                                         streamSettings.sps,
                                         streamSettings.pps
                                 );
@@ -846,7 +854,6 @@ public class Scrcpy extends Service {
                                 requestNewKeyFrame();
                             }
                         }
-                        first_time = false;
                     } else if (MediaPacket.Type.getType(packet[0]) == MediaPacket.Type.COMMAND) {
                         handleRuntimeCommand(new CommandPacket().fromArray(packet));
                     } else if (audioDecoder != null && MediaPacket.Type.getType(packet[0]) == MediaPacket.Type.AUDIO) {
