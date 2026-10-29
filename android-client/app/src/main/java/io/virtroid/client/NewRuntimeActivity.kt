@@ -11,6 +11,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStarted
 import io.virtroid.client.api.AppCatalogEntry
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeEgress
@@ -327,8 +328,14 @@ class NewRuntimeActivity : AppCompatActivity() {
         deviceId: String,
         runtimeId: String,
     ): RuntimeSummary {
-        val startedAtMs = System.currentTimeMillis()
+        var startedAtMs = System.currentTimeMillis()
         while (true) {
+            // Wait while the screen is not started: the device keys only sign
+            // while the phone is unlocked, and there is no one to show. The
+            // time away does not count against the wait.
+            val pausedAtMs = System.currentTimeMillis()
+            withStarted { }
+            startedAtMs += System.currentTimeMillis() - pausedAtMs
             val runtime = api.listRuntimes(baseUrl, accountId, deviceId)
                 .firstOrNull { it.id == runtimeId }
                 ?: throw java.io.IOException(getString(R.string.runtime_missing_for_session))

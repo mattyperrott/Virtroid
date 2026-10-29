@@ -854,8 +854,14 @@ class MainActivity : AppCompatActivity() {
         deviceId: String,
         runtimeId: String,
     ): RuntimeSummary {
-        val startedAtMs = System.currentTimeMillis()
+        var startedAtMs = System.currentTimeMillis()
         while (true) {
+            // Wait while the screen is not started: the device keys only sign
+            // while the phone is unlocked, and there is no one to show. The
+            // time away does not count against the wait.
+            val pausedAtMs = System.currentTimeMillis()
+            withStarted { }
+            startedAtMs += System.currentTimeMillis() - pausedAtMs
             val state = latestRuntimeState(baseUrl, accountId, deviceId, runtimeId)
             val runtime = state.runtime
 

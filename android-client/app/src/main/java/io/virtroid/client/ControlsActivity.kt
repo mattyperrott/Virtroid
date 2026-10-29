@@ -420,8 +420,14 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private suspend fun waitForRuntimeStartable(accountId: String, deviceId: String, runtimeId: String): RuntimeState {
-        val startedAtMs = System.currentTimeMillis()
+        var startedAtMs = System.currentTimeMillis()
         while (true) {
+            // Wait while the screen is not started: the device keys only sign
+            // while the phone is unlocked, and there is no one to show. The
+            // time away does not count against the wait.
+            val pausedAtMs = System.currentTimeMillis()
+            withStarted { }
+            startedAtMs += System.currentTimeMillis() - pausedAtMs
             val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
             snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
             runtime = state.runtime
@@ -484,8 +490,14 @@ class ControlsActivity : AppCompatActivity() {
     }
 
     private suspend fun waitForRuntimeReady(accountId: String, deviceId: String, runtimeId: String): RuntimeSummary {
-        val startedAtMs = System.currentTimeMillis()
+        var startedAtMs = System.currentTimeMillis()
         while (true) {
+            // Wait while the screen is not started: the device keys only sign
+            // while the phone is unlocked, and there is no one to show. The
+            // time away does not count against the wait.
+            val pausedAtMs = System.currentTimeMillis()
+            withStarted { }
+            startedAtMs += System.currentTimeMillis() - pausedAtMs
             val state = api.getRuntimeState(sessionStore.baseUrl, accountId, deviceId, runtimeId)
             snapshotRollbackGuard.verifyAndRecord(accountId, state.runtime)
             runtime = state.runtime
