@@ -4001,6 +4001,36 @@ func (s *Store) StartRuntimeOnHost(ctx context.Context, accountID, runtimeID, ho
 	return s.startRuntime(ctx, accountID, runtimeID, strings.TrimSpace(hostID), freshIdentity)
 }
 
+// CheckRuntimeStartEntitlement reports, without changing anything, whether a
+// start of this runtime would be refused for entitlement, quota, trial time
+// or balance, so no VM is prepared for it. A runtime that is already running
+// or has cleanup pending is left to startRuntime, which stays authoritative.
+func (s *Store) CheckRuntimeStartEntitlement(ctx context.Context, accountID, runtimeID string) error {
+	// Not ReadOnly: the entitlement read takes its row lock. Nothing is
+	// written, and the rollback releases it.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var desiredState string
+	var cleanupPending bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT desired_state, cleanup_pending FROM runtimes
+		 WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL AND desired_state <> 'deleted'`,
+		accountID, runtimeID,
+	).Scan(&desiredState, &cleanupPending); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRuntimeNotFound
+		}
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(desiredState), "running") || cleanupPending {
+		return nil
+	}
+	return ensureRuntimeStartEntitlementTX(ctx, tx, s.pricing, accountID, runtimeID)
+}
+
 func (s *Store) startRuntime(ctx context.Context, accountID, runtimeID, requiredHostID string, freshIdentity bool) (Runtime, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -1744,6 +1744,19 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 	// runtime's keys; for a confidential account that is its own VM, so ask
 	// for one when it is not running.
 	if errors.Is(err, store.ErrNoReadyHost) && (operation == "start" || operation == "wipe" || operation == "delete") {
+		if operation == "start" {
+			// Don't prepare a VM for a start that will be refused anyway.
+			// startRuntime re-checks under its row lock.
+			switch checkErr := a.store.CheckRuntimeStartEntitlement(r.Context(), actor.accountID, runtimeID); {
+			case errors.Is(checkErr, store.ErrRuntimeEntitlement),
+				errors.Is(checkErr, store.ErrRuntimeActiveQuota),
+				errors.Is(checkErr, store.ErrRuntimeStartQuota),
+				errors.Is(checkErr, store.ErrRuntimeTrialTimeQuota),
+				errors.Is(checkErr, store.ErrRuntimeBalance):
+				writeRuntimeMutationError(w, checkErr)
+				return
+			}
+		}
 		a.writeNoReadyHost(w, r, actor.accountID, err)
 		return
 	}

@@ -492,3 +492,63 @@ func TestPostgresRetiresReadyVMsWhoseNodeWentSilent(t *testing.T) {
 		t.Fatalf("claimed VM %q err=%v, want the reporting spare %q", vm.ID, err, alsoHealthy2)
 	}
 }
+
+func TestPostgresCheckRuntimeStartEntitlementChangesNothing(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	accountID := uuid.NewString()
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM accounts WHERE id = $1`, accountID)
+	})
+	if _, err := st.BootstrapAccountWithIdentity(
+		ctx, accountID, uuid.NewString(), "CI device", integrationNodePublicKey(t), CreateRuntimeInput{},
+	); err != nil {
+		t.Fatalf("bootstrap account: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE account_entitlements SET runtime_limit = 10 WHERE account_id = $1`, accountID); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{Name: "CI runtime", FileMode: "upload-only"})
+	if err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	if err := st.CheckRuntimeStartEntitlement(ctx, accountID, runtime.ID); err != nil {
+		t.Fatalf("entitled start check = %v, want nil", err)
+	}
+	if err := st.CheckRuntimeStartEntitlement(ctx, accountID, uuid.NewString()); !errors.Is(err, ErrRuntimeNotFound) {
+		t.Fatalf("unknown runtime check = %v, want ErrRuntimeNotFound", err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE account_entitlements SET runtime_starts_per_day = 0 WHERE account_id = $1`, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CheckRuntimeStartEntitlement(ctx, accountID, runtime.ID); !errors.Is(err, ErrRuntimeStartQuota) {
+		t.Fatalf("no-starts check = %v, want ErrRuntimeStartQuota", err)
+	}
+	// A runtime already meant to run is startRuntime's to answer.
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtimes SET desired_state = 'running' WHERE id = $1`, runtime.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CheckRuntimeStartEntitlement(ctx, accountID, runtime.ID); err != nil {
+		t.Fatalf("running runtime check = %v, want nil", err)
+	}
+	var starts int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_start_events WHERE account_id = $1`, accountID).Scan(&starts); err != nil || starts != 0 {
+		t.Fatalf("start events = %d err=%v, want none recorded by a check", starts, err)
+	}
+}
