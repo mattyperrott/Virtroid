@@ -14,6 +14,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
@@ -23,6 +24,9 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.VirtroidMotion
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class UnlockActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPinAuthenticationBinding
@@ -136,11 +140,17 @@ class UnlockActivity : AppCompatActivity() {
                 rejectPin()
                 return
             }
-            if (appLockStore.verify(pinBuffer.toString())) {
-                acceptPin()
-            } else {
-                rejectPin()
-                toast(getString(R.string.lock_invalid_pin))
+            // verify() runs two 210,000-iteration PBKDF2 derivations and opens the vault.
+            inputLocked = true
+            val pin = pinBuffer.toString()
+            lifecycleScope.launch {
+                val matches = withContext(Dispatchers.Default) { appLockStore.verify(pin) }
+                if (matches) {
+                    acceptPin()
+                } else {
+                    rejectPin()
+                    toast(getString(R.string.lock_invalid_pin))
+                }
             }
         }
     }
@@ -172,12 +182,17 @@ class UnlockActivity : AppCompatActivity() {
         if (showLockoutIfNeeded()) {
             return
         }
-        if (appLockStore.verify(value)) {
-            launchMain()
-        } else {
-            VirtroidMotion.rejectHaptic(binding.passphraseInput)
-            VirtroidMotion.shake(binding.passphraseInput)
-            toast(getString(R.string.lock_invalid_passphrase))
+        binding.unlockButton.isEnabled = false
+        lifecycleScope.launch {
+            val matches = withContext(Dispatchers.Default) { appLockStore.verify(value) }
+            binding.unlockButton.isEnabled = true
+            if (matches) {
+                launchMain()
+            } else {
+                VirtroidMotion.rejectHaptic(binding.passphraseInput)
+                VirtroidMotion.shake(binding.passphraseInput)
+                toast(getString(R.string.lock_invalid_passphrase))
+            }
         }
     }
 

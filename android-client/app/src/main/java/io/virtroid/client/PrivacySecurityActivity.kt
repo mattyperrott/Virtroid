@@ -23,7 +23,9 @@ import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptPinCode
 import io.virtroid.client.security.showConfirmation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -220,7 +222,10 @@ class PrivacySecurityActivity : AppCompatActivity() {
                 return
             }
             runCatching {
-                appLockStore.saveCredential(AppLockStore.LockMode.PIN, pin)
+                // Two 210,000-iteration PBKDF2 derivations: not on the main thread.
+                withContext(Dispatchers.Default) {
+                    appLockStore.saveCredential(AppLockStore.LockMode.PIN, pin)
+                }
             }.onFailure { error ->
                 appLogs.error("App lock setup failed: ${error.message}", "auth")
                 toast(getString(R.string.privacy_app_lock_setup_failed))
