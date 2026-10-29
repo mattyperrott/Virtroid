@@ -85,15 +85,22 @@ class AppLogStore private constructor(context: Context) {
         }
     }
 
+    // Called for every log line, so it writes once: the in-memory list is
+    // already the merged, sanitized log (loadEntries and the vault migration
+    // fold in older copies; entries are sanitized when made or decoded).
     private fun persist(next: List<AppLogEntry>) {
-        val bounded = next.map { it.copy(message = sanitizeMessage(it.message)) }.takeLast(MAX_ENTRIES)
-        _entries.value = bounded
-        migrateToEncryptedIfNeeded()
-        securePrefs.putString(KEY_ENTRIES, encodeEntries(bounded))
-        prefs.edit().remove(KEY_ENTRIES).apply()
-        if (vault.isUnlocked) {
+        var bounded = next.takeLast(MAX_ENTRIES)
+        if (vault.isUnlocked && vault.contains(NAMESPACE, KEY_ENTRIES)) {
+            // An older version kept the log in the vault: fold it in once.
+            val vaultEntries = vault.getString(NAMESPACE, KEY_ENTRIES, null)?.let(::decodeEntries).orEmpty()
+            bounded = (bounded + vaultEntries)
+                .distinctBy { it.id }
+                .sortedBy { it.timestampMs }
+                .takeLast(MAX_ENTRIES)
             vault.clearNamespace(NAMESPACE)
         }
+        _entries.value = bounded
+        securePrefs.putString(KEY_ENTRIES, encodeEntries(bounded))
     }
 
     private fun loadEntries(): List<AppLogEntry> {

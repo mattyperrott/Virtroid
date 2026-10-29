@@ -190,8 +190,10 @@ class SecureLocalVault private constructor(context: Context) {
     fun clearNamespace(namespace: String) {
         synchronized(lock) {
             if (vaultKey == null) return
-            document.remove(namespace)
-            persistLocked()
+            // Rewriting the whole vault is costly; skip it when nothing changed.
+            if (document.remove(namespace) != null) {
+                persistLocked()
+            }
         }
     }
 
