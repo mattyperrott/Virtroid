@@ -304,6 +304,7 @@ services:
       PAYMENTS_SEED_FILE: /run/secrets/payments-seed
       PAYMENTS_PRIVATE_KEY_FILE: /run/secrets/payments-key
       TRONGRID_URL: ${TRONGRID_URL:-https://api.trongrid.io}
+      TRONGRID_API_KEY_FILE: /run/secrets/trongrid-api-key
       TRON_VERIFY_URL: ${TRON_VERIFY_URL:-https://tron-rpc.publicnode.com}
       # The treasury sweeps deposits and swaps USDT for Siacoin, ETH (for
       # Aleph credits) and TRX (payments.md). Only "live" moves funds.
@@ -326,6 +327,8 @@ services:
       - /etc/virtroid/secrets/payments-key:/run/secrets/payments-key:ro
       # /dev/null when unset: without a key the treasury quotes nothing.
       - ${SIMPLESWAP_API_KEY_FILE:-/dev/null}:/run/secrets/simpleswap-api-key:ro
+      # /dev/null when unset: TronGrid is then polled keyless, about 1 request a second.
+      - ${TRONGRID_API_KEY_FILE:-/dev/null}:/run/secrets/trongrid-api-key:ro
     mem_limit: "${PAYMENTS_MEMORY_LIMIT:-256m}"
     cpus: "${PAYMENTS_CPU_LIMIT:-0.5}"
     pids_limit: ${PAYMENTS_PIDS_LIMIT:-64}

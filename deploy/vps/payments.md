@@ -141,7 +141,9 @@ move nothing. `live` signs and sends; `off` stops them.
    script printed, and `PAYMENTS_SECRET_GID=<gid>`. The release then starts the
    `payments` profile.
 4. Optional: a TronGrid API key (free account) raises its rate limits; put it
-   in a secret file and point `TRONGRID_API_KEY_FILE` at it.
+   in a secret file readable by `PAYMENTS_SECRET_GID` and set
+   `TRONGRID_API_KEY_FILE` to that host path in `.env`. Compose mounts it into
+   the payments container; without it the service polls keyless.
 
 The app's Wallet screen then shows each user's balance, deposit address and
 activity.
