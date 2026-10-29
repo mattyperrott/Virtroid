@@ -3331,8 +3331,16 @@ func (n *nodeAgent) notifyRuntimeMediaScanner(ctx context.Context, runtime runti
 	return err
 }
 
+// adbShellTimeout bounds one adb shell command. Its callers run on the single
+// reconcile goroutine, whose stops and snapshots a wedged adbd must not hold.
+const adbShellTimeout = 60 * time.Second
+
 func (n *nodeAgent) adbShellCapture(ctx context.Context, serial string, shellCmd string) (string, error) {
-	cmd := exec.CommandContext(ctx, n.cfg.ADBPath, adbShellArgs(serial, shellCmd)...)
+	shellCtx, cancel := context.WithTimeout(ctx, adbShellTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(shellCtx, n.cfg.ADBPath, adbShellArgs(serial, shellCmd)...)
+	// Kill-then-wait must not block on a pipe a child process still holds.
+	cmd.WaitDelay = 5 * time.Second
 	output, err := cmd.CombinedOutput()
 	trimmed := strings.TrimSpace(string(output))
 	if err != nil {
