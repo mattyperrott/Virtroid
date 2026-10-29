@@ -73,7 +73,22 @@ type ProvisioningPolicy struct {
 	WarmSpares   int
 	SetupTimeout time.Duration
 	RetireAfter  time.Duration
+	// NodeSilentAfter retires a ready VM whose node has sent no heartbeat for
+	// this long: it is wedged, and would otherwise be billed until someone
+	// noticed. Zero turns the rule off. It applies only once the control
+	// plane itself has been up that long (UpSince), since heartbeats stop
+	// arriving while it is down.
+	NodeSilentAfter time.Duration
+	UpSince         time.Time
 }
+
+// A node heartbeats every 30 s; a ready spare quiet for longer than this is
+// not handed to an account.
+const spareNodeQuietAfter = 5 * time.Minute
+
+// provisionedVMLastSeenSQL is when the VM aliased p last showed signs of
+// life: its node's last heartbeat, or else when it became ready.
+const provisionedVMLastSeenSQL = `COALESCE((SELECT h.last_heartbeat_at FROM hosts h WHERE h.id = p.id), p.ready_at, p.state_changed_at)`
 
 // ProvisionerReport is what the provisioner learned or did for one VM. State
 // is the new state, or empty when the report only carries a failure.
@@ -89,10 +104,15 @@ type ProvisionerReport struct {
 }
 
 type ProvisioningSummary struct {
-	TimedOut      int
-	AccountsGone  int
-	Retired       int
-	SparesCreated int
+	TimedOut     int
+	AccountsGone int
+	Retired      int
+	// NodeSilent counts VMs retired because their node stopped reporting;
+	// NodeSilentHeld counts silent VMs left alone because so many went quiet
+	// at once that the fault is more likely on this side.
+	NodeSilent     int
+	NodeSilentHeld int
+	SparesCreated  int
 	// RuntimesReset counts runtimes whose VM was deleted with their data.
 	RuntimesReset int
 }
@@ -219,18 +239,21 @@ func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, p
 		return ProvisionedVM{}, err
 	}
 
-	// A spare that is already running reaches the user soonest.
+	// A spare that is already running reaches the user soonest. A ready spare
+	// whose node has stopped reporting is passed over; the reconcile retires it.
 	vm, err = scanProvisionedVM(tx.QueryRowContext(ctx,
 		`UPDATE provisioned_vms SET account_id = $1::uuid, last_used_at = NOW()
 		  WHERE id = (
-		      SELECT id FROM provisioned_vms
-		       WHERE account_id IS NULL AND desired = 'present' AND state <> 'deleted' AND region = $2
-		       ORDER BY (state = 'ready') DESC, requested_at
+		      SELECT p.id FROM provisioned_vms p
+		       WHERE p.account_id IS NULL AND p.desired = 'present' AND p.state <> 'deleted' AND p.region = $2
+		         AND NOT (p.state = 'ready' AND `+provisionedVMLastSeenSQL+` < NOW() - make_interval(secs => $3))
+		       ORDER BY (p.state = 'ready') DESC, p.requested_at
 		       LIMIT 1
 		  )
 		  RETURNING `+provisionedVMColumns,
 		accountID,
 		region,
+		spareNodeQuietAfter.Seconds(),
 	))
 	if err == nil {
 		return vm, tx.Commit()
@@ -577,6 +600,10 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 		summary.Retired = rowsAffected(result)
 	}
 
+	if err := retireSilentNodeVMsTX(ctx, tx, policy, &summary); err != nil {
+		return summary, err
+	}
+
 	// A deleted VM took the snapshots on its data disk with it. Runtimes that
 	// lived there would otherwise wait for it forever: forget the lost data,
 	// say so in the runtime's log, and let it start fresh on the account's
@@ -689,6 +716,63 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 		}
 	}
 	return summary, tx.Commit()
+}
+
+// retireSilentNodeVMsTX retires ready VMs whose node has stopped reporting.
+// A VM that restarts is unlocked again by the provisioner and reports in;
+// one that hangs without restarting never does, and its runtimes keep it
+// looking used. When most ready VMs go quiet together, the cause is more
+// likely the control plane's network than the VMs, so none is retired.
+func retireSilentNodeVMsTX(ctx context.Context, tx *sql.Tx, policy ProvisioningPolicy, summary *ProvisioningSummary) error {
+	if policy.NodeSilentAfter <= 0 || policy.UpSince.IsZero() || time.Since(policy.UpSince) < policy.NodeSilentAfter {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT p.id, `+provisionedVMLastSeenSQL+` < NOW() - make_interval(secs => $1)
+		   FROM provisioned_vms p
+		  WHERE p.desired = 'present' AND p.state = 'ready'`,
+		policy.NodeSilentAfter.Seconds(),
+	)
+	if err != nil {
+		return err
+	}
+	var silent []string
+	ready := 0
+	for rows.Next() {
+		var id string
+		var quiet bool
+		if err := rows.Scan(&id, &quiet); err != nil {
+			rows.Close()
+			return err
+		}
+		ready++
+		if quiet {
+			silent = append(silent, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(silent) == 0 {
+		return nil
+	}
+	if len(silent) >= 3 && len(silent)*2 > ready {
+		summary.NodeSilentHeld = len(silent)
+		return nil
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE provisioned_vms
+		    SET desired = 'absent', retire_reason = 'node-silent',
+		        failure = CASE WHEN failure = '' THEN 'its node stopped reporting' ELSE failure END
+		  WHERE id = ANY($1) AND desired = 'present' AND state = 'ready'`,
+		silent,
+	)
+	if err != nil {
+		return err
+	}
+	summary.NodeSilent = rowsAffected(result)
+	return nil
 }
 
 func rowsAffected(result sql.Result) int {

@@ -51,6 +51,9 @@ type ServerConfig struct {
 	ProvisionerWarmSpares   int
 	ProvisionerSetupTimeout time.Duration
 	ProvisionerRetireAfter  time.Duration
+	// ProvisionerNodeSilentAfter retires a ready VM whose node has not
+	// reported for this long (0 = never).
+	ProvisionerNodeSilentAfter time.Duration
 	// RuntimeAndroidVersion is the Android the deployed runtime VM image runs
 	// (android-14 or android-16); runtimes are labelled with it.
 	RuntimeAndroidVersion string
@@ -271,6 +274,7 @@ func LoadServer() ServerConfig {
 		ProvisionerSetupTimeout:          parseEnvDuration("PROVISIONER_SETUP_TIMEOUT", 30*time.Minute),
 		RuntimeAndroidVersion:            envOrDefault("RUNTIME_ANDROID_VERSION", "android-14"),
 		ProvisionerRetireAfter:           parseEnvDuration("PROVISIONER_RETIRE_AFTER", 2*time.Hour),
+		ProvisionerNodeSilentAfter:       parseEnvDuration("PROVISIONER_NODE_SILENT_AFTER", time.Hour),
 		SNPMeasurementsPath:              strings.TrimSpace(os.Getenv("SNP_MEASUREMENTS_PATH")),
 		SiaIndexerAppURL:                 strings.TrimSpace(os.Getenv("SIA_INDEXER_APP_URL")),
 		SiaIndexerAdminURL:               envOrDefault("SIA_INDEXER_ADMIN_URL", "http://indexd:9980/api"),

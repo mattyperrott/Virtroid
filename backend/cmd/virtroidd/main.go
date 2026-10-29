@@ -234,8 +234,11 @@ func provisioningLoop(ctx context.Context, pg *store.Store, cfg config.ServerCon
 		WarmSpares:   cfg.ProvisionerWarmSpares,
 		SetupTimeout: cfg.ProvisionerSetupTimeout,
 		RetireAfter:  cfg.ProvisionerRetireAfter,
+		// Heartbeats only count from when this process could receive them.
+		NodeSilentAfter: cfg.ProvisionerNodeSilentAfter,
+		UpSince:         time.Now(),
 	}
-	log.Printf("runtime VM provisioning: regions=%v max_vms=%d warm_spares=%d", policy.Regions, policy.MaxVMs, policy.WarmSpares)
+	log.Printf("runtime VM provisioning: regions=%v max_vms=%d warm_spares=%d node_silent_after=%s", policy.Regions, policy.MaxVMs, policy.WarmSpares, policy.NodeSilentAfter)
 	reconcile := func() {
 		runBackgroundIteration("provisioning", func() {
 			summary, err := pg.ReconcileProvisionedVMs(ctx, policy)
@@ -244,8 +247,8 @@ func provisioningLoop(ctx context.Context, pg *store.Store, cfg config.ServerCon
 				return
 			}
 			if summary != (store.ProvisioningSummary{}) {
-				log.Printf("provisioning: timed_out=%d accounts_gone=%d retired=%d spares_created=%d runtimes_reset=%d",
-					summary.TimedOut, summary.AccountsGone, summary.Retired, summary.SparesCreated, summary.RuntimesReset)
+				log.Printf("provisioning: timed_out=%d accounts_gone=%d retired=%d node_silent=%d node_silent_held=%d spares_created=%d runtimes_reset=%d",
+					summary.TimedOut, summary.AccountsGone, summary.Retired, summary.NodeSilent, summary.NodeSilentHeld, summary.SparesCreated, summary.RuntimesReset)
 			}
 		})
 	}

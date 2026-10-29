@@ -360,3 +360,135 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 		t.Fatalf("carol VM = %q err=%v, want the spare %q", carolVM.ID, err, spareID)
 	}
 }
+
+func TestPostgresRetiresReadyVMsWhoseNodeWentSilent(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	var otherReady int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM provisioned_vms WHERE desired = 'present' AND state = 'ready'`).Scan(&otherReady); err != nil {
+		t.Fatal(err)
+	}
+	if otherReady != 0 {
+		t.Skipf("%d ready VMs left by other tests would change the mass-silence guard", otherReady)
+	}
+
+	region := "ci-snp-" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	var ids []string
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		for _, id := range ids {
+			_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM hosts WHERE id = $1`, id)
+			_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM provisioned_vms WHERE id = $1`, id)
+		}
+	})
+	// readyVM is a ready spare whose node last reported quietFor ago, or
+	// that never reported when quietFor is negative.
+	readyVM := func(quietFor time.Duration) string {
+		t.Helper()
+		id := "pvm-ci-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20]
+		ids = append(ids, id)
+		if _, err := st.db.ExecContext(ctx,
+			`INSERT INTO provisioned_vms (id, region, state, desired, ready_at, state_changed_at)
+			 VALUES ($1, $2, 'ready', 'present', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '3 hours')`, id, region); err != nil {
+			t.Fatal(err)
+		}
+		if quietFor >= 0 {
+			if _, err := st.db.ExecContext(ctx,
+				`INSERT INTO hosts (id, name, advertise_addr, last_heartbeat_at)
+				 VALUES ($1, 'CI VM', '2001:db8::10', NOW() - make_interval(secs => $2))`, id, quietFor.Seconds()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return id
+	}
+	desired := func(id string) (string, string) {
+		t.Helper()
+		var d, reason string
+		if err := st.db.QueryRowContext(ctx, `SELECT desired, retire_reason FROM provisioned_vms WHERE id = $1`, id).Scan(&d, &reason); err != nil {
+			t.Fatal(err)
+		}
+		return d, reason
+	}
+	policy := ProvisioningPolicy{
+		Regions:         []string{region},
+		SetupTimeout:    30 * time.Minute,
+		NodeSilentAfter: time.Hour,
+		UpSince:         time.Now().Add(-2 * time.Hour),
+	}
+
+	wedged := readyVM(2 * time.Hour)
+	neverReported := readyVM(-1)
+	healthy := readyVM(10 * time.Second)
+	alsoHealthy := readyVM(20 * time.Second)
+	alsoHealthy2 := readyVM(5 * time.Second)
+
+	// Not while the control plane itself has been up for less than the limit.
+	fresh := policy
+	fresh.UpSince = time.Now()
+	if summary, err := st.ReconcileProvisionedVMs(ctx, fresh); err != nil || summary.NodeSilent != 0 {
+		t.Fatalf("reconcile just after start = %+v err=%v, want nothing retired", summary, err)
+	}
+
+	summary, err := st.ReconcileProvisionedVMs(ctx, policy)
+	if err != nil || summary.NodeSilent != 2 || summary.NodeSilentHeld != 0 {
+		t.Fatalf("reconcile = %+v err=%v, want the two silent VMs retired", summary, err)
+	}
+	for _, id := range []string{wedged, neverReported} {
+		if d, reason := desired(id); d != "absent" || reason != "node-silent" {
+			t.Fatalf("silent VM %s desired=%s reason=%s, want retired as node-silent", id, d, reason)
+		}
+	}
+	for _, id := range []string{healthy, alsoHealthy, alsoHealthy2} {
+		if d, _ := desired(id); d != "present" {
+			t.Fatalf("reporting VM %s was retired", id)
+		}
+	}
+
+	// When most ready VMs go quiet at once, none is retired.
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE hosts SET last_heartbeat_at = NOW() - INTERVAL '2 hours' WHERE id = ANY($1)`,
+		[]string{healthy, alsoHealthy}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE provisioned_vms SET desired = 'present', retire_reason = '' WHERE id = $1`, wedged); err != nil {
+		t.Fatal(err)
+	}
+	summary, err = st.ReconcileProvisionedVMs(ctx, policy)
+	if err != nil || summary.NodeSilent != 0 || summary.NodeSilentHeld != 3 {
+		t.Fatalf("mass-silence reconcile = %+v err=%v, want 3 held and none retired", summary, err)
+	}
+
+	// A silent ready spare is not handed to an account; a reporting one is.
+	accountID := uuid.NewString()
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM accounts WHERE id = $1`, accountID)
+	})
+	if _, err := st.BootstrapAccountWithIdentity(
+		ctx, accountID, uuid.NewString(), "CI device", integrationNodePublicKey(t), CreateRuntimeInput{},
+	); err != nil {
+		t.Fatalf("bootstrap account: %v", err)
+	}
+	claimPolicy := policy
+	claimPolicy.MaxVMs = 100
+	vm, err := st.EnsureAccountVM(ctx, accountID, region, claimPolicy)
+	if err != nil || vm.ID != alsoHealthy2 {
+		t.Fatalf("claimed VM %q err=%v, want the reporting spare %q", vm.ID, err, alsoHealthy2)
+	}
+}
