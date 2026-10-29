@@ -340,6 +340,17 @@ class VirtroidApi(
 
     private val blobSealCheck get() = BlobSeal.check
 
+    // Imports upload up to 32 MiB over the phone's uplink and then wait for
+    // the runtime's VM (the server allows 3 min for the upload, 2 for the VM),
+    // so they get more than the 120 s every other call has.
+    private val importHttpClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder()
+            .readTimeout(150, TimeUnit.SECONDS)
+            .writeTimeout(180, TimeUnit.SECONDS)
+            .callTimeout(330, TimeUnit.SECONDS)
+            .build()
+    }
+
     fun clearLocalRuntimeCapabilities(context: Context) {
         RuntimeCapabilityStore.clearAllRegistered(context)
         synchronized(registeredRuntimeCapabilities) {
@@ -1091,6 +1102,7 @@ class VirtroidApi(
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
         val payload = executeJson(
             runtimeImportRequest(baseUrl, runtimeId, sessionId, "file", "files", fileName, body, viewerKey),
+            importHttpClient,
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1116,6 +1128,7 @@ class VirtroidApi(
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
         val payload = executeJson(
             runtimeImportRequest(baseUrl, runtimeId, sessionId, "photo", "photos", fileName, jpeg, viewerKey),
+            importHttpClient,
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1141,6 +1154,7 @@ class VirtroidApi(
         ensureRuntimeCapability(baseUrl, accountId, deviceId, runtimeId)
         val payload = executeJson(
             runtimeImportRequest(baseUrl, runtimeId, sessionId, "video", "videos", fileName, mp4, viewerKey),
+            importHttpClient,
         )
         RuntimeFileImport(
             fileName = payload.getString("file_name"),
@@ -1644,8 +1658,8 @@ class VirtroidApi(
         return builder.build()
     }
 
-    private fun executeJson(request: Request): JSONObject {
-        okHttpClient.newCall(request).execute().use { response ->
+    private fun executeJson(request: Request, client: OkHttpClient = okHttpClient): JSONObject {
+        client.newCall(request).execute().use { response ->
             val responseBody = response.body
             val contentType = responseBody?.contentType()
             val body = readBoundedResponseBody(responseBody)

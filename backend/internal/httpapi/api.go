@@ -123,6 +123,28 @@ const maxRuntimePhotoImportBytes int64 = 16 << 20
 const maxRuntimeVideoImportBytes int64 = 32 << 20
 const runtimeMediaProxyTimeout = 2 * time.Minute
 
+// The server's ReadTimeout (30 s) and WriteTimeout (60 s) suit ordinary API
+// calls. A sealed import must be allowed to upload slowly over a phone's
+// uplink (32 MiB at 1.5 Mbit/s), then wait for the VM; a session or relay
+// token waits up to viewerPrepareProxyTimeout for the VM to prepare its
+// viewer. These routes extend their own deadlines.
+const (
+	runtimeImportUploadTimeout = 3 * time.Minute
+	runtimeImportWriteTimeout  = runtimeImportUploadTimeout + runtimeMediaProxyTimeout + 15*time.Second
+	viewerPrepareWriteTimeout  = viewerPrepareProxyTimeout + 30*time.Second
+)
+
+// extendDeadlines lets one long route outlive the server's default timeouts.
+// A zero read timeout leaves the read deadline alone.
+func extendDeadlines(w http.ResponseWriter, read, write time.Duration) {
+	controller := http.NewResponseController(w)
+	now := time.Now()
+	if read > 0 {
+		_ = controller.SetReadDeadline(now.Add(read))
+	}
+	_ = controller.SetWriteDeadline(now.Add(write))
+}
+
 var errNodeAdvertiseAllowlistUnavailable = errors.New("node advertise address allowlist is required in production")
 
 const (
@@ -1980,6 +2002,7 @@ func (a *API) runtimeLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
+	extendDeadlines(w, 0, viewerPrepareWriteTimeout)
 	runtimeID := r.PathValue("id")
 	actor, ok := a.requireRuntimeActor(w, r, runtimeID)
 	if !ok {
@@ -2175,6 +2198,8 @@ func (a *API) importMyRuntimeVideo(w http.ResponseWriter, r *http.Request) {
 // VM. Nodes refuse anything else, so an unsealed upload would only show its
 // contents to this server.
 func (a *API) importMyRuntimeMedia(w http.ResponseWriter, r *http.Request, kind, route string, maxBytes int64) {
+	// Before the body is read for the signature check.
+	extendDeadlines(w, runtimeImportUploadTimeout, runtimeImportWriteTimeout)
 	runtimeID := strings.TrimSpace(r.PathValue("id"))
 	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
 	if !ok {
@@ -2453,6 +2478,7 @@ func (a *API) getMySession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) issueMySessionRelayToken(w http.ResponseWriter, r *http.Request) {
+	extendDeadlines(w, 0, viewerPrepareWriteTimeout)
 	actor, ok := a.requireSessionActor(w, r)
 	if !ok {
 		return
