@@ -19,6 +19,8 @@ import kotlinx.coroutines.launch
  */
 object UpdatePrompt {
     fun check(activity: AppCompatActivity, quiet: Boolean) {
+        // Quiet checks happen at most daily; a check the user asks for always runs.
+        if (quiet && !AppUpdater(activity).checkDue()) return
         val logs = AppLogStore.get(activity)
         if (!quiet) {
             Notice.show(activity, activity.getString(R.string.update_checking))
