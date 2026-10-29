@@ -5676,7 +5676,8 @@ func (s *Store) UpsertHostHeartbeat(ctx context.Context, heartbeat HostHeartbeat
 		heartbeat.CameraPassthrough,
 		max(0, heartbeat.CameraSlots),
 		strings.TrimSpace(heartbeat.PublicKey),
-		normalizeChoice(heartbeat.BlobStoreKind, "local-disk", "local-disk", "sia-renterd"),
+		// siaindexd.StoreKind is what nodes on Sia report today.
+		normalizeChoice(heartbeat.BlobStoreKind, "local-disk", "local-disk", "sia-indexd", "sia-renterd"),
 		nullStringValue(heartbeat.StoragePreflightKind),
 		nullStringValue(heartbeat.StoragePreflightStatus),
 		nullStringValue(heartbeat.StoragePreflightJSON),

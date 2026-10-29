@@ -552,3 +552,38 @@ func TestPostgresCheckRuntimeStartEntitlementChangesNothing(t *testing.T) {
 		t.Fatalf("start events = %d err=%v, want none recorded by a check", starts, err)
 	}
 }
+
+func TestPostgresHostHeartbeatKeepsTheSiaIndexdStoreKind(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	hostID := "ci-host-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM hosts WHERE id = $1`, hostID)
+	})
+	for kind, want := range map[string]string{"sia-indexd": "sia-indexd", "SIA-INDEXD ": "sia-indexd", "nonsense": "local-disk"} {
+		host, err := st.UpsertHostHeartbeat(ctx, HostHeartbeat{
+			ID:            hostID,
+			Name:          "CI host",
+			AdvertiseAddr: "2001:db8::20",
+			RelayPort:     8090,
+			BlobStoreKind: kind,
+		})
+		if err != nil || host.BlobStoreKind != want {
+			t.Fatalf("heartbeat with %q recorded %q err=%v, want %q", kind, host.BlobStoreKind, err, want)
+		}
+	}
+}
