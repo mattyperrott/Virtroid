@@ -3459,13 +3459,21 @@ func (s *Store) EnqueueSecurityNoticeDelivery(ctx context.Context, delivery Secu
 	return rows > 0, nil
 }
 
+// ListPendingNotificationDeliveries returns the device's oldest unacked
+// deliveries, skipping excludeIDs: the ones its open stream has already sent.
+// Without that, deliveries the phone never acks would fill every batch and
+// hold back everything newer until they expire.
 func (s *Store) ListPendingNotificationDeliveries(
 	ctx context.Context,
 	accountID, deviceID string,
 	limit int,
+	excludeIDs []string,
 ) ([]RuntimeNotificationDelivery, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
+	}
+	if excludeIDs == nil {
+		excludeIDs = []string{}
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT q.id, q.runtime_id, q.event_id, q.device_id, q.envelope_ciphertext,
@@ -3486,9 +3494,10 @@ func (s *Store) ListPendingNotificationDeliveries(
 		   JOIN accounts a ON a.id = p.account_id
 		  WHERE p.account_id = $1 AND p.device_id = $2
 		    AND d.revoked_at IS NULL AND a.deleted_at IS NULL
-		  ORDER BY q.created_at ASC
+		    AND NOT (q.id = ANY($4::uuid[]))
+		  ORDER BY q.created_at ASC, q.id ASC
 		  LIMIT $3`,
-		strings.TrimSpace(accountID), strings.TrimSpace(deviceID), limit,
+		strings.TrimSpace(accountID), strings.TrimSpace(deviceID), limit, excludeIDs,
 	)
 	if err != nil {
 		return nil, err

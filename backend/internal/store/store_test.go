@@ -3954,8 +3954,18 @@ func TestMarkNotificationDeliveryDeliveredFallsBackToSecurityNotice(t *testing.T
 	}
 }
 
+// passStringSlices lets sqlmock take the []string arguments pgx sends as arrays.
+type passStringSlices struct{}
+
+func (passStringSlices) ConvertValue(v any) (driver.Value, error) {
+	if _, ok := v.([]string); ok {
+		return v, nil
+	}
+	return driver.DefaultParameterConverter.ConvertValue(v)
+}
+
 func TestListPendingNotificationDeliveriesIncludesSecurityNotices(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(passStringSlices{}))
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
@@ -3965,7 +3975,7 @@ func TestListPendingNotificationDeliveriesIncludesSecurityNotices(t *testing.T) 
 	accountID := "11111111-1111-1111-1111-111111111111"
 	deviceID := "22222222-2222-2222-2222-222222222222"
 	mock.ExpectQuery("UNION ALL").
-		WithArgs(accountID, deviceID, 20).
+		WithArgs(accountID, deviceID, 20, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "runtime_id", "event_id", "device_id", "envelope_ciphertext", "created_at", "expires_at",
 		}).AddRow(
@@ -3978,7 +3988,7 @@ func TestListPendingNotificationDeliveriesIncludesSecurityNotices(t *testing.T) 
 			now.Add(time.Hour),
 		))
 
-	deliveries, err := st.ListPendingNotificationDeliveries(context.Background(), accountID, deviceID, 20)
+	deliveries, err := st.ListPendingNotificationDeliveries(context.Background(), accountID, deviceID, 20, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

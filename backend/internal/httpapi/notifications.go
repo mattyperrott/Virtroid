@@ -32,6 +32,7 @@ const (
 	notificationDeliveryTTL              = 7 * 24 * time.Hour
 	notificationStreamHeartbeat          = 15 * time.Second
 	notificationStreamBatchSize          = 20
+	notificationStreamSentLimit          = 500
 )
 
 var notificationPackagePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
@@ -189,11 +190,22 @@ func (a *API) streamMyNotifications(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 	ticker := time.NewTicker(notificationStreamHeartbeat)
 	defer ticker.Stop()
+	// What this stream has sent and the phone has not acked yet. It is left
+	// out of the next batch, so a few deliveries the phone never acks (it
+	// cannot open them, or may not show notifications) don't hold back newer
+	// ones. Past a bound it starts over; the phone drops events it has seen.
 	sent := make(map[string]struct{})
 
 	for {
+		if len(sent) > notificationStreamSentLimit {
+			sent = make(map[string]struct{})
+		}
+		exclude := make([]string, 0, len(sent))
+		for id := range sent {
+			exclude = append(exclude, id)
+		}
 		deliveries, err := a.store.ListPendingNotificationDeliveries(
-			r.Context(), accountID, deviceID, notificationStreamBatchSize,
+			r.Context(), accountID, deviceID, notificationStreamBatchSize, exclude,
 		)
 		if err != nil {
 			return
