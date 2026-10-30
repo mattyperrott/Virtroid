@@ -23,8 +23,9 @@ TARGET_EXCLUDES_LINEAGE_SETUPWIZARD := true
 PRODUCT_COPY_FILES += \
     device/virtroid/handheld_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
 # No Google endpoints by default (captive portal probes off, network time
-# from the NTP pool, the browser on DuckDuckGo), and the home screen's
-# layout on a black wallpaper (overlay/). release/ turns off the bp4a
+# from the NTP pool, the browser on DuckDuckGo), and the look: AOSP's
+# default wallpaper, the home screen's layout and the icon shape
+# (overlay/). release/ turns off the bp4a
 # release's blurred, Compose notification shade and the launcher's blur,
 # which a runtime draws on the CPU (README.md, look).
 PRODUCT_PACKAGE_OVERLAYS += device/virtroid/overlay

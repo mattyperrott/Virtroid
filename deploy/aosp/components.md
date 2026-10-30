@@ -103,9 +103,10 @@ Still open:
    Privacy Browser.
 2. **The look:** launcher, wallpaper, theme colours, icons and fonts, from
    the owner's design. Applied so far (2026-10-28, [README.md](README.md),
-   look): Android's own, with LineageOS's launcher (without its blur), a
-   black wallpaper and the notification shade as Android 16 first shipped
-   it; Lawnchair with the owner's settings is next.
+   look): Android's own, with LineageOS's launcher (without its blur) and
+   the notification shade as Android 16 first shipped it; since 2026-10-30
+   AOSP's default wallpaper (stock ReDroid's), a five-app dock and squircle
+   icons, the owner's picks from side-by-side screenshots.
 
 ## Applied in the image (2026-10-26)
 

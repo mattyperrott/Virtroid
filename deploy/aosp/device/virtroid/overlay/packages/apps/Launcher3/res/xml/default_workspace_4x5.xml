@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A runtime's first home screen: the dock with the browser, F-Droid, files
-     and settings, and the gallery and calculator above it. The same layout
-     for each phone grid (4x5, 5x5, 5x6); apps installed later are added to
-     the home screen as usual. -->
+<!-- A runtime's first home screen on the four-column grid (5x5 and 5x6 have
+     a five-app dock instead): the dock with the browser, F-Droid, files and
+     settings, and the gallery and calculator above it. Apps installed later
+     are added to the home screen as usual. -->
 <favorites xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.launcher3">
     <!-- Dock -->
     <resolve

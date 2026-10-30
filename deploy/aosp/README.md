@@ -167,8 +167,11 @@ certificate and claim its privileges, or `android.uid.system` itself.
 ## Look
 
 Android's own look (2026-10-28). The colour theme, tile shape and icon
-patches of 2026-10-27 were dropped once the owner saw them on a phone;
-Lawnchair, with the owner's settings built in, is to carry the look.
+patches of 2026-10-27 were dropped once the owner saw them on a phone.
+On 2026-10-30 the owner compared the image with stock ReDroid 16 side by
+side and picked the wallpaper, home screen and icon shape below from live
+screenshots. Lawnchair, tried on 2026-10-28, was no faster and ran beside
+Launcher3, which recents still need.
 
 - **Notification shade.** As Android 16 first shipped it (bp2a). QPR1 and
   QPR2 turned on a blurred shade, quick settings in Compose and a shader that
@@ -184,12 +187,21 @@ Lawnchair, with the owner's settings built in, is to carry the look.
   which doubled the time its frames took to draw. With both off, the
   launcher misread its blur radius and crashed each time it came back home
   from an app; `patches/packages/apps/Launcher3` fixes that.
-- **Home screen.** LineageOS's own launcher: Browser, F-Droid, Files and
-  Settings in the dock, Gallery and Calculator above it, on a black
-  wallpaper. The wallpaper doesn't zoom out behind the opening shade
-  (`config_wallpaperMaxScale` in the framework overlay): each step of that
-  zoom had SurfaceFlinger redraw the viewer's screen on the CPU while
-  SystemUI drew the shade, and on black it can't be seen.
+- **Wallpaper and colours.** AOSP's default wallpaper, the phone-size file
+  stock ReDroid ships, in every density and screen size LineageOS gives its
+  own, so a runtime's wallpaper and the colours Android takes from it
+  (which any app can read) are those of every ReDroid phone. LineageOS's
+  dark theme stays. The black wallpaper before it left the colours flat
+  grey.
+- **Home screen.** LineageOS's own launcher on the five-column grid a
+  runtime's screen gets: Browser, F-Droid, Gallery, Files and Settings fill
+  the dock and the rest shows the wallpaper (the four-column grid keeps a
+  four-app dock with Gallery and Calculator above it). Icons are a squircle
+  (`config_icon_mask` in the framework overlay, in place of LineageOS's
+  circle), across the system. The wallpaper doesn't zoom out behind the
+  opening shade (`config_wallpaperMaxScale`): each step of that zoom had
+  SurfaceFlinger redraw the viewer's screen on the CPU while SystemUI drew
+  the shade.
 - **Navigation** stays 3-button: with gesture navigation, the swipe up for
   the runtime's home would trigger the viewing phone's own home, which the
   app can't exclude.

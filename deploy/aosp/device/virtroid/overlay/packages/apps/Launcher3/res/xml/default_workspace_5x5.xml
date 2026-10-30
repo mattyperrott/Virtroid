@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A runtime's first home screen: the dock with the browser, F-Droid, files
-     and settings, and the gallery and calculator above it. The same layout
-     for each phone grid (4x5, 5x5, 5x6); apps installed later are added to
+<!-- A runtime's first home screen on a five-column grid, which a runtime's
+     752x1600 screen gets: the browser, F-Droid, the gallery, files and
+     settings fill the dock, and the rest of the screen shows the wallpaper.
+     The calculator is in the app drawer; apps installed later are added to
      the home screen as usual. -->
 <favorites xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.launcher3">
     <!-- Dock -->
@@ -20,33 +21,26 @@
         launcher:y="0"
         launcher:packageName="org.fdroid.fdroid"
         launcher:className="org.fdroid.fdroid.views.main.MainActivity" />
-    <favorite
+    <resolve
         launcher:container="-101"
         launcher:screen="2"
         launcher:x="2"
-        launcher:y="0"
-        launcher:packageName="com.android.documentsui"
-        launcher:className="com.android.documentsui.LauncherActivity" />
+        launcher:y="0" >
+        <favorite launcher:uri="#Intent;action=android.intent.action.MAIN;category=android.intent.category.APP_GALLERY;end" />
+        <favorite launcher:uri="#Intent;type=images/*;end" />
+    </resolve>
     <favorite
         launcher:container="-101"
         launcher:screen="3"
         launcher:x="3"
         launcher:y="0"
+        launcher:packageName="com.android.documentsui"
+        launcher:className="com.android.documentsui.LauncherActivity" />
+    <favorite
+        launcher:container="-101"
+        launcher:screen="4"
+        launcher:x="4"
+        launcher:y="0"
         launcher:packageName="com.android.settings"
         launcher:className="com.android.settings.Settings" />
-
-    <!-- Screen 0, the row above the dock -->
-    <resolve
-        launcher:screen="0"
-        launcher:x="0"
-        launcher:y="-1" >
-        <favorite launcher:uri="#Intent;action=android.intent.action.MAIN;category=android.intent.category.APP_GALLERY;end" />
-        <favorite launcher:uri="#Intent;type=images/*;end" />
-    </resolve>
-    <favorite
-        launcher:screen="0"
-        launcher:x="1"
-        launcher:y="-1"
-        launcher:packageName="com.android.calculator2"
-        launcher:className="com.android.calculator2.Calculator" />
 </favorites>

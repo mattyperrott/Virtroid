@@ -9,7 +9,12 @@
     <!-- The wallpaper stays still as the notification shade comes down.
          Android zooms it out a little behind the shade; with no GPU, each
          step of the zoom has SurfaceFlinger redraw the viewer's whole screen
-         on the CPU while SystemUI is drawing the shade, and on a black
-         wallpaper the zoom can't be seen. -->
+         on the CPU while SystemUI is drawing the shade. -->
     <item name="config_wallpaperMaxScale" format="float" type="dimen">1</item>
+
+    <!-- App icons as a squircle, the owner's pick (2026-10-30) among the
+         launcher's shapes, in place of LineageOS's circle. Android crops
+         every app's icon with this mask, and the launcher uses it until
+         someone picks a shape in Wallpaper & style. -->
+    <string name="config_icon_mask" translatable="false">"M50,0 C10,0 0,10 0,50 0,90 10,100 50,100 90,100 100,90 100,50 100,10 90,0 50,0 Z"</string>
 </resources>
