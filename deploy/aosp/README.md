@@ -267,8 +267,17 @@ x264 is GPL-2.0-or-later. `build-x264.sh` builds it with the NDK during the
 patch stage (the build host needs `nasm`) into `device/virtroid/x264`, and
 `patches/packages/modules/common` 0001 lets the swcodec APEX depend on it.
 `libcodec2_soft_x264enc`, which links it, is under the GPL too, so an image
-that ships it comes with an offer of x264's and the component's source (or
-x264 LLC's commercial licence instead).
+that ships it goes out with x264's and the component's source (or under
+x264 LLC's commercial licence instead). The package stage writes that source
+as `x264-source.tar.gz` (`x264-source.sh`: x264 at its pinned commit, the
+build's files from this repository, every LineageOS project's revision),
+and each VM image is published on Aleph with it, from the same account.
+Aleph serves it by its SHA-256 at
+`https://api2.aleph.im/api/v0/storage/raw/<sha256>`.
+
+| VM image | Android build | x264 source on Aleph (STORE message) | sha256 |
+| :--- | :--- | :--- | :--- |
+| 21 | 30 (`20261031T144222Z-user`) | `7aa6529c6a22d3886aa5a97429806463c68b64315f29167fbadcf1aaaf4d1907` | `6b6c152b03f30d70af918e46e6efbf55dc45276e555c070569bf46b55ab29b80` |
 
 ## Container confinement
 

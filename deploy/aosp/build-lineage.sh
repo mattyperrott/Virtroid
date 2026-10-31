@@ -23,7 +23,8 @@
 #                         x264 with (it needs nasm on the host)
 #   out/<build id>/       each build's image and the inputs that made it:
 #                         runtime-image.tar and runtime-image.json go into the
-#                         VM image builder's assets directory
+#                         VM image builder's assets directory, and
+#                         x264-source.tar.gz is published with the VM image
 #
 # Every stage can be re-run. package needs sudo (it loop-mounts the images),
 # Docker and skopeo.
@@ -249,6 +250,9 @@ stage_package() {
   else
     rm -f "${out}/virtroid-commit"
   fi
+  # x264's licence: its source, and ours that links it, goes out with every
+  # image that ships the screen encoder.
+  "${here}/x264-source.sh" "${out}"
 
   # ReDroid's container image: system's files at the root, vendor in /vendor.
   mounted="${mnt}"
