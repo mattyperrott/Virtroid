@@ -44,6 +44,8 @@ type API struct {
 	notificationHub     *notificationStreamHub
 	// sia registers accounts on the Sia indexer; nil when Sia storage is off.
 	sia *siaindexd.Registry
+	// relayLegs times the edge relay's path to remote nodes.
+	relayLegs *relayLegTimer
 }
 
 type durableBlobKeyHandoffStore interface {
@@ -377,6 +379,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 		observability:       telemetry,
 		httpClient:          &http.Client{Transport: telemetry.Transport(http.DefaultTransport), Timeout: runtimeMediaProxyTimeout},
 		notificationHub:     newNotificationStreamHub(),
+		relayLegs:           newRelayLegTimer(),
 	}
 	sia, err := NewSiaRegistry(cfg)
 	if err != nil {
@@ -2135,6 +2138,20 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		writeServerAPIError(w, http.StatusBadGateway, "node_relay_endpoint_unavailable", "assigned node address is unavailable", err)
 		return
 	}
+	// Timed while the viewer is prepared: the edge relay's round trip to the
+	// node, which the phone adds to its own to the edge when it chooses
+	// between the two.
+	relayLeg := make(chan int64, 1)
+	if relayPin != "" {
+		go func() {
+			defer close(relayLeg)
+			if roundTrip, ok := a.relayLegs.roundTrip(r.Context(), relayEndpoint.Address); ok {
+				relayLeg <- roundTrip.Milliseconds()
+			}
+		}()
+	} else {
+		close(relayLeg)
+	}
 
 	viewer, err := a.prepareViewer(r.Context(), host, runtime.ID, maxSize, bitRate)
 	if err != nil {
@@ -2172,11 +2189,15 @@ func (a *API) createMyRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if relayPin != "" {
 		response["relay_tls_spki_sha256"] = relayPin
-		// Phones that cannot reach the node directly (e.g. no IPv6) use the
-		// edge, whose node forwards the stream to the remote node.
+		// Phones that cannot reach the node directly (e.g. no IPv6), or reach
+		// it worse than through the edge, use the edge, whose node forwards
+		// the stream to the remote node.
 		if edge, err := a.publicRelayEndpoint(); err == nil {
 			response["fallback_relay_host"] = edge.Host
 			response["fallback_relay_port"] = edge.Port
+			if roundTripMs, ok := <-relayLeg; ok {
+				response["fallback_relay_node_rtt_ms"] = roundTripMs
+			}
 		}
 	}
 	writeJSON(w, http.StatusCreated, response)
