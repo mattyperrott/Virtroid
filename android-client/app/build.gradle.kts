@@ -46,8 +46,8 @@ android {
         applicationId = "io.virtroid.client"
         minSdk = 28
         targetSdk = 36
-        versionCode = 29
-        versionName = "0.4.15"
+        versionCode = 30
+        versionName = "0.4.16"
         buildConfigField("String", "DEFAULT_CONTROL_PLANE_URL", buildConfigString(defaultControlPlaneUrl))
         // Every runtime must prove it is a confidential VM: the server's word
         // that one isn't is never enough.
