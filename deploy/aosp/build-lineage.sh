@@ -18,6 +18,9 @@
 #   keys/                 the private halves of our release keys
 #                         (make-release-keys.sh); nothing else has them
 #   ccache/               the compiler cache
+#   android-ndk-r29/, x264/
+#                         what build-x264.sh builds the screen encoder's
+#                         x264 with (it needs nasm on the host)
 #   out/<build id>/       each build's image and the inputs that made it:
 #                         runtime-image.tar and runtime-image.json go into the
 #                         VM image builder's assets directory
@@ -133,6 +136,9 @@ stage_patch() {
   rm -rf device/virtroid
   cp -a "${here}/device/virtroid" device/virtroid
   place_prebuilts device/virtroid
+  # x264 for the screen encoder (patches/frameworks/av 0004), next to the
+  # Android.bp that imports it.
+  "${here}/build-x264.sh" "${root}" device/virtroid/x264
   place_keys vendor/lineage-priv/keys
 }
 

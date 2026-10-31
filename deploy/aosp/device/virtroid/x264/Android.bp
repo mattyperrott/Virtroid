@@ -1,0 +1,29 @@
+// x264, for the screen encoder c2.virtroid.x264.encoder (patches/frameworks/av
+// 0004). build-x264.sh builds it with the NDK in the patch stage, into lib/
+// and include/ here with its COPYING; none of them is in git.
+
+license {
+    name: "virtroid_x264_license",
+    visibility: ["//visibility:public"],
+    license_kinds: ["SPDX-license-identifier-GPL-2.0-or-later"],
+    license_text: ["COPYING"],
+}
+
+cc_prebuilt_library_static {
+    name: "libx264_virtroid",
+    licenses: ["virtroid_x264_license"],
+    // The encoder component is built for the swcodec APEX and, like every
+    // Codec2 software component, for vendor too.
+    vendor_available: true,
+    min_sdk_version: "29",
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media.swcodec",
+    ],
+    export_include_dirs: ["include"],
+    arch: {
+        x86_64: {
+            srcs: ["lib/libx264.a"],
+        },
+    },
+}

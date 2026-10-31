@@ -25,7 +25,7 @@ expect it. *Decide*: a product choice (listed again at the end).
 | Virtroid runtime agent (system app) | Notification forwarding. |
 | `DocumentsUI`, `MediaProvider`, `DownloadProvider` | File and photo imports land in Downloads and the gallery; apps' file pickers. `DocumentsUI` is also the Files app. |
 | Audio service and `r_submix` audio HAL | Viewer audio and microphone injection. |
-| Software codecs (Codec2) | The viewer's H.264 encoding and apps' media playback. |
+| Software codecs (Codec2) | The viewer's H.264 encoding (x264, our `c2.virtroid.x264.encoder`) and apps' media playback. |
 | Graphics: SwiftShader/Mesa, ANGLE, gralloc, composer | Rendering without a GPU. |
 | Software keymaster and gatekeeper | Apps' keystore and screen-lock keys. |
 | Health, power and thermal stub HALs | The framework refuses to boot without them. |

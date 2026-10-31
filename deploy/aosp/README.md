@@ -236,6 +236,40 @@ CPU than anything but SurfaceFlinger. Three patches in
 - 0003 encodes on one thread. libavc started a second thread for every
   frame, and the two waited on each other by spinning on `sched_yield`.
 
+Since build 30 (2026-10-31) x264 encodes the stream instead, as a Codec2
+component of our own, `c2.virtroid.x264.encoder` (0004). It ranks ahead of
+`c2.android.avc.encoder`, so whatever asks for `video/avc` gets it, and the
+libavc encoder stays as the fallback. On frames recorded from the runtime's
+own gestures and encoded on one core, libavc at its fastest preset needs
+about 3.1 Mbps for 50 dB PSNR and its worst frames fall to about 30 dB;
+x264 at its superfast preset needs about 1.7 Mbps, with worst frames about
+45 dB. The component runs superfast tuned for zero latency (no lookahead,
+no B-frames), on its own thread raised to `ANDROID_PRIORITY_URGENT_DISPLAY`,
+in High profile, with the bitrate held within a second. Its rate control
+goes by the configured frame rate, not the frames' timestamps: with
+timestamps x264 holds each frame until the next one arrives, to know how
+long it lasts, and the screen sends one only when it changes (build 30a
+was 100-170 ms slower for it).
+
+Against build 29 in a 2-vCPU VM (one run each), the first change of each
+gesture reaches the viewer as soon as before (opening the drawer 186 ms
+against 252, back 282 against 290, the shade 409 against 456), each frame
+takes about 8 ms longer from capture to output (38 ms against 26 opening
+the drawer), and the encoder uses 5.5% of the VM's CPU over five minutes of
+gestures against 3.9%. The same gestures take 30-55% less data (6.1 MB
+against 8.9 for one script), and the largest frame is 32 KB instead of
+185 KB. Settings, still after a scroll, reached the viewer at 52-56 dB PSNR
+against a screenshot all six times (worst 32x32 block 43-45 dB); with
+libavc it was 45-48 dB four times out of five and 58 once (worst block
+36-39, and 49 that once).
+
+x264 is GPL-2.0-or-later. `build-x264.sh` builds it with the NDK during the
+patch stage (the build host needs `nasm`) into `device/virtroid/x264`, and
+`patches/packages/modules/common` 0001 lets the swcodec APEX depend on it.
+`libcodec2_soft_x264enc`, which links it, is under the GPL too, so an image
+that ships it comes with an offer of x264's and the component's source (or
+x264 LLC's commercial licence instead).
+
 ## Container confinement
 
 Our image runs without `--privileged` (2026-10-27). Privileged, a runtime

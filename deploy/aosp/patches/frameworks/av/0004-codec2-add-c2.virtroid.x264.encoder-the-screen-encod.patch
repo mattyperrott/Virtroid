@@ -1,0 +1,1148 @@
+From eb8daa247e063510d14cd5e472c8dfb6016ae99d Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Sat, 31 Oct 2026 13:09:12 +0000
+Subject: [PATCH] codec2: add c2.virtroid.x264.encoder, the screen encoder
+
+With no hardware encoder, a software H.264 encoder streams the screen.
+On frames recorded from the runtime's own gestures (drawer, shade,
+Settings scrolling, recents) and encoded on one core at the same
+settings, libavc at its fastest preset needs about 3.1 Mbps for 50 dB
+PSNR at 4.0 ms a frame, and its worst frames fall to about 30 dB; x264
+at its superfast preset needs about 1.7 Mbps at 5.5 ms a frame, with
+worst frames about 45 dB.
+
+The new component wraps x264 behind the same Codec2 interface as
+c2.android.avc.encoder:
+ - superfast, tuned for zero latency: no lookahead, no B-frames, each
+   frame out as it goes in, on the component's thread (x264 is built
+   without threads of its own), raised to ANDROID_PRIORITY_URGENT_DISPLAY
+   so it never waits behind the apps' render threads;
+ - rate control by the configured frame rate, not the frames'
+   timestamps (with timestamps x264 holds each frame until the next one
+   arrives, and the screen sends one only when it changes), with the
+   bitrate held within a second (half for CBR), and live bitrate changes
+   and key frame requests honoured;
+ - no IDR frames but the periodic and requested ones; SPS and PPS once,
+   as codec-specific data; High profile unless asked otherwise.
+
+It is ranked 256, ahead of the software default 0x200, so video/avc
+encodes with it. x264 (GPL-2.0-or-later) is libx264_virtroid in
+device/virtroid/x264, which deploy/aosp/build-x264.sh builds with the
+NDK; the library that links it is distributed under the GPL.
+
+Change-Id: I9440a7f0f699c83a5531e95ced62a264bfe34bfa
+---
+ media/codec2/components/x264/Android.bp       |  23 +
+ .../codec2/components/x264/C2SoftX264Enc.cpp  | 919 ++++++++++++++++++
+ media/codec2/components/x264/C2SoftX264Enc.h  |  92 ++
+ media/codec2/vndk/C2Store.cpp                 |   1 +
+ media/libstagefright/data/media_codecs_sw.xml |  13 +
+ .../module/codecserviceregistrant/Android.bp  |   1 +
+ 6 files changed, 1049 insertions(+)
+ create mode 100644 media/codec2/components/x264/Android.bp
+ create mode 100644 media/codec2/components/x264/C2SoftX264Enc.cpp
+ create mode 100644 media/codec2/components/x264/C2SoftX264Enc.h
+
+diff --git a/media/codec2/components/x264/Android.bp b/media/codec2/components/x264/Android.bp
+new file mode 100644
+index 0000000..76a586d
+--- /dev/null
++++ b/media/codec2/components/x264/Android.bp
+@@ -0,0 +1,23 @@
++package {
++    // The component's code is Apache-2.0 (it started as C2SoftAvcEnc); the
++    // library links x264, GPL-2.0-or-later.
++    default_applicable_licenses: [
++        "frameworks_av_license",
++        "virtroid_x264_license",
++    ],
++}
++
++cc_library {
++    name: "libcodec2_soft_x264enc",
++    defaults: [
++        "libcodec2_soft-defaults",
++        "libcodec2_soft_sanitize_signed-defaults",
++        "libcodec2_soft_sanitize_cfi-defaults",
++    ],
++
++    static_libs: ["libx264_virtroid"],
++
++    srcs: ["C2SoftX264Enc.cpp"],
++
++    export_include_dirs: ["."],
++}
+diff --git a/media/codec2/components/x264/C2SoftX264Enc.cpp b/media/codec2/components/x264/C2SoftX264Enc.cpp
+new file mode 100644
+index 0000000..bba8e5c
+--- /dev/null
++++ b/media/codec2/components/x264/C2SoftX264Enc.cpp
+@@ -0,0 +1,919 @@
++/*
++ * Copyright 2018 The Android Open Source Project
++ * Copyright 2026 Virtroid
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * The library this builds links x264 (GPL-2.0-or-later), so it is
++ * distributed under the GNU GPL, version 3.
++ */
++
++//#define LOG_NDEBUG 0
++#define LOG_TAG "C2SoftX264Enc"
++#include <log/log.h>
++
++#include <errno.h>
++#include <stdarg.h>
++#include <string.h>
++#include <sys/resource.h>
++#include <unistd.h>
++
++#include <algorithm>
++
++#include <media/hardware/VideoAPI.h>
++#include <media/stagefright/MediaDefs.h>
++#include <media/stagefright/foundation/ColorUtils.h>
++
++#include <C2Debug.h>
++#include <C2PlatformSupport.h>
++#include <Codec2BufferUtils.h>
++#include <Codec2Mapper.h>
++#include <SimpleC2Interface.h>
++#include <util/C2InterfaceHelper.h>
++
++#include "C2SoftX264Enc.h"
++
++namespace android {
++
++namespace {
++
++constexpr char COMPONENT_NAME[] = "c2.virtroid.x264.encoder";
++constexpr uint32_t kMinOutBufferSize = 524288;
++// ANDROID_PRIORITY_URGENT_DISPLAY: above the apps' UI and render threads,
++// below SurfaceFlinger's real-time main thread. init's "setrlimit nice 40 40"
++// lets the codec process raise a thread this far.
++constexpr int kEncoderNice = -8;
++
++void X264Log(void *, int level, const char *format, va_list args) {
++    int priority = ANDROID_LOG_DEBUG;
++    if (level == X264_LOG_ERROR) {
++        priority = ANDROID_LOG_ERROR;
++    } else if (level == X264_LOG_WARNING) {
++        priority = ANDROID_LOG_WARN;
++    } else if (level == X264_LOG_INFO) {
++        priority = ANDROID_LOG_INFO;
++    }
++    __android_log_vprint(priority, LOG_TAG, format, args);
++}
++
++}  // namespace
++
++class C2SoftX264Enc::IntfImpl : public SimpleInterface<void>::BaseParams {
++public:
++    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper> &helper)
++        : SimpleInterface<void>::BaseParams(
++                helper,
++                COMPONENT_NAME,
++                C2Component::KIND_ENCODER,
++                C2Component::DOMAIN_VIDEO,
++                MEDIA_MIMETYPE_VIDEO_AVC) {
++        noPrivateBuffers();
++        noInputReferences();
++        noOutputReferences();
++        noTimeStretch();
++        setDerivedInstance(this);
++
++        addParameter(
++                DefineParam(mUsage, C2_PARAMKEY_INPUT_STREAM_USAGE)
++                .withConstValue(new C2StreamUsageTuning::input(
++                        0u, (uint64_t)C2MemoryUsage::CPU_READ))
++                .build());
++
++        addParameter(
++                DefineParam(mAttrib, C2_PARAMKEY_COMPONENT_ATTRIBUTES)
++                .withConstValue(new C2ComponentAttributesSetting(
++                    C2Component::ATTRIB_IS_TEMPORAL))
++                .build());
++
++        addParameter(
++                DefineParam(mSize, C2_PARAMKEY_PICTURE_SIZE)
++                .withDefault(new C2StreamPictureSizeInfo::input(0u, 16, 16))
++                .withFields({
++                    C2F(mSize, width).inRange(2, 2560, 2),
++                    C2F(mSize, height).inRange(2, 2560, 2),
++                })
++                .withSetter(SizeSetter)
++                .build());
++
++        // Every frame comes out as it goes in: no B-frames, no lookahead.
++        addParameter(
++                DefineParam(mActualInputDelay, C2_PARAMKEY_INPUT_DELAY)
++                .withConstValue(new C2PortActualDelayTuning::input(0u))
++                .build());
++
++        addParameter(
++                DefineParam(mFrameRate, C2_PARAMKEY_FRAME_RATE)
++                .withDefault(new C2StreamFrameRateInfo::output(0u, 30.))
++                .withFields({C2F(mFrameRate, value).greaterThan(0.)})
++                .withSetter(Setter<decltype(*mFrameRate)>::StrictValueWithNoDeps)
++                .build());
++
++        addParameter(
++                DefineParam(mBitrateMode, C2_PARAMKEY_BITRATE_MODE)
++                .withDefault(new C2StreamBitrateModeTuning::output(0u, C2Config::BITRATE_VARIABLE))
++                .withFields({C2F(mBitrateMode, value).oneOf({
++                                        C2Config::BITRATE_CONST,
++                                        C2Config::BITRATE_VARIABLE,
++                                        C2Config::BITRATE_IGNORE})
++                        })
++                .withSetter(Setter<decltype(*mBitrateMode)>::StrictValueWithNoDeps)
++                .build());
++
++        addParameter(
++                DefineParam(mBitrate, C2_PARAMKEY_BITRATE)
++                .withDefault(new C2StreamBitrateInfo::output(0u, 64000))
++                .withFields({C2F(mBitrate, value).inRange(4096, 40000000)})
++                .withSetter(BitrateSetter)
++                .build());
++
++        addParameter(
++                DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
++                .withDefault(new C2StreamProfileLevelInfo::output(
++                        0u, PROFILE_AVC_HIGH, LEVEL_AVC_4_1))
++                .withFields({
++                    C2F(mProfileLevel, profile).oneOf({
++                        PROFILE_AVC_BASELINE,
++                        PROFILE_AVC_CONSTRAINED_BASELINE,
++                        PROFILE_AVC_MAIN,
++                        PROFILE_AVC_HIGH,
++                        PROFILE_AVC_CONSTRAINED_HIGH,
++                    }),
++                    C2F(mProfileLevel, level).oneOf({
++                        LEVEL_AVC_1,
++                        LEVEL_AVC_1B,
++                        LEVEL_AVC_1_1,
++                        LEVEL_AVC_1_2,
++                        LEVEL_AVC_1_3,
++                        LEVEL_AVC_2,
++                        LEVEL_AVC_2_1,
++                        LEVEL_AVC_2_2,
++                        LEVEL_AVC_3,
++                        LEVEL_AVC_3_1,
++                        LEVEL_AVC_3_2,
++                        LEVEL_AVC_4,
++                        LEVEL_AVC_4_1,
++                        LEVEL_AVC_4_2,
++                        LEVEL_AVC_5,
++                        LEVEL_AVC_5_1,
++                        LEVEL_AVC_5_2,
++                    }),
++                })
++                .withSetter(ProfileLevelSetter, mSize, mFrameRate, mBitrate)
++                .build());
++
++        addParameter(
++                DefineParam(mRequestSync, C2_PARAMKEY_REQUEST_SYNC_FRAME)
++                .withDefault(new C2StreamRequestSyncFrameTuning::output(0u, C2_FALSE))
++                .withFields({C2F(mRequestSync, value).oneOf({ C2_FALSE, C2_TRUE }) })
++                .withSetter(Setter<decltype(*mRequestSync)>::NonStrictValueWithNoDeps)
++                .build());
++
++        addParameter(
++                DefineParam(mSyncFramePeriod, C2_PARAMKEY_SYNC_FRAME_INTERVAL)
++                .withDefault(new C2StreamSyncFrameIntervalTuning::output(0u, 1000000))
++                .withFields({C2F(mSyncFramePeriod, value).any()})
++                .withSetter(Setter<decltype(*mSyncFramePeriod)>::StrictValueWithNoDeps)
++                .build());
++
++        addParameter(
++                DefineParam(mColorAspects, C2_PARAMKEY_COLOR_ASPECTS)
++                .withDefault(new C2StreamColorAspectsInfo::input(
++                        0u, C2Color::RANGE_UNSPECIFIED, C2Color::PRIMARIES_UNSPECIFIED,
++                        C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED))
++                .withFields({
++                    C2F(mColorAspects, range).inRange(
++                                C2Color::RANGE_UNSPECIFIED,     C2Color::RANGE_OTHER),
++                    C2F(mColorAspects, primaries).inRange(
++                                C2Color::PRIMARIES_UNSPECIFIED, C2Color::PRIMARIES_OTHER),
++                    C2F(mColorAspects, transfer).inRange(
++                                C2Color::TRANSFER_UNSPECIFIED,  C2Color::TRANSFER_OTHER),
++                    C2F(mColorAspects, matrix).inRange(
++                                C2Color::MATRIX_UNSPECIFIED,    C2Color::MATRIX_OTHER)
++                })
++                .withSetter(ColorAspectsSetter)
++                .build());
++
++        addParameter(
++                DefineParam(mCodedColorAspects, C2_PARAMKEY_VUI_COLOR_ASPECTS)
++                .withDefault(new C2StreamColorAspectsInfo::output(
++                        0u, C2Color::RANGE_LIMITED, C2Color::PRIMARIES_UNSPECIFIED,
++                        C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED))
++                .withFields({
++                    C2F(mCodedColorAspects, range).inRange(
++                                C2Color::RANGE_UNSPECIFIED,     C2Color::RANGE_OTHER),
++                    C2F(mCodedColorAspects, primaries).inRange(
++                                C2Color::PRIMARIES_UNSPECIFIED, C2Color::PRIMARIES_OTHER),
++                    C2F(mCodedColorAspects, transfer).inRange(
++                                C2Color::TRANSFER_UNSPECIFIED,  C2Color::TRANSFER_OTHER),
++                    C2F(mCodedColorAspects, matrix).inRange(
++                                C2Color::MATRIX_UNSPECIFIED,    C2Color::MATRIX_OTHER)
++                })
++                .withSetter(CodedColorAspectsSetter, mColorAspects)
++                .build());
++    }
++
++    static C2R BitrateSetter(bool mayBlock, C2P<C2StreamBitrateInfo::output> &me) {
++        (void)mayBlock;
++        if (me.v.value <= 4096) {
++            me.set().value = 4096;
++        }
++        return C2R::Ok();
++    }
++
++    static C2R SizeSetter(bool mayBlock, const C2P<C2StreamPictureSizeInfo::input> &oldMe,
++                          C2P<C2StreamPictureSizeInfo::input> &me) {
++        (void)mayBlock;
++        C2R res = C2R::Ok();
++        if (!me.F(me.v.width).supportsAtAll(me.v.width)) {
++            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.width)));
++            me.set().width = oldMe.v.width;
++        }
++        if (!me.F(me.v.height).supportsAtAll(me.v.height)) {
++            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.height)));
++            me.set().height = oldMe.v.height;
++        }
++        return res;
++    }
++
++    // As c2.android.avc.encoder's, with High profile and levels 5.1 and 5.2.
++    static C2R ProfileLevelSetter(
++            bool mayBlock,
++            C2P<C2StreamProfileLevelInfo::output> &me,
++            const C2P<C2StreamPictureSizeInfo::input> &size,
++            const C2P<C2StreamFrameRateInfo::output> &frameRate,
++            const C2P<C2StreamBitrateInfo::output> &bitrate) {
++        (void)mayBlock;
++        if (!me.F(me.v.profile).supportsAtAll(me.v.profile)) {
++            me.set().profile = PROFILE_AVC_HIGH;
++        }
++
++        struct LevelLimits {
++            C2Config::level_t level;
++            float mbsPerSec;
++            uint64_t mbs;
++            uint32_t bitrate;
++        };
++        constexpr LevelLimits kLimits[] = {
++            { LEVEL_AVC_1,       1485,    99,     64000 },
++            // Decoder does not properly handle level 1b.
++            { LEVEL_AVC_1_1,     3000,   396,    192000 },
++            { LEVEL_AVC_1_2,     6000,   396,    384000 },
++            { LEVEL_AVC_1_3,    11880,   396,    768000 },
++            { LEVEL_AVC_2,      11880,   396,   2000000 },
++            { LEVEL_AVC_2_1,    19800,   792,   4000000 },
++            { LEVEL_AVC_2_2,    20250,  1620,   4000000 },
++            { LEVEL_AVC_3,      40500,  1620,  10000000 },
++            { LEVEL_AVC_3_1,   108000,  3600,  14000000 },
++            { LEVEL_AVC_3_2,   216000,  5120,  20000000 },
++            { LEVEL_AVC_4,     245760,  8192,  20000000 },
++            { LEVEL_AVC_4_1,   245760,  8192,  50000000 },
++            { LEVEL_AVC_4_2,   522240,  8704,  50000000 },
++            { LEVEL_AVC_5,     589824, 22080, 135000000 },
++            { LEVEL_AVC_5_1,   983040, 36864, 240000000 },
++            { LEVEL_AVC_5_2,  2073600, 36864, 240000000 },
++        };
++
++        uint64_t mbs = uint64_t((size.v.width + 15) / 16) * ((size.v.height + 15) / 16);
++        float mbsPerSec = float(mbs) * frameRate.v.value;
++
++        // The lowest level that covers the configuration, unless the one
++        // asked for already does.
++        bool found = false;
++        bool needsUpdate = false;
++        if (me.v.level == LEVEL_AVC_1B || !me.F(me.v.level).supportsAtAll(me.v.level)) {
++            needsUpdate = true;
++        }
++        for (const LevelLimits &limit : kLimits) {
++            if (mbs <= limit.mbs && mbsPerSec <= limit.mbsPerSec &&
++                    bitrate.v.value <= limit.bitrate) {
++                if (needsUpdate) {
++                    ALOGD("Given level %x does not cover current configuration: "
++                          "adjusting to %x", me.v.level, limit.level);
++                    me.set().level = limit.level;
++                }
++                found = true;
++                break;
++            }
++            if (me.v.level == limit.level) {
++                needsUpdate = true;
++            }
++        }
++        if (!found || me.v.level > LEVEL_AVC_5_2) {
++            me.set().level = LEVEL_AVC_5_2;
++        }
++        return C2R::Ok();
++    }
++
++    static C2R ColorAspectsSetter(bool mayBlock, C2P<C2StreamColorAspectsInfo::input> &me) {
++        (void)mayBlock;
++        if (me.v.range > C2Color::RANGE_OTHER) {
++            me.set().range = C2Color::RANGE_OTHER;
++        }
++        if (me.v.primaries > C2Color::PRIMARIES_OTHER) {
++            me.set().primaries = C2Color::PRIMARIES_OTHER;
++        }
++        if (me.v.transfer > C2Color::TRANSFER_OTHER) {
++            me.set().transfer = C2Color::TRANSFER_OTHER;
++        }
++        if (me.v.matrix > C2Color::MATRIX_OTHER) {
++            me.set().matrix = C2Color::MATRIX_OTHER;
++        }
++        return C2R::Ok();
++    }
++
++    static C2R CodedColorAspectsSetter(bool mayBlock, C2P<C2StreamColorAspectsInfo::output> &me,
++                                       const C2P<C2StreamColorAspectsInfo::input> &coded) {
++        (void)mayBlock;
++        me.set().range = coded.v.range;
++        me.set().primaries = coded.v.primaries;
++        me.set().transfer = coded.v.transfer;
++        me.set().matrix = coded.v.matrix;
++        return C2R::Ok();
++    }
++
++    const char *getProfileName_l() const {
++        switch (mProfileLevel->profile) {
++        case PROFILE_AVC_BASELINE:              [[fallthrough]];
++        case PROFILE_AVC_CONSTRAINED_BASELINE:  return "baseline";
++        case PROFILE_AVC_MAIN:                  return "main";
++        default:                                return "high";
++        }
++    }
++
++    int getLevel_l() const {
++        struct Level {
++            C2Config::level_t c2Level;
++            int avcLevel;
++        };
++        constexpr Level levels[] = {
++            { LEVEL_AVC_1,   10 },
++            { LEVEL_AVC_1B,   9 },
++            { LEVEL_AVC_1_1, 11 },
++            { LEVEL_AVC_1_2, 12 },
++            { LEVEL_AVC_1_3, 13 },
++            { LEVEL_AVC_2,   20 },
++            { LEVEL_AVC_2_1, 21 },
++            { LEVEL_AVC_2_2, 22 },
++            { LEVEL_AVC_3,   30 },
++            { LEVEL_AVC_3_1, 31 },
++            { LEVEL_AVC_3_2, 32 },
++            { LEVEL_AVC_4,   40 },
++            { LEVEL_AVC_4_1, 41 },
++            { LEVEL_AVC_4_2, 42 },
++            { LEVEL_AVC_5,   50 },
++            { LEVEL_AVC_5_1, 51 },
++            { LEVEL_AVC_5_2, 52 },
++        };
++        for (const Level &level : levels) {
++            if (mProfileLevel->level == level.c2Level) {
++                return level.avcLevel;
++            }
++        }
++        ALOGD("Unrecognized level: %x", mProfileLevel->level);
++        return -1;  // x264 picks
++    }
++
++    uint32_t getSyncFramePeriod_l() const {
++        if (mSyncFramePeriod->value < 0 || mSyncFramePeriod->value == INT64_MAX) {
++            return 0;
++        }
++        double period = mSyncFramePeriod->value / 1e6 * mFrameRate->value;
++        return (uint32_t)c2_max(c2_min(period + 0.5, double(UINT32_MAX)), 1.);
++    }
++
++    // unsafe getters
++    std::shared_ptr<C2StreamPictureSizeInfo::input> getSize_l() const { return mSize; }
++    std::shared_ptr<C2StreamFrameRateInfo::output> getFrameRate_l() const { return mFrameRate; }
++    std::shared_ptr<C2StreamBitrateModeTuning::output> getBitrateMode_l() const {
++        return mBitrateMode;
++    }
++    std::shared_ptr<C2StreamBitrateInfo::output> getBitrate_l() const { return mBitrate; }
++    std::shared_ptr<C2StreamRequestSyncFrameTuning::output> getRequestSync_l() const {
++        return mRequestSync;
++    }
++    std::shared_ptr<C2StreamColorAspectsInfo::output> getCodedColorAspects_l() const {
++        return mCodedColorAspects;
++    }
++
++private:
++    std::shared_ptr<C2StreamUsageTuning::input> mUsage;
++    std::shared_ptr<C2StreamPictureSizeInfo::input> mSize;
++    std::shared_ptr<C2StreamFrameRateInfo::output> mFrameRate;
++    std::shared_ptr<C2StreamRequestSyncFrameTuning::output> mRequestSync;
++    std::shared_ptr<C2StreamBitrateInfo::output> mBitrate;
++    std::shared_ptr<C2StreamBitrateModeTuning::output> mBitrateMode;
++    std::shared_ptr<C2StreamProfileLevelInfo::output> mProfileLevel;
++    std::shared_ptr<C2StreamSyncFrameIntervalTuning::output> mSyncFramePeriod;
++    std::shared_ptr<C2StreamColorAspectsInfo::input> mColorAspects;
++    std::shared_ptr<C2StreamColorAspectsInfo::output> mCodedColorAspects;
++};
++
++C2SoftX264Enc::C2SoftX264Enc(
++        const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl)
++    : SimpleC2Component(std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
++      mIntf(intfImpl),
++      mEncoder(nullptr),
++      mHeaderSent(false),
++      mSawInputEOS(false),
++      mSignalledError(false),
++      mOutBufferSize(kMinOutBufferSize) {
++}
++
++C2SoftX264Enc::~C2SoftX264Enc() {
++    onRelease();
++}
++
++c2_status_t C2SoftX264Enc::onInit() {
++    return C2_OK;
++}
++
++c2_status_t C2SoftX264Enc::onStop() {
++    return C2_OK;
++}
++
++void C2SoftX264Enc::onReset() {
++    releaseEncoder();
++}
++
++void C2SoftX264Enc::onRelease() {
++    releaseEncoder();
++}
++
++c2_status_t C2SoftX264Enc::onFlush_sm() {
++    // Nothing is held back: each frame is encoded and returned as it comes.
++    return C2_OK;
++}
++
++void C2SoftX264Enc::releaseEncoder() {
++    if (mEncoder) {
++        x264_encoder_close(mEncoder);
++        mEncoder = nullptr;
++    }
++    mHeaderSent = false;
++    mSawInputEOS = false;
++    mSignalledError = false;
++}
++
++void C2SoftX264Enc::setRateControl() {
++    const uint32_t kbps = std::max(mBitrate->value / 1000, 1u);
++    x264_param_t &p = mParams;
++    if (mBitrateMode->value == C2Config::BITRATE_IGNORE) {
++        p.rc.i_rc_method = X264_RC_CRF;
++        p.rc.f_rf_constant = 23;
++        p.rc.i_vbv_max_bitrate = 0;
++        p.rc.i_vbv_buffer_size = 0;
++        return;
++    }
++    // Average bitrate, held to it within a second (half a second for CBR)
++    // so a burst of motion can't queue seconds of video on a slow link.
++    p.rc.i_rc_method = X264_RC_ABR;
++    p.rc.i_bitrate = kbps;
++    p.rc.i_vbv_max_bitrate = kbps;
++    p.rc.i_vbv_buffer_size =
++            mBitrateMode->value == C2Config::BITRATE_CONST ? std::max(kbps / 2, 1u) : kbps;
++}
++
++c2_status_t C2SoftX264Enc::initEncoder() {
++    CHECK(mEncoder == nullptr);
++
++    std::shared_ptr<C2StreamFrameRateInfo::output> frameRate;
++    const char *profile;
++    int level;
++    uint32_t syncPeriod;
++    {
++        IntfImpl::Lock lock = mIntf->lock();
++        mSize = mIntf->getSize_l();
++        mBitrate = mIntf->getBitrate_l();
++        mBitrateMode = mIntf->getBitrateMode_l();
++        mRequestSync = mIntf->getRequestSync_l();
++        mColorAspects = mIntf->getCodedColorAspects_l();
++        frameRate = mIntf->getFrameRate_l();
++        profile = mIntf->getProfileName_l();
++        level = mIntf->getLevel_l();
++        syncPeriod = mIntf->getSyncFramePeriod_l();
++    }
++
++    x264_param_t &p = mParams;
++    if (x264_param_default_preset(&p, "superfast", "zerolatency") < 0) {
++        ALOGE("x264_param_default_preset failed");
++        return C2_CORRUPTED;
++    }
++    p.pf_log = X264Log;
++    p.i_log_level = X264_LOG_WARNING;
++    // One thread, the component's: x264 is built without its own.
++    p.i_threads = 1;
++    p.b_sliced_threads = 0;
++    p.i_width = mSize->width;
++    p.i_height = mSize->height;
++    p.i_csp = X264_CSP_I420;
++    p.i_bitdepth = 8;
++    // Rate control by the configured frame rate, not the frames' timestamps:
++    // with timestamps x264 holds each frame until the next one arrives (it
++    // needs the next to know how long this one lasts), and the screen sends
++    // a frame only when it changes, so each would wait 100 ms or more.
++    p.b_vfr_input = 0;
++    p.i_timebase_num = 1;
++    p.i_timebase_den = 1000000;
++    p.i_fps_num = std::max((uint32_t)(frameRate->value * 1000. + 0.5), 1u);
++    p.i_fps_den = 1000;
++    p.i_keyint_max = syncPeriod > 0 ? (int)syncPeriod : X264_KEYINT_MAX_INFINITE;
++    p.i_keyint_min = X264_KEYINT_MIN_AUTO;
++    // No IDR frames but the periodic and requested ones: a scene cut is a
++    // burst of bits when the link can least afford it.
++    p.i_scenecut_threshold = 0;
++    p.i_level_idc = level;
++    // SPS and PPS go out once, as codec-specific data.
++    p.b_repeat_headers = 0;
++    p.b_annexb = 1;
++
++    ColorAspects sfAspects;
++    if (!C2Mapper::map(mColorAspects->primaries, &sfAspects.mPrimaries)) {
++        sfAspects.mPrimaries = android::ColorAspects::PrimariesUnspecified;
++    }
++    if (!C2Mapper::map(mColorAspects->range, &sfAspects.mRange)) {
++        sfAspects.mRange = android::ColorAspects::RangeUnspecified;
++    }
++    if (!C2Mapper::map(mColorAspects->matrix, &sfAspects.mMatrixCoeffs)) {
++        sfAspects.mMatrixCoeffs = android::ColorAspects::MatrixUnspecified;
++    }
++    if (!C2Mapper::map(mColorAspects->transfer, &sfAspects.mTransfer)) {
++        sfAspects.mTransfer = android::ColorAspects::TransferUnspecified;
++    }
++    int32_t primaries, transfer, matrixCoeffs;
++    bool fullRange;
++    ColorUtils::convertCodecColorAspectsToIsoAspects(
++            sfAspects, &primaries, &transfer, &matrixCoeffs, &fullRange);
++    p.vui.i_colorprim = primaries;
++    p.vui.i_transfer = transfer;
++    p.vui.i_colmatrix = matrixCoeffs;
++    p.vui.b_fullrange = fullRange;
++
++    setRateControl();
++    if (x264_param_apply_profile(&p, profile) < 0) {
++        ALOGE("x264_param_apply_profile(%s) failed", profile);
++        return C2_CORRUPTED;
++    }
++
++    mEncoder = x264_encoder_open(&p);
++    if (mEncoder == nullptr) {
++        ALOGE("x264_encoder_open failed");
++        return C2_CORRUPTED;
++    }
++    mOutBufferSize = std::max(mSize->width * mSize->height * 3 / 2, kMinOutBufferSize);
++
++    // process() runs on the component's own thread.
++    if (setpriority(PRIO_PROCESS, gettid(), kEncoderNice) != 0) {
++        ALOGW("couldn't raise the encoding thread's priority: %s", strerror(errno));
++    }
++    ALOGD("x264 %s %ux%u, %s profile, level %d, %u kbps (%s), keyint %d, %.2f fps estimate",
++          X264_POINTVER, mSize->width, mSize->height, profile, level, mBitrate->value / 1000,
++          mBitrateMode->value == C2Config::BITRATE_CONST ? "CBR" : "VBR", p.i_keyint_max,
++          frameRate->value);
++    return C2_OK;
++}
++
++c2_status_t C2SoftX264Enc::readInput(
++        const C2GraphicView &view, x264_picture_t *pic, MemoryBlock *block) {
++    const uint32_t width = mSize->width;
++    const uint32_t height = mSize->height;
++    if (view.width() < width || view.height() < height) {
++        ALOGW("unexpected capacity %d(%d) x %d(%d)", view.width(), width, view.height(), height);
++        return C2_BAD_VALUE;
++    }
++    const C2PlanarLayout &layout = view.layout();
++    uint8_t *yPlane = const_cast<uint8_t *>(view.data()[C2PlanarLayout::PLANE_Y]);
++    uint8_t *uPlane = const_cast<uint8_t *>(view.data()[C2PlanarLayout::PLANE_U]);
++    uint8_t *vPlane = const_cast<uint8_t *>(view.data()[C2PlanarLayout::PLANE_V]);
++    int32_t yStride = layout.planes[C2PlanarLayout::PLANE_Y].rowInc;
++    int32_t uStride = layout.planes[C2PlanarLayout::PLANE_U].rowInc;
++    int32_t vStride = layout.planes[C2PlanarLayout::PLANE_V].rowInc;
++    const size_t yPlaneSize = width * height;
++
++    switch (layout.type) {
++        case C2PlanarLayout::TYPE_RGB:
++            [[fallthrough]];
++        case C2PlanarLayout::TYPE_RGBA: {
++            // The screen: SurfaceFlinger composes the virtual display in RGBA.
++            *block = mConversionBuffers.fetch(yPlaneSize * 3 / 2);
++            yPlane = block->data();
++            uPlane = yPlane + yPlaneSize;
++            vPlane = uPlane + yPlaneSize / 4;
++            yStride = width;
++            uStride = vStride = yStride / 2;
++            ConvertRGBToPlanarYUV(yPlane, yStride, height, block->size(), view,
++                                  mColorAspects->matrix, mColorAspects->range);
++            break;
++        }
++        case C2PlanarLayout::TYPE_YUV: {
++            if (!IsYUV420(view)) {
++                ALOGE("input is not YUV420");
++                return C2_BAD_VALUE;
++            }
++            if (layout.planes[layout.PLANE_Y].colInc == 1
++                    && layout.planes[layout.PLANE_U].colInc == 1
++                    && layout.planes[layout.PLANE_V].colInc == 1
++                    && uStride == vStride
++                    && yStride == 2 * vStride) {
++                break;  // already I420
++            }
++            *block = mConversionBuffers.fetch(yPlaneSize * 3 / 2);
++            yStride = width;
++            uStride = vStride = yStride / 2;
++            MediaImage2 img = CreateYUV420PlanarMediaImage2(width, height, yStride, height);
++            status_t err = ImageCopy(block->data(), &img, view);
++            if (err != OK) {
++                ALOGE("buffer conversion failed: %d", err);
++                return C2_BAD_VALUE;
++            }
++            yPlane = block->data();
++            uPlane = yPlane + yPlaneSize;
++            vPlane = uPlane + yPlaneSize / 4;
++            break;
++        }
++        default:
++            ALOGE("unsupported plane type %d", layout.type);
++            return C2_BAD_VALUE;
++    }
++
++    pic->img.i_csp = X264_CSP_I420;
++    pic->img.i_plane = 3;
++    pic->img.plane[0] = yPlane;
++    pic->img.plane[1] = uPlane;
++    pic->img.plane[2] = vPlane;
++    pic->img.i_stride[0] = yStride;
++    pic->img.i_stride[1] = uStride;
++    pic->img.i_stride[2] = vStride;
++    return C2_OK;
++}
++
++c2_status_t C2SoftX264Enc::writeOutput(
++        const x264_nal_t *nals, int size, const x264_picture_t &picOut,
++        const std::unique_ptr<C2Work> &work, const std::shared_ptr<C2BlockPool> &pool) {
++    std::shared_ptr<C2LinearBlock> block;
++    C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE};
++    c2_status_t err = pool->fetchLinearBlock(
++            std::max(mOutBufferSize, (uint32_t)size), usage, &block);
++    if (err != C2_OK) {
++        ALOGE("fetch linear block err = %d", err);
++        return err;
++    }
++    C2WriteView wView = block->map().get();
++    if (wView.error() != C2_OK) {
++        ALOGE("write view map err = %d", wView.error());
++        return wView.error();
++    }
++    // x264 lays a frame's NAL units out back to back.
++    memcpy(wView.base(), nals[0].p_payload, size);
++    std::shared_ptr<C2Buffer> buffer = createLinearBuffer(block, 0, size);
++    if (picOut.b_keyframe) {
++        buffer->setInfo(std::make_shared<C2StreamPictureTypeMaskInfo::output>(
++                0u /* stream id */, C2Config::SYNC_FRAME));
++    }
++
++    const uint64_t workIndex = (uint64_t)(uintptr_t)picOut.opaque;
++    const bool eos = mSawInputEOS;
++    auto fillWork = [buffer, eos](const std::unique_ptr<C2Work> &work) {
++        work->worklets.front()->output.flags =
++                eos ? C2FrameData::FLAG_END_OF_STREAM : (C2FrameData::flags_t)0;
++        work->worklets.front()->output.buffers.clear();
++        work->worklets.front()->output.buffers.push_back(buffer);
++        work->worklets.front()->output.ordinal = work->input.ordinal;
++        work->workletsProcessed = 1u;
++    };
++    if (work && c2_cntr64_t(workIndex) == work->input.ordinal.frameIndex) {
++        fillWork(work);
++    } else {
++        finish(workIndex, fillWork);
++    }
++    return C2_OK;
++}
++
++void C2SoftX264Enc::process(
++        const std::unique_ptr<C2Work> &work,
++        const std::shared_ptr<C2BlockPool> &pool) {
++    work->result = C2_OK;
++    work->workletsProcessed = 0u;
++    work->worklets.front()->output.flags = work->input.flags;
++
++    if (mSignalledError) {
++        return;
++    }
++    if (mEncoder == nullptr && initEncoder() != C2_OK) {
++        mSignalledError = true;
++        work->result = C2_CORRUPTED;
++        work->workletsProcessed = 1u;
++        return;
++    }
++
++    if (!mHeaderSent) {
++        x264_nal_t *nals;
++        int count;
++        if (x264_encoder_headers(mEncoder, &nals, &count) < 0) {
++            ALOGE("x264_encoder_headers failed");
++            mSignalledError = true;
++            work->result = C2_CORRUPTED;
++            work->workletsProcessed = 1u;
++            return;
++        }
++        // SPS and PPS, without x264's SEI (its version and settings).
++        size_t size = 0;
++        for (int i = 0; i < count; ++i) {
++            if (nals[i].i_type == NAL_SPS || nals[i].i_type == NAL_PPS) {
++                size += nals[i].i_payload;
++            }
++        }
++        std::unique_ptr<C2StreamInitDataInfo::output> csd =
++                C2StreamInitDataInfo::output::AllocUnique(size, 0u);
++        if (!csd) {
++            ALOGE("CSD allocation failed");
++            mSignalledError = true;
++            work->result = C2_NO_MEMORY;
++            work->workletsProcessed = 1u;
++            return;
++        }
++        uint8_t *dst = csd->m.value;
++        for (int i = 0; i < count; ++i) {
++            if (nals[i].i_type == NAL_SPS || nals[i].i_type == NAL_PPS) {
++                memcpy(dst, nals[i].p_payload, nals[i].i_payload);
++                dst += nals[i].i_payload;
++            }
++        }
++        work->worklets.front()->output.configUpdate.push_back(std::move(csd));
++        mHeaderSent = true;
++    }
++
++    // Changes made while running: the viewer lowers and raises the bitrate
++    // as its connection allows, and asks for a key frame when it (re)joins.
++    bool forceIdr = false;
++    {
++        IntfImpl::Lock lock = mIntf->lock();
++        std::shared_ptr<C2StreamBitrateInfo::output> bitrate = mIntf->getBitrate_l();
++        std::shared_ptr<C2StreamRequestSyncFrameTuning::output> requestSync =
++                mIntf->getRequestSync_l();
++        lock.unlock();
++
++        if (bitrate != mBitrate) {
++            mBitrate = bitrate;
++            setRateControl();
++            if (x264_encoder_reconfig(mEncoder, &mParams) < 0) {
++                ALOGW("x264_encoder_reconfig to %u bps failed", mBitrate->value);
++            }
++        }
++        if (requestSync != mRequestSync) {
++            if (requestSync->value) {
++                C2StreamRequestSyncFrameTuning::output clearSync(0u, C2_FALSE);
++                std::vector<std::unique_ptr<C2SettingResult>> failures;
++                mIntf->config({ &clearSync }, C2_MAY_BLOCK, &failures);
++                forceIdr = true;
++            }
++            mRequestSync = requestSync;
++        }
++    }
++
++    if (work->input.flags & C2FrameData::FLAG_END_OF_STREAM) {
++        mSawInputEOS = true;
++    }
++    if (work->input.buffers.empty()) {
++        work->workletsProcessed = 1u;
++        return;
++    }
++
++    C2GraphicView view = work->input.buffers[0]->data().graphicBlocks().front().map().get();
++    if (view.error() != C2_OK) {
++        ALOGE("graphic view map err = %d", view.error());
++        work->workletsProcessed = 1u;
++        return;
++    }
++    // (b/232396154) the view's crop is wrong in surface mode
++    view.setCrop_be(C2Rect(mSize->width, mSize->height));
++
++    x264_picture_t picIn;
++    x264_picture_init(&picIn);
++    MemoryBlock conversionBuffer;
++    c2_status_t err = readInput(view, &picIn, &conversionBuffer);
++    if (err != C2_OK) {
++        mSignalledError = true;
++        work->result = err;
++        work->workletsProcessed = 1u;
++        return;
++    }
++    picIn.i_pts = work->input.ordinal.timestamp.peekll();
++    picIn.i_type = forceIdr ? X264_TYPE_IDR : X264_TYPE_AUTO;
++    picIn.opaque = (void *)(uintptr_t)work->input.ordinal.frameIndex.peekull();
++
++    x264_picture_t picOut;
++    x264_nal_t *nals;
++    int count;
++    int size = x264_encoder_encode(mEncoder, &nals, &count, &picIn, &picOut);
++    if (size < 0) {
++        ALOGE("x264_encoder_encode failed");
++        mSignalledError = true;
++        work->result = C2_CORRUPTED;
++        work->workletsProcessed = 1u;
++        return;
++    }
++    if (size > 0) {
++        err = writeOutput(nals, size, picOut, work, pool);
++        if (err != C2_OK) {
++            work->result = err;
++            work->workletsProcessed = 1u;
++            return;
++        }
++    }
++    if (work->workletsProcessed == 0u && size == 0) {
++        // Held back by x264 (it shouldn't be, with zerolatency): this work
++        // finishes when drain() returns its frame.
++        ALOGW("x264 held a frame back");
++    }
++    if (mSawInputEOS) {
++        drain(DRAIN_COMPONENT_WITH_EOS, pool);
++    }
++}
++
++c2_status_t C2SoftX264Enc::drain(
++        uint32_t drainMode,
++        const std::shared_ptr<C2BlockPool> &pool) {
++    if (drainMode == NO_DRAIN) {
++        ALOGW("drain with NO_DRAIN: no-op");
++        return C2_OK;
++    }
++    if (drainMode == DRAIN_CHAIN) {
++        ALOGW("DRAIN_CHAIN not supported");
++        return C2_OMITTED;
++    }
++    while (mEncoder && x264_encoder_delayed_frames(mEncoder) > 0) {
++        x264_picture_t picOut;
++        x264_nal_t *nals;
++        int count;
++        int size = x264_encoder_encode(mEncoder, &nals, &count, nullptr, &picOut);
++        if (size < 0) {
++            return C2_CORRUPTED;
++        }
++        if (size > 0) {
++            c2_status_t err = writeOutput(nals, size, picOut, nullptr, pool);
++            if (err != C2_OK) {
++                return err;
++            }
++        }
++    }
++    return C2_OK;
++}
++
++class C2SoftX264EncFactory : public C2ComponentFactory {
++public:
++    C2SoftX264EncFactory() : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
++        GetCodec2PlatformComponentStore()->getParamReflector())) {
++    }
++
++    c2_status_t createComponent(
++            c2_node_id_t id,
++            std::shared_ptr<C2Component>* const component,
++            std::function<void(C2Component*)> deleter) override {
++        *component = std::shared_ptr<C2Component>(
++                new C2SoftX264Enc(COMPONENT_NAME,
++                                  id,
++                                  std::make_shared<C2SoftX264Enc::IntfImpl>(mHelper)),
++                deleter);
++        return C2_OK;
++    }
++
++    c2_status_t createInterface(
++            c2_node_id_t id,
++            std::shared_ptr<C2ComponentInterface>* const interface,
++            std::function<void(C2ComponentInterface*)> deleter) override {
++        *interface = std::shared_ptr<C2ComponentInterface>(
++                new SimpleInterface<C2SoftX264Enc::IntfImpl>(
++                        COMPONENT_NAME, id, std::make_shared<C2SoftX264Enc::IntfImpl>(mHelper)),
++                deleter);
++        return C2_OK;
++    }
++
++    ~C2SoftX264EncFactory() override = default;
++
++private:
++    std::shared_ptr<C2ReflectorHelper> mHelper;
++};
++
++}  // namespace android
++
++__attribute__((cfi_canonical_jump_table))
++extern "C" ::C2ComponentFactory* CreateCodec2Factory() {
++    ALOGV("in %s", __func__);
++    return new ::android::C2SoftX264EncFactory();
++}
++
++__attribute__((cfi_canonical_jump_table))
++extern "C" void DestroyCodec2Factory(::C2ComponentFactory* factory) {
++    ALOGV("in %s", __func__);
++    delete factory;
++}
+diff --git a/media/codec2/components/x264/C2SoftX264Enc.h b/media/codec2/components/x264/C2SoftX264Enc.h
+new file mode 100644
+index 0000000..0830961
+--- /dev/null
++++ b/media/codec2/components/x264/C2SoftX264Enc.h
+@@ -0,0 +1,92 @@
++/*
++ * Copyright 2018 The Android Open Source Project
++ * Copyright 2026 Virtroid
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * The library this builds links x264 (GPL-2.0-or-later), so it is
++ * distributed under the GNU GPL, version 3.
++ */
++
++#ifndef ANDROID_C2_SOFT_X264_ENC_H__
++#define ANDROID_C2_SOFT_X264_ENC_H__
++
++#include <stdint.h>
++
++#include <Codec2BufferUtils.h>
++#include <SimpleC2Component.h>
++#include <util/C2InterfaceHelper.h>
++
++#include <x264.h>
++
++namespace android {
++
++// The screen encoder: H.264 from x264 at its superfast preset, tuned for
++// zero latency (no lookahead, no B-frames, every frame out as it goes in),
++// on the component's own thread, raised above the apps' render threads so
++// a frame never waits for them. Same Codec2 interface as
++// c2.android.avc.encoder, which it outranks for video/avc.
++struct C2SoftX264Enc : public SimpleC2Component {
++    class IntfImpl;
++
++    C2SoftX264Enc(const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl);
++
++    // From SimpleC2Component
++    c2_status_t onInit() override;
++    c2_status_t onStop() override;
++    void onReset() override;
++    void onRelease() override;
++    c2_status_t onFlush_sm() override;
++    void process(
++            const std::unique_ptr<C2Work> &work,
++            const std::shared_ptr<C2BlockPool> &pool) override;
++    c2_status_t drain(
++            uint32_t drainMode,
++            const std::shared_ptr<C2BlockPool> &pool) override;
++
++protected:
++    ~C2SoftX264Enc() override;
++
++private:
++    std::shared_ptr<IntfImpl> mIntf;
++
++    x264_t *mEncoder;
++    x264_param_t mParams;
++    bool mHeaderSent;
++    bool mSawInputEOS;
++    bool mSignalledError;
++    uint32_t mOutBufferSize;
++
++    // Configuration in use; process() compares the interface's against these.
++    std::shared_ptr<C2StreamPictureSizeInfo::input> mSize;
++    std::shared_ptr<C2StreamBitrateInfo::output> mBitrate;
++    std::shared_ptr<C2StreamBitrateModeTuning::output> mBitrateMode;
++    std::shared_ptr<C2StreamRequestSyncFrameTuning::output> mRequestSync;
++    std::shared_ptr<C2StreamColorAspectsInfo::output> mColorAspects;
++
++    MemoryBlockPool mConversionBuffers;
++
++    c2_status_t initEncoder();
++    void releaseEncoder();
++    void setRateControl();
++    c2_status_t readInput(const C2GraphicView &view, x264_picture_t *pic, MemoryBlock *block);
++    c2_status_t writeOutput(
++            const x264_nal_t *nals, int size, const x264_picture_t &picOut,
++            const std::unique_ptr<C2Work> &work, const std::shared_ptr<C2BlockPool> &pool);
++
++    C2_DO_NOT_COPY(C2SoftX264Enc);
++};
++
++}  // namespace android
++
++#endif  // ANDROID_C2_SOFT_X264_ENC_H__
+diff --git a/media/codec2/vndk/C2Store.cpp b/media/codec2/vndk/C2Store.cpp
+index a494b70..30c816d 100644
+--- a/media/codec2/vndk/C2Store.cpp
++++ b/media/codec2/vndk/C2Store.cpp
+@@ -1187,6 +1187,7 @@ C2PlatformComponentStore::C2PlatformComponentStore()
+     emplace("libcodec2_soft_av1enc.so");
+     emplace("libcodec2_soft_avcdec.so");
+     emplace("libcodec2_soft_avcenc.so");
++    emplace("libcodec2_soft_x264enc.so");
+     emplace("libcodec2_soft_flacdec.so");
+     emplace("libcodec2_soft_flacenc.so");
+     emplace("libcodec2_soft_g711alawdec.so");
+diff --git a/media/libstagefright/data/media_codecs_sw.xml b/media/libstagefright/data/media_codecs_sw.xml
+index 475048c..808b84b 100644
+--- a/media/libstagefright/data/media_codecs_sw.xml
++++ b/media/libstagefright/data/media_codecs_sw.xml
+@@ -339,6 +339,19 @@
+             <Limit name="bitrate" range="1-64000" />
+             <Attribute name="software-codec" />
+         </MediaCodec>
++        <!-- The screen encoder (x264, superfast, zero latency): ranked
++             ahead of c2.android.avc.encoder (software default 0x200), so
++             video/avc encodes with it. -->
++        <MediaCodec name="c2.virtroid.x264.encoder" type="video/avc" rank="256">
++            <Limit name="alignment" value="2x2" />
++            <Limit name="block-size" value="16x16" />
++            <Limit name="size" min="16x16" max="2560x2560" />
++            <Limit name="block-count" range="1-25600" />
++            <Limit name="blocks-per-second" range="1-2073600" />
++            <Limit name="bitrate" range="1-40000000" />
++            <Feature name="bitrate-modes" value="VBR,CBR" />
++            <Attribute name="software-codec" />
++        </MediaCodec>
+         <MediaCodec name="c2.android.avc.encoder" type="video/avc" variant="slow-cpu,!slow-cpu">
+             <Alias name="OMX.google.h264.encoder" />
+             <Limit name="alignment" value="2x2" />
+diff --git a/media/module/codecserviceregistrant/Android.bp b/media/module/codecserviceregistrant/Android.bp
+index 76dc373..3f791d0 100644
+--- a/media/module/codecserviceregistrant/Android.bp
++++ b/media/module/codecserviceregistrant/Android.bp
+@@ -46,6 +46,7 @@ cc_defaults {
+         "libcodec2_soft_vp8enc",
+         "libcodec2_soft_vp9dec",
+         "libcodec2_soft_vp9enc",
++        "libcodec2_soft_x264enc",
+     ],
+ }
+ 
+-- 
+2.43.0
+
