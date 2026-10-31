@@ -20,6 +20,7 @@ class ScrcpySessionHost(
     private val relayTlsPin: String,
     private val relayFallbackHost: String,
     private val relayFallbackPort: Int,
+    private val relayFallbackNodeRttMs: Int,
     private val relayToken: String,
     private val viewerPublicKey: String,
     private val viewerProtocol: Int,
@@ -54,6 +55,7 @@ class ScrcpySessionHost(
                 relayTlsPin,
                 relayFallbackHost,
                 relayFallbackPort,
+                relayFallbackNodeRttMs,
                 relayToken,
                 viewerPublicKey,
                 viewerProtocol,
@@ -116,7 +118,7 @@ class ScrcpySessionHost(
         if (host.isBlank() || service.activeEndpointPort() <= 0) {
             return null
         }
-        return StreamEndpoint(host, service.activeEndpointPort(), service.activeEndpointPin())
+        return StreamEndpoint(host, service.activeEndpointPort(), service.activeEndpointPin(), service.activeEndpointRelayLegMs())
     }
 
     fun pauseRendering() {
@@ -165,6 +167,10 @@ class ScrcpySessionHost(
         callback.onPhysicalMicrophoneStateChanged(active, detail)
     }
 
+    override fun routeChosen(description: String) {
+        callback.onRouteChosen(description)
+    }
+
     interface Callback {
         fun onConnected(remoteWidth: Int, remoteHeight: Int)
 
@@ -172,6 +178,9 @@ class ScrcpySessionHost(
         fun onStreamResized(remoteWidth: Int, remoteHeight: Int)
         fun onFirstVideoFrame()
         fun onPhysicalMicrophoneStateChanged(active: Boolean, detail: String)
+
+        /** Which path the stream takes to a remote node, and why. */
+        fun onRouteChosen(description: String)
         fun onDisconnected(message: String)
     }
 }

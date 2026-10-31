@@ -7,8 +7,11 @@ import java.net.InetSocketAddress
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
-/** Where the viewer's stream is connected: the runtime node, or the edge it fell back to. */
-internal data class StreamEndpoint(val host: String, val port: Int, val tlsPin: String)
+/**
+ * Where the viewer's stream is connected: the runtime node, or the edge, plus
+ * the edge's own round trip to the node when the edge relays to one.
+ */
+internal data class StreamEndpoint(val host: String, val port: Int, val tlsPin: String, val relayLegMs: Int = 0)
 
 /**
  * Measures the round trip to the endpoint the stream uses. A TCP connect takes
@@ -20,7 +23,10 @@ internal data class StreamEndpoint(val host: String, val port: Int, val tlsPin: 
 internal object RelayLatencyProbe {
     private const val TIMEOUT_MS = 3_000
 
-    /** The round trip in milliseconds, or null when the endpoint did not answer. */
+    /**
+     * The stream's round trip in milliseconds, or null when the endpoint did
+     * not answer: to the endpoint, and on to the node through the edge.
+     */
     fun measure(endpoint: StreamEndpoint): Long? = runCatching {
         val pinned = endpoint.tlsPin.isNotBlank()
         val factory = if (pinned) {
@@ -43,7 +49,7 @@ internal object RelayLatencyProbe {
             if (!pinned) {
                 TlsPins.checkPeerCertificates(endpoint.host, socket.session.peerCertificates)
             }
-            roundTripMs
+            roundTripMs + endpoint.relayLegMs
         }
     }.getOrNull()
 }

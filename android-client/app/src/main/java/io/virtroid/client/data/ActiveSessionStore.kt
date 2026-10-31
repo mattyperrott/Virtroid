@@ -133,6 +133,7 @@ class ActiveSessionStore(context: Context) {
             .put(KEY_RELAY_TLS_PIN, session.relayTlsPin)
             .put(KEY_RELAY_FALLBACK_HOST, session.relayFallbackHost)
             .put(KEY_RELAY_FALLBACK_PORT, session.relayFallbackPort)
+            .put(KEY_RELAY_FALLBACK_NODE_RTT_MS, session.relayFallbackNodeRttMs)
             .put(KEY_RELAY_TOKEN, session.relayToken)
             .put(KEY_SESSION_ID, session.sessionId)
             .put(KEY_VIEWER_PUBLIC_KEY, session.viewerPublicKey)
@@ -162,6 +163,7 @@ class ActiveSessionStore(context: Context) {
                 relayTlsPin = payload.optString(KEY_RELAY_TLS_PIN),
                 relayFallbackHost = payload.optString(KEY_RELAY_FALLBACK_HOST),
                 relayFallbackPort = payload.optInt(KEY_RELAY_FALLBACK_PORT),
+                relayFallbackNodeRttMs = payload.optInt(KEY_RELAY_FALLBACK_NODE_RTT_MS, -1),
                 relayToken = payload.optString(KEY_RELAY_TOKEN),
                 sessionId = payload.optString(KEY_SESSION_ID),
                 viewerPublicKey = payload.optString(KEY_VIEWER_PUBLIC_KEY),
@@ -214,6 +216,7 @@ class ActiveSessionStore(context: Context) {
         val relayTlsPin: String = "",
         val relayFallbackHost: String = "",
         val relayFallbackPort: Int = 0,
+        val relayFallbackNodeRttMs: Int = -1,
         val audioEnabled: Boolean = false,
         val cameraMode: String = "photo-import",
         val fileMode: String = "upload-only",
@@ -256,6 +259,7 @@ class ActiveSessionStore(context: Context) {
         const val KEY_RELAY_TLS_PIN = "relay_tls_pin"
         const val KEY_RELAY_FALLBACK_HOST = "relay_fallback_host"
         const val KEY_RELAY_FALLBACK_PORT = "relay_fallback_port"
+        const val KEY_RELAY_FALLBACK_NODE_RTT_MS = "relay_fallback_node_rtt_ms"
         const val KEY_RELAY_TOKEN = "relay_token"
         const val KEY_SESSION_ID = "session_id"
         const val KEY_VIEWER_PUBLIC_KEY = "viewer_public_key"

@@ -664,6 +664,7 @@ class MainActivity : AppCompatActivity() {
                         relayTlsPin = session.relayTlsPin,
                         relayFallbackHost = session.relayFallbackHost,
                         relayFallbackPort = session.relayFallbackPort,
+                        relayFallbackNodeRttMs = session.relayFallbackNodeRttMs,
                         audioEnabled = readyRuntime.audioEnabled,
                         cameraMode = readyRuntime.cameraMode,
                         fileMode = readyRuntime.fileMode,

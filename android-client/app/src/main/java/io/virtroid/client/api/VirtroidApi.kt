@@ -87,6 +87,9 @@ data class SessionLaunch(
     // The edge, for when the node cannot be reached directly.
     val relayFallbackHost: String = "",
     val relayFallbackPort: Int = 0,
+    // The edge's round trip to the node in ms, -1 when unknown: the phone
+    // adds it to its own to the edge when it chooses where to connect.
+    val relayFallbackNodeRttMs: Int = -1,
     val attestation: SessionAttestation = SessionAttestation(),
 )
 
@@ -1082,6 +1085,7 @@ class VirtroidApi(
             relayTlsPin = payload.optString("relay_tls_spki_sha256").trim(),
             relayFallbackHost = payload.optString("fallback_relay_host").trim(),
             relayFallbackPort = payload.optInt("fallback_relay_port"),
+            relayFallbackNodeRttMs = payload.optInt("fallback_relay_node_rtt_ms", -1),
             attestation = payload.toSessionAttestation(),
         )
     }

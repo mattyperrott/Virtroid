@@ -19,6 +19,7 @@ import android.view.Surface;
 import io.virtroid.client.BuildConfig;
 import io.virtroid.client.R;
 import io.virtroid.client.security.TlsPins;
+import io.virtroid.client.viewer.RouteChooser;
 
 import org.client.scrcpy.decoder.AudioDecoder;
 import org.client.scrcpy.decoder.H264Sps;
@@ -68,9 +69,12 @@ public class Scrcpy extends Service {
     private boolean relayTls = false;
     private String relayPath = "";
     private String relayTlsPin = "";
-    // The edge, used when a remote node cannot be reached directly.
+    // The edge, used when a remote node cannot be reached directly or is
+    // reached better through it, and the edge's own round trip to the node
+    // in ms (-1 when the server did not say).
     private String relayFallbackHost = "";
     private int relayFallbackPort = 0;
+    private int relayFallbackNodeRttMs = -1;
     private String relayToken = "";
     private String viewerPublicKey = "";
     private int viewerProtocol = 1;
@@ -176,7 +180,7 @@ public class Scrcpy extends Service {
         return decoder;
     }
 
-    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayFallbackHost, int relayFallbackPort, String relayToken, String viewerPublicKey, int viewerProtocol, String viewerKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
+    public void start(Surface surface, String serverHost, int serverPort, boolean relayTls, String relayPath, String relayTlsPin, String relayFallbackHost, int relayFallbackPort, int relayFallbackNodeRttMs, String relayToken, String viewerPublicKey, int viewerProtocol, String viewerKey, boolean audioEnabled, boolean physicalMicrophoneEnabled, int screenHeight, int screenWidth, int delay) {
         LetServceRunning.set(true);
         socket_status = false;
         streamSize = null;
@@ -191,6 +195,7 @@ public class Scrcpy extends Service {
         this.relayTlsPin = relayTlsPin == null ? "" : relayTlsPin.trim();
         this.relayFallbackHost = relayFallbackHost == null ? "" : relayFallbackHost.trim();
         this.relayFallbackPort = relayFallbackPort;
+        this.relayFallbackNodeRttMs = relayFallbackNodeRttMs;
         this.relayToken = relayToken;
         this.viewerPublicKey = viewerPublicKey;
         this.viewerProtocol = viewerProtocol;
@@ -459,6 +464,7 @@ public class Scrcpy extends Service {
     private volatile String activeEndpointHost = "";
     private volatile int activeEndpointPort;
     private volatile String activeEndpointPin = "";
+    private volatile int activeEndpointRelayLegMs;
 
     /** The host the stream is connected to, or "" before it connects. */
     public String activeEndpointHost() {
@@ -477,6 +483,11 @@ public class Scrcpy extends Service {
     /** The node key pin the stream verified, or "" when it went through the edge. */
     public String activeEndpointPin() {
         return activeEndpointPin;
+    }
+
+    /** The edge's round trip to the node when the stream goes through the edge to one, else 0. */
+    public int activeEndpointRelayLegMs() {
+        return activeEndpointRelayLegMs;
     }
 
     public boolean check_socket_connection() {
@@ -513,6 +524,25 @@ public class Scrcpy extends Service {
         boolean relayTokenConsumed = false;
         int attempts = 12;
         long retryDelayMs = 250L;
+        // A remote node that the edge can also reach: time both paths and
+        // stream over the better one (RouteChooser), trying the other once if
+        // it cannot be reached before the relay token is spent.
+        final String directHost = ip;
+        final int directPort = port;
+        final String directPin = relayTlsPin;
+        final boolean edgeAvailable = !TextUtils.isEmpty(directPin) && !TextUtils.isEmpty(relayFallbackHost) && relayFallbackPort > 0;
+        boolean otherRouteTried = false;
+        if (edgeAvailable) {
+            RouteChooser.Decision route = RouteChooser.choose(directHost, directPort, relayFallbackHost, relayFallbackPort, relayFallbackNodeRttMs);
+            if (serviceCallbacks != null) {
+                serviceCallbacks.routeChosen(route.describe());
+            }
+            if (route.getUseEdge()) {
+                ip = relayFallbackHost;
+                port = relayFallbackPort;
+                relayTlsPin = "";
+            }
+        }
         while (attempts > 0 && LetServceRunning.get()) {
             // Which step failed goes into the disconnect reason the app logs.
             String phase = "connecting";
@@ -525,11 +555,13 @@ public class Scrcpy extends Service {
                 }
 
                 debugLog("Connected to relay");
-                // The fallback clears relayTlsPin, so this records whether the
+                // The edge path clears relayTlsPin, so this records whether the
                 // stream reached the node itself or the edge.
                 activeEndpointHost = ip;
                 activeEndpointPort = port;
                 activeEndpointPin = relayTlsPin == null ? "" : relayTlsPin;
+                activeEndpointRelayLegMs = edgeAvailable && TextUtils.isEmpty(relayTlsPin)
+                        ? Math.max(relayFallbackNodeRttMs, 0) : 0;
                 phase = "relay handshake";
                 performRelayHandshake(socket, ip, port);
                 relayTokenConsumed = true;
@@ -577,14 +609,21 @@ public class Scrcpy extends Service {
                         }
                         return;
                     }
-                    if (!TextUtils.isEmpty(relayTlsPin) && !TextUtils.isEmpty(relayFallbackHost) && relayFallbackPort > 0) {
-                        // The node is not reachable directly from this network (for
-                        // example no IPv6), and the token is still unused: go through
-                        // the edge, whose node forwards the stream to the remote node.
-                        debugLog("direct runtime node unreachable; using the edge relay");
-                        ip = relayFallbackHost;
-                        port = relayFallbackPort;
-                        relayTlsPin = "";
+                    if (edgeAvailable && !otherRouteTried) {
+                        // The token is still unused: try the other path once. The
+                        // edge's node forwards the stream to the remote node.
+                        otherRouteTried = true;
+                        if (TextUtils.isEmpty(relayTlsPin)) {
+                            debugLog("edge relay unreachable; connecting to the runtime node directly");
+                            ip = directHost;
+                            port = directPort;
+                            relayTlsPin = directPin;
+                        } else {
+                            debugLog("direct runtime node unreachable; using the edge relay");
+                            ip = relayFallbackHost;
+                            port = relayFallbackPort;
+                            relayTlsPin = "";
+                        }
                         continue;
                     }
                     attempts--;
@@ -1049,6 +1088,9 @@ public class Scrcpy extends Service {
         void firstVideoFrame();
 
         void physicalMicrophoneStateChanged(boolean active, String detail);
+
+        /** Which path the stream takes to a remote node, and the timings behind the choice. */
+        void routeChosen(String description);
     }
 
     public static final String EXTRA_PHYSICAL_MICROPHONE_ENABLED =

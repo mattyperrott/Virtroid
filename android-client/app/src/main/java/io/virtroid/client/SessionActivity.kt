@@ -69,6 +69,7 @@ class SessionActivity : AppCompatActivity() {
     private var relayTlsPin: String = ""
     private var relayFallbackHost: String = ""
     private var relayFallbackPort: Int = 0
+    private var relayFallbackNodeRttMs: Int = -1
     private var relayToken: String = ""
     private var viewerPublicKey: String = ""
     private var viewerProtocol: Int = 1
@@ -172,6 +173,12 @@ class SessionActivity : AppCompatActivity() {
             }
         }
 
+        override fun onRouteChosen(description: String) {
+            runOnUiThread {
+                appLogs.info("Stream route: $description", "session")
+            }
+        }
+
         override fun onDisconnected(message: String) {
             runOnUiThread {
                 stopLatencyProbe()
@@ -221,6 +228,7 @@ class SessionActivity : AppCompatActivity() {
         relayTlsPin = intent.getStringExtra(EXTRA_RELAY_TLS_PIN).orEmpty()
         relayFallbackHost = intent.getStringExtra(EXTRA_RELAY_FALLBACK_HOST).orEmpty()
         relayFallbackPort = intent.getIntExtra(EXTRA_RELAY_FALLBACK_PORT, 0)
+        relayFallbackNodeRttMs = intent.getIntExtra(EXTRA_RELAY_FALLBACK_NODE_RTT_MS, -1)
         relayToken = intent.getStringExtra(EXTRA_RELAY_TOKEN).orEmpty()
         viewerPublicKey = intent.getStringExtra(EXTRA_VIEWER_PUBLIC_KEY).orEmpty()
         viewerProtocol = intent.getIntExtra(EXTRA_VIEWER_PROTOCOL, 1)
@@ -462,6 +470,7 @@ class SessionActivity : AppCompatActivity() {
             relayTlsPin = relayTlsPin,
             relayFallbackHost = relayFallbackHost,
             relayFallbackPort = relayFallbackPort,
+            relayFallbackNodeRttMs = relayFallbackNodeRttMs,
             relayToken = relayToken,
             viewerPublicKey = viewerPublicKey,
             viewerProtocol = viewerProtocol,
@@ -791,6 +800,7 @@ class SessionActivity : AppCompatActivity() {
                 relayTlsPin = relayTlsPin,
                 relayFallbackHost = relayFallbackHost,
                 relayFallbackPort = relayFallbackPort,
+                relayFallbackNodeRttMs = relayFallbackNodeRttMs,
                 audioEnabled = audioEnabled,
                 cameraMode = cameraMode,
                 fileMode = fileMode,
@@ -962,6 +972,7 @@ class SessionActivity : AppCompatActivity() {
         private const val EXTRA_RELAY_TLS_PIN = "relay_tls_pin"
         private const val EXTRA_RELAY_FALLBACK_HOST = "relay_fallback_host"
         private const val EXTRA_RELAY_FALLBACK_PORT = "relay_fallback_port"
+        private const val EXTRA_RELAY_FALLBACK_NODE_RTT_MS = "relay_fallback_node_rtt_ms"
         private const val EXTRA_RELAY_TOKEN = "relay_token"
         private const val EXTRA_VIEWER_PUBLIC_KEY = "viewer_public_key"
         private const val EXTRA_VIEWER_PROTOCOL = "viewer_protocol"
@@ -1006,6 +1017,7 @@ class SessionActivity : AppCompatActivity() {
             relayTlsPin: String = "",
             relayFallbackHost: String = "",
             relayFallbackPort: Int = 0,
+            relayFallbackNodeRttMs: Int = -1,
             audioEnabled: Boolean = false,
             cameraMode: String = "photo-import",
             fileMode: String = "upload-only",
@@ -1025,6 +1037,7 @@ class SessionActivity : AppCompatActivity() {
                 .putExtra(EXTRA_RELAY_TLS_PIN, relayTlsPin)
                 .putExtra(EXTRA_RELAY_FALLBACK_HOST, relayFallbackHost)
                 .putExtra(EXTRA_RELAY_FALLBACK_PORT, relayFallbackPort)
+                .putExtra(EXTRA_RELAY_FALLBACK_NODE_RTT_MS, relayFallbackNodeRttMs)
                 .putExtra(EXTRA_RELAY_TOKEN, relayToken)
                 .putExtra(EXTRA_VIEWER_PUBLIC_KEY, viewerPublicKey)
                 .putExtra(EXTRA_VIEWER_PROTOCOL, viewerProtocol)
@@ -1056,6 +1069,7 @@ class SessionActivity : AppCompatActivity() {
                 relayTlsPin = session.relayTlsPin,
                 relayFallbackHost = session.relayFallbackHost,
                 relayFallbackPort = session.relayFallbackPort,
+                relayFallbackNodeRttMs = session.relayFallbackNodeRttMs,
                 audioEnabled = session.audioEnabled,
                 cameraMode = session.cameraMode,
                 fileMode = session.fileMode,
