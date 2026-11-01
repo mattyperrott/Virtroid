@@ -12,7 +12,6 @@ LOCAL_OVERRIDES_PACKAGES := \
     BuiltInPrintService \
     CaptivePortalLogin \
     Contacts \
-    DeskClock \
     EasterEgg \
     Gallery2 \
     LiveWallpapersPicker \
@@ -54,4 +53,24 @@ LOCAL_OVERRIDES_PACKAGES += \
 LOCAL_UNINSTALLABLE_MODULE := true
 LOCAL_CERTIFICATE := PRESIGNED
 LOCAL_SRC_FILES := /dev/null
+include $(BUILD_PREBUILT)
+
+# LibreOffice Viewer (MPL-2.0), F-Droid's x86_64 build, as F-Droid signed it.
+# It keeps its native code compressed for Android to extract, which Android
+# never does for a built-in app, so build-lineage.sh extracts the x86_64
+# libraries into prebuilt/LibreOfficeViewer-lib and they're installed as the
+# app's lib/x86_64. The APK goes in untouched (LOCAL_REPLACE_PREBUILT_APK_
+# INSTALLED skips the uncompressing and aligning a PRESIGNED app otherwise
+# gets, which would break its signature).
+include $(CLEAR_VARS)
+LOCAL_MODULE := LibreOfficeViewer
+LOCAL_MODULE_CLASS := APPS
+LOCAL_MODULE_TAGS := optional
+LOCAL_PRODUCT_MODULE := true
+LOCAL_CERTIFICATE := PRESIGNED
+LOCAL_SRC_FILES := prebuilt/LibreOfficeViewer.apk
+LOCAL_REPLACE_PREBUILT_APK_INSTALLED := $(LOCAL_PATH)/prebuilt/LibreOfficeViewer.apk
+LOCAL_DEX_PREOPT := false
+LOCAL_MODULE_TARGET_ARCH := x86_64
+LOCAL_PREBUILT_JNI_LIBS := $(patsubst $(LOCAL_PATH)/%,%,$(wildcard $(LOCAL_PATH)/prebuilt/LibreOfficeViewer-lib/*.so))
 include $(BUILD_PREBUILT)

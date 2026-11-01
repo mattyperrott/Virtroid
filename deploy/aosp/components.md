@@ -44,8 +44,8 @@ expect it. *Decide*: a product choice (listed again at the end).
 | Trebuchet (launcher) | Cut | Replaced by the chosen launcher. |
 | Jelly (browser) | Decide | The owner asked about Vanadium or another light browser; see the browser decision below. |
 | Recorder | Cut | Rarely wanted; the microphone is on demand. |
-| Glimpse (gallery), Calculator | Keep | Part of the small built-in set (with a browser and Files). |
-| Twelve (music), Camelot (PDF), Etar (calendar), DeskClock | Cut | Not in the built-in set; F-Droid has them. |
+| Glimpse (gallery), Calculator, DeskClock | Keep | Part of the built-in set (with a browser and Files); DeskClock back in 2026-11-01. |
+| Twelve (music), Camelot (PDF), Etar (calendar) | Cut | Not in the built-in set; F-Droid has them. GrapheneOS's PDF Viewer replaces Camelot. |
 | Contacts, Dialer, Messaging | Cut | No phone or SIM. |
 | AudioFX, LiveDisplay | Cut | No speakers or display hardware to tune. |
 | Lineage Health (charging control), FlipFlap | Cut | No battery, no cover. |
@@ -89,6 +89,18 @@ Made 2026-10-21:
 
 - **Built-in apps:** a small set: a browser, Files (`DocumentsUI`), a gallery
   (Glimpse) and a calculator. Everything else comes from F-Droid.
+  Widened by the owner 2026-11-01: a clock (LineageOS's DeskClock), and, as
+  their publishers signed them, GrapheneOS's PDF Viewer, Currencies,
+  Fossify Notes and LibreOffice Viewer (`device/virtroid/prebuilt.sha256`),
+  and Virtroid's Shield. The F-Droid-signed ones update through the
+  built-in F-Droid. A built-in
+  app must ship x86_64 native code or keep its libraries uncompressed:
+  Android never extracts a built-in app's libraries, and looks for them
+  only under the first 64-bit ABI's name. LibreOffice's compressed x86_64
+  libraries are extracted at build time; an ARM-only app with compressed
+  libraries (Unstoppable Wallet, from F-Droid or GitHub) can't be built in
+  unchanged. Unstoppable is left to F-Droid (owner, 2026-11-01): the
+  built-in F-Droid installs it, through ARM translation.
 - **CJK fonts:** left out.
 - **ARM translation:** kept (owner, 2026-10-22); SimpleX and other ARM-only apps need it. Google's `libndk_translation` for now, as in image 16; try the open-source Digitalis on the build host first (see the [plan](README.md), milestone 4).
 

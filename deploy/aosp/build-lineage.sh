@@ -24,7 +24,9 @@
 #   out/<build id>/       each build's image and the inputs that made it:
 #                         runtime-image.tar and runtime-image.json go into the
 #                         VM image builder's assets directory, and
-#                         x264-source.tar.gz is published with the VM image
+#                         x264-source.tar.gz and app-sources/ are published
+#                         with the VM image
+#   prebuilt-sources/     the app source tarballs prebuilt-sources.sha256 pins
 #
 # Every stage can be re-run. package needs sudo (it loop-mounts the images),
 # Docker and skopeo.
@@ -201,7 +203,24 @@ place_prebuilts() {
       exit 1
     fi
     cp "${cached}" "${device_dir}/prebuilt/${name}"
-    log "prebuilt ${name} (${sha:0:12})"
+    # Android never extracts a built-in app's native code: an APK that keeps
+    # its x86_64 libraries compressed gets them beside it instead, in
+    # prebuilt/<name>-lib/, which Android.mk installs as the app's lib/x86_64
+    # while the APK itself stays as signed.
+    local libs="${device_dir}/prebuilt/${name%.apk}-lib"
+    rm -rf "${libs}"
+    python3 -I - "${cached}" "${libs}" <<'PY'
+import os, sys, zipfile
+apk, out = sys.argv[1:3]
+with zipfile.ZipFile(apk) as z:
+    libs = [i for i in z.infolist() if i.filename.startswith("lib/x86_64/") and i.filename.endswith(".so")]
+    if any(i.compress_type != zipfile.ZIP_STORED for i in libs):
+        os.makedirs(out)
+        for i in libs:
+            with open(os.path.join(out, os.path.basename(i.filename)), "wb") as f:
+                f.write(z.read(i))
+PY
+    log "prebuilt ${name} (${sha:0:12})$([ -d "${libs}" ] && echo ", $(ls "${libs}" | wc -l) x86_64 libraries beside it")"
   done
 }
 
@@ -253,6 +272,8 @@ stage_package() {
   # x264's licence: its source, and ours that links it, goes out with every
   # image that ships the screen encoder.
   "${here}/x264-source.sh" "${out}"
+  # The same for the copyleft apps built in as prebuilts (app-sources.sh).
+  "${here}/app-sources.sh" "${out}"
 
   # ReDroid's container image: system's files at the root, vendor in /vendor.
   mounted="${mnt}"

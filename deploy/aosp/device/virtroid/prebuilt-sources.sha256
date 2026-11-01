@@ -1,0 +1,19 @@
+# The source of each app prebuilt.sha256 pins whose licence makes the image
+# carry it (GPL, MPL): SHA-256, file name, and where app-sources.sh gets it
+# (a URL, or "local": put it in $LINEAGE_ROOT/prebuilt-sources/ yourself).
+# F-Droid keeps the tarball it built each APK from; those are pinned with
+# the digests F-Droid's signed index (index-v2) lists for them. Each goes
+# out with the VM image, beside x264-source.tar.gz.
+#
+# Currencies 1.23.0 (GPL-3.0-or-later), F-Droid build 12300.
+7254bfb42c0b8274b2e8e6684341e9cc55d37333e69f325a7a117d6caf7a50b5  de.salomax.currencies_12300_src.tar.gz  https://f-droid.org/repo/de.salomax.currencies_12300_src.tar.gz
+# Fossify Notes 1.7.0 (GPL-3.0-only), F-Droid build 13.
+c859abd363ebc551c55b165241501c88e484fc09b7892d7c34d2932e60e7f0f3  org.fossify.notes_13_src.tar.gz  https://f-droid.org/repo/org.fossify.notes_13_src.tar.gz
+# LibreOffice Viewer 26.2.6.3 (MPL-2.0), F-Droid build 129. About 1 GB: it
+# changes only when the app does, so it's the same Aleph object until then.
+1d4264ae8b7f68c55124c3f68d38caa3dda31781fcf6f88c7b0a08e091963f1f  org.documentfoundation.libreoffice_129_src.tar.gz  https://f-droid.org/repo/org.documentfoundation.libreoffice_129_src.tar.gz
+# Shield 0.1.0 (GPL-3.0-or-later): Virtroid's tree at ef53579 and 0xbow's
+# monorepo at the commit android-client/shield/engine/sdk.lock pins, with a
+# SOURCE.md; GNU tar --sort=name --mtime=@0 --owner=0 --group=0
+# --numeric-owner, gzip -n -9.
+32580f05d232a8692f47d299c095b0941f28318bb8b2cba138ca5ef27d62cf2a  shield-source-ef53579.tar.gz  local

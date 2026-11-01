@@ -69,6 +69,21 @@ PRODUCT_PACKAGES += \
     F-DroidPrivilegedExtension \
     VirtroidRuntimeAgent
 
+# The everyday apps (components.md, built-in set): LineageOS's clock, and,
+# as their publishers signed them (Android.bp, Android.mk), GrapheneOS's PDF
+# Viewer, Currencies, Fossify Notes and LibreOffice Viewer. LineageOS's
+# Calculator is already in.
+PRODUCT_PACKAGES += \
+    DeskClock \
+    PdfViewer \
+    Currencies \
+    FossifyNotes \
+    LibreOfficeViewer
+
+# Shield (android-client/shield), Virtroid's own app for shielding the user's
+# own crypto through Privacy Pools.
+PRODUCT_PACKAGES += Shield
+
 # Location: AOSP's default GNSS HAL reads each fix from the socket the node
 # serves for the runtime (deploy/aosp/gnss-feed.md, patches/hardware/
 # interfaces), so apps see an ordinary GPS fix.

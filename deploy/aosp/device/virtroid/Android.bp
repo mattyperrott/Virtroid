@@ -16,6 +16,46 @@ android_app_import {
     },
 }
 
+// GrapheneOS's PDF Viewer (MIT): pdf.js in a sandboxed WebView, no
+// permissions. Signed by GrapheneOS (the certificate their App Store lists);
+// it isn't on F-Droid, so a new version comes with a new image.
+android_app_import {
+    name: "PdfViewer",
+    apk: "prebuilt/PdfViewer.apk",
+    presigned: true,
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}
+
+// Currencies (GPL-3.0-or-later), an exchange-rate converter, and Fossify
+// Notes (GPL-3.0). F-Droid built and signed both, so the F-Droid client
+// above updates them; their source goes out with each image
+// (app-sources.sh).
+android_app_import {
+    name: "Currencies",
+    apk: "prebuilt/Currencies.apk",
+    presigned: true,
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}
+
+android_app_import {
+    name: "FossifyNotes",
+    apk: "prebuilt/FossifyNotes.apk",
+    presigned: true,
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}
+
 // Virtroid's runtime agent (notification forwarding), the APK the node pins
 // and provisions. The node still installs it over adb and provisions it; a
 // bundled copy is there from the first boot.
@@ -24,6 +64,21 @@ android_app_import {
     apk: "prebuilt/virtroid-runtime-agent.apk",
     presigned: true,
     // Installed exactly as signed: the build must not realign or re-sign it.
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}
+
+// Shield (GPL-3.0-or-later, android-client/shield): shields, privately sends
+// and withdraws the user's own crypto through Privacy Pools, with their own
+// wallet over WalletConnect. Signed with Virtroid's release key; its source
+// goes out with each image (app-sources.sh).
+android_app_import {
+    name: "Shield",
+    apk: "prebuilt/Shield.apk",
+    presigned: true,
     preprocessed: true,
     product_specific: true,
     dex_preopt: {
