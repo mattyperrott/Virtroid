@@ -1,7 +1,5 @@
 <!-- markdownlint-disable MD013 MD033 MD041 -->
 
-<img width="1788" height="944" alt="The Virtroid Android client on two phones, beside the Observatory operator console on a laptop" src="https://github.com/user-attachments/assets/e9cace37-5f98-4384-a01a-dddc96e5b4d2">
-
 <h1 align="center">Virtroid</h1>
 
 <p align="center">
