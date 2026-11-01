@@ -261,20 +261,25 @@ echo "boot-test: runtime confinement: \$(echo "\$smoke_confinement" | \$B cut -c
 # name below proves its DNS went through Tor.
 C /bin/nft add element inet virtroid tor_bridges '{ "vrt-smoke" }' || fail "add the Tor bridge"
 C /bin/docker network create -o com.docker.network.bridge.name=vrt-smoke virtroid-guest-smoke >/dev/null || fail "runtime network"
-eval "C /bin/docker run -d --name smoke \$smoke_confinement" --network virtroid-guest-smoke \
-  -p 127.0.0.1:15555:5555 \
-  --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
-  --cpus 2 --pids-limit \${NODE_RUNTIME_PIDS_LIMIT:-4096} --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
-  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
-  -v /srv/virtroid/runtimes/smoke/data:/data \
-  -v \$A/scrcpy-server.jar:/opt/virtroid/scrcpy-server.jar:ro \
-  -v \$A/virtroid-viewercrypt:/opt/virtroid/virtroid-viewercrypt:ro \
-  -v \$A/virtroid-viewer.sh:/vendor/bin/virtroid-viewer.sh:ro \
-  -v \$A/virtroid-viewer.rc:/vendor/etc/init/virtroid-viewer.rc:ro \
-  -v /srv/virtroid/runtimes/smoke/gnss:/opt/virtroid/gnss:ro \
-  "\$NODE_RUNTIME_IMAGE" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \
-  androidboot.redroid_gpu_node=auto androidboot.redroid_fps=30 androidboot.redroid_width=720 \
-  androidboot.redroid_height=1280 androidboot.redroid_dpi=320 || fail "docker run"
+# smoke [ARG...]: the runtime container, with these further arguments to
+# Android's init (evaluated again, as the confinement options are).
+smoke() {
+  eval "C /bin/docker run -d --name smoke \$smoke_confinement" --network virtroid-guest-smoke \
+    -p 127.0.0.1:15555:5555 \
+    --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
+    --cpus 2 --pids-limit \${NODE_RUNTIME_PIDS_LIMIT:-4096} --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
+    --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
+    -v /srv/virtroid/runtimes/smoke/data:/data \
+    -v \$A/scrcpy-server.jar:/opt/virtroid/scrcpy-server.jar:ro \
+    -v \$A/virtroid-viewercrypt:/opt/virtroid/virtroid-viewercrypt:ro \
+    -v \$A/virtroid-viewer.sh:/vendor/bin/virtroid-viewer.sh:ro \
+    -v \$A/virtroid-viewer.rc:/vendor/etc/init/virtroid-viewer.rc:ro \
+    -v /srv/virtroid/runtimes/smoke/gnss:/opt/virtroid/gnss:ro \
+    "\$NODE_RUNTIME_IMAGE" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \
+    androidboot.redroid_gpu_node=auto androidboot.redroid_fps=30 androidboot.redroid_width=720 \
+    androidboot.redroid_height=1280 androidboot.redroid_dpi=320 "\$@"
+}
+smoke || fail "docker run"
 booted=""
 for i in \$(\$B seq 1 90); do
   C /bin/adb connect 127.0.0.1:15555 >/dev/null 2>&1
@@ -483,15 +488,6 @@ if C /bin/test -d /tmp/apks; then
   done
 fi
 
-# BOOT_TEST_UPGRADE_FROM (the third disk): Android from the older image
-# writes its data, then this image boots on the same data.
-android() { # android NAME IMAGE PORT
-  eval "C /bin/docker run -d --name \$1 \$(confine "\$2")" -p 127.0.0.1:\$3:5555 \
-    --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
-    --cpus 2 --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
-    -v /srv/virtroid/runtimes/upgrade/data:/data "\$2" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \
-    androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 >/dev/null || fail "docker run \$2"
-}
 booted_on() { # booted_on PORT TRIES: Android finished booting
   for i in \$(\$B seq 1 \$2); do
     C /bin/adb connect 127.0.0.1:\$1 >/dev/null 2>&1
@@ -499,6 +495,44 @@ booted_on() { # booted_on PORT TRIES: Android finished booting
     \$B sleep 4
   done
   return 1
+}
+# Each start presents another phone (virtnoded's persona.go) on the runtime's
+# same data. What Android took from the build when it made that data must
+# follow the phone it is now: the device name, which any app reads and the
+# file picker shows as the storage's name, and the build the settings were
+# made on. A name the owner gave the device stays theirs.
+G() { C /bin/adb -s 127.0.0.1:15555 shell "\$1" | \$B tr -d '\r'; }
+first_model=\$(G 'getprop ro.product.model')
+first_build=\$(G 'getprop ro.build.id')
+again_as() { # again_as MODEL BUILD_ID: the runtime stopped as virtnoded stops it, then started as that phone
+  C /bin/docker stop -t 20 smoke >/dev/null
+  C /bin/docker rm smoke >/dev/null
+  C /bin/adb disconnect 127.0.0.1:15555 >/dev/null 2>&1
+  # Quoted as virtnoded quotes a value with spaces for ReDroid's init.
+  smoke "'ro.product.model=\"\$1\"'" "ro.build.id=\$2" >/dev/null || fail "docker run as a \$1"
+  booted_on 15555 90 || fail "Android did not boot again as a \$1"
+  name=\$(G 'settings get global device_name')
+  made=\$(G 'settings get global database_creation_buildid')
+  echo "boot-test: started again as a \$(G 'getprop ro.product.model') \$(G 'getprop ro.build.id'): device name \$name, settings made on \$made"
+}
+again_as "Pixel 8 Pro" CP1A.260505.005
+[ "\$name" = "Pixel 8 Pro" ] || fail "the device name is still \$name, not this start's phone's"
+[ "\$made" = CP1A.260505.005 ] || fail "the settings still say they were made on \$made"
+stale=\$(G 'settings list global; settings list secure; settings list system' | \$B grep -F -e "\$first_model" -e "\$first_build")
+[ -z "\$stale" ] || { echo "\$stale" | \$B sed 's/^/boot-test:   /'; fail "settings still name the first start's \$first_model \$first_build"; }
+G 'settings put global device_name "Boot test phone"'
+again_as SM-S901B BP2A.250605.031.A3
+[ "\$name" = "Boot test phone" ] || fail "the owner's name for the device became \$name"
+[ "\$made" = BP2A.250605.031.A3 ] || fail "the settings still say they were made on \$made"
+
+# BOOT_TEST_UPGRADE_FROM (the third disk): Android from the older image
+# writes its data, then this image boots on the same data.
+android() { # android NAME IMAGE PORT [ARGS]: ARGS, one string, to Android's init
+  eval "C /bin/docker run -d --name \$1 \$(confine "\$2")" -p 127.0.0.1:\$3:5555 \
+    --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
+    --cpus 2 --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
+    -v /srv/virtroid/runtimes/upgrade/data:/data "\$2" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \
+    androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 \${4:-} >/dev/null || fail "docker run \$2"
 }
 if [ -n "$older_disk" ] && [ -b "$older_disk" ]; then
   C /bin/docker rm -f smoke >/dev/null
@@ -525,11 +559,15 @@ if [ -n "$older_disk" ] && [ -b "$older_disk" ]; then
   C /bin/docker rm upgrade-old >/dev/null
   C /bin/adb disconnect 127.0.0.1:15556 >/dev/null 2>&1
   authorize_adb /srv/virtroid/runtimes/upgrade/data
-  android upgrade-new "\$NODE_RUNTIME_IMAGE" 15557
+  # As virtnoded starts a saved runtime: as a phone, here not the older one.
+  android upgrade-new "\$NODE_RUNTIME_IMAGE" 15557 "ro.product.model=SM-S928B ro.build.id=BP4A.251205.006"
   booted_on 15557 150 || {
     C /bin/docker logs --tail 40 upgrade-new 2>&1 | \$B sed 's/^/boot-test:   /'
     fail "this image did not boot on the older image's data"
   }
+  name=\$(C /bin/adb -s 127.0.0.1:15557 shell settings get global device_name | \$B tr -d '\r')
+  echo "boot-test: upgrade: device name \$name"
+  [ "\$name" = SM-S928B ] || fail "on the older image's data the device name is still \$name"
   after=\$(C /bin/adb -s 127.0.0.1:15557 shell pm list packages -3 | \$B tr -d '\r' | \$B sort | \$B tr '\n' ' ')
   echo "boot-test: upgrade: booted \$(C /bin/adb -s 127.0.0.1:15557 shell getprop ro.build.version.release | \$B tr -d '\r') on that data; apps before: \${before:-none}; after: \${after:-none}"
   [ "\$before" = "\$after" ] || fail "apps changed across the upgrade"
@@ -563,7 +601,9 @@ if C /bin/test -f /tmp/gnss-probe.apk; then
   done
   state | \$B tail -8 | \$B cut -c1-200 | \$B sed 's/^/boot-test:   /'
   state | \$B grep -q '^connection online' || { C /bin/tail -20 /run/virtnoded.log; fail "the node did not bring its runtime online"; }
-  echo "boot-test: location: the node's runtime is a \$(X 'getprop ro.product.model'), timezone \$(X 'getprop persist.sys.timezone')"
+  model=\$(X 'getprop ro.product.model')
+  echo "boot-test: location: the node's runtime is a \$model named \$(X 'settings get global device_name'), timezone \$(X 'getprop persist.sys.timezone')"
+  [ "\$(X 'settings get global device_name')" = "\$model" ] || fail "the node's runtime is not named as its phone"
   C /bin/docker cp /tmp/gnss-probe.apk "\$ct:/data/local/tmp/gnss-probe.apk" >/dev/null || fail "could not copy the probe into the runtime"
   X 'pm install -r -g /data/local/tmp/gnss-probe.apk' | \$B grep -q Success || fail "could not install the probe"
   X 'logcat -c'

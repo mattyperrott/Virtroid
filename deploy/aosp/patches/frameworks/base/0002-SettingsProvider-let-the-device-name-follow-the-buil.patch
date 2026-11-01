@@ -1,0 +1,64 @@
+From 011d9c3cf1c3c1f6ffa0b3853a297d0c801cad5d Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Sun, 1 Nov 2026 22:33:29 +0000
+Subject: [PATCH] SettingsProvider: let the device name follow the build at
+ each boot
+
+Android sets Settings.Global.DEVICE_NAME from Build.MODEL, and DATABASE_CREATION_BUILDID from Build.ID, only when it first creates a device's settings, and never again. Virtroid's runtimes present another phone at each start on the same data, so both went on naming the phone the data first booted as (on data from before personas, the image's own redroid16_x86_64_only): any app reads them without a permission, and the file picker shows the device name as the storage's name. SettingsProvider now sets both from the build at every boot, before any app runs, and keeps a device name that anyone but the system set.
+
+Change-Id: I606661f3985f4acb99d115a311729cbddb0732ab
+---
+ .../providers/settings/SettingsProvider.java  | 30 +++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java b/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
+index 1231f5632..6793bfd9a 100644
+--- a/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
++++ b/packages/SettingsProvider/src/com/android/providers/settings/SettingsProvider.java
+@@ -432,6 +432,7 @@ public class SettingsProvider extends ContentProvider {
+                         Context.DEVICE_ID_DEFAULT);
+             }
+             mSettingsRegistry.syncSsaidTableOnStartLocked();
++            mSettingsRegistry.updateBuildDerivedSettingsOnStartLocked();
+         }
+         handler.post(() -> {
+             registerBroadcastReceivers();
+@@ -3446,6 +3447,35 @@ public class SettingsProvider extends ContentProvider {
+             }
+         }
+ 
++        /**
++         * Brings the global settings Android derives from the build when it
++         * first creates them up to this boot's build. A device that presents
++         * another model at each start, on the same data, would otherwise go on
++         * naming itself as the model its data first booted as, and say its
++         * settings were made on that model's build. A device name set by
++         * anyone else (its owner in Settings, an app with
++         * WRITE_SECURE_SETTINGS) is theirs and stays.
++         */
++        private void updateBuildDerivedSettingsOnStartLocked() {
++            // Global settings are applicable only for the default device.
++            final SettingsState globalSettings = getSettingsLocked(SETTINGS_TYPE_GLOBAL,
++                    UserHandle.USER_SYSTEM, Context.DEVICE_ID_DEFAULT);
++            if (globalSettings == null) {
++                return;
++            }
++            final Setting deviceName = globalSettings.getSettingLocked(
++                    Settings.Global.DEVICE_NAME);
++            if (deviceName.isNull()
++                    || SettingsState.SYSTEM_PACKAGE_NAME.equals(deviceName.getPackageName())) {
++                globalSettings.insertSettingLocked(Settings.Global.DEVICE_NAME,
++                        getContext().getResources().getString(
++                                R.string.def_device_name_simple, Build.MODEL),
++                        null, true, SettingsState.SYSTEM_PACKAGE_NAME);
++            }
++            globalSettings.insertSettingLocked(Settings.Global.DATABASE_CREATION_BUILDID,
++                    Build.ID, null, true, SettingsState.SYSTEM_PACKAGE_NAME);
++        }
++
+         public List<String> getSettingsNamesLocked(int type, int userId, int deviceId) {
+             final long key = makeKey(type, userId, deviceId);
+             SettingsState settingsState = mSettingsStates.get(key);
+-- 
+2.43.0
+

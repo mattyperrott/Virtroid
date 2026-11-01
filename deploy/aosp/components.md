@@ -157,6 +157,15 @@ Still open:
   captive portal mode 0, automatic time off, NTP from the pool. The runtime
   used 1,348 MiB after boot, against 2,136 MiB for the image before the cuts
   (one boot test each).
+- **Settings follow each start's phone (2026-11-02):** Android names the
+  device (`Settings.Global.DEVICE_NAME`, which any app reads and the file
+  picker shows as the storage's name) and records the build its settings
+  were made on (`database_creation_buildid`) only when it first makes them.
+  With a new persona at every start, a runtime went on naming the phone its
+  data first booted as, `redroid16_x86_64_only` on data from before
+  personas. SettingsProvider now sets both from the build at each boot
+  (`patches/frameworks/base` 0002); a name the owner gave the device stays.
+  The boot test checks it across starts and on an older image's data.
 - **Trade-off to review:** a runtime without Bluetooth declares fewer
   features than any phone, which apps can read, while personas claim real
   phone models.
