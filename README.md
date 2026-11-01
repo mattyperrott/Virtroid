@@ -32,7 +32,7 @@
   <a href="#building-from-source">Build</a>
 </p>
 
-https://github.com/user-attachments/assets/aa310b75-3f26-4822-945f-a90573e5f463
+https://github.com/user-attachments/assets/02f9720f-3876-4977-bf91-d5424892bd30
 
 Virtroid runs your Android apps in the cloud instead of on your phone. Each account gets its own confidential virtual machine, protected by **AMD SEV-SNP**. Your phone checks the VM's hardware attestation, then shows its screen and sends your touches and typing. The apps, their accounts, messages and files stay in the runtime.
 
