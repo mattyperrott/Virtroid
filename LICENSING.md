@@ -45,6 +45,11 @@ In particular:
 - Dependencies, runtime images, and applications installed inside a runtime
   retain their own licenses. Availability through VirtRoid does not make them
   subject to the project license.
+- The cloud phone's shield app, [`android-client/shield/`](android-client/shield/),
+  is licensed under the GNU General Public License, version 3 or later
+  ([its LICENSE](android-client/shield/LICENSE)), not the project terms: it
+  bundles snarkjs and circomlib (GPL-3.0) and uses 0xbow's Privacy Pools v2
+  SDKs (MIT) and circuits (GPL-3.0). The Commons Clause doesn't apply to it.
 - The Android client's city list,
   `android-client/app/src/main/assets/cities.tsv`, is derived from
   [GeoNames](https://www.geonames.org/) (`cities15000`, 2026-10-21) and is

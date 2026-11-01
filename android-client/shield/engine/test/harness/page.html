@@ -1,0 +1,62 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html>
+<head>
+<meta charset="utf-8">
+<!-- The app page's policy (src/main/assets/engine/index.html), plus inline script for this glue. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; connect-src 'self'">
+<title>Shield engine harness</title>
+</head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+// The app's side of the bridge, played by server.mjs: the engine's calls go
+// to /host, the app's requests come from window.engine(), as WebMessages do.
+const log = (line) => (document.getElementById("log").textContent += line + "\n");
+const pending = new Map();
+let nextId = 1;
+
+globalThis.shieldHost = {
+    onmessage: null,
+    postMessage(raw) {
+        const message = JSON.parse(raw);
+        if (message.t === "call") {
+            fetch("/host", { method: "POST", body: JSON.stringify({ m: message.m, p: message.p }) })
+                .then((r) => r.json())
+                .then((answer) => deliver({ t: "ret", id: message.id, ...answer }));
+        } else if (message.t === "res") {
+            const waiter = pending.get(message.id);
+            pending.delete(message.id);
+            if (message.e) waiter.reject(Object.assign(new Error(message.e.message), { code: message.e.code }));
+            else waiter.resolve(message.r);
+        } else if (message.t === "evt") {
+            log(`event ${message.m} ${JSON.stringify(message.p)}`);
+        }
+    },
+};
+const deliver = (message) => globalThis.shieldHost.onmessage({ data: JSON.stringify(message) });
+
+globalThis.engine = (m, p) =>
+    new Promise((resolve, reject) => {
+        const id = nextId++;
+        pending.set(id, { resolve, reject });
+        deliver({ t: "req", id, m, p });
+    });
+globalThis.control = (m, p) =>
+    fetch("/control", { method: "POST", body: JSON.stringify({ m, p }) })
+        .then((r) => r.json())
+        .then((answer) => {
+            if (answer.e) throw new Error(answer.e.message);
+            return answer.r;
+        });
+globalThis.report = (step, ok, detail) => {
+    log(`${ok === false ? "FAIL" : "ok"} ${step} ${detail ? JSON.stringify(detail) : ""}`);
+    return fetch("/report", { method: "POST", body: JSON.stringify({ step, ok, detail }) });
+};
+
+globalThis.localChain = await (await fetch("/local-chain.json")).json();
+await import("/harness.js");
+if (new URLSearchParams(location.search).get("run") === "1") await import("/scenario.js");
+</script>
+</body>
+</html>

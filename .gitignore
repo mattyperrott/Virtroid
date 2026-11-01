@@ -39,3 +39,11 @@
 /assets/social/*
 /deploy/aosp/test/gnss-probe/gnss-probe.apk
 /video/*
+# The shield app's generated engine, circuits and SDK checkout (android-client/shield/README.md).
+/android-client/shield/engine/.sdk/
+/android-client/shield/engine/node_modules/
+/android-client/shield/engine/test/harness/.out/
+/android-client/shield/src/main/assets/engine/engine.js
+/android-client/shield/src/main/assets/engine/bundled-packages.txt
+/android-client/shield/src/main/assets/circuits/
+/android-client/shield/src/debug/assets/engine/engine-local.js

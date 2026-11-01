@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/debug_network">
+        <!-- adb can send it (the shell holds DUMP); nothing else on the phone can. -->
+        <receiver
+            android:name=".DebugScenario"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

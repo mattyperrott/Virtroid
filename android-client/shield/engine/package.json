@@ -1,0 +1,21 @@
+{
+  "name": "shield-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The shield app's engine: 0xbow's Privacy Pools v2 SDK behind a message bridge to the app",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "sdk": "./fetch-sdk.sh",
+    "circuits": "node fetch-circuits.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node build.mjs",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "events": "3.3.0",
+    "typescript": "5.9.3"
+  },
+  "packageManager": "pnpm@10.27.0"
+}

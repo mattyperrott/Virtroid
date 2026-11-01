@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@privacy-pools-v2/evm-sdk": [".sdk/pp2/packages/evm-sdk/dist/index.d.ts"],
+      "viem": [".sdk/pp2/packages/evm-sdk/node_modules/viem"],
+      "viem/*": [".sdk/pp2/packages/evm-sdk/node_modules/viem/*"]
+    }
+  },
+  "include": ["src"]
+}

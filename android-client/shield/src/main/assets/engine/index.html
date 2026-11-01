@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!--
+  The engine's page in the app's WebView, served from the app's own assets.
+  It loads nothing from anywhere else: every request the engine makes goes
+  to the app over the shieldHost bridge (src/net.ts), and the policy below
+  keeps it that way. snarkjs proves in Web Workers it starts from blobs and
+  needs WebAssembly.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src blob:; connect-src 'self'">
+<title>Shield engine</title>
+</head>
+<body>
+<script type="module" src="engine.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# What fetch-sdk.sh builds the engine from: 0xbow's Privacy Pools v2 monorepo
+# at the commit that is SDK 1.0.2, the release 0xbow's own app vendors. Only
+# its MIT core and EVM SDKs go into the bundle; their snarkjs and circomlibjs
+# dependencies are GPL-3.0, which is why this app is too.
+repo=https://github.com/0xbow-io/privacy-pools-v2-monorepo.git
+commit=61fac03acd1fc306164ddc234f7fac4147d04493
+pnpm=10.27.0

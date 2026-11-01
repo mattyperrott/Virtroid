@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <!-- The system's own look: the cloud phone's theme and dynamic colours. -->
+    <style name="Theme.Shield" parent="Theme.Material3.DayNight.NoActionBar" />
+
+    <style name="Shield.Title" parent="TextAppearance.Material3.HeadlineSmall" />
+
+    <style name="Shield.Body" parent="TextAppearance.Material3.BodyMedium" />
+</resources>
