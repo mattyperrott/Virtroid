@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -72,6 +74,7 @@ class WalletConnect(
     private val _session = MutableStateFlow<WcSession?>(null)
     private val _prompts = MutableSharedFlow<WcSession>(extraBufferCapacity = 8)
     private var relay: WcRelay? = null
+    private val starting = Mutex()
 
     val session: StateFlow<WcSession?> = _session
 
@@ -80,8 +83,12 @@ class WalletConnect(
 
     val configured: Boolean get() = projectId.isNotBlank()
 
-    suspend fun start() = withContext(Dispatchers.IO) {
-        if (relay != null || !configured) return@withContext
+    suspend fun start() = starting.withLock {
+        withContext(Dispatchers.IO) { connectRelay() }
+    }
+
+    private suspend fun connectRelay() {
+        if (relay != null || !configured) return
         val seed = store.get(IDENTITY)?.let(WcCrypto::unhex) ?: WcCrypto.randomBytes(32).also { store.set(IDENTITY, WcCrypto.hex(it)) }
         relay = WcRelay(scope, projectId, WcCrypto.Ed25519Identity(seed), ::onRelayMessage).also { it.connect() }
         store.get(SESSION)?.let { WcSession.fromJson(JSONObject(it)) }?.takeIf { it.expiry > nowSeconds() }?.let { saved ->
@@ -89,6 +96,11 @@ class WalletConnect(
             relay!!.subscribe(saved.topic)
             _session.value = saved
         }
+    }
+
+    /** Reconnects to the relay at once if it's down (see [WcRelay.wake]). */
+    fun wake() {
+        relay?.wake()
     }
 
     /** A pairing to show as a QR code or hand to a wallet on this device as a wc: link. */
@@ -116,11 +128,12 @@ class WalletConnect(
                 ),
             )
             .put("expiryTimestamp", expiry)
+            .put("pairingTopic", pairingTopic)
 
         val approved = CompletableDeferred<WcSession>()
         val id = newId()
         val response = CompletableDeferred<JSONObject>().also { waiting[id] = it }
-        publish(pairingTopic, request(id, "wc_sessionPropose", proposal), TAG_PROPOSE, 300)
+        relay.proposeSession(pairingTopic, WcCrypto.seal(pairingKey, request(id, "wc_sessionPropose", proposal).toString()), 300, id)
 
         scope.launch {
             try {
@@ -183,8 +196,11 @@ class WalletConnect(
     }
 
     private fun onRelayMessage(topic: String, message: String, tag: Int) {
-        val key = keys[topic] ?: return
-        val payload = runCatching { JSONObject(WcCrypto.open(key, message)) }.getOrNull() ?: return
+        val key = keys[topic] ?: return trace("no key for ${topic.take(12)} tag=$tag")
+        val payload = runCatching { JSONObject(WcCrypto.open(key, message)) }.getOrElse {
+            return trace("couldn't open a message on ${topic.take(12)}: ${it.message}")
+        }
+        trace("wc <- ${topic.take(12)} tag=$tag ${payload.optString("method").ifEmpty { "response " + payload.optLong("id") }}")
         if (payload.has("method")) {
             scope.launch { onWalletRequest(topic, payload) }
         } else {
@@ -274,6 +290,11 @@ class WalletConnect(
 
     private fun nowSeconds() = System.currentTimeMillis() / 1000
 
+    /** Debug builds only: which messages arrive, by method or response id. */
+    private fun trace(line: String) {
+        if (io.virtroid.shield.BuildConfig.DEBUG) android.util.Log.d("ShieldWC", line)
+    }
+
     private companion object {
         const val IDENTITY = "wc.identity"
         const val SESSION = "wc.session"
@@ -281,7 +302,6 @@ class WalletConnect(
         const val REQUEST_TTL = 3_600L
         const val SETTLE_TIMEOUT_MS = 300_000L
         // Tags from the specs' method tables; each response is its request's tag + 1.
-        const val TAG_PROPOSE = 1100
         const val TAG_SETTLE = 1102
         const val TAG_UPDATE = 1104
         const val TAG_EXTEND = 1106

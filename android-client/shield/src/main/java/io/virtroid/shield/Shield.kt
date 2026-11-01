@@ -2,6 +2,7 @@
 package io.virtroid.shield
 
 import android.content.Context
+import androidx.core.content.edit
 import io.virtroid.shield.engine.EngineException
 import io.virtroid.shield.widget.ShieldWidget
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,7 +51,7 @@ class Shield(private val app: ShieldApp) {
 
     var chainId: Int
         get() = app.localTest?.let { LOCAL_CHAIN } ?: prefs.getInt("chainId", DEFAULT_CHAIN)
-        set(value) = prefs.edit().putInt("chainId", value).apply()
+        set(value) = prefs.edit { putInt("chainId", value) }
 
     suspend fun chains(): List<ChainInfo> = chainCache ?: (app.engine.request("chains") as JSONArray).let { list ->
         (0 until list.length()).map { i ->

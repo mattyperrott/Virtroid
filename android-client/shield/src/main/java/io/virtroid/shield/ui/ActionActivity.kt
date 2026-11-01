@@ -3,10 +3,10 @@ package io.virtroid.shield.ui
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toUri
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -179,7 +179,7 @@ class ActionActivity : AppCompatActivity() {
             if (explorer.isNotEmpty()) {
                 binding.explorerButton.visibility = View.VISIBLE
                 binding.explorerButton.setOnClickListener {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$explorer/tx/$txHash")))
+                    startActivity(Intent(Intent.ACTION_VIEW, "$explorer/tx/$txHash".toUri()))
                 }
             }
         }

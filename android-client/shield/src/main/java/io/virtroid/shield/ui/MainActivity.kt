@@ -67,11 +67,11 @@ class MainActivity : AppCompatActivity() {
         val session = app.walletConnect.session.value
         val test = app.localTest
         binding.walletText.text = when {
-            test != null -> getString(R.string.wallet_connected, getString(R.string.wallet_test), short(test.owner))
+            test?.owner != null -> getString(R.string.wallet_connected, getString(R.string.wallet_test), short(test.owner))
             session != null -> getString(R.string.wallet_connected, session.walletName.ifEmpty { getString(R.string.wallet_unnamed) }, short(session.addresses.firstOrNull()))
             else -> getString(R.string.wallet_none)
         }
-        binding.connectButton.visibility = if (session == null && test == null) View.VISIBLE else View.GONE
+        binding.connectButton.visibility = if (session == null && test?.owner == null) View.VISIBLE else View.GONE
         binding.disconnectButton.visibility = if (session != null) View.VISIBLE else View.GONE
         binding.setupGroup.visibility = if (state is AccountState.NeedsSetup) View.VISIBLE else View.GONE
         binding.readyGroup.visibility = if (state is AccountState.Ready) View.VISIBLE else View.GONE

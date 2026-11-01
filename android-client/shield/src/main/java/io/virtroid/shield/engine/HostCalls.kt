@@ -3,6 +3,7 @@ package io.virtroid.shield.engine
 
 import android.content.Context
 import android.util.Base64
+import androidx.core.net.toUri
 import io.virtroid.shield.store.SecureStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -66,7 +67,7 @@ class HostCalls(
 
     private suspend fun http(p: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         val url = p.getString("url")
-        val parsed = android.net.Uri.parse(url)
+        val parsed = url.toUri()
         val host = parsed.host?.lowercase() ?: throw EngineException("blocked", "No host in $url")
         val authority = if (parsed.port > 0) "$host:${parsed.port}" else host
         val scheme = parsed.scheme

@@ -5,8 +5,8 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.widget.TextView
+import androidx.core.net.toUri
 import io.virtroid.shield.R
 import io.virtroid.shield.ShieldApp
 import io.virtroid.shield.engine.EngineException
@@ -37,7 +37,7 @@ object Progress {
                 // Bring the wallet forward when it's on this phone and says how.
                 session.walletLink?.let { link ->
                     try {
-                        activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        activity.startActivity(Intent(Intent.ACTION_VIEW, link.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     } catch (_: ActivityNotFoundException) {
                         // The wallet is on another device; the user approves there.
                     }
@@ -58,6 +58,7 @@ object Errors {
         "below_fee" -> context.getString(R.string.error_below_fee)
         "fee_changed" -> context.getString(R.string.error_fee_changed)
         "blocked" -> context.getString(R.string.error_blocked)
+        "engine_restarted" -> context.getString(R.string.error_engine_restarted)
         else -> error.message ?: error.code
     }
 }

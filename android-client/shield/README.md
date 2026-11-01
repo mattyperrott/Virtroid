@@ -76,8 +76,15 @@ relayer, their mock ASP):
    deposit; the steps print in the server's output.
 3. Emulator: `node engine/test/harness/build-device.mjs <same json>`, build
    and install the debug APK, write the harness URL and the test wallet's
-   address into the app's files (see `src/debug/.../BuildHooks.kt`), then
-   `adb shell am broadcast -n io.virtroid.shield/.DebugScenario` and
+   address into the app's files (see `src/debug/.../BuildHooks.kt`), start
+   the app (`adb shell am start -n io.virtroid.shield/.ui.MainActivity`),
+   then `adb shell am broadcast -n io.virtroid.shield/.DebugScenario` and
    `adb shell run-as io.virtroid.shield cat files/scenario.log`.
+4. WalletConnect, end to end through Reown's relay: as 3, but write
+   `walletconnect` in place of the address. The scenario pairs first and
+   writes `files/pairing-uri`; give that to the test wallet, WalletConnect's
+   own SDK (sign-client 2.21.8, the last Apache-2.0 release), which signs
+   with the harness's key:
+   `cd engine/test/walletconnect && pnpm install --ignore-scripts && SHIELD_WALLETCONNECT_PROJECT_ID=… node wallet.mjs '<wc: uri>'`.
 
 The test mode exists only in debug builds.

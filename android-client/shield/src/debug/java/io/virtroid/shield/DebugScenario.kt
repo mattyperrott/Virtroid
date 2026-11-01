@@ -17,15 +17,17 @@ import java.math.BigInteger
 /**
  * Debug builds only: runs engine/test/harness/scenario.js's steps through
  * the app's own code (the engine in the WebView, the bridge, the sealed
- * store, Shield) in local test mode, logging each step:
+ * store, Shield) in local test mode, logging each step. Start the app
+ * first, so it's in the foreground for the whole run; the broadcast only
+ * starts the scenario (Android kills a receiver that holds one for a minute):
+ *   adb shell am start -n io.virtroid.shield/.ui.MainActivity
  *   adb shell am broadcast -n io.virtroid.shield/.DebugScenario
- *   adb logcat -s ShieldScenario
+ *   adb shell run-as io.virtroid.shield cat files/scenario.log
  */
 class DebugScenario : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext as ShieldApp
         val test = app.localTest ?: return log(context, "FAIL local test mode is off")
-        val pending = goAsync()
         app.scope.launch {
             val shield = app.shield
             suspend fun step(name: String, block: suspend () -> Any?) {
@@ -35,8 +37,16 @@ class DebugScenario : BroadcastReceiver() {
             }
             try {
                 val harness = File(context.filesDir, "harness-url").readText().trim()
-                step("load: ${test.owner}") { shield.load() }
-                if (shield.state.value is AccountState.NeedsSetup) step("set up") { shield.setUp(test.owner) }
+                if (test.owner == null && app.walletConnect.session.value == null) {
+                    // The interop test: pair, and wait for engine/test/walletconnect's wallet to approve.
+                    step("start WalletConnect") { app.walletConnect.start() }
+                    val pairing = app.walletConnect.pair(shield.chains().map { it.chainId })
+                    File(context.filesDir, "pairing-uri").writeText(pairing.uri)
+                    step("wallet approved the session") { pairing.approved.await().let { "${it.walletName} ${it.addresses}" } }
+                }
+                val owner = app.ownerAddress() ?: error("no wallet")
+                step("load: $owner") { shield.load() }
+                if (shield.state.value is AccountState.NeedsSetup) step("set up") { shield.setUp(owner) }
                 step("shield 100 USDC") { shield.shield("USDC", BigInteger("100000000")) }
                 approveWaiting(harness, shield)
                 step("spendable USDC") { (shield.refresh() as AccountState.Ready).balances.first { it.symbol == "USDC" }.spendable }
@@ -44,14 +54,12 @@ class DebugScenario : BroadcastReceiver() {
                 step("quote 25 USDC withdrawal") { shield.quoteWithdraw("USDC", BigInteger("25000000"), fresh) }
                 step("confirm") { shield.confirm() }
                 step("fresh address USDC") { control(harness, "balance", JSONObject().put("address", fresh).put("token", shield.chain().assets.first { it.symbol == "USDC" }.token)).get("r") }
-                step("quote private send of max USDC to self") { shield.quoteSend("USDC", null, test.owner) }
+                step("quote private send of max USDC to self") { shield.quoteSend("USDC", null, owner) }
                 step("confirm") { shield.confirm() }
                 step("final") { (shield.refresh() as AccountState.Ready).balances.joinToString { "${it.symbol}=${it.spendable}" } }
                 log(context, "ok   scenario finished")
             } catch (error: Exception) {
                 log(context, "FAIL ${error.javaClass.simpleName}: ${error.message}")
-            } finally {
-                pending.finish()
             }
         }
     }

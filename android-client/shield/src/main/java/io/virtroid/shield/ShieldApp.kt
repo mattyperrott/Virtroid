@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.virtroid.shield
 
+import android.app.Activity
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
+import android.os.Bundle
 import io.virtroid.shield.engine.EngineHost
 import io.virtroid.shield.engine.HostCalls
 import io.virtroid.shield.engine.WalletRequests
@@ -52,6 +56,30 @@ class ShieldApp : Application() {
                 .put("icons", JSONArray()),
         )
         scope.launch { walletConnect.start() }
+        wakeWalletConnect()
+    }
+
+    /**
+     * WalletConnect's relay connection is cut while the app is in the
+     * background (the user is in their wallet, approving); it reconnects the
+     * moment a screen comes forward or the network comes back, so what the
+     * wallet sent meanwhile arrives at once.
+     */
+    private fun wakeWalletConnect() {
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityStarted(activity: Activity) = walletConnect.wake()
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityResumed(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        })
+        getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = walletConnect.wake()
+            },
+        )
     }
 
     companion object {

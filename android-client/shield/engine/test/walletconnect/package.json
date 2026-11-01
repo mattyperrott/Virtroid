@@ -1,0 +1,11 @@
+{
+  "name": "shield-walletconnect-test-wallet",
+  "private": true,
+  "description": "A wallet for testing the app's WalletConnect client against WalletConnect's own SDK; never shipped",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "dependencies": {
+    "@walletconnect/sign-client": "2.21.8"
+  },
+  "packageManager": "pnpm@10.27.0"
+}

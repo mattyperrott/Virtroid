@@ -11,8 +11,10 @@ import io.virtroid.shield.engine.WalletRequests
 class LocalTest(
     /** The engine page under assets/, with the local chain built in. */
     val page: String,
-    val owner: String,
-    val wallet: WalletRequests,
+    /** The test wallet's address, or null when the test connects a wallet over WalletConnect. */
+    val owner: String?,
+    /** The harness's wallet, or null to use WalletConnect (the interop test). */
+    val wallet: WalletRequests?,
     /** Plain-HTTP hosts the local stack answers on. */
     val cleartextHosts: Set<String>,
 )

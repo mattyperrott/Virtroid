@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -34,12 +35,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * hands every request it makes to [HostCalls], which sends it if its host is
  * one the engine's chains name.
  */
-class EngineHost(context: Context, private val calls: HostCalls, page: String = "engine/index.html") {
+class EngineHost(context: Context, private val calls: HostCalls, private val page: String = "engine/index.html") {
+    private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val nextId = AtomicInteger(1)
     private val pending = HashMap<Int, CompletableDeferred<Any?>>()
-    private val ready = CompletableDeferred<Unit>()
+    @Volatile private var ready = CompletableDeferred<Unit>()
     private var reply: JavaScriptReplyProxy? = null
     private val _events = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 64)
 
@@ -51,8 +53,20 @@ class EngineHost(context: Context, private val calls: HostCalls, page: String = 
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
         .build()
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private val webView = WebView(context.applicationContext).apply {
+    private var webView: WebView
+
+    init {
+        check(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            "This WebView can't run the engine (no WebMessageListener)"
+        }
+        webView = createWebView()
+    }
+
+    // WEB_MESSAGE_LISTENER is checked in init, before the first WebView exists.
+    // Lint misses the onRenderProcessGone below in an anonymous client; it
+    // works (a killed renderer restarts the engine, tested on Android 16).
+    @SuppressLint("SetJavaScriptEnabled", "RequiresFeature", "MissingOnRenderProcessGone")
+    private fun createWebView(): WebView = WebView(appContext).apply {
         settings.javaScriptEnabled = true
         settings.allowFileAccess = false
         settings.allowContentAccess = false
@@ -69,19 +83,35 @@ class EngineHost(context: Context, private val calls: HostCalls, page: String = 
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
-        }
-    }
 
-    init {
-        check(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            "This WebView can't run the engine (no WebMessageListener)"
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                restart()
+                return true
+            }
         }
-        WebViewCompat.addWebMessageListener(webView, "shieldHost", setOf(ORIGIN)) { _, message, _, isMainFrame, replyProxy ->
+        WebViewCompat.addWebMessageListener(this, "shieldHost", setOf(ORIGIN)) { _, message, _, isMainFrame, replyProxy ->
             if (!isMainFrame) return@addWebMessageListener
             reply = replyProxy
             message.data?.let(::receive)
         }
-        webView.loadUrl("$ORIGIN/assets/$page")
+        loadUrl("$ORIGIN/assets/$page")
+    }
+
+    /**
+     * Android can end the WebView's renderer (it reclaims memory, and a proof
+     * holds tens of megabytes), which would otherwise take the app down with
+     * it. The engine starts again in a new WebView; what it was doing fails
+     * with a code the screens explain, and nothing is lost: notes and keys are
+     * in the app's store, and notes a relay was spending stay marked in flight.
+     */
+    private fun restart() {
+        webView.destroy()
+        reply = null
+        val failed = pending.values.toList()
+        pending.clear()
+        failed.forEach { it.completeExceptionally(EngineException("engine_restarted", "The engine was stopped by the system")) }
+        if (ready.isCompleted) ready = CompletableDeferred()
+        webView = createWebView()
     }
 
     /** Asks the engine to do [method]; the result is what engine/src/app.ts returns, as org.json values. */
@@ -131,6 +161,7 @@ class EngineHost(context: Context, private val calls: HostCalls, page: String = 
         }
     }
 
+    @SuppressLint("RequiresFeature") // checked in init
     private fun post(message: JSONObject) {
         main.post { reply?.postMessage(message.toString()) }
     }

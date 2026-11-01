@@ -8,6 +8,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
+import androidx.core.content.edit
 import io.virtroid.shield.AccountState
 import io.virtroid.shield.R
 import io.virtroid.shield.Shield
@@ -37,7 +38,7 @@ class ShieldWidget : AppWidgetProvider() {
             context.getSharedPreferences("shield", Context.MODE_PRIVATE).getBoolean(SHOW_BALANCES, false)
 
         fun setShowBalances(context: Context, show: Boolean) {
-            context.getSharedPreferences("shield", Context.MODE_PRIVATE).edit().putBoolean(SHOW_BALANCES, show).apply()
+            context.getSharedPreferences("shield", Context.MODE_PRIVATE).edit { putBoolean(SHOW_BALANCES, show) }
             refreshAll(context)
         }
 

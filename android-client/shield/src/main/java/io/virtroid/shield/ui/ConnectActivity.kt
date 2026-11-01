@@ -5,10 +5,10 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
@@ -46,7 +46,7 @@ class ConnectActivity : AppCompatActivity() {
                 binding.qr.setImageBitmap(withContext(Dispatchers.Default) { qr(pairing.uri) })
                 binding.openWallet.setOnClickListener {
                     try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pairing.uri)))
+                        startActivity(Intent(Intent.ACTION_VIEW, pairing.uri.toUri()))
                     } catch (_: ActivityNotFoundException) {
                         binding.status.setText(R.string.connect_no_wallet_here)
                     }

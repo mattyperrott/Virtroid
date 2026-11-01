@@ -76,6 +76,7 @@
     <string name="error_nothing_spendable">Nothing is ready to spend yet.</string>
     <string name="error_below_fee">This is less than the relayer\'s fee.</string>
     <string name="error_fee_changed">The relayer\'s fee changed. Review again.</string>
+    <string name="error_engine_restarted">The phone stopped the engine to free memory. It has started again; try once more.</string>
     <string name="error_blocked">The app blocked a request to an unexpected server.</string>
 
     <string name="widget_label">Shield</string>

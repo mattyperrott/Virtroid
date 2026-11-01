@@ -18,7 +18,9 @@ import java.util.concurrent.TimeUnit
 /**
  * Debug builds' local test mode, on when the test writes the harness's URL
  * (engine/test/harness/server.mjs, reached at 10.0.2.2 from an emulator)
- * and the test wallet's address into the app's files:
+ * into the app's files, and then either the test wallet's address (the
+ * harness signs) or `walletconnect` (a wallet connects over WalletConnect,
+ * engine/test/walletconnect):
  *   adb shell run-as io.virtroid.shield sh -c 'echo http://10.0.2.2:8099 > files/harness-url'
  *   adb shell run-as io.virtroid.shield sh -c 'echo 0x… > files/harness-owner'
  */
@@ -26,10 +28,11 @@ object BuildHooks {
     fun localTest(context: Context): LocalTest? {
         val url = File(context.filesDir, "harness-url").takeIf { it.isFile }?.readText()?.trim() ?: return null
         val owner = File(context.filesDir, "harness-owner").takeIf { it.isFile }?.readText()?.trim() ?: return null
+        val walletConnect = owner == "walletconnect"
         return LocalTest(
             page = "engine/index-local.html",
-            owner = owner,
-            wallet = HarnessWallet(url),
+            owner = owner.takeUnless { walletConnect },
+            wallet = if (walletConnect) null else HarnessWallet(url),
             cleartextHosts = setOf("10.0.2.2"),
         )
     }
