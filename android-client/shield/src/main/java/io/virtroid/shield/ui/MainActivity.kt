@@ -19,6 +19,8 @@ import io.virtroid.shield.ShieldApp
 import io.virtroid.shield.databinding.ActivityMainBinding
 import io.virtroid.shield.databinding.RowBalanceBinding
 import io.virtroid.shield.engine.EngineException
+import io.virtroid.shield.ui.card.CardActivity
+import io.virtroid.shield.ui.card.Tab
 import io.virtroid.shield.widget.ShieldWidget
 import kotlinx.coroutines.launch
 
@@ -33,13 +35,13 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.connectButton.setOnClickListener { startActivity(Intent(this, ConnectActivity::class.java)) }
+        binding.connectButton.setOnClickListener { startActivity(CardActivity.intent(this)) }
         binding.setupButton.setOnClickListener { run(getString(R.string.progress_setting_up)) { shield.setUp((shield.state.value as AccountState.NeedsSetup).owner) } }
         binding.refreshButton.setOnClickListener { run(getString(R.string.progress_syncing)) { shield.refresh() } }
         binding.chainButton.setOnClickListener { pickChain() }
-        binding.shieldButton.setOnClickListener { startActivity(ActionActivity.intent(this, ActionActivity.Mode.SHIELD)) }
-        binding.sendButton.setOnClickListener { startActivity(ActionActivity.intent(this, ActionActivity.Mode.SEND)) }
-        binding.withdrawButton.setOnClickListener { startActivity(ActionActivity.intent(this, ActionActivity.Mode.WITHDRAW)) }
+        binding.shieldButton.setOnClickListener { startActivity(CardActivity.intent(this, Tab.SHIELD)) }
+        binding.sendButton.setOnClickListener { startActivity(CardActivity.intent(this, Tab.SEND)) }
+        binding.withdrawButton.setOnClickListener { startActivity(CardActivity.intent(this, Tab.WITHDRAW)) }
         binding.disconnectButton.setOnClickListener { lifecycleScope.launch { app.walletConnect.disconnect(); shield.load() } }
         binding.widgetBalances.isChecked = ShieldWidget.showBalances(this)
         binding.widgetBalances.setOnCheckedChangeListener { _, checked -> ShieldWidget.setShowBalances(this, checked) }

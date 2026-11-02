@@ -38,7 +38,8 @@ const RELAYER_KEY = "0xb9dacf9a665e631e115b28d780600d4238ff202e6c37c661d5c20c860
 
 const chain = defineChain({ id: 11155111, name: "local", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [RPC] } } });
 const publicClient = createPublicClient({ chain, transport: http(RPC), pollingInterval: 200 });
-const user = privateKeyToAccount(generatePrivateKey());
+// HARNESS_KEY keeps the test wallet across restarts (an app set up against it stays usable).
+const user = privateKeyToAccount(process.env.HARNESS_KEY ?? generatePrivateKey());
 const wallet = createWalletClient({ account: user, chain, transport: http(RPC) });
 
 const localChainConfig = localChain(deployment, "127.0.0.1", privateKeyToAccount(RELAYER_KEY).address);
@@ -104,6 +105,12 @@ const control = {
     async approve({ label }) {
         const response = await fetch("http://127.0.0.1:3001/admin/approve-label", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) });
         if (!response.ok) throw new Error(`approve-label: ${response.status} ${await response.text()}`);
+        return response.json();
+    },
+    // Takes an approved label back out of the set: the SDK then marks its notes declined.
+    async revoke({ label }) {
+        const response = await fetch("http://127.0.0.1:3001/admin/revoke-label", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) });
+        if (!response.ok) throw new Error(`revoke-label: ${response.status} ${await response.text()}`);
         return response.json();
     },
     async balance({ address, token }) {

@@ -116,15 +116,6 @@
                     android:text="@string/shield" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/sendButton"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:text="@string/send" />
-
-                <com.google.android.material.button.MaterialButton
                     android:id="@+id/withdrawButton"
                     style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
@@ -132,6 +123,15 @@
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:text="@string/withdraw" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sendButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/send" />
             </LinearLayout>
 
             <com.google.android.material.button.MaterialButton

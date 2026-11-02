@@ -28,7 +28,21 @@ data class Balance(
     val declined: List<PendingDeposit>,
 )
 
-data class Quote(val receive: BigInteger, val fee: BigInteger, val expiresAt: Long?)
+/** A send or withdrawal the engine has proved and the relayer priced; [id] is what confirms it. */
+data class Quote(val id: Long, val receive: BigInteger, val fee: BigInteger, val expiresAt: Long?)
+
+/** What the wallet holds of an asset, and for ETH what to leave in it for gas. */
+data class WalletFunds(val balance: BigInteger, val reserve: BigInteger)
+
+/** What a shield of a given amount comes to (engine.ts shieldPlan); [cost] is exact, or at most that when not [exact]. */
+data class ShieldPlan(
+    val hold: BigInteger,
+    val fee: BigInteger,
+    val cost: BigInteger,
+    val exact: Boolean,
+    val approvals: Int,
+    val minimum: BigInteger,
+)
 
 /** Where the account stands, for the screens and the widget. */
 sealed interface AccountState {
@@ -107,9 +121,34 @@ class Shield(private val app: ShieldApp) {
         return ready
     }
 
-    suspend fun shield(symbol: String, amount: BigInteger) {
-        app.engine.request("shield", account(currentOwner()).put("symbol", symbol).put("amount", amount.toString()))
+    suspend fun walletBalance(symbol: String): WalletFunds {
+        val r = app.engine.request("walletBalance", account(currentOwner()).put("symbol", symbol)) as JSONObject
+        return WalletFunds(BigInteger(r.getString("balance")), BigInteger(r.getString("reserve")))
+    }
+
+    suspend fun shieldPlan(symbol: String, amount: BigInteger): ShieldPlan {
+        val r = app.engine.request("shieldPlan", account(currentOwner()).put("symbol", symbol).put("amount", amount.toString())) as JSONObject
+        return ShieldPlan(
+            hold = BigInteger(r.getString("hold")),
+            fee = BigInteger(r.getString("fee")),
+            cost = BigInteger(r.getString("cost")),
+            exact = r.getBoolean("exact"),
+            approvals = r.getInt("approvals"),
+            minimum = BigInteger(r.getString("minimum")),
+        )
+    }
+
+    /** Whether `recipient` has a Privacy Pools account on this chain, so a private send reaches it. */
+    suspend fun canReceive(recipient: String): Boolean {
+        val r = app.engine.request("canReceive", JSONObject().put("chainId", chainId).put("recipient", recipient)) as JSONObject
+        return r.getBoolean("registered")
+    }
+
+    /** Shields up to `amount` from the wallet; returns the shield's transaction. */
+    suspend fun shield(symbol: String, amount: BigInteger): String? {
+        val result = app.engine.request("shield", account(currentOwner()).put("symbol", symbol).put("amount", amount.toString())) as JSONObject
         refresh()
+        return result.optJSONArray("txHashes")?.let { hashes -> hashes.optString(hashes.length() - 1).ifEmpty { null } }
     }
 
     suspend fun quoteWithdraw(symbol: String, amount: BigInteger?, recipient: String): Quote =
@@ -118,8 +157,8 @@ class Shield(private val app: ShieldApp) {
     suspend fun quoteSend(symbol: String, amount: BigInteger?, recipient: String): Quote =
         quote("quoteSend", symbol, amount, recipient)
 
-    suspend fun confirm(): String {
-        val result = app.engine.request("confirm") as JSONObject
+    suspend fun confirm(quoteId: Long): String {
+        val result = app.engine.request("confirm", JSONObject().put("id", quoteId)) as JSONObject
         refresh()
         return result.getString("txHash")
     }
@@ -136,7 +175,9 @@ class Shield(private val app: ShieldApp) {
             .put("amount", amount?.toString() ?: "max")
             .put("recipient", recipient)
         val q = app.engine.request(method, params) as JSONObject
-        return Quote(BigInteger(q.getString("receive")), BigInteger(q.getString("fee")), q.optLong("expiresAt").takeIf { it > 0 })
+        // The relayer gives its fee's expiry in seconds or milliseconds, depending on the route.
+        val expires = q.optLong("expiresAt").takeIf { it > 0 }?.let { if (it < 100_000_000_000L) it * 1000 else it }
+        return Quote(q.getLong("id"), BigInteger(q.getString("receive")), BigInteger(q.getString("fee")), expires)
     }
 
     private fun currentOwner(): String = when (val s = _state.value) {

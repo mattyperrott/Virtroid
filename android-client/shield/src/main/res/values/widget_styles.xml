@@ -3,11 +3,11 @@
 <resources>
     <style name="ShieldWidgetButton">
         <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">36dp</item>
+        <item name="android:layout_height">48dp</item>
         <item name="android:layout_weight">1</item>
         <item name="android:gravity">center</item>
         <item name="android:background">@drawable/widget_button</item>
-        <item name="android:textColor">@color/widget_button_text</item>
-        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">14sp</item>
     </style>
 </resources>

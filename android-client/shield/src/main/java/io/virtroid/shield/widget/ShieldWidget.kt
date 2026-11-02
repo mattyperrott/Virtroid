@@ -13,16 +13,17 @@ import io.virtroid.shield.AccountState
 import io.virtroid.shield.R
 import io.virtroid.shield.Shield
 import io.virtroid.shield.ShieldApp
-import io.virtroid.shield.ui.ActionActivity
-import io.virtroid.shield.ui.MainActivity
+import io.virtroid.shield.ui.card.CardActivity
+import io.virtroid.shield.ui.card.Tab
 import org.json.JSONObject
 
 /**
- * The home-screen widget: a shortcut into the app, not the app. It shows the
- * chain and whether deposits are waiting for screening, and the balance only
- * when the user turned that on in the app (off by default: the home screen
- * is the most looked-at surface there is). Its buttons open the app's
- * screens; nothing is signed or sent from the widget itself.
+ * The home-screen widget: the way into the transaction card, not the card.
+ * It shows the chain and whether deposits are waiting for screening or were
+ * declined, and the balance only when the user turned that on in the app
+ * (off by default: the home screen is the most looked-at surface there is).
+ * Its buttons open the card on their tab, growing out of the widget; nothing
+ * is typed, signed or sent on the widget itself.
  */
 class ShieldWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
@@ -67,15 +68,15 @@ class ShieldWidget : AppWidgetProvider() {
             val summary = runCatching { app.store.get(SUMMARY)?.let(::JSONObject) }.getOrNull()
             val views = RemoteViews(context.packageName, R.layout.widget_shield)
             if (summary == null) {
-                views.setTextViewText(R.id.widget_status, context.getString(R.string.widget_set_up))
-                views.setTextViewText(R.id.widget_balance, "")
+                views.setTextViewText(R.id.widget_status, "")
+                views.setTextViewText(R.id.widget_balance, context.getString(R.string.widget_set_up))
             } else {
                 val waiting = summary.optInt("waiting")
                 val declined = summary.optInt("declined")
                 val status = buildList {
                     add(summary.optString("chain"))
                     if (waiting > 0) add(context.resources.getQuantityString(R.plurals.widget_waiting, waiting, waiting))
-                    if (declined > 0) add(context.getString(R.string.widget_declined))
+                    if (declined > 0) add(context.resources.getQuantityString(R.plurals.widget_declined, declined, declined))
                 }.joinToString("  ·  ")
                 views.setTextViewText(R.id.widget_status, status)
                 val balances = summary.optString("balances")
@@ -88,10 +89,10 @@ class ShieldWidget : AppWidgetProvider() {
                     },
                 )
             }
-            views.setOnClickPendingIntent(R.id.widget_root, open(context, Intent(context, MainActivity::class.java), 0))
-            views.setOnClickPendingIntent(R.id.widget_shield, open(context, ActionActivity.intent(context, ActionActivity.Mode.SHIELD), 1))
-            views.setOnClickPendingIntent(R.id.widget_send, open(context, ActionActivity.intent(context, ActionActivity.Mode.SEND), 2))
-            views.setOnClickPendingIntent(R.id.widget_withdraw, open(context, ActionActivity.intent(context, ActionActivity.Mode.WITHDRAW), 3))
+            views.setOnClickPendingIntent(android.R.id.background, open(context, CardActivity.intent(context), 0))
+            views.setOnClickPendingIntent(R.id.widget_shield, open(context, CardActivity.intent(context, Tab.SHIELD), 1))
+            views.setOnClickPendingIntent(R.id.widget_withdraw, open(context, CardActivity.intent(context, Tab.WITHDRAW), 2))
+            views.setOnClickPendingIntent(R.id.widget_send, open(context, CardActivity.intent(context, Tab.SEND), 3))
             return views
         }
 
@@ -99,7 +100,7 @@ class ShieldWidget : AppWidgetProvider() {
             PendingIntent.getActivity(
                 context,
                 code,
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
     }

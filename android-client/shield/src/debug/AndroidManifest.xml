@@ -7,5 +7,9 @@
             android:name=".DebugScenario"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <receiver
+            android:name=".DebugScreening"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
     </application>
 </manifest>

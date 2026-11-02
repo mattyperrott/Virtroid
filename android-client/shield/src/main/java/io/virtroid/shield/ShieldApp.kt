@@ -38,6 +38,7 @@ class ShieldApp : Application() {
         if (test != null) EngineHost(this, calls, test.page) else EngineHost(this, calls)
     }
     val shield: Shield by lazy { Shield(this) }
+    val operations: Operations by lazy { Operations(this) }
 
     /** The connected wallet's address, the account's owner. */
     fun ownerAddress(): String? = localTest?.owner ?: walletConnect.session.value?.addresses?.firstOrNull()

@@ -42,8 +42,18 @@ uses the Privacy Pools circuits, which are too.
   because Reown's Kotlin SDK is under the WalletConnect Community License,
   which a GPL app can't include. `WcCryptoTest` checks it against
   WalletConnect's own test vectors.
-- **Widget**: a shortcut into the app. It shows the chain and waiting
-  deposits; the balance only if the user turns that on.
+- **The transaction card** (`ui/card`, Compose): where the user shields,
+  withdraws, sends privately and takes back a declined deposit, a step at a
+  time, in Virtroid's palette ([design-brief.md](design-brief.md)). It opens
+  over whatever is behind it: from the home-screen widget it grows out of the
+  widget, from the app over its screen. A transaction runs in the app
+  (`Operations.kt`), not the card, so closing the card doesn't stop it, and
+  opening it again shows where it got to. Sends and withdrawals are proved
+  and priced before their review, and a confirm only sends the quote on
+  screen.
+- **Widget**: the way into the card. It shows the chain and deposits waiting
+  for screening or declined, the balance only if the user turns that on, and
+  opens the card on Shield, Withdraw or Send.
 
 ## Building
 
@@ -80,7 +90,13 @@ relayer, their mock ASP):
    the app (`adb shell am start -n io.virtroid.shield/.ui.MainActivity`),
    then `adb shell am broadcast -n io.virtroid.shield/.DebugScenario` and
    `adb shell run-as io.virtroid.shield cat files/scenario.log`.
-4. WalletConnect, end to end through Reown's relay: as 3, but write
+4. By hand: as 3, then open the card from the widget or the app.
+   `adb shell am broadcast -n io.virtroid.shield/.DebugScreening` has the
+   mock screening approve the deposits the account waits on (`--es verdict
+   decline` approves and then revokes them: the SDK only declines a deposit
+   it had approved), with Shield in the foreground. Start the harness with
+   `HARNESS_KEY=0x…` to keep its test wallet across restarts.
+5. WalletConnect, end to end through Reown's relay: as 3, but write
    `walletconnect` in place of the address. The scenario pairs first and
    writes `files/pairing-uri`; give that to the test wallet, WalletConnect's
    own SDK (sign-client 2.21.8, the last Apache-2.0 release), which signs

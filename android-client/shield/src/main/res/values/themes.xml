@@ -1,8 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
-    <!-- The system's own look: the cloud phone's theme and dynamic colours. -->
-    <style name="Theme.Shield" parent="Theme.Material3.DayNight.NoActionBar" />
+    <!-- Virtroid's palette over Material 3, like the card and the widget. -->
+    <style name="Theme.Shield" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/lime</item>
+        <item name="colorOnPrimary">@color/on_lime</item>
+        <item name="colorPrimaryContainer">@color/control</item>
+        <item name="colorOnPrimaryContainer">@color/text</item>
+        <item name="colorSecondary">@color/lime</item>
+        <item name="colorOnSecondary">@color/on_lime</item>
+        <item name="colorSecondaryContainer">@color/control</item>
+        <item name="colorOnSecondaryContainer">@color/text</item>
+        <item name="colorSurface">@color/outer</item>
+        <item name="colorOnSurface">@color/text</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+        <item name="colorSurfaceContainer">@color/panel</item>
+        <item name="colorSurfaceContainerHigh">@color/control</item>
+        <item name="colorOutline">@color/border</item>
+        <item name="colorError">@color/error</item>
+        <item name="android:colorBackground">@color/outer</item>
+    </style>
+
+    <!-- The transaction card: a see-through window; the card draws its own scrim. -->
+    <style name="Theme.Shield.Card">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 
     <style name="Shield.Title" parent="TextAppearance.Material3.HeadlineSmall" />
 

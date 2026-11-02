@@ -35,13 +35,15 @@
             </intent-filter>
         </activity>
 
+        <!-- The transaction card. Its own task, so closing it shows what was behind it: the
+             home screen when the widget opened it, Shield's screen when that did. -->
         <activity
-            android:name=".ui.ConnectActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".ui.ActionActivity"
+            android:name=".ui.card.CardActivity"
+            android:excludeFromRecents="true"
             android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="io.virtroid.shield.card"
+            android:theme="@style/Theme.Shield.Card"
             android:windowSoftInputMode="adjustResize" />
 
         <activity

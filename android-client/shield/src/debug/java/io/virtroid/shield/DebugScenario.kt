@@ -51,11 +51,12 @@ class DebugScenario : BroadcastReceiver() {
                 approveWaiting(harness, shield)
                 step("spendable USDC") { (shield.refresh() as AccountState.Ready).balances.first { it.symbol == "USDC" }.spendable }
                 val fresh = control(harness, "fresh").getString("r")
-                step("quote 25 USDC withdrawal") { shield.quoteWithdraw("USDC", BigInteger("25000000"), fresh) }
-                step("confirm") { shield.confirm() }
+                var quote: Quote? = null
+                step("quote 25 USDC withdrawal") { shield.quoteWithdraw("USDC", BigInteger("25000000"), fresh).also { quote = it } }
+                step("confirm") { shield.confirm(checkNotNull(quote).id) }
                 step("fresh address USDC") { control(harness, "balance", JSONObject().put("address", fresh).put("token", shield.chain().assets.first { it.symbol == "USDC" }.token)).get("r") }
-                step("quote private send of max USDC to self") { shield.quoteSend("USDC", null, owner) }
-                step("confirm") { shield.confirm() }
+                step("quote private send of max USDC to self") { shield.quoteSend("USDC", null, owner).also { quote = it } }
+                step("confirm") { shield.confirm(checkNotNull(quote).id) }
                 step("final") { (shield.refresh() as AccountState.Ready).balances.joinToString { "${it.symbol}=${it.spendable}" } }
                 log(context, "ok   scenario finished")
             } catch (error: Exception) {

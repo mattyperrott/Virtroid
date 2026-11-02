@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The widget takes the system's own dynamic colours, as the launcher's do. -->
+<!-- Virtroid's palette (design-brief.md): the same light or dark, as ui/card/Theme.kt's. -->
 <resources>
-    <color name="widget_background">@android:color/system_neutral1_50</color>
-    <color name="widget_button">@android:color/system_accent1_100</color>
-    <color name="widget_button_text">@android:color/system_accent1_900</color>
+    <color name="outer">#131313</color>
+    <color name="panel">#1B1B1B</color>
+    <color name="control">#242424</color>
+    <color name="lime">#AFD135</color>
+    <color name="on_lime">#0E0E0E</color>
+    <color name="text">#F4F4F5</color>
+    <color name="text_secondary">#A1A1AA</color>
+    <color name="error">#DF7E79</color>
+    <color name="border">#14FFFFFF</color>
     <color name="launcher_background">#1F1F1F</color>
 </resources>

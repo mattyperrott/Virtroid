@@ -41,11 +41,12 @@ import type {
     WithdrawalRelayParams,
     YieldSessions,
 } from "@privacy-pools-v2/evm-sdk";
-import { createPublicClient, fallback, http, keccak256, toBytes, toHex } from "viem";
+import { createPublicClient, erc20Abi, fallback, http, keccak256, toBytes, toHex } from "viem";
 
 import type { Bridge } from "./bridge.js";
 import { EngineError } from "./bridge.js";
 import { AppCircuitArtifacts } from "./artifacts.js";
+import { NATIVE } from "./chains.js";
 import type { Asset, ChainConfig } from "./chains.js";
 import { HostStorage } from "./storage.js";
 import { walletProvider } from "./wallet.js";
@@ -56,6 +57,45 @@ const DERIVATION_PURPOSE =
 
 type Route = "transfer" | "withdraw" | { router: Address };
 
+/** The entrypoint's per-asset terms: the smallest deposit and the screening (vetting) fee. */
+const ENTRYPOINT_ASSETS_ABI = [
+    {
+        type: "function",
+        name: "assets",
+        inputs: [{ name: "_asset", type: "address" }],
+        outputs: [
+            {
+                name: "config_",
+                type: "tuple",
+                components: [
+                    { name: "enabled", type: "bool" },
+                    { name: "minAmount", type: "uint256" },
+                    { name: "vettingFeeBPS", type: "uint256" },
+                    { name: "maxRelayFee", type: "uint256" },
+                ],
+            },
+        ],
+        stateMutability: "view",
+    },
+] as const;
+
+/** The keystore's published viewing keys: zero for an address that hasn't opened an account. */
+const KEYSTORE_VIEWING_KEYS_ABI = [
+    {
+        type: "function",
+        name: "viewingKeys",
+        inputs: [{ name: "_account", type: "address" }],
+        outputs: [{ name: "viewingKey_", type: "bytes32" }],
+        stateMutability: "view",
+    },
+] as const;
+
+/**
+ * Gas a shield can take, approvals included (a yield deposit through a
+ * router runs to about 700k), for what to leave in the wallet when shielding ETH.
+ */
+const SHIELD_GAS_RESERVE = 1_000_000n;
+
 interface Account {
     chain: ChainConfig;
     owner: Address;
@@ -64,10 +104,11 @@ interface Account {
 }
 
 /** A quote the user is looking at, kept until they confirm or it's replaced. */
-type Pending =
+type Pending = { id: number } & (
     | { kind: "withdraw"; account: Account; session: EvmPoolSession; prepared: PrepareWithdrawResult }
     | { kind: "yieldWithdraw"; account: Account; router: Address; relayParams: WithdrawalRelayParams; spent: Hex[] }
-    | { kind: "transfer"; account: Account; session: EvmPoolSession; prepared: PrepareTransferResult };
+    | { kind: "transfer"; account: Account; session: EvmPoolSession; prepared: PrepareTransferResult }
+);
 
 export interface Balance {
     symbol: string;
@@ -88,6 +129,8 @@ export class Engine {
     private hashService: IHashService | null = null;
     private readonly accounts = new Map<string, Account>();
     private pending: Pending | null = null;
+    /** Numbers each quote, so a confirm can only send the quote the user is looking at. */
+    private quotes = 0;
 
     constructor(
         private readonly bridge: Bridge,
@@ -192,7 +235,96 @@ export class Engine {
         return Promise.all(account.chain.assets.map((asset) => this.balance(session, asset, notes, inflight)));
     }
 
-    /** Wraps and shields `amount` (in the asset's smallest unit) from the user's wallet. */
+    /** What the wallet holds of `symbol`, and for ETH what to leave in it for gas. */
+    async walletBalance(chainId: number, owner: Address, symbol: string) {
+        const chain = this.chain(chainId);
+        const asset = this.asset(chain, symbol);
+        const client = this.publicClient(chain);
+        if (asset.token === NATIVE) {
+            const [balance, gasPrice] = await Promise.all([client.getBalance({ address: owner }), client.getGasPrice()]);
+            return { balance: balance.toString(), reserve: (gasPrice * SHIELD_GAS_RESERVE).toString() };
+        }
+        const balance = await client.readContract({ address: asset.token, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
+        return { balance: balance.toString(), reserve: "0" };
+    }
+
+    /**
+     * What shielding `amount` (the most it takes from the wallet, in the
+     * asset's smallest unit) comes to, without sending anything: what the
+     * account will hold, the screening fee, what leaves the wallet (`exact`,
+     * or at most that: a yield deposit's router pulls what the shares cost
+     * when it runs), how many approvals the wallet asks for before the
+     * shield, and the smallest shield the pool takes.
+     */
+    async shieldPlan(chainId: number, owner: Address, symbol: string, amount: string) {
+        const account = this.account(chainId, owner);
+        const asset = this.asset(account.chain, symbol);
+        const budget = positive(amount);
+        const session = await this.session(account, "transfer");
+        if (asset.yield) {
+            const y = this.yieldOf(session, asset);
+            const terms = await this.assetTerms(account.chain, asset.yield.ppUSDC);
+            const minimum = terms.minAmount > 0n ? await y.token.previewRedeem(terms.minAmount) : 0n;
+            let shares: bigint;
+            let maxUnderlyingIn: bigint;
+            try {
+                ({ shares, maxUnderlyingIn } = await y.deposit.sizeSharesForBudget(budget));
+            } catch {
+                throw new EngineError("below_minimum", minimum.toString());
+            }
+            if (shares <= 0n || shares < terms.minAmount) throw new EngineError("below_minimum", minimum.toString());
+            const prepared = await y.deposit.prepareYieldDeposit({ value: shares, maxUnderlyingIn });
+            // The router mints the note's shares plus the screening fee's, and pulls at most maxUnderlyingIn for them.
+            const feeShares = (shares * terms.vettingFeeBPS) / 10_000n;
+            return {
+                hold: (await y.token.previewRedeem(shares)).toString(),
+                fee: (feeShares > 0n ? await y.token.previewRedeem(feeShares) : 0n).toString(),
+                cost: maxUnderlyingIn.toString(),
+                exact: false,
+                approvals: prepared.approvalTxs.length,
+                minimum: minimum.toString(),
+            };
+        }
+        const terms = await this.assetTerms(account.chain, asset.token);
+        const note = plainNote(budget, terms.vettingFeeBPS);
+        if (note.value <= 0n || note.value < terms.minAmount) throw new EngineError("below_minimum", terms.minAmount.toString());
+        let approvals = 0;
+        if (asset.token !== NATIVE) {
+            const allowance = await this.publicClient(account.chain).readContract({
+                address: asset.token,
+                abi: erc20Abi,
+                functionName: "allowance",
+                args: [owner, account.chain.entrypoint],
+            });
+            if (allowance < note.value + note.fee) approvals = 1;
+        }
+        return {
+            hold: note.value.toString(),
+            fee: note.fee.toString(),
+            cost: (note.value + note.fee).toString(),
+            exact: true,
+            approvals,
+            minimum: terms.minAmount.toString(),
+        };
+    }
+
+    /** Whether `recipient` has a Privacy Pools account on the chain, so a private send can reach it. */
+    async canReceive(chainId: number, recipient: Address) {
+        const chain = this.chain(chainId);
+        const key = await this.publicClient(chain).readContract({
+            address: chain.keystore,
+            abi: KEYSTORE_VIEWING_KEYS_ABI,
+            functionName: "viewingKeys",
+            args: [recipient],
+        });
+        return { registered: BigInt(key) !== 0n };
+    }
+
+    /**
+     * Shields from the user's wallet: `amount`, in the asset's smallest unit,
+     * is the most it takes, the screening fee included (the account holds a
+     * little less; shieldPlan says how much).
+     */
     async shield(chainId: number, owner: Address, symbol: string, amount: string) {
         const account = this.account(chainId, owner);
         const asset = this.asset(account.chain, symbol);
@@ -216,7 +348,9 @@ export class Engine {
                 if (receipt.status !== "success") throw new EngineError("reverted", `Transaction ${hash} reverted`);
             }
         } else {
-            const receipt = await session.deposit({ tokenId: asset.token, value: toHex(value) });
+            const terms = await this.assetTerms(account.chain, asset.token);
+            const note = plainNote(value, terms.vettingFeeBPS);
+            const receipt = await session.deposit({ tokenId: asset.token, value: toHex(note.value) });
             txHashes = [receipt.txHash];
         }
         await session.discoverNotes({ fromBlock: account.chain.fromBlock });
@@ -259,8 +393,9 @@ export class Engine {
                 recipient,
                 signedFeeCommitment: quote.feeCommitment,
             });
-            this.pending = { kind: "yieldWithdraw", account, router, relayParams: prepared.relayParams, spent: inputs.commitments };
+            this.pending = { id: ++this.quotes, kind: "yieldWithdraw", account, router, relayParams: prepared.relayParams, spent: inputs.commitments };
             return {
+                id: this.quotes,
                 receive: prepared.quotedUnderlyingOut.toString(),
                 fee: (await y.token.previewRedeem(BigInt(quote.feeCommitment.feeAmount))).toString(),
                 expiresAt: quote.feeCommitment.expiration,
@@ -283,8 +418,8 @@ export class Engine {
         if (!option) throw new EngineError("no_quote", "No relayer quoted this withdrawal");
         const { quote } = option.selectedQuote;
         if (BigInt(quote.amountSent) > inputs.total) throw new EngineError("fee_changed", "The relayer's fee went up; try again");
-        this.pending = { kind: "withdraw", account, session, prepared };
-        return { receive: quote.amountReceived, fee: quote.feeCommitment.feeAmount, expiresAt: quote.feeCommitment.expiration };
+        this.pending = { id: ++this.quotes, kind: "withdraw", account, session, prepared };
+        return { id: this.quotes, receive: quote.amountReceived, fee: quote.feeCommitment.feeAmount, expiresAt: quote.feeCommitment.expiration };
     }
 
     /**
@@ -306,6 +441,9 @@ export class Engine {
         const quoted = await this.relayerInteractor(relayer).getTransferQuote(relayer, { asset: tokenId, commit: true });
         const { inputs, units } = coverWithFee(notes, asked, BigInt(quoted.feeCommitment.feeAmount));
         this.bridge.emit("progress", { stage: "proving" });
+        if (!(await this.canReceive(chainId, recipient)).registered) {
+            throw new EngineError("recipient_unregistered", "This address has no Privacy Pools account on this chain");
+        }
         const prepared = await session.prepareTransfer({
             inputCommitments: inputs.commitments,
             amount: toHex(units),
@@ -317,9 +455,10 @@ export class Engine {
         const { feeCommitment } = option.selectedQuote.quote;
         const fee = BigInt(feeCommitment.feeAmount);
         if (units + fee > inputs.total) throw new EngineError("fee_changed", "The relayer's fee went up; try again");
-        this.pending = { kind: "transfer", account, session, prepared };
+        this.pending = { id: ++this.quotes, kind: "transfer", account, session, prepared };
         const value = (shares: bigint) => (y ? y.token.previewRedeem(shares) : Promise.resolve(shares));
         return {
+            id: this.quotes,
             receive: (await value(units)).toString(),
             fee: (await value(fee)).toString(),
             expiresAt: feeCommitment.expiration,
@@ -342,11 +481,12 @@ export class Engine {
         return BigInt(quote.feeCommitment.feeAmount);
     }
 
-    /** Sends the quote the user accepted through the relayer. */
-    async confirm() {
+    /** Sends the quote the user accepted (`id`, as its quote returned it) through the relayer. */
+    async confirm(id?: number) {
         const pending = this.pending;
-        this.pending = null;
         if (!pending) throw new EngineError("no_quote", "Nothing is waiting to be sent");
+        if (id !== undefined && pending.id !== id) throw new EngineError("quote_replaced", "A newer quote replaced this one");
+        this.pending = null;
         const { account } = pending;
         const spent =
             pending.kind === "withdraw"
@@ -359,6 +499,7 @@ export class Engine {
         // can only be used once), so the worst a retry after a relay that did
         // land costs is a refused request.
         await this.markInflight(account, spent, "relaying");
+        this.bridge.emit("progress", { stage: "relaying" });
         let txHash: Hex;
         try {
             if (pending.kind === "withdraw") {
@@ -550,6 +691,17 @@ export class Engine {
         return asset;
     }
 
+    private async assetTerms(chain: ChainConfig, token: Address): Promise<{ minAmount: bigint; vettingFeeBPS: bigint }> {
+        const config = await this.publicClient(chain).readContract({
+            address: chain.entrypoint,
+            abi: ENTRYPOINT_ASSETS_ABI,
+            functionName: "assets",
+            args: [token],
+        });
+        if (!config.enabled) throw new EngineError("unknown_asset", "The pool isn't taking this asset");
+        return { minAmount: config.minAmount, vettingFeeBPS: config.vettingFeeBPS };
+    }
+
     private yieldOf(session: EvmPoolSession, asset: Asset): YieldSessions {
         const y = asset.yield ? session.yieldFor(asset.yield.ppUSDC) : undefined;
         if (!y) throw new EngineError("unknown_asset", `${asset.symbol} has no yield session`);
@@ -559,6 +711,16 @@ export class Engine {
 
 function accountKey(chainId: number, owner: Address): string {
     return `${chainId}:${owner.toLowerCase()}`;
+}
+
+/**
+ * A plain deposit's note out of the most the wallet gives: the entrypoint
+ * takes the note's value plus a screening fee of `bps` on top.
+ */
+export function plainNote(budget: bigint, bps: bigint): { value: bigint; fee: bigint } {
+    let value = (budget * 10_000n) / (10_000n + bps);
+    while (value > 0n && value + (value * bps) / 10_000n > budget) value -= 1n;
+    return { value, fee: (value * bps) / 10_000n };
 }
 
 function positive(amount: string): bigint {

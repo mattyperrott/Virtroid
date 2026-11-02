@@ -67,6 +67,12 @@ export function start(port: HostPort, chains: ChainConfig[]): void {
                 return engine.register(p.chainId, p.owner);
             case "sync":
                 return engine.sync(p.chainId, p.owner);
+            case "walletBalance":
+                return engine.walletBalance(p.chainId, p.owner, String(p.symbol));
+            case "shieldPlan":
+                return engine.shieldPlan(p.chainId, p.owner, String(p.symbol), String(p.amount));
+            case "canReceive":
+                return engine.canReceive(p.chainId, p.recipient as Address);
             case "shield":
                 return engine.shield(p.chainId, p.owner, String(p.symbol), String(p.amount));
             case "quoteWithdraw":
@@ -74,7 +80,7 @@ export function start(port: HostPort, chains: ChainConfig[]): void {
             case "quoteSend":
                 return engine.quoteSend(p.chainId, p.owner, String(p.symbol), String(p.amount), p.recipient as Address);
             case "confirm":
-                return engine.confirm();
+                return engine.confirm(typeof p.id === "number" ? p.id : undefined);
             case "exit":
                 return engine.exit(p.chainId, p.owner, p.commitment as Hex);
             default:
