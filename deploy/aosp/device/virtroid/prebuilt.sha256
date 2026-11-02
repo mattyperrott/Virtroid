@@ -23,7 +23,7 @@ cfaf9eea5fd695c449e92eb10cc0b1617ec51d068345068cea9b7e1c67968df5  LibreOfficeVie
 # The runtime agent 0.1.0, signed with Virtroid's release key: the APK the
 # VM image's assets carry and node.env pins (NODE_NOTIFICATION_AGENT_APK_SHA256).
 f4fb0185a904d7080bd9c182dd73ecfcb9eb9d4aa9e6d1d9052cc0052ced5f91  virtroid-runtime-agent.apk  local
-# Shield 0.1.0 (versionCode 1), signed with Virtroid's release key: built at
-# ef53579 by android-client's signing/build-signed-release.sh values and
+# Shield 0.1.1 (versionCode 2), signed with Virtroid's release key: built at
+# 06d2e8f by android-client's signing/build-signed-release.sh values and
 # `./gradlew :shield:assembleRelease` (android-client/shield/README.md).
-1cce5eabe625cec9d784b7528d3fafcd932b30fb48f934b5e07599e209b003ee  Shield.apk  local
+caaa9c3ed08d984df2d9853326d571a66d9157a998989dd451dad36e56b44da1  Shield.apk  local

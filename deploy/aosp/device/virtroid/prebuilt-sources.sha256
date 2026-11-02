@@ -16,8 +16,8 @@ c859abd363ebc551c55b165241501c88e484fc09b7892d7c34d2932e60e7f0f3  org.fossify.no
 # apps/fauxx/patches applied, as apps/fauxx/build.sh writes it (git archive of
 # the patched commit, which the patches' dates make the same every time).
 a6ef324b7618854412beafad8c587b49b98f5ea149f4d70e38c68f22e5a1dbd8  fauxx-source-0.9.3-virtroid.1.tar.gz  local
-# Shield 0.1.0 (GPL-3.0-or-later): Virtroid's tree at ef53579 and 0xbow's
+# Shield 0.1.1 (GPL-3.0-or-later): Virtroid's tree at 06d2e8f and 0xbow's
 # monorepo at the commit android-client/shield/engine/sdk.lock pins, with a
 # SOURCE.md; GNU tar --sort=name --mtime=@0 --owner=0 --group=0
 # --numeric-owner, gzip -n -9.
-32580f05d232a8692f47d299c095b0941f28318bb8b2cba138ca5ef27d62cf2a  shield-source-ef53579.tar.gz  local
+938adf628bf408d1b6bbe7e43727215e52d1527f86b6131ef4f0d059df095cbe  shield-source-06d2e8f.tar.gz  local
