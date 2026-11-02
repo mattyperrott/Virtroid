@@ -278,6 +278,24 @@ Aleph serves it by its SHA-256 at
 | VM image | Android build | x264 source on Aleph (STORE message) | sha256 |
 | :--- | :--- | :--- | :--- |
 | 21 | 30 (`20261031T144222Z-user`) | `7aa6529c6a22d3886aa5a97429806463c68b64315f29167fbadcf1aaaf4d1907` | `6b6c152b03f30d70af918e46e6efbf55dc45276e555c070569bf46b55ab29b80` |
+| 22 | 32 (`20261101T224242Z-user`) | `ecd6a355c18b2ac6648a8d92301dbd4879c320acdd4e0b42bc92c97e57593726` | `81a1fc65006d1bae43b046d4f6490b2e4f116f96a77bc780572b49de148f0367` |
+| 24 | 34 (`20261102T174239Z-user`) | `46b84e32014fe41bdaae9c0a6cc06d006698712e81db4ca8b02d7031ae9f253e` | `f13ab1e3ffacb20dee23bda6df13d9d33fdedac69c5523ca8e7d2a1eafd72262` |
+
+The copyleft apps built in as prebuilts (`device/virtroid/prebuilt-sources.sha256`)
+go out the same way: `app-sources.sh` puts each one's source beside the
+build, and it's published with the first VM image that ships it. A tarball
+that doesn't change between images is the same file, so it isn't published
+again. LibreOffice's, at about 1 GB, is pinned by its IPFS CID instead, and
+the gateway serves it at `https://ipfs.aleph.cloud/ipfs/<CID>`.
+
+| App source | First VM image | On Aleph (STORE message) | sha256 |
+| :--- | :--- | :--- | :--- |
+| Currencies 1.23.0 (`de.salomax.currencies_12300_src.tar.gz`) | 22 | `dbec2c84e2331070487230eb51cc9c27878fd9f59ef0557acdc092cef28fba1e` | `7254bfb42c0b8274b2e8e6684341e9cc55d37333e69f325a7a117d6caf7a50b5` |
+| Fossify Notes 1.7.0 (`org.fossify.notes_13_src.tar.gz`) | 22 | `04a7f8561e5467d75575138878b98bad42dc2480012f817ef070ba49f687b786` | `c859abd363ebc551c55b165241501c88e484fc09b7892d7c34d2932e60e7f0f3` |
+| LibreOffice Viewer 26.2.6.3 (`org.documentfoundation.libreoffice_129_src.tar.gz`, CID `QmUaoCXU7iPMXTr4ZPriQ5hR6GSndKJJv8w74xZxkSZ6UD`) | 22 | `3229a81094d7595c8471ae0d194ce837284fdd036244338aff89f829d9c388fe` | `1d4264ae8b7f68c55124c3f68d38caa3dda31781fcf6f88c7b0a08e091963f1f` |
+| Shield 0.1.0 (`shield-source-ef53579.tar.gz`) | 22 | `44079a27b55d5e10dfa3a48222b894689487dac880ade89d61944eed6ae484ef` | `32580f05d232a8692f47d299c095b0941f28318bb8b2cba138ca5ef27d62cf2a` |
+| Fauxx 0.9.3-virtroid.1 (`fauxx-source-0.9.3-virtroid.1.tar.gz`) | 24 | `20b0fd3a33158631711ddcb6ffb863592ea2429c121f70dce2a14a547507a7cb` | `a6ef324b7618854412beafad8c587b49b98f5ea149f4d70e38c68f22e5a1dbd8` |
+| Shield 0.2.0 (`shield-source-5254d5b.tar.gz`) | 24 | `148d1800c27e1edb9b66abc0a608bc3a3a2d5db14fc7381e423a4f7c627d2747` | `2f4d80b86fef00e1349e97b1002e156a7c0005101391db26ebf79ee58226dab7` |
 
 ## Container confinement
 
