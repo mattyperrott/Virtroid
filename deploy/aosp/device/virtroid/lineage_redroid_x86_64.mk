@@ -84,6 +84,10 @@ PRODUCT_PACKAGES += \
 # own crypto through Privacy Pools.
 PRODUCT_PACKAGES += Shield
 
+# Fauxx with its home-screen widget (apps/fauxx), decoy activity against
+# ad-tech profiling.
+PRODUCT_PACKAGES += Fauxx
+
 # Location: AOSP's default GNSS HAL reads each fix from the socket the node
 # serves for the runtime (deploy/aosp/gnss-feed.md, patches/hardware/
 # interfaces), so apps see an ordinary GPS fix.

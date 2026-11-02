@@ -56,6 +56,21 @@ android_app_import {
     },
 }
 
+// Fauxx (AGPL-3.0-only), decoy activity against ad-tech profiling, with a
+// home-screen widget added for Virtroid (apps/fauxx): built from source with
+// that change and signed with Virtroid's release key, so F-Droid doesn't
+// update it. Its source goes out with each image (app-sources.sh).
+android_app_import {
+    name: "Fauxx",
+    apk: "prebuilt/Fauxx.apk",
+    presigned: true,
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}
+
 // Virtroid's runtime agent (notification forwarding), the APK the node pins
 // and provisions. The node still installs it over adb and provisions it; a
 // bundled copy is there from the first boot.

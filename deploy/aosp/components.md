@@ -100,7 +100,10 @@ Made 2026-10-21:
   libraries are extracted at build time; an ARM-only app with compressed
   libraries (Unstoppable Wallet, from F-Droid or GitHub) can't be built in
   unchanged. Unstoppable is left to F-Droid (owner, 2026-11-01): the
-  built-in F-Droid installs it, through ARM translation.
+  built-in F-Droid installs it, through ARM translation. Fauxx added by the
+  owner 2026-11-02 with a home-screen widget of its own, which needs a
+  change to Fauxx, so it is built from source with the change and signed
+  with Virtroid's release key (`apps/fauxx`); F-Droid doesn't update it.
 - **CJK fonts:** left out.
 - **ARM translation:** kept (owner, 2026-10-22); SimpleX and other ARM-only apps need it. Google's `libndk_translation` for now, as in image 16; try the open-source Digitalis on the build host first (see the [plan](README.md), milestone 4).
 

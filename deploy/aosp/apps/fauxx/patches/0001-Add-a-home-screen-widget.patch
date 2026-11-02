@@ -1,0 +1,1474 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mattyperrott <mattyperrott@outlook.com>
+Date: Mon, 2 Nov 2026 06:00:00 +0000
+Subject: [PATCH] Add a home-screen widget
+
+For the copy of Fauxx built into Virtroid's cloud phones (VIRTROID.md).
+The widget fills the home screen's width: whether the engine is
+generating decoy activity or why it is paused, a switch that starts or
+stops it as the notification's Start and the dashboard's switch do
+(before the consent dialog has been accepted it opens the app instead),
+every decoy action Fauxx has made, and its hourly rate over the last
+day, as the dashboard counts it. A "?" opens the FAQ. System fonts, and
+on Android 12+ the system's dynamic colours and switch.
+
+PhantomForegroundService publishes each state it puts in its
+notification to the widget (updateNotification is synchronized so the
+60s tick and the state collector can't post an older state after a
+newer one), PoisonEngine counts each action it records for it, and
+Settings' "Clear All Data" forgets that count. MainActivity takes the
+widget's "?" and the navigation graph opens the FAQ for it.
+
+The About screen says the build is modified and links to its source,
+and the version name is 0.9.3-virtroid.1.
+---
+ VIRTROID.md                                   |  36 +++
+ app/src/main/AndroidManifest.xml              |  17 ++
+ .../java/com/fauxx/engine/PoisonEngine.kt     |   4 +
+ .../fauxx/service/PhantomForegroundService.kt |  27 +-
+ .../main/java/com/fauxx/ui/MainActivity.kt    |  19 +-
+ .../java/com/fauxx/ui/navigation/NavGraph.kt  |  14 +-
+ .../java/com/fauxx/ui/screens/AboutScreen.kt  |  20 ++
+ .../com/fauxx/ui/screens/SettingsScreen.kt    |   5 +
+ .../main/java/com/fauxx/widget/FauxxWidget.kt | 254 ++++++++++++++++++
+ .../com/fauxx/widget/WidgetActionReceiver.kt  |  88 ++++++
+ .../java/com/fauxx/widget/WidgetStatus.kt     |  84 ++++++
+ .../main/res/drawable/widget_background.xml   |   5 +
+ app/src/main/res/drawable/widget_card.xml     |   5 +
+ app/src/main/res/drawable/widget_ic_help.xml  |  11 +
+ .../main/res/drawable/widget_switch_off.xml   |  14 +
+ .../main/res/drawable/widget_switch_on.xml    |  14 +
+ .../res/layout-v31/widget_fauxx_switch.xml    |  10 +
+ app/src/main/res/layout/widget_fauxx.xml      | 180 +++++++++++++
+ .../main/res/layout/widget_fauxx_switch.xml   |  10 +
+ app/src/main/res/values-es/strings.xml        |  24 ++
+ app/src/main/res/values-fr/strings.xml        |  24 ++
+ app/src/main/res/values-night-v31/widget.xml  |  10 +
+ app/src/main/res/values-night/widget.xml      |  11 +
+ app/src/main/res/values-ru/strings.xml        |  24 ++
+ app/src/main/res/values-v31/widget.xml        |  10 +
+ app/src/main/res/values/strings.xml           |  26 ++
+ app/src/main/res/values/widget.xml            |  13 +
+ app/src/main/res/xml/fauxx_widget_info.xml    |  23 ++
+ .../java/com/fauxx/widget/WidgetStatusTest.kt |  76 ++++++
+ app/version.properties                        |   2 +-
+ 30 files changed, 1056 insertions(+), 4 deletions(-)
+ create mode 100644 VIRTROID.md
+ create mode 100644 app/src/main/java/com/fauxx/widget/FauxxWidget.kt
+ create mode 100644 app/src/main/java/com/fauxx/widget/WidgetActionReceiver.kt
+ create mode 100644 app/src/main/java/com/fauxx/widget/WidgetStatus.kt
+ create mode 100644 app/src/main/res/drawable/widget_background.xml
+ create mode 100644 app/src/main/res/drawable/widget_card.xml
+ create mode 100644 app/src/main/res/drawable/widget_ic_help.xml
+ create mode 100644 app/src/main/res/drawable/widget_switch_off.xml
+ create mode 100644 app/src/main/res/drawable/widget_switch_on.xml
+ create mode 100644 app/src/main/res/layout-v31/widget_fauxx_switch.xml
+ create mode 100644 app/src/main/res/layout/widget_fauxx.xml
+ create mode 100644 app/src/main/res/layout/widget_fauxx_switch.xml
+ create mode 100644 app/src/main/res/values-night-v31/widget.xml
+ create mode 100644 app/src/main/res/values-night/widget.xml
+ create mode 100644 app/src/main/res/values-v31/widget.xml
+ create mode 100644 app/src/main/res/values/widget.xml
+ create mode 100644 app/src/main/res/xml/fauxx_widget_info.xml
+ create mode 100644 app/src/test/java/com/fauxx/widget/WidgetStatusTest.kt
+
+diff --git a/VIRTROID.md b/VIRTROID.md
+new file mode 100644
+index 0000000..62428f0
+--- /dev/null
++++ b/VIRTROID.md
+@@ -0,0 +1,36 @@
++# Virtroid's changes to Fauxx
++
++This is Fauxx 0.9.3 (<https://github.com/digital-grease/fauxx>, tag `v0.9.3`,
++commit `1598ac1e5813d06079da4f65ab6392970c4e3f43`) as modified by Virtroid on
++2 November 2026, for the copy of Fauxx built into Virtroid's cloud phones.
++Like Fauxx, it is licensed under the GNU Affero General Public License,
++version 3 only (`LICENSE`).
++
++The changes:
++
++- A home-screen widget (`app/src/main/java/com/fauxx/widget`, its layout,
++  provider info, drawables and strings), the full width of the home screen:
++  whether the engine is generating decoy activity or why it is paused, a
++  switch that starts or stops it as the notification's Start and the
++  dashboard's switch do (before the consent dialog has been accepted it
++  opens the app instead), every decoy action Fauxx has made, and its hourly
++  rate over the last day, as the dashboard counts it. A "?" opens the FAQ.
++  It shows no persona, categories or log.
++- `PhantomForegroundService` publishes the state it shows in its
++  notification to the widget (`updateNotification` is synchronized, so the
++  60s tick and the state collector can't post an older state after a
++  newer one), and `PoisonEngine` counts each action it records for it.
++  Settings' "Clear All Data" forgets that count too.
++- `MainActivity` takes the widget's "?" (`EXTRA_OPEN_FAQ`) and the navigation
++  graph opens the FAQ for it.
++- The widget takes the system's fonts, and on Android 12+ the system's own
++  dynamic colours and switch, light or dark with the system; before that,
++  the app's colours and a drawn switch.
++- The About screen says that this build is modified and links to its
++  source.
++- The version name is `0.9.3-virtroid.1`; the version code is upstream's.
++
++Virtroid builds it with `./gradlew assembleFullRelease` (JDK 21, Android SDK
++platform 37) and signs it with Virtroid's release key. The build script, this
++change as a patch against the tag, and where each build's complete source is
++published are in <https://github.com/mattyperrott/Virtroid/tree/main/deploy/aosp/apps/fauxx>.
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index a899c74..d1ac379 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -133,6 +133,23 @@
+             android:name=".service.StartEngineReceiver"
+             android:exported="false" />
+ 
++        <!-- Home-screen widget. Exported for the launcher's APPWIDGET_UPDATE broadcasts, which
++             only the system sends; its buttons go to the unexported receiver below. -->
++        <receiver
++            android:name=".widget.FauxxWidget"
++            android:exported="true"
++            android:label="@string/app_name">
++            <intent-filter>
++                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
++            </intent-filter>
++            <meta-data
++                android:name="android.appwidget.provider"
++                android:resource="@xml/fauxx_widget_info" />
++        </receiver>
++        <receiver
++            android:name=".widget.WidgetActionReceiver"
++            android:exported="false" />
++
+         <!-- FileProvider for sharing crash reports and debug logs -->
+         <provider
+             android:name="androidx.core.content.FileProvider"
+diff --git a/app/src/main/java/com/fauxx/engine/PoisonEngine.kt b/app/src/main/java/com/fauxx/engine/PoisonEngine.kt
+index d04574f..fe0eeb5 100644
+--- a/app/src/main/java/com/fauxx/engine/PoisonEngine.kt
++++ b/app/src/main/java/com/fauxx/engine/PoisonEngine.kt
+@@ -20,6 +20,7 @@ import com.fauxx.util.Clock
+ import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.CoroutineDispatcher
+ import kotlinx.coroutines.CoroutineExceptionHandler
++import com.fauxx.widget.FauxxWidget
+ import timber.log.Timber
+ import com.fauxx.data.crawllist.CrawlListManager
+ import com.fauxx.data.crawllist.DomainBlocklist
+@@ -540,6 +541,9 @@ class PoisonEngine @Inject constructor(
+     private fun recordTodayAction(nowMs: Long) {
+         rollIfNewDay(nowMs)
+         todayActionCount.incrementAndGet()
++        // The home-screen widget's count of every decoy action (com.fauxx.widget).
++        runCatching { FauxxWidget.countAction(context) }
++            .onFailure { Timber.w(it, "Failed to count the action for the widget") }
+     }
+ 
+     /** Returns today's successful action count (thread-safe, cached). */
+diff --git a/app/src/main/java/com/fauxx/service/PhantomForegroundService.kt b/app/src/main/java/com/fauxx/service/PhantomForegroundService.kt
+index e4f8a24..f361918 100644
+--- a/app/src/main/java/com/fauxx/service/PhantomForegroundService.kt
++++ b/app/src/main/java/com/fauxx/service/PhantomForegroundService.kt
+@@ -19,6 +19,7 @@ import com.fauxx.engine.modules.MockLocationProviderCleaner
+ import com.fauxx.engine.webview.PhantomWebViewPool
+ import com.fauxx.logging.EncryptedFileTree
+ import com.fauxx.ui.MainActivity
++import com.fauxx.widget.FauxxWidget
+ import dagger.hilt.android.AndroidEntryPoint
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+@@ -70,6 +71,13 @@ class PhantomForegroundService : Service() {
+      */
+     private var stateNotificationJob: Job? = null
+ 
++    /**
++     * Set when the engine hands its pause to a scheduled resume ([onEngineResigned]), so
++     * [onDestroy] leaves the widget saying why it is paused instead of "stopped".
++     */
++    @Volatile
++    private var resigned = false
++
+     override fun onCreate() {
+         super.onCreate()
+         createNotificationChannel()
+@@ -81,6 +89,7 @@ class PhantomForegroundService : Service() {
+         when (action) {
+             ACTION_START -> {
+                 Timber.i("Starting Phantom service")
++                resigned = false
+                 // NOTE: a stale pending resume is NOT cancelled here. It is cancelled only
+                 // once the engine clears its constraint gate (setOnActive below), so a
+                 // process death during engine init can't wipe a still-needed resume before
+@@ -194,6 +203,10 @@ class PhantomForegroundService : Service() {
+ 
+     override fun onDestroy() {
+         isRunning = false
++        if (!resigned) {
++            runCatching { FauxxWidget.publish(this, EngineState.STOPPED) }
++                .onFailure { Timber.w(it, "Failed to update the widget on destroy") }
++        }
+         // Remove the mock-location provider synchronously and unconditionally first: the engine's
+         // module teardown below runs async on its own scope and can lose the race to process death,
+         // which is exactly how the provider gets orphaned (finding #6).
+@@ -234,6 +247,9 @@ class PhantomForegroundService : Service() {
+         val pausedState = runCatching { poisonEngine.engineState.value }.getOrDefault(EngineState.STOPPED)
+         runCatching { resumeScheduler.schedule(spec, pausedState) }
+             .onFailure { Timber.e(it, "Failed to schedule resume notification") }
++        resigned = true
++        runCatching { FauxxWidget.publish(this, pausedState, resigned = true) }
++            .onFailure { Timber.w(it, "Failed to update the widget on resign") }
+         // Persist buffered log lines now, on this (engine IO) thread, before the FGS stops
+         // and the OEM possibly kills the process — otherwise up to a flush-threshold of
+         // diagnostic lines covering the resign are lost (#158).
+@@ -275,9 +291,18 @@ class PhantomForegroundService : Service() {
+         stateNotificationJob = null
+     }
+ 
++    /**
++     * Synchronized: the 60s tick and the state collector call this from different threads, and
++     * a call that read the state before a transition must not post after one that read it after.
++     */
++    @Synchronized
+     private fun updateNotification() {
+         val count = poisonEngine.getTodayActionCount()
+-        val status = when (poisonEngine.engineState.value) {
++        val state = poisonEngine.engineState.value
++        // The widget shows the same state, on the same ticks and transitions.
++        runCatching { FauxxWidget.publish(this, state) }
++            .onFailure { Timber.w(it, "Failed to update the widget") }
++        val status = when (state) {
+             EngineState.ACTIVE -> "Generating diverse browsing activity — $count actions today"
+             EngineState.PAUSED_WIFI -> "Paused — waiting for a usable network"
+             EngineState.PAUSED_METERED_WIFI -> "Paused — this Wi-Fi is metered"
+diff --git a/app/src/main/java/com/fauxx/ui/MainActivity.kt b/app/src/main/java/com/fauxx/ui/MainActivity.kt
+index e685b81..9aa58cd 100644
+--- a/app/src/main/java/com/fauxx/ui/MainActivity.kt
++++ b/app/src/main/java/com/fauxx/ui/MainActivity.kt
+@@ -118,6 +118,7 @@ class MainActivity : ComponentActivity() {
+             }
+         }
+ 
++        takeOpenFaq(intent)
+         if (!inSafeMode) {
+             reconcileEngineState(intent)
+         }
+@@ -196,7 +197,11 @@ class MainActivity : ComponentActivity() {
+ 
+                 val onboarding = showOnboarding
+                 if (onboarding != null) {
+-                    FauxxNavGraph(showOnboarding = onboarding)
++                    FauxxNavGraph(
++                        showOnboarding = onboarding,
++                        openFaq = openFaq,
++                        onFaqOpened = { openFaq = false },
++                    )
+                 }
+             }
+         }
+@@ -205,9 +210,18 @@ class MainActivity : ComponentActivity() {
+     override fun onNewIntent(intent: Intent) {
+         super.onNewIntent(intent)
+         setIntent(intent)
++        takeOpenFaq(intent)
+         reconcileEngineState(intent)
+     }
+ 
++    /** The home-screen widget's "?" ([EXTRA_OPEN_FAQ]): show the FAQ once the app is up. */
++    private var openFaq by mutableStateOf(false)
++
++    private fun takeOpenFaq(intent: Intent?) {
++        if (intent?.getBooleanExtra(EXTRA_OPEN_FAQ, false) == true) openFaq = true
++        intent?.removeExtra(EXTRA_OPEN_FAQ)
++    }
++
+     /**
+      * Reconcile persisted engine intent vs runtime service state on every launch.
+      *
+@@ -256,5 +270,8 @@ class MainActivity : ComponentActivity() {
+          * launcher-open and notification-tap share one start path.
+          */
+         const val EXTRA_RESUME_ENGINE = "com.fauxx.extra.RESUME_ENGINE"
++
++        /** Boolean extra set by the home-screen widget's "?" ([com.fauxx.widget.FauxxWidget]). */
++        const val EXTRA_OPEN_FAQ = "com.fauxx.extra.OPEN_FAQ"
+     }
+ }
+diff --git a/app/src/main/java/com/fauxx/ui/navigation/NavGraph.kt b/app/src/main/java/com/fauxx/ui/navigation/NavGraph.kt
+index 6498c16..ba7e4fd 100644
+--- a/app/src/main/java/com/fauxx/ui/navigation/NavGraph.kt
++++ b/app/src/main/java/com/fauxx/ui/navigation/NavGraph.kt
+@@ -32,6 +32,7 @@ import androidx.compose.material3.NavigationBarItem
+ import androidx.compose.material3.Scaffold
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.collectAsState
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+@@ -94,8 +95,12 @@ private val bottomNavItems = listOf(
+     Screen.Settings to Icons.Default.Settings
+ )
+ 
++/**
++ * @param openFaq the home-screen widget's "?" asked for the FAQ ([com.fauxx.ui.MainActivity]);
++ *   it opens once the app is past onboarding, then [onFaqOpened] clears the request.
++ */
+ @Composable
+-fun FauxxNavGraph(showOnboarding: Boolean) {
++fun FauxxNavGraph(showOnboarding: Boolean, openFaq: Boolean = false, onFaqOpened: () -> Unit = {}) {
+     val navController = rememberNavController()
+ 
+     Scaffold(
+@@ -204,6 +209,13 @@ fun FauxxNavGraph(showOnboarding: Boolean) {
+             }
+         }
+     }
++
++    // After the NavHost has its graph. Onboarding comes first; the request is dropped then.
++    LaunchedEffect(openFaq) {
++        if (!openFaq) return@LaunchedEffect
++        if (!showOnboarding) navController.navigate(Screen.Faq.route) { launchSingleTop = true }
++        onFaqOpened()
++    }
+ }
+ 
+ /** Smallest size a bottom-nav label may shrink to before it is ellipsized instead. */
+diff --git a/app/src/main/java/com/fauxx/ui/screens/AboutScreen.kt b/app/src/main/java/com/fauxx/ui/screens/AboutScreen.kt
+index 0ed50ff..a563239 100644
+--- a/app/src/main/java/com/fauxx/ui/screens/AboutScreen.kt
++++ b/app/src/main/java/com/fauxx/ui/screens/AboutScreen.kt
+@@ -32,9 +32,13 @@ import androidx.compose.ui.text.font.FontFamily
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.style.TextAlign
+ import androidx.compose.ui.unit.dp
++import androidx.core.net.toUri
+ import com.fauxx.BuildConfig
+ import com.fauxx.R
+ 
++/** Virtroid's changes to this build and how to get its complete source (VIRTROID.md). */
++private const val MODIFIED_SOURCE_URL = "https://github.com/mattyperrott/Virtroid/tree/main/deploy/aosp/apps/fauxx"
++
+ /**
+  * About & Privacy Policy screen accessible from Settings.
+  * Explains what data stays on-device, what network requests are made,
+@@ -130,6 +134,22 @@ fun AboutScreen(onBack: () -> Unit) {
+             BodyText(stringResource(R.string.about_license_body))
+         }
+ 
++        // What Virtroid changed, when, and where its source is (AGPL-3.0 sections 5a and 13).
++        AboutCard {
++            SectionTitle(stringResource(R.string.about_modified_title))
++            Spacer(Modifier.height(8.dp))
++            BodyText(stringResource(R.string.about_modified_body))
++            Spacer(Modifier.height(12.dp))
++            OutlinedButton(onClick = {
++                context.startActivity(Intent(Intent.ACTION_VIEW, MODIFIED_SOURCE_URL.toUri()))
++            }) {
++                Text(
++                    stringResource(R.string.about_modified_button),
++                    fontFamily = FontFamily.Monospace
++                )
++            }
++        }
++
+         // Support
+         AboutCard {
+             SectionTitle(stringResource(R.string.about_support_title))
+diff --git a/app/src/main/java/com/fauxx/ui/screens/SettingsScreen.kt b/app/src/main/java/com/fauxx/ui/screens/SettingsScreen.kt
+index 6ec56ed..d408b40 100644
+--- a/app/src/main/java/com/fauxx/ui/screens/SettingsScreen.kt
++++ b/app/src/main/java/com/fauxx/ui/screens/SettingsScreen.kt
+@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.text.font.FontFamily
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.platform.LocalContext
+@@ -53,6 +54,7 @@ import com.fauxx.network.dns.DohPresets
+ import com.fauxx.data.model.DnsMode
+ import com.fauxx.BuildConfig
+ import com.fauxx.R
++import com.fauxx.widget.FauxxWidget
+ import com.fauxx.data.model.IntensityLevel
+ import com.fauxx.data.model.BatteryThresholdType
+ import com.fauxx.data.model.MIN_ACTIVE_SEARCH_ENGINES
+@@ -78,6 +80,7 @@ fun SettingsScreen(
+ ) {
+     val uiState by viewModel.uiState.collectAsState()
+     val languageState by viewModel.languageState.collectAsState()
++    val context = LocalContext.current
+     var showClearDialog by remember { mutableStateOf(false) }
+     var showIntensityMenu by remember { mutableStateOf(false) }
+     var showLogExportSheet by remember { mutableStateOf(false) }
+@@ -660,6 +663,8 @@ fun SettingsScreen(
+             confirmButton = {
+                 TextButton(onClick = {
+                     viewModel.resetToDefaults()
++                    // The home-screen widget's count of decoy actions is part of the data too.
++                    FauxxWidget.resetCount(context)
+                     showClearDialog = false
+                 }) { Text(stringResource(R.string.settings_clear_dialog_confirm), color = MaterialTheme.colorScheme.error) }
+             },
+diff --git a/app/src/main/java/com/fauxx/widget/FauxxWidget.kt b/app/src/main/java/com/fauxx/widget/FauxxWidget.kt
+new file mode 100644
+index 0000000..2a518b4
+--- /dev/null
++++ b/app/src/main/java/com/fauxx/widget/FauxxWidget.kt
+@@ -0,0 +1,254 @@
++package com.fauxx.widget
++
++import android.app.PendingIntent
++import android.appwidget.AppWidgetManager
++import android.appwidget.AppWidgetProvider
++import android.content.ComponentName
++import android.content.Context
++import android.content.Intent
++import android.os.Build
++import android.widget.RemoteViews
++import androidx.core.content.ContextCompat
++import androidx.core.content.edit
++import com.fauxx.R
++import com.fauxx.data.db.ActionLogDao
++import com.fauxx.di.PreferenceKeys
++import com.fauxx.di.fauxxDataStore
++import com.fauxx.engine.EngineState
++import com.fauxx.service.PhantomForegroundService
++import com.fauxx.service.ResumeScheduler
++import com.fauxx.ui.MainActivity
++import dagger.hilt.EntryPoint
++import dagger.hilt.InstallIn
++import dagger.hilt.android.EntryPointAccessors
++import dagger.hilt.components.SingletonComponent
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
++import timber.log.Timber
++import java.text.NumberFormat
++import java.util.Locale
++
++/**
++ * The home-screen widget: whether Fauxx is generating decoy activity or why it is paused, a
++ * switch that starts or stops the engine the way the dashboard's does, every decoy action Fauxx
++ * has made, and its hourly rate over the last day. It shows no persona, categories or log; the
++ * "?" opens the FAQ and a tap anywhere else opens the app.
++ *
++ * [PhantomForegroundService] publishes each state it puts in its notification ([publish]), and
++ * the engine counts each action it records ([countAction]); the widget keeps that state and the
++ * count in a small preferences file of its own (which, like the rest of Fauxx's, is never backed
++ * up). The rate comes from the action log when the widget draws, as the dashboard's does.
++ */
++class FauxxWidget : AppWidgetProvider() {
++
++    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
++        val pending = goAsync()
++        scope.launch {
++            try {
++                draw(context.applicationContext)
++            } catch (e: Exception) {
++                Timber.w(e, "FauxxWidget: update failed")
++            } finally {
++                pending.finish()
++            }
++        }
++    }
++
++    @EntryPoint
++    @InstallIn(SingletonComponent::class)
++    interface WidgetEntryPoint {
++        fun actionLogDao(): ActionLogDao
++        fun resumeScheduler(): ResumeScheduler
++    }
++
++    companion object {
++        private const val PREFS = "fauxx_widget"
++        private const val KEY_STATE = "state"
++        private const val KEY_RESIGNED = "resigned"
++        private const val KEY_TOTAL = "total_actions"
++        private const val DAY_MS = 24L * 60 * 60 * 1000
++
++        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
++
++        /**
++         * One redraw at a time, each reading the state when it holds the lock: redraws are
++         * launched from several threads, and one that read an older state must not land after
++         * one that read a newer.
++         */
++        private val drawLock = Mutex()
++
++        /**
++         * Records what the engine is doing and redraws any widgets. [resigned] marks a pause the
++         * engine handed to a scheduled resume ([WidgetSnapshot]).
++         */
++        @Synchronized
++        fun publish(context: Context, state: EngineState, resigned: Boolean = false) {
++            val app = context.applicationContext
++            app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
++                putString(KEY_STATE, state.name)
++                putBoolean(KEY_RESIGNED, resigned)
++            }
++            refresh(app)
++        }
++
++        /** Counts one decoy action; the engine calls it as it records each one. */
++        @Synchronized
++        fun countAction(context: Context) {
++            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++            prefs.edit { putLong(KEY_TOTAL, prefs.getLong(KEY_TOTAL, 0L) + 1) }
++        }
++
++        /** Forgets the count, with the rest of the user's data (Settings, "Clear All Data"). */
++        @Synchronized
++        fun resetCount(context: Context) {
++            val app = context.applicationContext
++            app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_TOTAL) }
++            refresh(app)
++        }
++
++        /** Redraws every Fauxx widget; does nothing when none is placed. */
++        fun refresh(context: Context) {
++            val app = context.applicationContext
++            if (widgetIds(app).isEmpty()) return
++            scope.launch {
++                runCatching { draw(app) }.onFailure { Timber.w(it, "FauxxWidget: redraw failed") }
++            }
++        }
++
++        fun entryPoint(context: Context): WidgetEntryPoint =
++            EntryPointAccessors.fromApplication(context.applicationContext, WidgetEntryPoint::class.java)
++
++        private fun widgetIds(context: Context): IntArray =
++            AppWidgetManager.getInstance(context)
++                .getAppWidgetIds(ComponentName(context, FauxxWidget::class.java))
++
++        private fun snapshot(context: Context): WidgetSnapshot? {
++            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++            val state = prefs.getString(KEY_STATE, null)
++                ?.let { name -> EngineState.entries.firstOrNull { it.name == name } }
++                ?: return null
++            return WidgetSnapshot(state, prefs.getBoolean(KEY_RESIGNED, false))
++        }
++
++        private suspend fun draw(context: Context) = drawLock.withLock {
++            val ids = widgetIds(context)
++            if (ids.isEmpty()) return@withLock
++            val prefs = context.fauxxDataStore.data.first()
++            val status = WidgetStatus.from(
++                enabled = prefs[PreferenceKeys.ENABLED] ?: false,
++                consented = prefs[PreferenceKeys.CONSENT_ACCEPTED] ?: false,
++                running = PhantomForegroundService.isRunning,
++                snapshot = snapshot(context),
++            )
++            val total = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_TOTAL, 0L)
++            val rate = runCatching {
++                val since = System.currentTimeMillis() - DAY_MS
++                WidgetStatus.hourlyRate(entryPoint(context).actionLogDao().countSince(since).first())
++            }.onFailure { Timber.w(it, "FauxxWidget: could not count the last day's actions") }.getOrNull()
++            AppWidgetManager.getInstance(context).updateAppWidget(ids, views(context, status, total, rate))
++        }
++
++        private fun views(context: Context, status: WidgetStatus, total: Long, rate: Float?): RemoteViews {
++            val views = RemoteViews(context.packageName, R.layout.widget_fauxx)
++
++            val (headline, colour) = when (status.headline) {
++                WidgetStatus.Headline.ENABLED -> R.string.widget_headline_enabled to R.color.widget_accent
++                WidgetStatus.Headline.PAUSED -> R.string.widget_headline_paused to R.color.widget_paused
++                WidgetStatus.Headline.STOPPED -> R.string.widget_headline_stopped to R.color.widget_text
++                WidgetStatus.Headline.DISABLED,
++                WidgetStatus.Headline.SET_UP -> R.string.widget_headline_disabled to R.color.widget_text
++            }
++            views.setTextViewText(R.id.widget_headline, context.getString(headline))
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++                // The launcher resolves it, so it follows the system's light or dark theme.
++                views.setColorStateList(R.id.widget_headline, "setTextColor", colour)
++            } else {
++                views.setTextColor(R.id.widget_headline, ContextCompat.getColor(context, colour))
++            }
++            views.setTextViewText(R.id.widget_detail, context.getString(detailText(status)))
++
++            val (switchLabel, switchAction) = when (status.action) {
++                WidgetStatus.Action.START -> R.string.widget_action_start to actionIntent(context, WidgetActionReceiver.ACTION_START)
++                WidgetStatus.Action.STOP -> R.string.notification_action_stop to actionIntent(context, WidgetActionReceiver.ACTION_STOP)
++                WidgetStatus.Action.SET_UP -> R.string.widget_action_set_up to openAppIntent(context, faq = false)
++            }
++            views.setContentDescription(R.id.widget_switch, context.getString(switchLabel))
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++                // The system's own switch (layout-v31): flipping it sends what the state calls for.
++                views.setCompoundButtonChecked(R.id.widget_switch, status.switchOn)
++                views.setOnCheckedChangeResponse(R.id.widget_switch, RemoteViews.RemoteResponse.fromPendingIntent(switchAction))
++            } else {
++                views.setImageViewResource(
++                    R.id.widget_switch,
++                    if (status.switchOn) R.drawable.widget_switch_on else R.drawable.widget_switch_off,
++                )
++                views.setOnClickPendingIntent(R.id.widget_switch, switchAction)
++            }
++
++            val locale = Locale.getDefault()
++            views.setTextViewText(
++                R.id.widget_total,
++                NumberFormat.getIntegerInstance(locale).apply { isGroupingUsed = false }.format(total),
++            )
++            views.setTextViewText(R.id.widget_rate, rate?.let { String.format(locale, "%.1f", it) } ?: "–")
++
++            views.setOnClickPendingIntent(R.id.widget_help, openAppIntent(context, faq = true))
++            // The root is @android:id/background, which Android 12+ launchers animate from when it opens the app.
++            views.setOnClickPendingIntent(android.R.id.background, openAppIntent(context, faq = false))
++            return views
++        }
++
++        private fun detailText(status: WidgetStatus): Int = when (status.headline) {
++            WidgetStatus.Headline.ENABLED -> R.string.widget_detail_active
++            WidgetStatus.Headline.STOPPED -> R.string.widget_detail_stopped
++            WidgetStatus.Headline.DISABLED -> R.string.widget_detail_off
++            WidgetStatus.Headline.SET_UP -> R.string.widget_detail_set_up
++            WidgetStatus.Headline.PAUSED -> when (status.pause) {
++                EngineState.PAUSED_WIFI -> R.string.widget_reason_network
++                EngineState.PAUSED_METERED_WIFI -> R.string.widget_reason_metered
++                EngineState.PAUSED_NETWORK_BLOCKED -> R.string.widget_reason_network_blocked
++                EngineState.PAUSED_BATTERY -> R.string.dashboard_engine_state_paused_battery
++                EngineState.PAUSED_BATTERY_SAVER -> R.string.dashboard_engine_state_paused_battery_saver
++                EngineState.PAUSED_RATE_LIMIT -> R.string.dashboard_engine_state_paused_rate_limit
++                EngineState.PAUSED_QUIET_HOURS -> R.string.dashboard_engine_state_paused_quiet_hours
++                EngineState.ACTIVE, EngineState.STOPPED, null -> R.string.widget_detail_active
++            }
++        }
++
++        private fun openAppIntent(context: Context, faq: Boolean): PendingIntent {
++            // Explicit component and package, as postResumeNotification's tap intent (CWE-927).
++            val intent = Intent(context, MainActivity::class.java).apply {
++                action = Intent.ACTION_MAIN
++                setPackage(context.packageName)
++                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
++                if (faq) putExtra(MainActivity.EXTRA_OPEN_FAQ, true)
++            }
++            return PendingIntent.getActivity(
++                context, if (faq) REQUEST_FAQ else REQUEST_OPEN, intent,
++                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
++            )
++        }
++
++        private fun actionIntent(context: Context, action: String): PendingIntent {
++            val intent = Intent(context, WidgetActionReceiver::class.java).apply {
++                this.action = action
++                setPackage(context.packageName)
++            }
++            val request = if (action == WidgetActionReceiver.ACTION_START) REQUEST_START else REQUEST_STOP
++            return PendingIntent.getBroadcast(
++                context, request, intent,
++                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
++            )
++        }
++
++        private const val REQUEST_OPEN = 0
++        private const val REQUEST_START = 1
++        private const val REQUEST_STOP = 2
++        private const val REQUEST_FAQ = 3
++    }
++}
+diff --git a/app/src/main/java/com/fauxx/widget/WidgetActionReceiver.kt b/app/src/main/java/com/fauxx/widget/WidgetActionReceiver.kt
+new file mode 100644
+index 0000000..561e205
+--- /dev/null
++++ b/app/src/main/java/com/fauxx/widget/WidgetActionReceiver.kt
+@@ -0,0 +1,88 @@
++package com.fauxx.widget
++
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import androidx.core.content.ContextCompat
++import androidx.datastore.preferences.core.edit
++import com.fauxx.di.PreferenceKeys
++import com.fauxx.di.fauxxDataStore
++import com.fauxx.engine.EngineState
++import com.fauxx.service.PhantomForegroundService
++import com.fauxx.service.postResumeNotification
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.launch
++import timber.log.Timber
++
++/**
++ * The widget's switch, starting or stopping the engine. Not exported: only the widget's own PendingIntents
++ * reach it.
++ *
++ * Start mirrors [com.fauxx.service.StartEngineReceiver]: the foreground service starts
++ * synchronously inside the tap's broadcast, since a tap on the app's own widget is one of the
++ * contexts Android 12+ lets an app start a foreground service from, then ENABLED=true is
++ * persisted. The widget only offers Start once the user has accepted the consent dialog
++ * ([WidgetStatus.Button.SET_UP] opens the app instead), so this never skips it.
++ *
++ * Stop does what the dashboard's switch does: it stops the running service (whose stop also
++ * cancels a pending resume) and persists ENABLED=false. With no service running, a pause the
++ * engine handed to a scheduled resume is cancelled directly.
++ */
++class WidgetActionReceiver : BroadcastReceiver() {
++
++    override fun onReceive(context: Context, intent: Intent) {
++        val app = context.applicationContext
++        when (intent.action) {
++            ACTION_START -> start(app)
++            ACTION_STOP -> stop(app)
++        }
++    }
++
++    private fun start(app: Context) {
++        val started = try {
++            ContextCompat.startForegroundService(app, PhantomForegroundService.startIntent(app))
++            Timber.i("WidgetActionReceiver: started the foreground service from the widget")
++            true
++        } catch (e: Exception) {
++            Timber.w(e, "WidgetActionReceiver: FGS start denied; posting the resume notification")
++            runCatching { postResumeNotification(app) }
++                .onFailure { Timber.w(it, "WidgetActionReceiver: failed to post the resume notification") }
++            false
++        }
++        if (started) persistEnabled(app, true) else FauxxWidget.refresh(app)
++    }
++
++    private fun stop(app: Context) {
++        if (PhantomForegroundService.isRunning) {
++            // A process with a running foreground service may start its own services.
++            runCatching { app.startService(PhantomForegroundService.stopIntent(app)) }
++                .onFailure { Timber.w(it, "WidgetActionReceiver: failed to stop the service") }
++        } else {
++            runCatching {
++                FauxxWidget.entryPoint(app).resumeScheduler().cancel()
++            }.onFailure { Timber.w(it, "WidgetActionReceiver: failed to cancel the pending resume") }
++        }
++        persistEnabled(app, false)
++    }
++
++    private fun persistEnabled(app: Context, enabled: Boolean) {
++        val pending = goAsync()
++        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
++            try {
++                runCatching { app.fauxxDataStore.edit { it[PreferenceKeys.ENABLED] = enabled } }
++                    .onFailure { Timber.w(it, "WidgetActionReceiver: failed to persist ENABLED=$enabled") }
++                // A stop has nothing left to say why it was paused.
++                if (enabled) FauxxWidget.refresh(app) else FauxxWidget.publish(app, EngineState.STOPPED)
++            } finally {
++                pending?.finish()
++            }
++        }
++    }
++
++    companion object {
++        const val ACTION_START = "com.fauxx.widget.START"
++        const val ACTION_STOP = "com.fauxx.widget.STOP"
++    }
++}
+diff --git a/app/src/main/java/com/fauxx/widget/WidgetStatus.kt b/app/src/main/java/com/fauxx/widget/WidgetStatus.kt
+new file mode 100644
+index 0000000..fae8626
+--- /dev/null
++++ b/app/src/main/java/com/fauxx/widget/WidgetStatus.kt
+@@ -0,0 +1,84 @@
++package com.fauxx.widget
++
++import com.fauxx.engine.EngineState
++
++/**
++ * The last state the engine published to the widget ([FauxxWidget.publish]).
++ *
++ * @property resigned the engine handed this pause to a scheduled resume and stopped its service,
++ *   so the pause stays true while nothing runs. Any other state is only true while the service is.
++ */
++internal data class WidgetSnapshot(
++    val state: EngineState,
++    val resigned: Boolean,
++)
++
++/**
++ * What the widget's status card shows: its headline, the pause behind a [Headline.PAUSED]
++ * ([pause]), and what its switch does ([action]); the switch reads on while it would stop.
++ */
++internal data class WidgetStatus(
++    val headline: Headline,
++    val pause: EngineState?,
++    val action: Action,
++) {
++    val switchOn: Boolean get() = action == Action.STOP
++
++    enum class Headline {
++        /** Generating decoy activity. */
++        ENABLED,
++
++        /** On, but waiting out a pause ([pause] says which). */
++        PAUSED,
++
++        /** On, but not running (after a reboot, or stopped from the notification). */
++        STOPPED,
++
++        /** Turned off. */
++        DISABLED,
++
++        /** Never allowed to run: the consent dialog hasn't been accepted. */
++        SET_UP,
++    }
++
++    enum class Action {
++        /** Start the engine (the user has accepted the consent dialog). */
++        START,
++
++        /** Stop the engine, as the dashboard's switch does. */
++        STOP,
++
++        /** Open the app: the engine has never been allowed to run, and only the app asks. */
++        SET_UP,
++    }
++
++    companion object {
++        /**
++         * Decides what to show from the engine's on/off and consent flags, whether its service
++         * runs, and the last published [snapshot], so a state the service stopped publishing (a
++         * reboot, a killed process) never shows as current.
++         */
++        fun from(enabled: Boolean, consented: Boolean, running: Boolean, snapshot: WidgetSnapshot?): WidgetStatus {
++            if (!enabled) {
++                return if (consented) WidgetStatus(Headline.DISABLED, null, Action.START)
++                else WidgetStatus(Headline.SET_UP, null, Action.SET_UP)
++            }
++            val state = when {
++                snapshot == null -> EngineState.STOPPED
++                running || snapshot.resigned -> snapshot.state
++                else -> EngineState.STOPPED
++            }
++            return when (state) {
++                EngineState.ACTIVE -> WidgetStatus(Headline.ENABLED, null, Action.STOP)
++                EngineState.STOPPED -> WidgetStatus(Headline.STOPPED, null, Action.START)
++                else -> WidgetStatus(Headline.PAUSED, state, Action.STOP)
++            }
++        }
++
++        /**
++         * Decoy actions per hour over the last 24 hours, the dashboard's figure
++         * ([com.fauxx.ui.viewmodels.DashboardViewModel]): an honest measure of the cover traffic.
++         */
++        fun hourlyRate(actionsLastDay: Int): Float = actionsLastDay / 24f
++    }
++}
+diff --git a/app/src/main/res/drawable/widget_background.xml b/app/src/main/res/drawable/widget_background.xml
+new file mode 100644
+index 0000000..adc0fad
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_background.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <solid android:color="@color/widget_bg" />
++    <corners android:radius="24dp" />
++</shape>
+diff --git a/app/src/main/res/drawable/widget_card.xml b/app/src/main/res/drawable/widget_card.xml
+new file mode 100644
+index 0000000..a545439
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_card.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <solid android:color="@color/widget_card" />
++    <corners android:radius="18dp" />
++</shape>
+diff --git a/app/src/main/res/drawable/widget_ic_help.xml b/app/src/main/res/drawable/widget_ic_help.xml
+new file mode 100644
+index 0000000..282e9e8
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_ic_help.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- A question mark in a circle (Material's help_outline, Apache-2.0). -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="@color/widget_text_secondary"
++        android:pathData="M11,18h2v-2h-2v2zM12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM12,20c-4.41,0 -8,-3.59 -8,-8s3.59,-8 8,-8 8,3.59 8,8 -3.59,8 -8,8zM12,6c-2.21,0 -4,1.79 -4,4h2c0,-1.1 0.9,-2 2,-2s2,0.9 2,2c0,2 -3,1.75 -3,5h2c0,-2.25 3,-2.5 3,-5 0,-2.21 -1.79,-4 -4,-4z" />
++</vector>
+diff --git a/app/src/main/res/drawable/widget_switch_off.xml b/app/src/main/res/drawable/widget_switch_off.xml
+new file mode 100644
+index 0000000..de15ed5
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_switch_off.xml
+@@ -0,0 +1,14 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The widget's switch before Android 12 (layout/widget_fauxx_switch), off. -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="48dp"
++    android:height="24dp"
++    android:viewportWidth="48"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="@color/widget_switch_track_off"
++        android:pathData="M12,0h24a12,12 0,0 1,0 24h-24a12,12 0,0 1,0 -24z" />
++    <path
++        android:fillColor="@color/widget_switch_knob"
++        android:pathData="M12,4a8,8 0,1 1,0 16a8,8 0,1 1,0 -16z" />
++</vector>
+diff --git a/app/src/main/res/drawable/widget_switch_on.xml b/app/src/main/res/drawable/widget_switch_on.xml
+new file mode 100644
+index 0000000..2475b00
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_switch_on.xml
+@@ -0,0 +1,14 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The widget's switch before Android 12 (layout/widget_fauxx_switch), on. -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="48dp"
++    android:height="24dp"
++    android:viewportWidth="48"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="@color/widget_accent"
++        android:pathData="M12,0h24a12,12 0,0 1,0 24h-24a12,12 0,0 1,0 -24z" />
++    <path
++        android:fillColor="@color/widget_switch_knob"
++        android:pathData="M36,4a8,8 0,1 1,0 16a8,8 0,1 1,0 -16z" />
++</vector>
+diff --git a/app/src/main/res/layout-v31/widget_fauxx_switch.xml b/app/src/main/res/layout-v31/widget_fauxx_switch.xml
+new file mode 100644
+index 0000000..e679eb5
+--- /dev/null
++++ b/app/src/main/res/layout-v31/widget_fauxx_switch.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Android 12+: the system's own switch (a widget can only use the framework's views, so not
++     AppCompat's or Material's). -->
++<Switch xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:tools="http://schemas.android.com/tools"
++    android:id="@+id/widget_switch"
++    android:layout_width="wrap_content"
++    android:layout_height="wrap_content"
++    android:layout_marginStart="12dp"
++    tools:ignore="UseSwitchCompatOrMaterialXml" />
+diff --git a/app/src/main/res/layout/widget_fauxx.xml b/app/src/main/res/layout/widget_fauxx.xml
+new file mode 100644
+index 0000000..5d0f4da
+--- /dev/null
++++ b/app/src/main/res/layout/widget_fauxx.xml
+@@ -0,0 +1,180 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The home-screen widget (com.fauxx.widget.FauxxWidget), the full width of the home screen:
++     a header with "?", the status card with its switch, and two tiles, every decoy action and
++     the hourly rate. System fonts and colours (values-v31: the system's dynamic colours). -->
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:tools="http://schemas.android.com/tools"
++    android:id="@android:id/background"
++    android:layout_width="match_parent"
++    android:layout_height="match_parent"
++    android:background="@drawable/widget_background"
++    android:orientation="vertical"
++    android:padding="16dp">
++
++    <!-- Not one TextView with a compound drawable: the "?" is a tap target of its own. -->
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:gravity="center_vertical"
++        android:orientation="horizontal"
++        android:paddingStart="4dp"
++        android:paddingEnd="0dp"
++        tools:ignore="UseCompoundDrawables">
++
++        <TextView
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1"
++            android:ellipsize="end"
++            android:fontFamily="sans-serif-medium"
++            android:letterSpacing="0.15"
++            android:maxLines="1"
++            android:text="@string/widget_title"
++            android:textAllCaps="true"
++            android:textColor="@color/widget_text_secondary"
++            android:textSize="12sp" />
++
++        <ImageView
++            android:id="@+id/widget_help"
++            android:layout_width="32dp"
++            android:layout_height="32dp"
++            android:contentDescription="@string/widget_help"
++            android:padding="5dp"
++            android:src="@drawable/widget_ic_help" />
++    </LinearLayout>
++
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:layout_marginTop="8dp"
++        android:background="@drawable/widget_card"
++        android:baselineAligned="false"
++        android:gravity="center_vertical"
++        android:orientation="horizontal"
++        android:paddingStart="16dp"
++        android:paddingTop="12dp"
++        android:paddingEnd="12dp"
++        android:paddingBottom="12dp">
++
++        <LinearLayout
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1"
++            android:orientation="vertical">
++
++            <TextView
++                android:id="@+id/widget_headline"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:letterSpacing="0.08"
++                android:maxLines="1"
++                android:text="@string/widget_headline_disabled"
++                android:textAllCaps="true"
++                android:textColor="@color/widget_text"
++                android:textSize="15sp"
++                android:textStyle="bold" />
++
++            <TextView
++                android:id="@+id/widget_detail"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_marginTop="2dp"
++                android:ellipsize="end"
++                android:maxLines="2"
++                android:text="@string/widget_detail_off"
++                android:textColor="@color/widget_text_secondary"
++                android:textSize="13sp" />
++        </LinearLayout>
++
++        <include layout="@layout/widget_fauxx_switch" />
++    </LinearLayout>
++
++    <!-- The tiles share the width and take the height the widget has left. -->
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="0dp"
++        android:layout_marginTop="10dp"
++        android:layout_weight="1"
++        android:baselineAligned="false"
++        android:orientation="horizontal"
++        tools:ignore="NestedWeights">
++
++        <LinearLayout
++            android:layout_width="0dp"
++            android:layout_height="match_parent"
++            android:layout_weight="1"
++            android:background="@drawable/widget_card"
++            android:gravity="center_vertical"
++            android:orientation="vertical"
++            android:padding="16dp">
++
++            <TextView
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:letterSpacing="0.08"
++                android:maxLines="1"
++                android:text="@string/widget_total_count"
++                android:textAllCaps="true"
++                android:textColor="@color/widget_text_secondary"
++                android:textSize="11sp" />
++
++            <TextView
++                android:id="@+id/widget_total"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_marginTop="4dp"
++                android:maxLines="1"
++                android:text="@string/widget_zero_count"
++                android:textColor="@color/widget_accent"
++                android:textSize="26sp"
++                android:textStyle="bold" />
++        </LinearLayout>
++
++        <LinearLayout
++            android:layout_width="0dp"
++            android:layout_height="match_parent"
++            android:layout_marginStart="10dp"
++            android:layout_weight="1"
++            android:background="@drawable/widget_card"
++            android:gravity="center_vertical"
++            android:orientation="vertical"
++            android:padding="16dp">
++
++            <TextView
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:letterSpacing="0.08"
++                android:maxLines="1"
++                android:text="@string/widget_hourly_rate"
++                android:textAllCaps="true"
++                android:textColor="@color/widget_text_secondary"
++                android:textSize="11sp" />
++
++            <LinearLayout
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_marginTop="4dp"
++                android:orientation="horizontal">
++
++                <TextView
++                    android:id="@+id/widget_rate"
++                    android:layout_width="wrap_content"
++                    android:layout_height="wrap_content"
++                    android:maxLines="1"
++                    android:text="@string/widget_zero_rate"
++                    android:textColor="@color/widget_accent"
++                    android:textSize="26sp"
++                    android:textStyle="bold" />
++
++                <TextView
++                    android:layout_width="wrap_content"
++                    android:layout_height="wrap_content"
++                    android:layout_marginStart="4dp"
++                    android:maxLines="1"
++                    android:text="@string/widget_per_hour"
++                    android:textColor="@color/widget_text_secondary"
++                    android:textSize="12sp" />
++            </LinearLayout>
++        </LinearLayout>
++    </LinearLayout>
++</LinearLayout>
+diff --git a/app/src/main/res/layout/widget_fauxx_switch.xml b/app/src/main/res/layout/widget_fauxx_switch.xml
+new file mode 100644
+index 0000000..53ef57e
+--- /dev/null
++++ b/app/src/main/res/layout/widget_fauxx_switch.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The widget's switch before Android 12, which has no switch for widgets: an image the
++     widget swaps. layout-v31 has the system's own. -->
++<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/widget_switch"
++    android:layout_width="48dp"
++    android:layout_height="24dp"
++    android:layout_marginStart="12dp"
++    android:contentDescription="@string/widget_action_start"
++    android:src="@drawable/widget_switch_off" />
+diff --git a/app/src/main/res/values-es/strings.xml b/app/src/main/res/values-es/strings.xml
+index 9950ad9..2d6d2a8 100644
+--- a/app/src/main/res/values-es/strings.xml
++++ b/app/src/main/res/values-es/strings.xml
+@@ -625,4 +625,28 @@
+     <string name="dashboard_trackers_ddg_hint">Puede que la Protección de rastreo de apps de DuckDuckGo esté bloqueando los rastreadores a los que deben llegar los señuelos de Fauxx. Si está activada, excluye a Fauxx de ella.</string>
+     <string name="dashboard_trackers_ddg_hint_dismiss">Descartar</string>
+     <string name="dashboard_trackers_blocked_faq">Toca para ver los pasos en las preguntas frecuentes.</string>
++
++    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
++    <string name="widget_description">El estado y los totales de Fauxx, con un interruptor para iniciarlo o detenerlo</string>
++    <string name="widget_title">Fauxx: envenenamiento de datos</string>
++    <string name="widget_help">Ayuda</string>
++    <string name="widget_headline_enabled">Activado</string>
++    <string name="widget_headline_paused">En pausa</string>
++    <string name="widget_headline_stopped">Detenido</string>
++    <string name="widget_headline_disabled">Desactivado</string>
++    <string name="widget_detail_active">Actividad señuelo activa</string>
++    <string name="widget_detail_off">Actividad señuelo desactivada</string>
++    <string name="widget_detail_stopped">Toca el interruptor para iniciar</string>
++    <string name="widget_detail_set_up">Abre Fauxx para configurarlo</string>
++    <string name="widget_reason_network">Esperando una red utilizable</string>
++    <string name="widget_reason_metered">Esta red Wi-Fi es de uso medido</string>
++    <string name="widget_reason_network_blocked">Android está restringiendo su red</string>
++    <string name="widget_total_count">Total</string>
++    <string name="widget_hourly_rate">Por hora</string>
++    <string name="widget_per_hour">/h</string>
++    <string name="widget_action_start">Iniciar</string>
++    <string name="widget_action_set_up">Configurar</string>
++    <string name="about_modified_title">Versión modificada</string>
++    <string name="about_modified_body">Virtroid modificó esta versión de Fauxx el 2 de noviembre de 2026 para sus teléfonos en la nube: añade un widget para la pantalla de inicio. Como Fauxx, se distribuye bajo la licencia AGPL-3.0, y los cambios y el código fuente completo están publicados en el enlace de abajo.</string>
++    <string name="about_modified_button">Código fuente</string>
+ </resources>
+diff --git a/app/src/main/res/values-fr/strings.xml b/app/src/main/res/values-fr/strings.xml
+index d96dbea..0633f00 100644
+--- a/app/src/main/res/values-fr/strings.xml
++++ b/app/src/main/res/values-fr/strings.xml
+@@ -625,4 +625,28 @@
+     <string name="dashboard_trackers_ddg_hint">La Protection contre le pistage des applis de DuckDuckGo bloque peut-être les traqueurs que les leurres de Fauxx doivent atteindre. Si elle est activée, excluez-en Fauxx.</string>
+     <string name="dashboard_trackers_ddg_hint_dismiss">Ignorer</string>
+     <string name="dashboard_trackers_blocked_faq">Touchez pour voir les étapes dans la FAQ.</string>
++
++    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
++    <string name="widget_description">L\'état et les totaux de Fauxx, avec un interrupteur pour le démarrer ou l\'arrêter</string>
++    <string name="widget_title">Fauxx : empoisonnement des données</string>
++    <string name="widget_help">Aide</string>
++    <string name="widget_headline_enabled">Activé</string>
++    <string name="widget_headline_paused">En pause</string>
++    <string name="widget_headline_stopped">Arrêté</string>
++    <string name="widget_headline_disabled">Désactivé</string>
++    <string name="widget_detail_active">Activité leurre en cours</string>
++    <string name="widget_detail_off">Activité leurre désactivée</string>
++    <string name="widget_detail_stopped">Touchez l\'interrupteur pour démarrer</string>
++    <string name="widget_detail_set_up">Ouvrez Fauxx pour le configurer</string>
++    <string name="widget_reason_network">En attente d\'un réseau utilisable</string>
++    <string name="widget_reason_metered">Ce Wi-Fi est limité</string>
++    <string name="widget_reason_network_blocked">Android restreint son accès au réseau</string>
++    <string name="widget_total_count">Total</string>
++    <string name="widget_hourly_rate">Par heure</string>
++    <string name="widget_per_hour">/h</string>
++    <string name="widget_action_start">Démarrer</string>
++    <string name="widget_action_set_up">Configurer</string>
++    <string name="about_modified_title">Version modifiée</string>
++    <string name="about_modified_body">Virtroid a modifié cette version de Fauxx le 2 novembre 2026 pour ses téléphones dans le cloud : elle ajoute un widget pour l\'écran d\'accueil. Comme Fauxx, elle est publiée sous licence AGPL-3.0, et les modifications et le code source complet sont publiés au lien ci-dessous.</string>
++    <string name="about_modified_button">Code source</string>
+ </resources>
+diff --git a/app/src/main/res/values-night-v31/widget.xml b/app/src/main/res/values-night-v31/widget.xml
+new file mode 100644
+index 0000000..26d9152
+--- /dev/null
++++ b/app/src/main/res/values-night-v31/widget.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Android 12+: the system's dynamic colours, dark. -->
++<resources>
++    <color name="widget_bg">@android:color/system_neutral1_800</color>
++    <color name="widget_card">@android:color/system_neutral1_700</color>
++    <color name="widget_text">@android:color/system_neutral1_50</color>
++    <color name="widget_text_secondary">@android:color/system_neutral2_200</color>
++    <color name="widget_accent">@android:color/system_accent1_200</color>
++    <color name="widget_paused">@android:color/system_accent3_200</color>
++</resources>
+diff --git a/app/src/main/res/values-night/widget.xml b/app/src/main/res/values-night/widget.xml
+new file mode 100644
+index 0000000..dfb3da7
+--- /dev/null
++++ b/app/src/main/res/values-night/widget.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <color name="widget_bg">#FF1C1C1C</color>
++    <color name="widget_card">#FF2A2A2A</color>
++    <color name="widget_text">#FFFFFFFF</color>
++    <color name="widget_text_secondary">#B3FFFFFF</color>
++    <color name="widget_accent">#FF00FF88</color>
++    <color name="widget_paused">#FFFF6B35</color>
++    <color name="widget_switch_track_off">#FF5A5A5A</color>
++    <color name="widget_switch_knob">#FF1C1C1C</color>
++</resources>
+diff --git a/app/src/main/res/values-ru/strings.xml b/app/src/main/res/values-ru/strings.xml
+index 70385cd..06cc8a2 100644
+--- a/app/src/main/res/values-ru/strings.xml
++++ b/app/src/main/res/values-ru/strings.xml
+@@ -645,4 +645,28 @@
+     <string name="dashboard_trackers_ddg_hint">Возможно, защита от отслеживания в приложениях DuckDuckGo блокирует трекеры, до которых должны доходить приманки Fauxx. Если она включена, исключите из неё Fauxx.</string>
+     <string name="dashboard_trackers_ddg_hint_dismiss">Скрыть</string>
+     <string name="dashboard_trackers_blocked_faq">Нажмите, чтобы открыть инструкции в FAQ.</string>
++
++    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
++    <string name="widget_description">Состояние и счётчики Fauxx и переключатель, чтобы запустить или остановить его</string>
++    <string name="widget_title">Fauxx: отравление данных</string>
++    <string name="widget_help">Справка</string>
++    <string name="widget_headline_enabled">Включено</string>
++    <string name="widget_headline_paused">Пауза</string>
++    <string name="widget_headline_stopped">Остановлено</string>
++    <string name="widget_headline_disabled">Выключено</string>
++    <string name="widget_detail_active">Активность-приманка включена</string>
++    <string name="widget_detail_off">Активность-приманка выключена</string>
++    <string name="widget_detail_stopped">Нажмите переключатель, чтобы запустить</string>
++    <string name="widget_detail_set_up">Откройте Fauxx, чтобы настроить</string>
++    <string name="widget_reason_network">Ожидание доступной сети</string>
++    <string name="widget_reason_metered">Эта сеть Wi-Fi лимитная</string>
++    <string name="widget_reason_network_blocked">Android ограничивает доступ к сети</string>
++    <string name="widget_total_count">Всего</string>
++    <string name="widget_hourly_rate">В час</string>
++    <string name="widget_per_hour">/ч</string>
++    <string name="widget_action_start">Запустить</string>
++    <string name="widget_action_set_up">Настроить</string>
++    <string name="about_modified_title">Изменённая версия</string>
++    <string name="about_modified_body">Virtroid изменил эту версию Fauxx 2 ноября 2026 года для своих облачных телефонов: она добавляет виджет для главного экрана. Как и Fauxx, она распространяется по лицензии AGPL-3.0, а изменения и полный исходный код опубликованы по ссылке ниже.</string>
++    <string name="about_modified_button">Исходный код</string>
+ </resources>
+diff --git a/app/src/main/res/values-v31/widget.xml b/app/src/main/res/values-v31/widget.xml
+new file mode 100644
+index 0000000..3366319
+--- /dev/null
++++ b/app/src/main/res/values-v31/widget.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Android 12+: the system's dynamic colours, light. -->
++<resources>
++    <color name="widget_bg">@android:color/system_neutral1_50</color>
++    <color name="widget_card">@android:color/system_neutral2_100</color>
++    <color name="widget_text">@android:color/system_neutral1_900</color>
++    <color name="widget_text_secondary">@android:color/system_neutral2_700</color>
++    <color name="widget_accent">@android:color/system_accent1_600</color>
++    <color name="widget_paused">@android:color/system_accent3_600</color>
++</resources>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index be47f65..13e666f 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -621,4 +621,30 @@
+     <string name="dashboard_trackers_ddg_hint">DuckDuckGo App Tracking Protection may be blocking the trackers Fauxx\'s decoys need to reach. If it\'s on, exclude Fauxx from it.</string>
+     <string name="dashboard_trackers_ddg_hint_dismiss">Dismiss</string>
+     <string name="dashboard_trackers_blocked_faq">Tap for the steps in the FAQ.</string>
++
++    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
++    <string name="widget_description">Fauxx\'s status and totals, with a switch to start or stop it</string>
++    <string name="widget_title">Fauxx data poisoning</string>
++    <string name="widget_help">Help</string>
++    <string name="widget_headline_enabled">Enabled</string>
++    <string name="widget_headline_paused">Paused</string>
++    <string name="widget_headline_stopped">Stopped</string>
++    <string name="widget_headline_disabled">Disabled</string>
++    <string name="widget_detail_active">Decoy activity active</string>
++    <string name="widget_detail_off">Decoy activity off</string>
++    <string name="widget_detail_stopped">Tap the switch to start</string>
++    <string name="widget_detail_set_up">Open Fauxx to set up</string>
++    <string name="widget_reason_network">Waiting for a usable network</string>
++    <string name="widget_reason_metered">This Wi-Fi is metered</string>
++    <string name="widget_reason_network_blocked">Android is restricting its network</string>
++    <string name="widget_total_count">Total count</string>
++    <string name="widget_hourly_rate">Hourly rate</string>
++    <string name="widget_per_hour">/hr</string>
++    <string name="widget_zero_count" translatable="false">0</string>
++    <string name="widget_zero_rate" translatable="false">0.0</string>
++    <string name="widget_action_start">Start</string>
++    <string name="widget_action_set_up">Set up</string>
++    <string name="about_modified_title">Modified build</string>
++    <string name="about_modified_body">This build of Fauxx was modified by Virtroid on 2 November 2026 for its cloud phones: it adds a home-screen widget. Like Fauxx, it is licensed under the AGPL-3.0, and the changes and the complete source are published at the link below.</string>
++    <string name="about_modified_button">Source</string>
+ </resources>
+diff --git a/app/src/main/res/values/widget.xml b/app/src/main/res/values/widget.xml
+new file mode 100644
+index 0000000..f48428e
+--- /dev/null
++++ b/app/src/main/res/values/widget.xml
+@@ -0,0 +1,13 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The home-screen widget's colours (com.fauxx.widget). Android 12+ takes the system's own
++     dynamic colours (values-v31), as the launcher does; before that, the app's own. -->
++<resources>
++    <color name="widget_bg">#FFF5F5F5</color>
++    <color name="widget_card">#FFE6E6E6</color>
++    <color name="widget_text">#DE000000</color>
++    <color name="widget_text_secondary">#8A000000</color>
++    <color name="widget_accent">#FF007A3D</color>
++    <color name="widget_paused">#FFB25E00</color>
++    <color name="widget_switch_track_off">#FF9E9E9E</color>
++    <color name="widget_switch_knob">#FFFFFFFF</color>
++</resources>
+diff --git a/app/src/main/res/xml/fauxx_widget_info.xml b/app/src/main/res/xml/fauxx_widget_info.xml
+new file mode 100644
+index 0000000..4bc7917
+--- /dev/null
++++ b/app/src/main/res/xml/fauxx_widget_info.xml
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The full width of the home screen, three rows tall. Launcher3 takes the 5x3 target on a
++     five-column grid, and on a narrower one sizes the widget from minWidth, capped at the grid's
++     width, so 400dp fills any phone's row. minResizeWidth/Height keep it shrinkable (left unset
++     they would default to minWidth/Height, and the widget would never fit). The engine publishes
++     every state change (FauxxWidget.publish); the hourly update keeps the hourly rate, a count
++     over the last day, current while the engine is off. previewLayout and the target cells are
++     for Android 12+ launchers. -->
++<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:tools="http://schemas.android.com/tools"
++    android:description="@string/widget_description"
++    android:initialLayout="@layout/widget_fauxx"
++    android:minWidth="400dp"
++    android:minHeight="180dp"
++    android:minResizeWidth="250dp"
++    android:minResizeHeight="150dp"
++    android:previewLayout="@layout/widget_fauxx"
++    android:resizeMode="horizontal|vertical"
++    android:targetCellWidth="5"
++    android:targetCellHeight="3"
++    android:updatePeriodMillis="3600000"
++    android:widgetCategory="home_screen"
++    tools:ignore="UnusedAttribute" />
+diff --git a/app/src/test/java/com/fauxx/widget/WidgetStatusTest.kt b/app/src/test/java/com/fauxx/widget/WidgetStatusTest.kt
+new file mode 100644
+index 0000000..873d53a
+--- /dev/null
++++ b/app/src/test/java/com/fauxx/widget/WidgetStatusTest.kt
+@@ -0,0 +1,76 @@
++package com.fauxx.widget
++
++import com.fauxx.engine.EngineState
++import com.fauxx.widget.WidgetStatus.Action
++import com.fauxx.widget.WidgetStatus.Headline
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/**
++ * What the home-screen widget's status card shows for each combination of the engine's flags,
++ * its service and the last state it published ([WidgetStatus.from]), and its hourly rate.
++ */
++class WidgetStatusTest {
++
++    private fun snapshot(state: EngineState, resigned: Boolean = false) = WidgetSnapshot(state, resigned)
++
++    @Test
++    fun `off before consent opens the app instead of starting`() {
++        val status = WidgetStatus.from(enabled = false, consented = false, running = false, snapshot = null)
++        assertEquals(WidgetStatus(Headline.SET_UP, null, Action.SET_UP), status)
++        assertFalse(status.switchOn)
++    }
++
++    @Test
++    fun `off after consent reads disabled, and the switch starts it`() {
++        val status = WidgetStatus.from(false, true, false, snapshot(EngineState.ACTIVE))
++        assertEquals(WidgetStatus(Headline.DISABLED, null, Action.START), status)
++        assertFalse(status.switchOn)
++    }
++
++    @Test
++    fun `running and active reads enabled, with the switch on`() {
++        val status = WidgetStatus.from(true, true, true, snapshot(EngineState.ACTIVE))
++        assertEquals(WidgetStatus(Headline.ENABLED, null, Action.STOP), status)
++        assertTrue(status.switchOn)
++    }
++
++    @Test
++    fun `a running pause reads paused with its reason, the switch still on`() {
++        val status = WidgetStatus.from(true, true, true, snapshot(EngineState.PAUSED_WIFI))
++        assertEquals(WidgetStatus(Headline.PAUSED, EngineState.PAUSED_WIFI, Action.STOP), status)
++        assertTrue(status.switchOn)
++    }
++
++    @Test
++    fun `a pause handed to a scheduled resume stays shown after the service stops`() {
++        val status = WidgetStatus.from(true, true, false, snapshot(EngineState.PAUSED_QUIET_HOURS, resigned = true))
++        assertEquals(WidgetStatus(Headline.PAUSED, EngineState.PAUSED_QUIET_HOURS, Action.STOP), status)
++    }
++
++    @Test
++    fun `a state the service stopped publishing reads as stopped, and the switch starts it`() {
++        // A reboot or a killed process: the last state was active, but nothing runs now.
++        val status = WidgetStatus.from(true, true, false, snapshot(EngineState.ACTIVE))
++        assertEquals(WidgetStatus(Headline.STOPPED, null, Action.START), status)
++        assertFalse(status.switchOn)
++    }
++
++    @Test
++    fun `on with nothing published yet reads as stopped`() {
++        assertEquals(WidgetStatus(Headline.STOPPED, null, Action.START), WidgetStatus.from(true, true, false, null))
++    }
++
++    @Test
++    fun `an engine turned on before consent existed can still be stopped`() {
++        assertEquals(Action.STOP, WidgetStatus.from(true, false, true, snapshot(EngineState.ACTIVE)).action)
++    }
++
++    @Test
++    fun `the hourly rate is the last day's actions over 24 hours, as the dashboard's`() {
++        assertEquals(40.2f, WidgetStatus.hourlyRate(965), 0.01f)
++        assertEquals(0f, WidgetStatus.hourlyRate(0), 0f)
++    }
++}
+diff --git a/app/version.properties b/app/version.properties
+index 5ddc279..5c66414 100644
+--- a/app/version.properties
++++ b/app/version.properties
+@@ -1,2 +1,2 @@
+ versionCode=903
+-versionName=0.9.3
++versionName=0.9.3-virtroid.1
