@@ -1,16 +1,19 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattyperrott <mattyperrott@outlook.com>
-Date: Mon, 2 Nov 2026 06:00:00 +0000
+Date: Tue, 3 Nov 2026 06:00:00 +0000
 Subject: [PATCH] Add a home-screen widget
 
 For the copy of Fauxx built into Virtroid's cloud phones (VIRTROID.md).
-The widget fills the home screen's width: whether the engine is
-generating decoy activity or why it is paused, a switch that starts or
-stops it as the notification's Start and the dashboard's switch do
-(before the consent dialog has been accepted it opens the app instead),
-every decoy action Fauxx has made, and its hourly rate over the last
-day, as the dashboard counts it. A "?" opens the FAQ. System fonts, and
-on Android 12+ the system's dynamic colours and switch.
+The widget fills the home screen's width and two rows (on Android 12+,
+resized to one row, a compact layout): whether the engine is generating
+decoy activity or why it is paused, a switch that starts or stops it as
+the notification's Start and the dashboard's switch do (before the
+consent dialog has been accepted it opens the app instead), every decoy
+action Fauxx has made, and its hourly rate over the last day, as the
+dashboard counts it. A "?" opens the FAQ. System fonts and Virtroid's
+palette (dark, with a lime accent), so it pairs with the other widgets
+on Virtroid's home screen; on Android 12+ its switch is the system's
+own, drawn in those colours.
 
 PhantomForegroundService publishes each state it puts in its
 notification to the widget (updateNotification is synchronized so the
@@ -20,77 +23,85 @@ Settings' "Clear All Data" forgets that count. MainActivity takes the
 widget's "?" and the navigation graph opens the FAQ for it.
 
 The About screen says the build is modified and links to its source,
-and the version name is 0.9.3-virtroid.1.
+and the version name is 0.9.3-virtroid.2.
 ---
- VIRTROID.md                                   |  36 +++
- app/src/main/AndroidManifest.xml              |  17 ++
+ VIRTROID.md                                   |  37 +++
+ app/src/main/AndroidManifest.xml              |  17 +
  .../java/com/fauxx/engine/PoisonEngine.kt     |   4 +
  .../fauxx/service/PhantomForegroundService.kt |  27 +-
  .../main/java/com/fauxx/ui/MainActivity.kt    |  19 +-
  .../java/com/fauxx/ui/navigation/NavGraph.kt  |  14 +-
  .../java/com/fauxx/ui/screens/AboutScreen.kt  |  20 ++
  .../com/fauxx/ui/screens/SettingsScreen.kt    |   5 +
- .../main/java/com/fauxx/widget/FauxxWidget.kt | 254 ++++++++++++++++++
+ .../main/java/com/fauxx/widget/FauxxWidget.kt | 292 ++++++++++++++++++
  .../com/fauxx/widget/WidgetActionReceiver.kt  |  88 ++++++
- .../java/com/fauxx/widget/WidgetStatus.kt     |  84 ++++++
- .../main/res/drawable/widget_background.xml   |   5 +
+ .../java/com/fauxx/widget/WidgetStatus.kt     |  84 +++++
+ .../main/res/drawable/widget_background.xml   |   6 +
  app/src/main/res/drawable/widget_card.xml     |   5 +
+ .../main/res/drawable/widget_help_ripple.xml  |   5 +
  app/src/main/res/drawable/widget_ic_help.xml  |  11 +
- .../main/res/drawable/widget_switch_off.xml   |  14 +
- .../main/res/drawable/widget_switch_on.xml    |  14 +
- .../res/layout-v31/widget_fauxx_switch.xml    |  10 +
- app/src/main/res/layout/widget_fauxx.xml      | 180 +++++++++++++
+ app/src/main/res/drawable/widget_ic_mark.xml  |  22 ++
+ .../main/res/drawable/widget_switch_off.xml   |  16 +
+ .../main/res/drawable/widget_switch_on.xml    |  15 +
+ .../main/res/drawable/widget_switch_thumb.xml |  28 ++
+ .../main/res/drawable/widget_switch_track.xml |  22 ++
+ .../res/layout-v31/widget_fauxx_switch.xml    |  18 ++
+ app/src/main/res/layout/widget_fauxx.xml      | 151 +++++++++
+ .../main/res/layout/widget_fauxx_compact.xml  |  54 ++++
  .../main/res/layout/widget_fauxx_switch.xml   |  10 +
- app/src/main/res/values-es/strings.xml        |  24 ++
- app/src/main/res/values-fr/strings.xml        |  24 ++
- app/src/main/res/values-night-v31/widget.xml  |  10 +
- app/src/main/res/values-night/widget.xml      |  11 +
- app/src/main/res/values-ru/strings.xml        |  24 ++
- app/src/main/res/values-v31/widget.xml        |  10 +
- app/src/main/res/values/strings.xml           |  26 ++
- app/src/main/res/values/widget.xml            |  13 +
- app/src/main/res/xml/fauxx_widget_info.xml    |  23 ++
- .../java/com/fauxx/widget/WidgetStatusTest.kt |  76 ++++++
+ app/src/main/res/values-es/strings.xml        |  25 ++
+ app/src/main/res/values-fr/strings.xml        |  25 ++
+ app/src/main/res/values-ru/strings.xml        |  25 ++
+ app/src/main/res/values-v31/widget.xml        |   7 +
+ app/src/main/res/values/strings.xml           |  27 ++
+ app/src/main/res/values/widget.xml            |  20 ++
+ app/src/main/res/values/widget_styles.xml     |  25 ++
+ app/src/main/res/xml/fauxx_widget_info.xml    |  24 ++
+ .../java/com/fauxx/widget/WidgetStatusTest.kt |  76 +++++
  app/version.properties                        |   2 +-
- 30 files changed, 1056 insertions(+), 4 deletions(-)
+ 34 files changed, 1222 insertions(+), 4 deletions(-)
  create mode 100644 VIRTROID.md
  create mode 100644 app/src/main/java/com/fauxx/widget/FauxxWidget.kt
  create mode 100644 app/src/main/java/com/fauxx/widget/WidgetActionReceiver.kt
  create mode 100644 app/src/main/java/com/fauxx/widget/WidgetStatus.kt
  create mode 100644 app/src/main/res/drawable/widget_background.xml
  create mode 100644 app/src/main/res/drawable/widget_card.xml
+ create mode 100644 app/src/main/res/drawable/widget_help_ripple.xml
  create mode 100644 app/src/main/res/drawable/widget_ic_help.xml
+ create mode 100644 app/src/main/res/drawable/widget_ic_mark.xml
  create mode 100644 app/src/main/res/drawable/widget_switch_off.xml
  create mode 100644 app/src/main/res/drawable/widget_switch_on.xml
+ create mode 100644 app/src/main/res/drawable/widget_switch_thumb.xml
+ create mode 100644 app/src/main/res/drawable/widget_switch_track.xml
  create mode 100644 app/src/main/res/layout-v31/widget_fauxx_switch.xml
  create mode 100644 app/src/main/res/layout/widget_fauxx.xml
+ create mode 100644 app/src/main/res/layout/widget_fauxx_compact.xml
  create mode 100644 app/src/main/res/layout/widget_fauxx_switch.xml
- create mode 100644 app/src/main/res/values-night-v31/widget.xml
- create mode 100644 app/src/main/res/values-night/widget.xml
  create mode 100644 app/src/main/res/values-v31/widget.xml
  create mode 100644 app/src/main/res/values/widget.xml
+ create mode 100644 app/src/main/res/values/widget_styles.xml
  create mode 100644 app/src/main/res/xml/fauxx_widget_info.xml
  create mode 100644 app/src/test/java/com/fauxx/widget/WidgetStatusTest.kt
 
 diff --git a/VIRTROID.md b/VIRTROID.md
 new file mode 100644
-index 0000000..62428f0
+index 0000000..230bec4
 --- /dev/null
 +++ b/VIRTROID.md
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +# Virtroid's changes to Fauxx
 +
 +This is Fauxx 0.9.3 (<https://github.com/digital-grease/fauxx>, tag `v0.9.3`,
 +commit `1598ac1e5813d06079da4f65ab6392970c4e3f43`) as modified by Virtroid on
-+2 November 2026, for the copy of Fauxx built into Virtroid's cloud phones.
++2 and 3 November 2026, for the copy of Fauxx built into Virtroid's cloud phones.
 +Like Fauxx, it is licensed under the GNU Affero General Public License,
 +version 3 only (`LICENSE`).
 +
 +The changes:
 +
 +- A home-screen widget (`app/src/main/java/com/fauxx/widget`, its layout,
-+  provider info, drawables and strings), the full width of the home screen:
-+  whether the engine is generating decoy activity or why it is paused, a
++  provider info, drawables and strings), the full width of the home screen
++  and two rows tall (on Android 12+ a compact layout at one row): whether the engine is generating decoy activity or why it is paused, a
 +  switch that starts or stops it as the notification's Start and the
 +  dashboard's switch do (before the consent dialog has been accepted it
 +  opens the app instead), every decoy action Fauxx has made, and its hourly
@@ -103,12 +114,13 @@ index 0000000..62428f0
 +  Settings' "Clear All Data" forgets that count too.
 +- `MainActivity` takes the widget's "?" (`EXTRA_OPEN_FAQ`) and the navigation
 +  graph opens the FAQ for it.
-+- The widget takes the system's fonts, and on Android 12+ the system's own
-+  dynamic colours and switch, light or dark with the system; before that,
-+  the app's colours and a drawn switch.
++- The widget takes the system's fonts and Virtroid's palette (dark, with a
++  lime accent), so it pairs with the other widgets on Virtroid's home
++  screen; on Android 12+ its switch is the system's own, drawn in those
++  colours, and before that a drawn one.
 +- The About screen says that this build is modified and links to its
 +  source.
-+- The version name is `0.9.3-virtroid.1`; the version code is upstream's.
++- The version name is `0.9.3-virtroid.2`; the version code is upstream's.
 +
 +Virtroid builds it with `./gradlew assembleFullRelease` (JDK 21, Android SDK
 +platform 37) and signs it with Virtroid's release key. The build script, this
@@ -412,10 +424,10 @@ index 6ec56ed..d408b40 100644
              },
 diff --git a/app/src/main/java/com/fauxx/widget/FauxxWidget.kt b/app/src/main/java/com/fauxx/widget/FauxxWidget.kt
 new file mode 100644
-index 0000000..2a518b4
+index 0000000..e7534d2
 --- /dev/null
 +++ b/app/src/main/java/com/fauxx/widget/FauxxWidget.kt
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,292 @@
 +package com.fauxx.widget
 +
 +import android.app.PendingIntent
@@ -425,6 +437,11 @@ index 0000000..2a518b4
 +import android.content.Context
 +import android.content.Intent
 +import android.os.Build
++import android.text.SpannableString
++import android.text.Spanned
++import android.text.style.ForegroundColorSpan
++import android.text.style.RelativeSizeSpan
++import android.util.SizeF
 +import android.widget.RemoteViews
 +import androidx.core.content.ContextCompat
 +import androidx.core.content.edit
@@ -571,24 +588,48 @@ index 0000000..2a518b4
 +            AppWidgetManager.getInstance(context).updateAppWidget(ids, views(context, status, total, rate))
 +        }
 +
++        /**
++         * On Android 12+ one layout per size, and the launcher picks the one that fits: two rows
++         * or more get [R.layout.widget_fauxx], one row the compact layout. Before 12, the full one.
++         */
 +        private fun views(context: Context, status: WidgetStatus, total: Long, rate: Float?): RemoteViews {
-+            val views = RemoteViews(context.packageName, R.layout.widget_fauxx)
++            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return views(context, status, total, rate, compact = false)
++            return RemoteViews(
++                mapOf(
++                    SizeF(250f, 90f) to views(context, status, total, rate, compact = true),
++                    SizeF(250f, 180f) to views(context, status, total, rate, compact = false),
++                ),
++            )
++        }
++
++        private fun views(context: Context, status: WidgetStatus, total: Long, rate: Float?, compact: Boolean): RemoteViews {
++            val views = RemoteViews(
++                context.packageName,
++                if (compact) R.layout.widget_fauxx_compact else R.layout.widget_fauxx,
++            )
 +
 +            val (headline, colour) = when (status.headline) {
 +                WidgetStatus.Headline.ENABLED -> R.string.widget_headline_enabled to R.color.widget_accent
 +                WidgetStatus.Headline.PAUSED -> R.string.widget_headline_paused to R.color.widget_paused
 +                WidgetStatus.Headline.STOPPED -> R.string.widget_headline_stopped to R.color.widget_text
-+                WidgetStatus.Headline.DISABLED,
-+                WidgetStatus.Headline.SET_UP -> R.string.widget_headline_disabled to R.color.widget_text
++                WidgetStatus.Headline.DISABLED -> R.string.widget_headline_disabled to R.color.widget_text
++                WidgetStatus.Headline.SET_UP -> R.string.widget_headline_set_up to R.color.widget_text
 +            }
 +            views.setTextViewText(R.id.widget_headline, context.getString(headline))
-+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-+                // The launcher resolves it, so it follows the system's light or dark theme.
-+                views.setColorStateList(R.id.widget_headline, "setTextColor", colour)
-+            } else {
-+                views.setTextColor(R.id.widget_headline, ContextCompat.getColor(context, colour))
-+            }
-+            views.setTextViewText(R.id.widget_detail, context.getString(detailText(status)))
++            views.setTextColor(R.id.widget_headline, ContextCompat.getColor(context, colour))
++
++            val locale = Locale.getDefault()
++            val totalText = NumberFormat.getIntegerInstance(locale).format(total)
++            val rateText = rate?.let { String.format(locale, "%.1f", it) } ?: "–"
++            // One row has no tiles: while it runs, the counts go under the headline instead.
++            views.setTextViewText(
++                R.id.widget_detail,
++                if (compact && status.headline == WidgetStatus.Headline.ENABLED) {
++                    context.getString(R.string.widget_compact_counts, totalText, rateText)
++                } else {
++                    context.getString(detailText(status))
++                },
++            )
 +
 +            val (switchLabel, switchAction) = when (status.action) {
 +                WidgetStatus.Action.START -> R.string.widget_action_start to actionIntent(context, WidgetActionReceiver.ACTION_START)
@@ -608,14 +649,23 @@ index 0000000..2a518b4
 +                views.setOnClickPendingIntent(R.id.widget_switch, switchAction)
 +            }
 +
-+            val locale = Locale.getDefault()
-+            views.setTextViewText(
-+                R.id.widget_total,
-+                NumberFormat.getIntegerInstance(locale).apply { isGroupingUsed = false }.format(total),
-+            )
-+            views.setTextViewText(R.id.widget_rate, rate?.let { String.format(locale, "%.1f", it) } ?: "–")
-+
-+            views.setOnClickPendingIntent(R.id.widget_help, openAppIntent(context, faq = true))
++            if (!compact) {
++                views.setTextViewText(R.id.widget_total, totalText)
++                // The unit smaller and quieter than the figure, in the one view (so it shrinks with it).
++                val unit = context.getString(R.string.widget_per_hour)
++                views.setTextViewText(
++                    R.id.widget_rate,
++                    SpannableString(rateText + unit).apply {
++                        val from = rateText.length
++                        setSpan(RelativeSizeSpan(0.6f), from, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++                        setSpan(
++                            ForegroundColorSpan(ContextCompat.getColor(context, R.color.widget_text_secondary)),
++                            from, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
++                        )
++                    },
++                )
++                views.setOnClickPendingIntent(R.id.widget_help, openAppIntent(context, faq = true))
++            }
 +            // The root is @android:id/background, which Android 12+ launchers animate from when it opens the app.
 +            views.setOnClickPendingIntent(android.R.id.background, openAppIntent(context, faq = false))
 +            return views
@@ -856,26 +906,38 @@ index 0000000..fae8626
 +}
 diff --git a/app/src/main/res/drawable/widget_background.xml b/app/src/main/res/drawable/widget_background.xml
 new file mode 100644
-index 0000000..adc0fad
+index 0000000..0ac2e2b
 --- /dev/null
 +++ b/app/src/main/res/drawable/widget_background.xml
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,6 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
 +    <solid android:color="@color/widget_bg" />
-+    <corners android:radius="24dp" />
++    <stroke android:width="1dp" android:color="@color/widget_border" />
++    <corners android:radius="@dimen/widget_radius" />
 +</shape>
 diff --git a/app/src/main/res/drawable/widget_card.xml b/app/src/main/res/drawable/widget_card.xml
 new file mode 100644
-index 0000000..a545439
+index 0000000..c3c5c3e
 --- /dev/null
 +++ b/app/src/main/res/drawable/widget_card.xml
 @@ -0,0 +1,5 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
 +    <solid android:color="@color/widget_card" />
-+    <corners android:radius="18dp" />
++    <corners android:radius="@dimen/widget_inner_radius" />
 +</shape>
+diff --git a/app/src/main/res/drawable/widget_help_ripple.xml b/app/src/main/res/drawable/widget_help_ripple.xml
+new file mode 100644
+index 0000000..4433ded
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_help_ripple.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The "?"'s touch feedback: a circle under the icon. -->
++<ripple xmlns:android="http://schemas.android.com/apk/res/android"
++    android:color="@color/widget_ripple"
++    android:radius="20dp" />
 diff --git a/app/src/main/res/drawable/widget_ic_help.xml b/app/src/main/res/drawable/widget_ic_help.xml
 new file mode 100644
 index 0000000..282e9e8
@@ -893,72 +955,173 @@ index 0000000..282e9e8
 +        android:fillColor="@color/widget_text_secondary"
 +        android:pathData="M11,18h2v-2h-2v2zM12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM12,20c-4.41,0 -8,-3.59 -8,-8s3.59,-8 8,-8 8,3.59 8,8 -3.59,8 -8,8zM12,6c-2.21,0 -4,1.79 -4,4h2c0,-1.1 0.9,-2 2,-2s2,0.9 2,2c0,2 -3,1.75 -3,5h2c0,-2.25 3,-2.5 3,-5 0,-2.21 -1.79,-4 -4,-4z" />
 +</vector>
+diff --git a/app/src/main/res/drawable/widget_ic_mark.xml b/app/src/main/res/drawable/widget_ic_mark.xml
+new file mode 100644
+index 0000000..fb6412e
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_ic_mark.xml
+@@ -0,0 +1,22 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The launcher icon's "F" (ic_launcher_foreground) in a ring, in the widget's accent. -->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
++    <path
++        android:fillColor="#00000000"
++        android:pathData="M12,1.9a10.1,10.1 0,1 1,0 20.2a10.1,10.1 0,1 1,0 -20.2z"
++        android:strokeWidth="1.8"
++        android:strokeColor="@color/widget_accent" />
++    <group
++        android:scaleX="0.2"
++        android:scaleY="0.2"
++        android:translateX="1.8"
++        android:translateY="1.2">
++        <path
++            android:fillColor="@color/widget_accent"
++            android:pathData="M34,28 L34,80 L44,80 L44,58 L66,58 L66,49 L44,49 L44,37 L70,37 L70,28 Z" />
++    </group>
++</vector>
 diff --git a/app/src/main/res/drawable/widget_switch_off.xml b/app/src/main/res/drawable/widget_switch_off.xml
 new file mode 100644
-index 0000000..de15ed5
+index 0000000..8f93980
 --- /dev/null
 +++ b/app/src/main/res/drawable/widget_switch_off.xml
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,16 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!-- The widget's switch before Android 12 (layout/widget_fauxx_switch), off. -->
 +<vector xmlns:android="http://schemas.android.com/apk/res/android"
-+    android:width="48dp"
-+    android:height="24dp"
-+    android:viewportWidth="48"
-+    android:viewportHeight="24">
++    android:width="56dp"
++    android:height="32dp"
++    android:viewportWidth="56"
++    android:viewportHeight="32">
 +    <path
 +        android:fillColor="@color/widget_switch_track_off"
-+        android:pathData="M12,0h24a12,12 0,0 1,0 24h-24a12,12 0,0 1,0 -24z" />
++        android:pathData="M16,1h24a15,15 0,0 1,0 30h-24a15,15 0,0 1,0 -30z"
++        android:strokeWidth="2"
++        android:strokeColor="@color/widget_switch_outline" />
 +    <path
-+        android:fillColor="@color/widget_switch_knob"
-+        android:pathData="M12,4a8,8 0,1 1,0 16a8,8 0,1 1,0 -16z" />
++        android:fillColor="@color/widget_switch_knob_off"
++        android:pathData="M16,8a8,8 0,1 1,0 16a8,8 0,1 1,0 -16z" />
 +</vector>
 diff --git a/app/src/main/res/drawable/widget_switch_on.xml b/app/src/main/res/drawable/widget_switch_on.xml
 new file mode 100644
-index 0000000..2475b00
+index 0000000..0c3185e
 --- /dev/null
 +++ b/app/src/main/res/drawable/widget_switch_on.xml
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,15 @@
 +<?xml version="1.0" encoding="utf-8"?>
-+<!-- The widget's switch before Android 12 (layout/widget_fauxx_switch), on. -->
++<!-- The widget's switch before Android 12 (layout/widget_fauxx_switch), on: drawn as
++     widget_switch_track and widget_switch_thumb draw the system's switch from Android 12. -->
 +<vector xmlns:android="http://schemas.android.com/apk/res/android"
-+    android:width="48dp"
-+    android:height="24dp"
-+    android:viewportWidth="48"
-+    android:viewportHeight="24">
++    android:width="56dp"
++    android:height="32dp"
++    android:viewportWidth="56"
++    android:viewportHeight="32">
 +    <path
 +        android:fillColor="@color/widget_accent"
-+        android:pathData="M12,0h24a12,12 0,0 1,0 24h-24a12,12 0,0 1,0 -24z" />
++        android:pathData="M16,0h24a16,16 0,0 1,0 32h-24a16,16 0,0 1,0 -32z" />
 +    <path
-+        android:fillColor="@color/widget_switch_knob"
-+        android:pathData="M36,4a8,8 0,1 1,0 16a8,8 0,1 1,0 -16z" />
++        android:fillColor="@color/widget_on_accent"
++        android:pathData="M40,4a12,12 0,1 1,0 24a12,12 0,1 1,0 -24z" />
 +</vector>
+diff --git a/app/src/main/res/drawable/widget_switch_thumb.xml b/app/src/main/res/drawable/widget_switch_thumb.xml
+new file mode 100644
+index 0000000..a6f8184
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_switch_thumb.xml
+@@ -0,0 +1,28 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The switch's thumb on Android 12+: 24dp on, 16dp off, as Material 3's. The switch stretches
++     its thumb to the track's height, so each circle keeps its own size in a 24dp-wide layer. -->
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_checked="true">
++        <layer-list>
++            <item android:width="24dp" android:height="24dp" android:gravity="center">
++                <shape android:shape="oval">
++                    <solid android:color="@color/widget_on_accent" />
++                </shape>
++            </item>
++        </layer-list>
++    </item>
++    <item>
++        <layer-list>
++            <item android:width="24dp" android:height="24dp" android:gravity="center">
++                <shape android:shape="oval">
++                    <solid android:color="@android:color/transparent" />
++                </shape>
++            </item>
++            <item android:width="16dp" android:height="16dp" android:gravity="center">
++                <shape android:shape="oval">
++                    <solid android:color="@color/widget_switch_knob_off" />
++                </shape>
++            </item>
++        </layer-list>
++    </item>
++</selector>
+diff --git a/app/src/main/res/drawable/widget_switch_track.xml b/app/src/main/res/drawable/widget_switch_track.xml
+new file mode 100644
+index 0000000..1337900
+--- /dev/null
++++ b/app/src/main/res/drawable/widget_switch_track.xml
+@@ -0,0 +1,22 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The switch's track on Android 12+ (layout-v31/widget_fauxx_switch), Material 3's shape in
++     the widget's colours; its padding keeps the thumb 4dp inside the ends. -->
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_checked="true">
++        <shape android:shape="rectangle">
++            <solid android:color="@color/widget_accent" />
++            <corners android:radius="16dp" />
++            <size android:width="56dp" android:height="32dp" />
++            <padding android:left="4dp" android:right="4dp" />
++        </shape>
++    </item>
++    <item>
++        <shape android:shape="rectangle">
++            <solid android:color="@color/widget_switch_track_off" />
++            <stroke android:width="2dp" android:color="@color/widget_switch_outline" />
++            <corners android:radius="16dp" />
++            <size android:width="56dp" android:height="32dp" />
++            <padding android:left="4dp" android:right="4dp" />
++        </shape>
++    </item>
++</selector>
 diff --git a/app/src/main/res/layout-v31/widget_fauxx_switch.xml b/app/src/main/res/layout-v31/widget_fauxx_switch.xml
 new file mode 100644
-index 0000000..e679eb5
+index 0000000..60e233c
 --- /dev/null
 +++ b/app/src/main/res/layout-v31/widget_fauxx_switch.xml
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,18 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!-- Android 12+: the system's own switch (a widget can only use the framework's views, so not
-+     AppCompat's or Material's). -->
++     AppCompat's or Material's), drawn in the widget's colours. White multiplies to nothing, so
++     a theme's tint can't recolour the drawables. -->
 +<Switch xmlns:android="http://schemas.android.com/apk/res/android"
 +    xmlns:tools="http://schemas.android.com/tools"
 +    android:id="@+id/widget_switch"
 +    android:layout_width="wrap_content"
 +    android:layout_height="wrap_content"
 +    android:layout_marginStart="12dp"
++    android:switchMinWidth="56dp"
++    android:thumb="@drawable/widget_switch_thumb"
++    android:thumbTint="@android:color/white"
++    android:thumbTintMode="multiply"
++    android:track="@drawable/widget_switch_track"
++    android:trackTint="@android:color/white"
++    android:trackTintMode="multiply"
 +    tools:ignore="UseSwitchCompatOrMaterialXml" />
 diff --git a/app/src/main/res/layout/widget_fauxx.xml b/app/src/main/res/layout/widget_fauxx.xml
 new file mode 100644
-index 0000000..5d0f4da
+index 0000000..0a100d1
 --- /dev/null
 +++ b/app/src/main/res/layout/widget_fauxx.xml
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,151 @@
 +<?xml version="1.0" encoding="utf-8"?>
-+<!-- The home-screen widget (com.fauxx.widget.FauxxWidget), the full width of the home screen:
-+     a header with "?", the status card with its switch, and two tiles, every decoy action and
-+     the hourly rate. System fonts and colours (values-v31: the system's dynamic colours). -->
++<!-- The home-screen widget (com.fauxx.widget.FauxxWidget) at two rows or more, the full width
++     of the home screen: a header with "?", the status card with its switch, and two tiles,
++     every decoy action and the hourly rate. System fonts; Virtroid's palette (values/widget). -->
 +<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
 +    xmlns:tools="http://schemas.android.com/tools"
 +    android:id="@android:id/background"
@@ -971,39 +1134,47 @@ index 0000000..5d0f4da
 +    <!-- Not one TextView with a compound drawable: the "?" is a tap target of its own. -->
 +    <LinearLayout
 +        android:layout_width="match_parent"
-+        android:layout_height="wrap_content"
++        android:layout_height="24dp"
 +        android:gravity="center_vertical"
 +        android:orientation="horizontal"
-+        android:paddingStart="4dp"
-+        android:paddingEnd="0dp"
 +        tools:ignore="UseCompoundDrawables">
++
++        <ImageView
++            android:layout_width="22dp"
++            android:layout_height="22dp"
++            android:importantForAccessibility="no"
++            android:src="@drawable/widget_ic_mark" />
 +
 +        <TextView
 +            android:layout_width="0dp"
 +            android:layout_height="wrap_content"
++            android:layout_marginStart="8dp"
 +            android:layout_weight="1"
 +            android:ellipsize="end"
 +            android:fontFamily="sans-serif-medium"
-+            android:letterSpacing="0.15"
 +            android:maxLines="1"
-+            android:text="@string/widget_title"
-+            android:textAllCaps="true"
-+            android:textColor="@color/widget_text_secondary"
-+            android:textSize="12sp" />
++            android:text="@string/app_name"
++            android:textColor="@color/widget_text"
++            android:textSize="16sp" />
 +
++        <!-- A 40dp target around a 22dp icon, taking no more of the header's height. -->
 +        <ImageView
 +            android:id="@+id/widget_help"
-+            android:layout_width="32dp"
-+            android:layout_height="32dp"
++            android:layout_width="40dp"
++            android:layout_height="40dp"
++            android:layout_marginTop="-8dp"
++            android:layout_marginEnd="-9dp"
++            android:layout_marginBottom="-8dp"
++            android:background="@drawable/widget_help_ripple"
 +            android:contentDescription="@string/widget_help"
-+            android:padding="5dp"
++            android:padding="9dp"
 +            android:src="@drawable/widget_ic_help" />
 +    </LinearLayout>
 +
 +    <LinearLayout
 +        android:layout_width="match_parent"
 +        android:layout_height="wrap_content"
-+        android:layout_marginTop="8dp"
++        android:layout_marginTop="12dp"
 +        android:background="@drawable/widget_card"
 +        android:baselineAligned="false"
 +        android:gravity="center_vertical"
@@ -1023,13 +1194,12 @@ index 0000000..5d0f4da
 +                android:id="@+id/widget_headline"
 +                android:layout_width="wrap_content"
 +                android:layout_height="wrap_content"
-+                android:letterSpacing="0.08"
-+                android:maxLines="1"
++                android:ellipsize="end"
++                android:fontFamily="sans-serif-medium"
++                android:maxLines="2"
 +                android:text="@string/widget_headline_disabled"
-+                android:textAllCaps="true"
 +                android:textColor="@color/widget_text"
-+                android:textSize="15sp"
-+                android:textStyle="bold" />
++                android:textSize="16sp" />
 +
 +            <TextView
 +                android:id="@+id/widget_detail"
@@ -1063,28 +1233,18 @@ index 0000000..5d0f4da
 +            android:background="@drawable/widget_card"
 +            android:gravity="center_vertical"
 +            android:orientation="vertical"
-+            android:padding="16dp">
++            android:paddingHorizontal="16dp"
++            android:paddingVertical="4dp">
 +
-+            <TextView
-+                android:layout_width="wrap_content"
-+                android:layout_height="wrap_content"
-+                android:letterSpacing="0.08"
-+                android:maxLines="1"
-+                android:text="@string/widget_total_count"
-+                android:textAllCaps="true"
-+                android:textColor="@color/widget_text_secondary"
-+                android:textSize="11sp" />
-+
++            <!-- A big count shrinks to fit rather than cut off. -->
 +            <TextView
 +                android:id="@+id/widget_total"
-+                android:layout_width="wrap_content"
-+                android:layout_height="wrap_content"
-+                android:layout_marginTop="4dp"
-+                android:maxLines="1"
-+                android:text="@string/widget_zero_count"
-+                android:textColor="@color/widget_accent"
-+                android:textSize="26sp"
-+                android:textStyle="bold" />
++                style="@style/FauxxWidgetFigure"
++                android:text="@string/widget_zero_count" />
++
++            <TextView
++                style="@style/FauxxWidgetFigureLabel"
++                android:text="@string/widget_total_count" />
 +        </LinearLayout>
 +
 +        <LinearLayout
@@ -1095,49 +1255,83 @@ index 0000000..5d0f4da
 +            android:background="@drawable/widget_card"
 +            android:gravity="center_vertical"
 +            android:orientation="vertical"
-+            android:padding="16dp">
++            android:paddingHorizontal="16dp"
++            android:paddingVertical="4dp">
 +
 +            <TextView
-+                android:layout_width="wrap_content"
-+                android:layout_height="wrap_content"
-+                android:letterSpacing="0.08"
-+                android:maxLines="1"
-+                android:text="@string/widget_hourly_rate"
-+                android:textAllCaps="true"
-+                android:textColor="@color/widget_text_secondary"
-+                android:textSize="11sp" />
++                android:id="@+id/widget_rate"
++                style="@style/FauxxWidgetFigure"
++                android:text="@string/widget_zero_rate" />
 +
-+            <LinearLayout
-+                android:layout_width="wrap_content"
-+                android:layout_height="wrap_content"
-+                android:layout_marginTop="4dp"
-+                android:orientation="horizontal">
-+
-+                <TextView
-+                    android:id="@+id/widget_rate"
-+                    android:layout_width="wrap_content"
-+                    android:layout_height="wrap_content"
-+                    android:maxLines="1"
-+                    android:text="@string/widget_zero_rate"
-+                    android:textColor="@color/widget_accent"
-+                    android:textSize="26sp"
-+                    android:textStyle="bold" />
-+
-+                <TextView
-+                    android:layout_width="wrap_content"
-+                    android:layout_height="wrap_content"
-+                    android:layout_marginStart="4dp"
-+                    android:maxLines="1"
-+                    android:text="@string/widget_per_hour"
-+                    android:textColor="@color/widget_text_secondary"
-+                    android:textSize="12sp" />
-+            </LinearLayout>
++            <TextView
++                style="@style/FauxxWidgetFigureLabel"
++                android:text="@string/widget_hourly_rate" />
 +        </LinearLayout>
 +    </LinearLayout>
 +</LinearLayout>
+diff --git a/app/src/main/res/layout/widget_fauxx_compact.xml b/app/src/main/res/layout/widget_fauxx_compact.xml
+new file mode 100644
+index 0000000..c1f3b17
+--- /dev/null
++++ b/app/src/main/res/layout/widget_fauxx_compact.xml
+@@ -0,0 +1,54 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The widget at one row (Android 12+, FauxxWidget): the status card's headline and switch,
++     with the counts, or why it is paused or off, under the headline. -->
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@android:id/background"
++    android:layout_width="match_parent"
++    android:layout_height="match_parent"
++    android:background="@drawable/widget_background"
++    android:baselineAligned="false"
++    android:gravity="center_vertical"
++    android:orientation="horizontal"
++    android:paddingStart="16dp"
++    android:paddingTop="12dp"
++    android:paddingEnd="14dp"
++    android:paddingBottom="12dp">
++
++    <ImageView
++        android:layout_width="28dp"
++        android:layout_height="28dp"
++        android:importantForAccessibility="no"
++        android:src="@drawable/widget_ic_mark" />
++
++    <LinearLayout
++        android:layout_width="0dp"
++        android:layout_height="wrap_content"
++        android:layout_marginStart="12dp"
++        android:layout_weight="1"
++        android:orientation="vertical">
++
++        <TextView
++            android:id="@+id/widget_headline"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:ellipsize="end"
++            android:fontFamily="sans-serif-medium"
++            android:maxLines="1"
++            android:text="@string/widget_headline_disabled"
++            android:textColor="@color/widget_text"
++            android:textSize="16sp" />
++
++        <TextView
++            android:id="@+id/widget_detail"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_marginTop="2dp"
++            android:ellipsize="end"
++            android:maxLines="1"
++            android:text="@string/widget_detail_off"
++            android:textColor="@color/widget_text_secondary"
++            android:textSize="13sp" />
++    </LinearLayout>
++
++    <include layout="@layout/widget_fauxx_switch" />
++</LinearLayout>
 diff --git a/app/src/main/res/layout/widget_fauxx_switch.xml b/app/src/main/res/layout/widget_fauxx_switch.xml
 new file mode 100644
-index 0000000..53ef57e
+index 0000000..f79876a
 --- /dev/null
 +++ b/app/src/main/res/layout/widget_fauxx_switch.xml
 @@ -0,0 +1,10 @@
@@ -1146,224 +1340,231 @@ index 0000000..53ef57e
 +     widget swaps. layout-v31 has the system's own. -->
 +<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
 +    android:id="@+id/widget_switch"
-+    android:layout_width="48dp"
-+    android:layout_height="24dp"
++    android:layout_width="56dp"
++    android:layout_height="32dp"
 +    android:layout_marginStart="12dp"
 +    android:contentDescription="@string/widget_action_start"
 +    android:src="@drawable/widget_switch_off" />
 diff --git a/app/src/main/res/values-es/strings.xml b/app/src/main/res/values-es/strings.xml
-index 9950ad9..2d6d2a8 100644
+index 9950ad9..ad9db35 100644
 --- a/app/src/main/res/values-es/strings.xml
 +++ b/app/src/main/res/values-es/strings.xml
-@@ -625,4 +625,28 @@
+@@ -625,4 +625,29 @@
      <string name="dashboard_trackers_ddg_hint">Puede que la Protección de rastreo de apps de DuckDuckGo esté bloqueando los rastreadores a los que deben llegar los señuelos de Fauxx. Si está activada, excluye a Fauxx de ella.</string>
      <string name="dashboard_trackers_ddg_hint_dismiss">Descartar</string>
      <string name="dashboard_trackers_blocked_faq">Toca para ver los pasos en las preguntas frecuentes.</string>
 +
 +    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
 +    <string name="widget_description">El estado y los totales de Fauxx, con un interruptor para iniciarlo o detenerlo</string>
-+    <string name="widget_title">Fauxx: envenenamiento de datos</string>
 +    <string name="widget_help">Ayuda</string>
-+    <string name="widget_headline_enabled">Activado</string>
++    <string name="widget_headline_enabled">Generando señuelos</string>
 +    <string name="widget_headline_paused">En pausa</string>
 +    <string name="widget_headline_stopped">Detenido</string>
 +    <string name="widget_headline_disabled">Desactivado</string>
-+    <string name="widget_detail_active">Actividad señuelo activa</string>
-+    <string name="widget_detail_off">Actividad señuelo desactivada</string>
++    <string name="widget_headline_set_up">Sin configurar</string>
++    <string name="widget_detail_active">Funcionando en segundo plano</string>
++    <string name="widget_detail_off">Actívalo para generar señuelos</string>
 +    <string name="widget_detail_stopped">Toca el interruptor para iniciar</string>
 +    <string name="widget_detail_set_up">Abre Fauxx para configurarlo</string>
 +    <string name="widget_reason_network">Esperando una red utilizable</string>
 +    <string name="widget_reason_metered">Esta red Wi-Fi es de uso medido</string>
 +    <string name="widget_reason_network_blocked">Android está restringiendo su red</string>
-+    <string name="widget_total_count">Total</string>
-+    <string name="widget_hourly_rate">Por hora</string>
++    <string name="widget_total_count">Acciones señuelo</string>
++    <string name="widget_hourly_rate">Últimas 24 horas</string>
 +    <string name="widget_per_hour">/h</string>
++    <string name="widget_compact_counts">%1$s en total · %2$s/h</string>
 +    <string name="widget_action_start">Iniciar</string>
 +    <string name="widget_action_set_up">Configurar</string>
 +    <string name="about_modified_title">Versión modificada</string>
-+    <string name="about_modified_body">Virtroid modificó esta versión de Fauxx el 2 de noviembre de 2026 para sus teléfonos en la nube: añade un widget para la pantalla de inicio. Como Fauxx, se distribuye bajo la licencia AGPL-3.0, y los cambios y el código fuente completo están publicados en el enlace de abajo.</string>
++    <string name="about_modified_body">Virtroid modificó esta versión de Fauxx los días 2 y 3 de noviembre de 2026 para sus teléfonos en la nube: añade un widget para la pantalla de inicio. Como Fauxx, se distribuye bajo la licencia AGPL-3.0, y los cambios y el código fuente completo están publicados en el enlace de abajo.</string>
 +    <string name="about_modified_button">Código fuente</string>
  </resources>
 diff --git a/app/src/main/res/values-fr/strings.xml b/app/src/main/res/values-fr/strings.xml
-index d96dbea..0633f00 100644
+index d96dbea..c5e3f1e 100644
 --- a/app/src/main/res/values-fr/strings.xml
 +++ b/app/src/main/res/values-fr/strings.xml
-@@ -625,4 +625,28 @@
+@@ -625,4 +625,29 @@
      <string name="dashboard_trackers_ddg_hint">La Protection contre le pistage des applis de DuckDuckGo bloque peut-être les traqueurs que les leurres de Fauxx doivent atteindre. Si elle est activée, excluez-en Fauxx.</string>
      <string name="dashboard_trackers_ddg_hint_dismiss">Ignorer</string>
      <string name="dashboard_trackers_blocked_faq">Touchez pour voir les étapes dans la FAQ.</string>
 +
 +    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
 +    <string name="widget_description">L\'état et les totaux de Fauxx, avec un interrupteur pour le démarrer ou l\'arrêter</string>
-+    <string name="widget_title">Fauxx : empoisonnement des données</string>
 +    <string name="widget_help">Aide</string>
-+    <string name="widget_headline_enabled">Activé</string>
++    <string name="widget_headline_enabled">Génère des leurres</string>
 +    <string name="widget_headline_paused">En pause</string>
 +    <string name="widget_headline_stopped">Arrêté</string>
 +    <string name="widget_headline_disabled">Désactivé</string>
-+    <string name="widget_detail_active">Activité leurre en cours</string>
-+    <string name="widget_detail_off">Activité leurre désactivée</string>
++    <string name="widget_headline_set_up">Non configuré</string>
++    <string name="widget_detail_active">Fonctionne en arrière-plan</string>
++    <string name="widget_detail_off">Activez-le pour générer des leurres</string>
 +    <string name="widget_detail_stopped">Touchez l\'interrupteur pour démarrer</string>
 +    <string name="widget_detail_set_up">Ouvrez Fauxx pour le configurer</string>
 +    <string name="widget_reason_network">En attente d\'un réseau utilisable</string>
 +    <string name="widget_reason_metered">Ce Wi-Fi est limité</string>
 +    <string name="widget_reason_network_blocked">Android restreint son accès au réseau</string>
-+    <string name="widget_total_count">Total</string>
-+    <string name="widget_hourly_rate">Par heure</string>
++    <string name="widget_total_count">Actions leurres</string>
++    <string name="widget_hourly_rate">Dernières 24 heures</string>
 +    <string name="widget_per_hour">/h</string>
++    <string name="widget_compact_counts">%1$s au total · %2$s/h</string>
 +    <string name="widget_action_start">Démarrer</string>
 +    <string name="widget_action_set_up">Configurer</string>
 +    <string name="about_modified_title">Version modifiée</string>
-+    <string name="about_modified_body">Virtroid a modifié cette version de Fauxx le 2 novembre 2026 pour ses téléphones dans le cloud : elle ajoute un widget pour l\'écran d\'accueil. Comme Fauxx, elle est publiée sous licence AGPL-3.0, et les modifications et le code source complet sont publiés au lien ci-dessous.</string>
++    <string name="about_modified_body">Virtroid a modifié cette version de Fauxx les 2 et 3 novembre 2026 pour ses téléphones dans le cloud : elle ajoute un widget pour l\'écran d\'accueil. Comme Fauxx, elle est publiée sous licence AGPL-3.0, et les modifications et le code source complet sont publiés au lien ci-dessous.</string>
 +    <string name="about_modified_button">Code source</string>
  </resources>
-diff --git a/app/src/main/res/values-night-v31/widget.xml b/app/src/main/res/values-night-v31/widget.xml
-new file mode 100644
-index 0000000..26d9152
---- /dev/null
-+++ b/app/src/main/res/values-night-v31/widget.xml
-@@ -0,0 +1,10 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<!-- Android 12+: the system's dynamic colours, dark. -->
-+<resources>
-+    <color name="widget_bg">@android:color/system_neutral1_800</color>
-+    <color name="widget_card">@android:color/system_neutral1_700</color>
-+    <color name="widget_text">@android:color/system_neutral1_50</color>
-+    <color name="widget_text_secondary">@android:color/system_neutral2_200</color>
-+    <color name="widget_accent">@android:color/system_accent1_200</color>
-+    <color name="widget_paused">@android:color/system_accent3_200</color>
-+</resources>
-diff --git a/app/src/main/res/values-night/widget.xml b/app/src/main/res/values-night/widget.xml
-new file mode 100644
-index 0000000..dfb3da7
---- /dev/null
-+++ b/app/src/main/res/values-night/widget.xml
-@@ -0,0 +1,11 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<resources>
-+    <color name="widget_bg">#FF1C1C1C</color>
-+    <color name="widget_card">#FF2A2A2A</color>
-+    <color name="widget_text">#FFFFFFFF</color>
-+    <color name="widget_text_secondary">#B3FFFFFF</color>
-+    <color name="widget_accent">#FF00FF88</color>
-+    <color name="widget_paused">#FFFF6B35</color>
-+    <color name="widget_switch_track_off">#FF5A5A5A</color>
-+    <color name="widget_switch_knob">#FF1C1C1C</color>
-+</resources>
 diff --git a/app/src/main/res/values-ru/strings.xml b/app/src/main/res/values-ru/strings.xml
-index 70385cd..06cc8a2 100644
+index 70385cd..12e0a0b 100644
 --- a/app/src/main/res/values-ru/strings.xml
 +++ b/app/src/main/res/values-ru/strings.xml
-@@ -645,4 +645,28 @@
+@@ -645,4 +645,29 @@
      <string name="dashboard_trackers_ddg_hint">Возможно, защита от отслеживания в приложениях DuckDuckGo блокирует трекеры, до которых должны доходить приманки Fauxx. Если она включена, исключите из неё Fauxx.</string>
      <string name="dashboard_trackers_ddg_hint_dismiss">Скрыть</string>
      <string name="dashboard_trackers_blocked_faq">Нажмите, чтобы открыть инструкции в FAQ.</string>
 +
 +    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
 +    <string name="widget_description">Состояние и счётчики Fauxx и переключатель, чтобы запустить или остановить его</string>
-+    <string name="widget_title">Fauxx: отравление данных</string>
 +    <string name="widget_help">Справка</string>
-+    <string name="widget_headline_enabled">Включено</string>
++    <string name="widget_headline_enabled">Создаёт приманки</string>
 +    <string name="widget_headline_paused">Пауза</string>
 +    <string name="widget_headline_stopped">Остановлено</string>
 +    <string name="widget_headline_disabled">Выключено</string>
-+    <string name="widget_detail_active">Активность-приманка включена</string>
-+    <string name="widget_detail_off">Активность-приманка выключена</string>
++    <string name="widget_headline_set_up">Не настроено</string>
++    <string name="widget_detail_active">Работает в фоне</string>
++    <string name="widget_detail_off">Включите, чтобы создавать приманки</string>
 +    <string name="widget_detail_stopped">Нажмите переключатель, чтобы запустить</string>
 +    <string name="widget_detail_set_up">Откройте Fauxx, чтобы настроить</string>
 +    <string name="widget_reason_network">Ожидание доступной сети</string>
 +    <string name="widget_reason_metered">Эта сеть Wi-Fi лимитная</string>
 +    <string name="widget_reason_network_blocked">Android ограничивает доступ к сети</string>
-+    <string name="widget_total_count">Всего</string>
-+    <string name="widget_hourly_rate">В час</string>
++    <string name="widget_total_count">Действия-приманки</string>
++    <string name="widget_hourly_rate">За последние 24 часа</string>
 +    <string name="widget_per_hour">/ч</string>
++    <string name="widget_compact_counts">Всего %1$s · %2$s/ч</string>
 +    <string name="widget_action_start">Запустить</string>
 +    <string name="widget_action_set_up">Настроить</string>
 +    <string name="about_modified_title">Изменённая версия</string>
-+    <string name="about_modified_body">Virtroid изменил эту версию Fauxx 2 ноября 2026 года для своих облачных телефонов: она добавляет виджет для главного экрана. Как и Fauxx, она распространяется по лицензии AGPL-3.0, а изменения и полный исходный код опубликованы по ссылке ниже.</string>
++    <string name="about_modified_body">Virtroid изменил эту версию Fauxx 2 и 3 ноября 2026 года для своих облачных телефонов: она добавляет виджет для главного экрана. Как и Fauxx, она распространяется по лицензии AGPL-3.0, а изменения и полный исходный код опубликованы по ссылке ниже.</string>
 +    <string name="about_modified_button">Исходный код</string>
  </resources>
 diff --git a/app/src/main/res/values-v31/widget.xml b/app/src/main/res/values-v31/widget.xml
 new file mode 100644
-index 0000000..3366319
+index 0000000..617ed45
 --- /dev/null
 +++ b/app/src/main/res/values-v31/widget.xml
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,7 @@
 +<?xml version="1.0" encoding="utf-8"?>
-+<!-- Android 12+: the system's dynamic colours, light. -->
++<!-- Android 12+: the system's widget corners, so the app the launcher opens out of the widget
++     starts from the same shape. -->
 +<resources>
-+    <color name="widget_bg">@android:color/system_neutral1_50</color>
-+    <color name="widget_card">@android:color/system_neutral2_100</color>
-+    <color name="widget_text">@android:color/system_neutral1_900</color>
-+    <color name="widget_text_secondary">@android:color/system_neutral2_700</color>
-+    <color name="widget_accent">@android:color/system_accent1_600</color>
-+    <color name="widget_paused">@android:color/system_accent3_600</color>
++    <dimen name="widget_radius">@android:dimen/system_app_widget_background_radius</dimen>
++    <dimen name="widget_inner_radius">@android:dimen/system_app_widget_inner_radius</dimen>
 +</resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index be47f65..13e666f 100644
+index be47f65..1a41524 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -621,4 +621,30 @@
+@@ -621,4 +621,31 @@
      <string name="dashboard_trackers_ddg_hint">DuckDuckGo App Tracking Protection may be blocking the trackers Fauxx\'s decoys need to reach. If it\'s on, exclude Fauxx from it.</string>
      <string name="dashboard_trackers_ddg_hint_dismiss">Dismiss</string>
      <string name="dashboard_trackers_blocked_faq">Tap for the steps in the FAQ.</string>
 +
 +    <!-- Home-screen widget (com.fauxx.widget), added by Virtroid -->
 +    <string name="widget_description">Fauxx\'s status and totals, with a switch to start or stop it</string>
-+    <string name="widget_title">Fauxx data poisoning</string>
 +    <string name="widget_help">Help</string>
-+    <string name="widget_headline_enabled">Enabled</string>
++    <string name="widget_headline_enabled">Generating decoys</string>
 +    <string name="widget_headline_paused">Paused</string>
 +    <string name="widget_headline_stopped">Stopped</string>
-+    <string name="widget_headline_disabled">Disabled</string>
-+    <string name="widget_detail_active">Decoy activity active</string>
-+    <string name="widget_detail_off">Decoy activity off</string>
++    <string name="widget_headline_disabled">Off</string>
++    <string name="widget_headline_set_up">Not set up</string>
++    <string name="widget_detail_active">Running in the background</string>
++    <string name="widget_detail_off">Turn on to generate decoys</string>
 +    <string name="widget_detail_stopped">Tap the switch to start</string>
 +    <string name="widget_detail_set_up">Open Fauxx to set up</string>
 +    <string name="widget_reason_network">Waiting for a usable network</string>
 +    <string name="widget_reason_metered">This Wi-Fi is metered</string>
 +    <string name="widget_reason_network_blocked">Android is restricting its network</string>
-+    <string name="widget_total_count">Total count</string>
-+    <string name="widget_hourly_rate">Hourly rate</string>
-+    <string name="widget_per_hour">/hr</string>
++    <string name="widget_total_count">Decoy actions</string>
++    <string name="widget_hourly_rate">Last 24 hours</string>
++    <string name="widget_per_hour">/h</string>
++    <string name="widget_compact_counts">%1$s total · %2$s/h</string>
 +    <string name="widget_zero_count" translatable="false">0</string>
 +    <string name="widget_zero_rate" translatable="false">0.0</string>
 +    <string name="widget_action_start">Start</string>
 +    <string name="widget_action_set_up">Set up</string>
 +    <string name="about_modified_title">Modified build</string>
-+    <string name="about_modified_body">This build of Fauxx was modified by Virtroid on 2 November 2026 for its cloud phones: it adds a home-screen widget. Like Fauxx, it is licensed under the AGPL-3.0, and the changes and the complete source are published at the link below.</string>
++    <string name="about_modified_body">This build of Fauxx was modified by Virtroid on 2 and 3 November 2026 for its cloud phones: it adds a home-screen widget. Like Fauxx, it is licensed under the AGPL-3.0, and the changes and the complete source are published at the link below.</string>
 +    <string name="about_modified_button">Source</string>
  </resources>
 diff --git a/app/src/main/res/values/widget.xml b/app/src/main/res/values/widget.xml
 new file mode 100644
-index 0000000..f48428e
+index 0000000..0012946
 --- /dev/null
 +++ b/app/src/main/res/values/widget.xml
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,20 @@
 +<?xml version="1.0" encoding="utf-8"?>
-+<!-- The home-screen widget's colours (com.fauxx.widget). Android 12+ takes the system's own
-+     dynamic colours (values-v31), as the launcher does; before that, the app's own. -->
++<!-- The home-screen widget's colours and corners (com.fauxx.widget): Virtroid's palette, the
++     same light or dark, so it pairs with the other widgets on Virtroid's home screen. -->
 +<resources>
-+    <color name="widget_bg">#FFF5F5F5</color>
-+    <color name="widget_card">#FFE6E6E6</color>
-+    <color name="widget_text">#DE000000</color>
-+    <color name="widget_text_secondary">#8A000000</color>
-+    <color name="widget_accent">#FF007A3D</color>
-+    <color name="widget_paused">#FFB25E00</color>
-+    <color name="widget_switch_track_off">#FF9E9E9E</color>
-+    <color name="widget_switch_knob">#FFFFFFFF</color>
++    <color name="widget_bg">#FF131313</color>
++    <color name="widget_border">#14FFFFFF</color>
++    <color name="widget_card">#FF222222</color>
++    <color name="widget_text">#FFF4F4F5</color>
++    <color name="widget_text_secondary">#FFA1A1AA</color>
++    <color name="widget_accent">#FFAFD135</color>
++    <color name="widget_on_accent">#FF0E0E0E</color>
++    <color name="widget_paused">#FFF5A623</color>
++    <color name="widget_switch_track_off">#FF262626</color>
++    <color name="widget_switch_outline">#FF6B6B72</color>
++    <color name="widget_switch_knob_off">#FF8A8A93</color>
++    <color name="widget_ripple">#29FFFFFF</color>
++
++    <dimen name="widget_radius">24dp</dimen>
++    <dimen name="widget_inner_radius">16dp</dimen>
++</resources>
+diff --git a/app/src/main/res/values/widget_styles.xml b/app/src/main/res/values/widget_styles.xml
+new file mode 100644
+index 0000000..e36a711
+--- /dev/null
++++ b/app/src/main/res/values/widget_styles.xml
+@@ -0,0 +1,25 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <!-- A tile's figure: its own height, which a widget's auto-sizing text needs. -->
++    <style name="FauxxWidgetFigure">
++        <item name="android:layout_width">match_parent</item>
++        <item name="android:layout_height">32dp</item>
++        <item name="android:autoSizeMaxTextSize">24sp</item>
++        <item name="android:autoSizeMinTextSize">14sp</item>
++        <item name="android:autoSizeTextType">uniform</item>
++        <item name="android:fontFamily">sans-serif-medium</item>
++        <item name="android:gravity">center_vertical|start</item>
++        <item name="android:maxLines">1</item>
++        <item name="android:textColor">@color/widget_text</item>
++        <item name="android:textSize">24sp</item>
++    </style>
++
++    <style name="FauxxWidgetFigureLabel">
++        <item name="android:layout_width">match_parent</item>
++        <item name="android:layout_height">wrap_content</item>
++        <item name="android:ellipsize">end</item>
++        <item name="android:maxLines">1</item>
++        <item name="android:textColor">@color/widget_text_secondary</item>
++        <item name="android:textSize">12sp</item>
++    </style>
 +</resources>
 diff --git a/app/src/main/res/xml/fauxx_widget_info.xml b/app/src/main/res/xml/fauxx_widget_info.xml
 new file mode 100644
-index 0000000..4bc7917
+index 0000000..fda6719
 --- /dev/null
 +++ b/app/src/main/res/xml/fauxx_widget_info.xml
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,24 @@
 +<?xml version="1.0" encoding="utf-8"?>
-+<!-- The full width of the home screen, three rows tall. Launcher3 takes the 5x3 target on a
++<!-- The full width of the home screen, two rows tall. Launcher3 takes the 5x2 target on a
 +     five-column grid, and on a narrower one sizes the widget from minWidth, capped at the grid's
-+     width, so 400dp fills any phone's row. minResizeWidth/Height keep it shrinkable (left unset
-+     they would default to minWidth/Height, and the widget would never fit). The engine publishes
++     width, so 400dp fills any phone's row. minResizeWidth/Height keep it shrinkable to one row
++     (left unset they would default to minWidth/Height, and the widget would never fit), where
++     Android 12+ draws a compact layout (FauxxWidget). The engine publishes
 +     every state change (FauxxWidget.publish); the hourly update keeps the hourly rate, a count
 +     over the last day, current while the engine is off. previewLayout and the target cells are
 +     for Android 12+ launchers. -->
@@ -1372,13 +1573,13 @@ index 0000000..4bc7917
 +    android:description="@string/widget_description"
 +    android:initialLayout="@layout/widget_fauxx"
 +    android:minWidth="400dp"
-+    android:minHeight="180dp"
++    android:minHeight="110dp"
 +    android:minResizeWidth="250dp"
-+    android:minResizeHeight="150dp"
++    android:minResizeHeight="90dp"
 +    android:previewLayout="@layout/widget_fauxx"
 +    android:resizeMode="horizontal|vertical"
 +    android:targetCellWidth="5"
-+    android:targetCellHeight="3"
++    android:targetCellHeight="2"
 +    android:updatePeriodMillis="3600000"
 +    android:widgetCategory="home_screen"
 +    tools:ignore="UnusedAttribute" />
@@ -1465,10 +1666,10 @@ index 0000000..873d53a
 +    }
 +}
 diff --git a/app/version.properties b/app/version.properties
-index 5ddc279..5c66414 100644
+index 5ddc279..dc7c5c1 100644
 --- a/app/version.properties
 +++ b/app/version.properties
 @@ -1,2 +1,2 @@
  versionCode=903
 -versionName=0.9.3
-+versionName=0.9.3-virtroid.1
++versionName=0.9.3-virtroid.2

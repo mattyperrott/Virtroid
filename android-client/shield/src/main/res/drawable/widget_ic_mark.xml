@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The launcher icon's shield (ic_launcher_foreground), in lime. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="@color/lime"
+        android:pathData="M24,4 L40,10 L40,22 C40,32.4 33.2,41.2 24,44 C14.8,41.2 8,32.4 8,22 L8,10 Z M24,8.2 L12,12.8 L12,22 C12,30 17,37 24,39.8 Z" />
+</vector>

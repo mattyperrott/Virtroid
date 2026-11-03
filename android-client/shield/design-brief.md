@@ -22,12 +22,17 @@ inside the widget; they run in a card that opens from it.
 
 **The widget** (full width, 5 × 2 cells):
 
-- Shield's name, the selected chain, and status: "2 waiting for screening",
-  "1 declined deposit".
-- The shielded balance only if the user turned it on in Shield; otherwise
-  "Balance hidden".
-- Three buttons: Shield, Withdraw, Send. Each opens the card on that tab.
-  Tapping anywhere else opens the card on its default tab.
+- Shield's mark and name, and the selected chain as a chip.
+- "Private balance": the shielded balance only if the user turned it on in
+  Shield; otherwise "Hidden".
+- Under it, only when deposits need looking at: "1 deposit waiting for
+  screening" in amber, "1 deposit declined" in red.
+- Three buttons with icons: Shield (lime, the primary one), Withdraw, Send.
+  Each opens the card on that tab. Tapping anywhere else opens the card on
+  its default tab. Before set-up there is one button, Set up.
+- Resized to one row, it keeps the buttons under its name, with what needs
+  looking at, or else the balance, on the right. Narrower than the home
+  screen, the buttons drop their icons.
 - Nothing is typed, signed or sent on the widget itself.
 
 **The card** is a floating window over the home screen, not a full-screen

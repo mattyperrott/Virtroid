@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/ripple_on_lime">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/lime" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+</ripple>

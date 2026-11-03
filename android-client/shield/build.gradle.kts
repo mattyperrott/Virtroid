@@ -41,8 +41,8 @@ android {
         // The cloud phone runs Android 16; 31 keeps the emulator tests easy.
         minSdk = 31
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.2.1"
         buildConfigField("String", "WALLETCONNECT_PROJECT_ID", "\"$walletConnectProjectId\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -2,14 +2,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The full width of the home screen and two rows: Launcher3 takes the 5x2 target on a
      five-column grid (a runtime's), and on a narrower one sizes the widget from minWidth,
-     capped at the grid's width, so 400dp fills any phone's row. minResizeWidth keeps it
-     shrinkable (left unset it would default to minWidth, and the widget would never fit). -->
+     capped at the grid's width, so 400dp fills any phone's row. minResizeWidth/Height keep it
+     shrinkable to one row (left unset they would default to minWidth/Height, and the widget
+     would never fit); ShieldWidget draws a compact layout there. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/wallet_connect_description"
     android:initialLayout="@layout/widget_shield"
     android:minWidth="400dp"
     android:minHeight="110dp"
     android:minResizeWidth="250dp"
+    android:minResizeHeight="90dp"
     android:previewLayout="@layout/widget_shield"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="5"

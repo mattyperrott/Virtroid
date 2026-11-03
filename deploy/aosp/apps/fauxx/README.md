@@ -19,23 +19,25 @@ go back to F-Droid's own build.
 `patches/0001` against tag `v0.9.3`, described in the `VIRTROID.md` it adds:
 
 - **The widget** (`com.fauxx.widget`), the full width of the home screen and
-  three rows tall (laid out after the owner's mock-up): a "Fauxx data
-  poisoning" header whose "?" opens the FAQ; a status card saying whether
-  the engine is generating decoy activity, why it is paused, or that it is
-  off, with a switch that starts it as Fauxx's own notification action does
-  and stops it as the dashboard's switch does; and two tiles, every decoy
-  action Fauxx has made and its hourly rate over the last day (the
-  dashboard's figure). Before the user has accepted Fauxx's consent dialog
-  the switch opens the app instead, so the widget never skips it. It shows
-  no persona, categories or log, and never polls: the engine's service
-  publishes each state it shows in its notification, the engine counts each
-  action it records (Settings' "Clear All Data" forgets the count), and the
-  rate is read from the action log when the widget draws. System fonts, and
-  on Android 12+ the system's dynamic colours and its own switch, light or
-  dark with the system.
+  two rows tall: a "Fauxx" header whose "?" opens the FAQ; a status card
+  saying whether the engine is generating decoys, why it is paused, or
+  that it is off, with a switch that starts it as Fauxx's own notification
+  action does and stops it as the dashboard's switch does; and two tiles,
+  every decoy action Fauxx has made and its hourly rate over the last day
+  (the dashboard's figure). Resized to one row (Android 12+), it keeps the
+  status and switch, with the counts under the headline while it runs.
+  Before the user has accepted Fauxx's consent dialog the switch opens the
+  app instead, so the widget never skips it. It shows no persona,
+  categories or log, and never polls: the engine's service publishes each
+  state it shows in its notification, the engine counts each action it
+  records (Settings' "Clear All Data" forgets the count), and the rate is
+  read from the action log when the widget draws. System fonts and
+  Virtroid's palette (dark, with a lime accent), so it pairs with Shield's
+  widget on the home screen; on Android 12+ the switch is the system's
+  own, drawn in those colours.
 - **About** says the build is modified, when and by whom, and links here,
   as the AGPL asks of a modified version that people use over a network.
-- The version name is `0.9.3-virtroid.1`; the version code stays 903.
+- The version name is `0.9.3-virtroid.2`; the version code stays 903.
 
 `WidgetStatusTest` covers what the widget shows in each case.
 

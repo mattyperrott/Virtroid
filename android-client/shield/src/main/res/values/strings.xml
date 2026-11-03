@@ -198,17 +198,29 @@
     <string name="card_error_detail">Something went wrong: %1$s</string>
 
     <string name="widget_label">Shield</string>
-    <string name="widget_set_up">Tap to set up</string>
-    <string name="widget_hidden">Balance hidden</string>
+    <string name="widget_private_balance">Private balance</string>
+    <string name="widget_hidden">Hidden</string>
     <string name="widget_empty">Nothing shielded</string>
+    <string name="widget_set_up">Not set up</string>
+    <string name="widget_set_up_detail">Connect a wallet to start</string>
+    <string name="widget_set_up_action">Set up</string>
     <plurals name="widget_waiting">
-        <item quantity="one">%d waiting for screening</item>
-        <item quantity="other">%d waiting for screening</item>
+        <item quantity="one">%d deposit waiting for screening</item>
+        <item quantity="other">%d deposits waiting for screening</item>
     </plurals>
     <plurals name="widget_declined">
-        <item quantity="one">%d declined deposit</item>
-        <item quantity="other">%d declined deposits</item>
+        <item quantity="one">%d deposit declined</item>
+        <item quantity="other">%d deposits declined</item>
     </plurals>
+    <plurals name="widget_waiting_short">
+        <item quantity="one">%d waiting</item>
+        <item quantity="other">%d waiting</item>
+    </plurals>
+    <plurals name="widget_declined_short">
+        <item quantity="one">%d declined</item>
+        <item quantity="other">%d declined</item>
+    </plurals>
+    <string name="widget_status_both">%1$s · %2$s</string>
 
     <string name="about_title">Licence and source</string>
     <string name="about_licence">Shield is free software under the GNU General Public License, version 3 or later. Its source is in the Virtroid repository, under android-client/shield. It runs 0xbow\'s Privacy Pools v2 SDK (MIT) with snarkjs and circomlib (GPL-3.0); the proving keys are from Privacy Pools\' trusted-setup ceremony.</string>

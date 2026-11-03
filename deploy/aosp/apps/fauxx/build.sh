@@ -17,7 +17,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "${here}/../../../.." && pwd)"
 upstream=https://github.com/digital-grease/fauxx.git
 commit=1598ac1e5813d06079da4f65ab6392970c4e3f43 # tag v0.9.3
-version=0.9.3-virtroid.1
+version=0.9.3-virtroid.2
 
 out="$(mkdir -p "$1" && cd "$1" && pwd)"
 work="$(mktemp -d)"
