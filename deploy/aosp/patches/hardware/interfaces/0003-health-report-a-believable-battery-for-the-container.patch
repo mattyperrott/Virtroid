@@ -1,0 +1,317 @@
+From fe1f20e95a8919255379f92b987aa44494683914 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 3 Nov 2026 12:01:00 +0700
+Subject: [PATCH] health: report a believable battery for the container
+
+A redroid container has no battery, so the default health HAL's
+BatteryMonitor finds no /sys/class/power_supply and reports the battery
+absent at level 0. Battery-aware apps misbehave -- Fauxx, built into the
+image, stays paused on "battery below threshold" and never generates
+decoys -- and a phone with no battery is an obvious emulator tell that
+works against the per-start persona.
+
+Subclass the default Health service and report a believable battery that
+drains and charges over time instead. The implementation is self-contained
+and injects no properties of its own: the claimed phone's nominal pack
+size is looked up from ro.product.device, and the per-start variation
+(starting level, cycle count, wear, and where in the drain/charge cycle it
+begins) is seeded from ro.serialno. Both are set from the session persona,
+which the node rotates on every start, so two starts look like two phones.
+---
+ health/aidl/default/main.cpp | 269 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 268 insertions(+), 1 deletion(-)
+
+diff --git a/health/aidl/default/main.cpp b/health/aidl/default/main.cpp
+index 03b2ecb..6d44414 100644
+--- a/health/aidl/default/main.cpp
++++ b/health/aidl/default/main.cpp
+@@ -19,6 +19,16 @@
+ #include <health-impl/Health.h>
+ #include <health/utils.h>
+ 
++#include <chrono>
++#include <cmath>
++#include <cstdint>
++#include <ctime>
++#include <mutex>
++#include <optional>
++#include <string>
++
++#include <android-base/properties.h>
++
+ #ifndef CHARGER_FORCE_NO_UI
+ #define CHARGER_FORCE_NO_UI 0
+ #endif
+@@ -35,6 +45,263 @@ using aidl::android::hardware::health::charger::ChargerCallback;
+ using aidl::android::hardware::health::charger::ChargerModeMain;
+ #endif
+ 
++namespace {
++
++using ::aidl::android::hardware::health::BatteryCapacityLevel;
++using ::aidl::android::hardware::health::BatteryChargingPolicy;
++using ::aidl::android::hardware::health::BatteryChargingState;
++using ::aidl::android::hardware::health::BatteryHealth;
++using ::aidl::android::hardware::health::BatteryHealthData;
++using ::aidl::android::hardware::health::BatteryPartStatus;
++using ::aidl::android::hardware::health::BatteryStatus;
++using ::aidl::android::hardware::health::HealthInfo;
++
++// A redroid container has no battery: the stock BatteryMonitor finds no
++// /sys/class/power_supply and reports the battery absent at 0%, which both
++// breaks battery-aware apps and marks the runtime as an emulator. This
++// stand-in reports a believable battery that drains and charges over time.
++//
++// It is self-contained and leaks nothing of its own: the claimed phone's
++// nominal pack size is looked up from ro.product.device, and the per-start
++// variation -- starting level, where in the drain/charge cycle it begins,
++// cycle count, wear, temperature -- is seeded from ro.serialno. Both are set
++// from the session persona, which the node rotates on every start, so two
++// starts look like two phones rather than one emulator. State is purely a
++// function of that seed and elapsed time, so there is nothing to read at
++// runtime and nothing to fail.
++class VirtroidHealth : public ::aidl::android::hardware::health::Health {
++  public:
++    using ::aidl::android::hardware::health::Health::Health;
++
++  protected:
++    void UpdateHealthInfo(HealthInfo* info) override {
++        std::lock_guard<std::mutex> lock(mutex_);
++        const Reading r = AdvanceLocked();
++        const bool plugged =
++                r.status == BatteryStatus::CHARGING || r.status == BatteryStatus::FULL;
++        info->batteryPresent = true;
++        info->batteryStatus = r.status;
++        info->batteryHealth = BatteryHealth::GOOD;
++        info->batteryLevel = r.level;
++        info->batteryVoltageMillivolts = r.voltageMillivolts;
++        info->batteryTemperatureTenthsCelsius = r.temperatureTenthsCelsius;
++        info->batteryCurrentMicroamps = r.currentMicroamps;
++        info->batteryCurrentAverageMicroamps = r.currentMicroamps;
++        info->batteryCycleCount = cycleCount_;
++        info->batteryFullChargeUah = fullChargeUah_;
++        info->batteryChargeCounterUah = ChargeCounterUah(r.level);
++        info->batteryTechnology = "Li-ion";
++        info->batteryCapacityLevel = CapacityLevel(r.level);
++        info->batteryChargeTimeToFullNowSeconds =
++                HealthInfo::BATTERY_CHARGE_TIME_TO_FULL_NOW_SECONDS_UNSUPPORTED;
++        info->batteryFullChargeDesignCapacityUah = designUah_;
++        info->chargingState = BatteryChargingState::NORMAL;
++        info->chargingPolicy = BatteryChargingPolicy::DEFAULT;
++        info->chargerAcOnline = plugged;
++        info->chargerUsbOnline = false;
++        info->chargerWirelessOnline = false;
++        info->chargerDockOnline = false;
++        info->maxChargingCurrentMicroamps = plugged ? 3000000 : 0;
++        info->maxChargingVoltageMicrovolts = plugged ? 5000000 : 0;
++        info->batteryHealthData = HealthDataLocked();
++    }
++
++    ndk::ScopedAStatus getCapacity(int32_t* out) override {
++        std::lock_guard<std::mutex> lock(mutex_);
++        *out = AdvanceLocked().level;
++        return ndk::ScopedAStatus::ok();
++    }
++    ndk::ScopedAStatus getChargeStatus(BatteryStatus* out) override {
++        std::lock_guard<std::mutex> lock(mutex_);
++        *out = AdvanceLocked().status;
++        return ndk::ScopedAStatus::ok();
++    }
++    ndk::ScopedAStatus getChargeCounterUah(int32_t* out) override {
++        std::lock_guard<std::mutex> lock(mutex_);
++        *out = ChargeCounterUah(AdvanceLocked().level);
++        return ndk::ScopedAStatus::ok();
++    }
++    ndk::ScopedAStatus getCurrentNowMicroamps(int32_t* out) override {
++        std::lock_guard<std::mutex> lock(mutex_);
++        *out = AdvanceLocked().currentMicroamps;
++        return ndk::ScopedAStatus::ok();
++    }
++    ndk::ScopedAStatus getCurrentAverageMicroamps(int32_t* out) override {
++        std::lock_guard<std::mutex> lock(mutex_);
++        *out = AdvanceLocked().currentMicroamps;
++        return ndk::ScopedAStatus::ok();
++    }
++    ndk::ScopedAStatus getBatteryHealthData(BatteryHealthData* out) override {
++        std::lock_guard<std::mutex> lock(mutex_);
++        SeedLocked();
++        *out = HealthDataLocked();
++        return ndk::ScopedAStatus::ok();
++    }
++
++  private:
++    using Clock = std::chrono::steady_clock;
++
++    struct Reading {
++        int level;
++        BatteryStatus status;
++        int voltageMillivolts;
++        int temperatureTenthsCelsius;
++        int currentMicroamps;
++    };
++
++    static uint32_t Mix(const std::string& value, uint32_t salt) {
++        uint32_t h = 2166136261u ^ salt;
++        for (unsigned char c : value) {
++            h ^= c;
++            h *= 16777619u;
++        }
++        return h;
++    }
++
++    // The claimed phone's published battery design capacity in microamp hours,
++    // by device codename (ro.product.device, set from the session persona). A
++    // phone not listed here -- a generic persona, or one added to the node's
++    // catalog without a size here -- gets a mid-range 4500 mAh.
++    static int DesignUahForDevice(const std::string& device) {
++        constexpr int kMah = 1000;  // microamp hours per milliamp hour
++        if (device == "oriole") return 4614 * kMah;    // Pixel 6
++        if (device == "panther") return 4355 * kMah;   // Pixel 7
++        if (device == "shiba") return 4575 * kMah;     // Pixel 8
++        if (device == "husky") return 5050 * kMah;     // Pixel 8 Pro
++        if (device == "akita") return 4492 * kMah;     // Pixel 8a
++        if (device == "tokay") return 4700 * kMah;     // Pixel 9
++        if (device == "caiman") return 4700 * kMah;    // Pixel 9 Pro
++        if (device == "r0s") return 3700 * kMah;       // Galaxy S22 (SM-S901B)
++        if (device == "dm3q") return 5000 * kMah;      // Galaxy S23 Ultra (SM-S918B)
++        if (device == "e3q") return 5000 * kMah;       // Galaxy S24 Ultra (SM-S928B)
++        if (device == "a55x") return 5000 * kMah;      // Galaxy A55 5G (SM-A556B)
++        if (device == "garnet") return 5100 * kMah;    // Redmi Note 13 Pro 5G
++        if (device == "OP595DL1") return 6000 * kMah;  // OnePlus 13R (CPH2581)
++        if (device == "OP5D55L1") return 6000 * kMah;  // OnePlus 13 (CPH2653)
++        if (device == "cybert") return 6000 * kMah;    // motorola edge 60 pro
++        if (device == "XQ-EC54") return 5000 * kMah;   // Sony Xperia 1 VI
++        if (device == "Pong") return 5000 * kMah;      // Nothing Phone (3a) Pro
++        return 4500 * kMah;
++    }
++
++    void SeedLocked() {
++        if (seeded_) return;
++        const std::string serial = ::android::base::GetProperty("ro.serialno", "redroid");
++        designUah_ = DesignUahForDevice(::android::base::GetProperty("ro.product.device", ""));
++        const uint32_t h = Mix(serial, 0x9e3779b9u);
++        level_ = 45.0 + static_cast<double>(h % 50);                             // 45..94 %
++        lowThreshold_ = 15 + static_cast<int>((h >> 7) % 10);                    // 15..24 %
++        dischargePerMinute_ = 0.10 + static_cast<double>((h >> 11) % 12) * 0.01;  // 0.10..0.21 %/min
++        chargePerMinute_ = 0.55 + static_cast<double>((h >> 15) % 40) * 0.01;     // 0.55..0.94 %/min
++        fullHoldMinutes_ = 20.0 + static_cast<double>((h >> 23) % 20);            // 20..39 min
++        baseTemperatureTenthsCelsius_ = 290 + static_cast<int>((h >> 3) % 50);    // 29.0..33.9 C
++        stateOfHealth_ = 90 + static_cast<int>((h >> 19) % 11);                   // 90..100 %
++        cycleCount_ = 30 + static_cast<int>((h >> 21) % 420);                     // 30..449
++        fullChargeUah_ =
++                static_cast<int>(static_cast<int64_t>(designUah_) * stateOfHealth_ / 100);
++        const int64_t now = static_cast<int64_t>(::time(nullptr));
++        const int64_t ageSeconds = static_cast<int64_t>(300 + (h % 400)) * 86400;  // 300..699 days
++        manufacturingDateSeconds_ = now - ageSeconds;
++        firstUsageSeconds_ = manufacturingDateSeconds_ + 7 * 86400;
++        status_ = ((h >> 5) % 5 == 0) ? BatteryStatus::CHARGING : BatteryStatus::DISCHARGING;
++        fullHeldMinutes_ = 0.0;
++        last_ = Clock::now();
++        seeded_ = true;
++    }
++
++    Reading AdvanceLocked() {
++        SeedLocked();
++        const auto now = Clock::now();
++        double minutes = std::chrono::duration<double>(now - last_).count() / 60.0;
++        last_ = now;
++        if (minutes < 0.0) minutes = 0.0;
++        switch (status_) {
++            case BatteryStatus::DISCHARGING:
++                level_ -= dischargePerMinute_ * minutes;
++                if (level_ <= lowThreshold_) {
++                    level_ = lowThreshold_;
++                    status_ = BatteryStatus::CHARGING;
++                }
++                break;
++            case BatteryStatus::CHARGING:
++                level_ += chargePerMinute_ * minutes;
++                if (level_ >= 100.0) {
++                    level_ = 100.0;
++                    status_ = BatteryStatus::FULL;
++                    fullHeldMinutes_ = 0.0;
++                }
++                break;
++            default:  // FULL: held on the charger a while, then unplugged.
++                level_ = 100.0;
++                fullHeldMinutes_ += minutes;
++                if (fullHeldMinutes_ >= fullHoldMinutes_) {
++                    status_ = BatteryStatus::DISCHARGING;
++                }
++                break;
++        }
++        int level = static_cast<int>(std::lround(level_));
++        if (level < 0) level = 0;
++        if (level > 100) level = 100;
++
++        Reading r;
++        r.level = level;
++        r.status = status_;
++        r.voltageMillivolts = 3600 + static_cast<int>(level_ * 7.5);  // ~3.60..4.35 V
++        r.temperatureTenthsCelsius =
++                baseTemperatureTenthsCelsius_ + (status_ == BatteryStatus::CHARGING ? 25 : 0);
++        if (status_ == BatteryStatus::DISCHARGING) {
++            r.currentMicroamps = -(350000 + static_cast<int>(level_ * 1500));
++        } else if (status_ == BatteryStatus::CHARGING) {
++            r.currentMicroamps = 1200000 - static_cast<int>(level_ * 6000);
++        } else {
++            r.currentMicroamps = -8000;
++        }
++        return r;
++    }
++
++    int ChargeCounterUah(int level) const {
++        return static_cast<int>(static_cast<int64_t>(fullChargeUah_) * level / 100);
++    }
++
++    static BatteryCapacityLevel CapacityLevel(int level) {
++        if (level >= 100) return BatteryCapacityLevel::FULL;
++        if (level >= 80) return BatteryCapacityLevel::HIGH;
++        if (level >= 30) return BatteryCapacityLevel::NORMAL;
++        if (level >= 10) return BatteryCapacityLevel::LOW;
++        return BatteryCapacityLevel::CRITICAL;
++    }
++
++    BatteryHealthData HealthDataLocked() const {
++        BatteryHealthData data;
++        data.batteryManufacturingDateSeconds = manufacturingDateSeconds_;
++        data.batteryFirstUsageSeconds = firstUsageSeconds_;
++        data.batteryStateOfHealth = stateOfHealth_;
++        data.batterySerialNumber = std::nullopt;
++        data.batteryPartStatus = BatteryPartStatus::ORIGINAL;
++        return data;
++    }
++
++    std::mutex mutex_;
++    bool seeded_ = false;
++    double level_ = 50.0;
++    int lowThreshold_ = 15;
++    double dischargePerMinute_ = 0.15;
++    double chargePerMinute_ = 0.7;
++    double fullHoldMinutes_ = 30.0;
++    double fullHeldMinutes_ = 0.0;
++    int baseTemperatureTenthsCelsius_ = 300;
++    int stateOfHealth_ = 100;
++    int cycleCount_ = 100;
++    int designUah_ = 4500000;
++    int fullChargeUah_ = 4500000;
++    int64_t manufacturingDateSeconds_ = 0;
++    int64_t firstUsageSeconds_ = 0;
++    BatteryStatus status_ = BatteryStatus::DISCHARGING;
++    Clock::time_point last_{};
++};
++
++}  // namespace
++
+ static constexpr const char* gInstanceName = "default";
+ static constexpr std::string_view gChargerArg{"--charger"};
+ 
+@@ -46,7 +313,7 @@ int main(int argc, char** argv) {
+     // make a default health service
+     auto config = std::make_unique<healthd_config>();
+     ::android::hardware::health::InitHealthdConfig(config.get());
+-    auto binder = ndk::SharedRefBase::make<Health>(gInstanceName, std::move(config));
++    auto binder = ndk::SharedRefBase::make<VirtroidHealth>(gInstanceName, std::move(config));
+ 
+     if (argc >= 2 && argv[1] == gChargerArg) {
+ #if !CHARGER_FORCE_NO_UI

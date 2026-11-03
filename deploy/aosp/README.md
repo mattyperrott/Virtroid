@@ -205,8 +205,15 @@ Launcher3, which recents still need.
 - **Navigation** stays 3-button: with gesture navigation, the swipe up for
   the runtime's home would trigger the viewing phone's own home, which the
   app can't exclude.
-- **Battery.** The status bar shows a battery with a "?", as a container has
-  none, and Android 16's battery icon can't be hidden by a setting.
+- **Battery.** A container has no battery, so the stock health HAL finds no
+  `/sys/class/power_supply` and reports it absent at 0%: the status bar showed
+  a "?", battery-aware apps misbehaved (Fauxx stayed paused on "battery below
+  threshold" and never ran), and a phone with no battery is an obvious emulator
+  tell. A health HAL stand-in (`patches/hardware/interfaces` 0003) reports a
+  believable battery instead — it slowly drains, then charges when low, takes
+  the claimed phone's pack size from `ro.product.device` and seeds its
+  per-start variation (level, wear, cycle count, where in the charge cycle it
+  begins) from `ro.serialno`, both set from the persona.
 
 ## Compiled code
 
