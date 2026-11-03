@@ -287,6 +287,7 @@ Aleph serves it by its SHA-256 at
 | 21 | 30 (`20261031T144222Z-user`) | `7aa6529c6a22d3886aa5a97429806463c68b64315f29167fbadcf1aaaf4d1907` | `6b6c152b03f30d70af918e46e6efbf55dc45276e555c070569bf46b55ab29b80` |
 | 22 | 32 (`20261101T224242Z-user`) | `ecd6a355c18b2ac6648a8d92301dbd4879c320acdd4e0b42bc92c97e57593726` | `81a1fc65006d1bae43b046d4f6490b2e4f116f96a77bc780572b49de148f0367` |
 | 24 | 34 (`20261102T174239Z-user`) | `46b84e32014fe41bdaae9c0a6cc06d006698712e81db4ca8b02d7031ae9f253e` | `f13ab1e3ffacb20dee23bda6df13d9d33fdedac69c5523ca8e7d2a1eafd72262` |
+| 26 | 36 (`20261103T140345Z-user`) | `0b638fb2c026c9ddca8b96ee28752e5ca7bfb40dc83a5d9dd2d66c2ee392c762` | `4902576064edb00b87322d208a43c0d22afefe7fd0baef0c7d6668ea8ba7beba` |
 
 The copyleft apps built in as prebuilts (`device/virtroid/prebuilt-sources.sha256`)
 go out the same way: `app-sources.sh` puts each one's source beside the
@@ -303,6 +304,8 @@ the gateway serves it at `https://ipfs.aleph.cloud/ipfs/<CID>`.
 | Shield 0.1.0 (`shield-source-ef53579.tar.gz`) | 22 | `44079a27b55d5e10dfa3a48222b894689487dac880ade89d61944eed6ae484ef` | `32580f05d232a8692f47d299c095b0941f28318bb8b2cba138ca5ef27d62cf2a` |
 | Fauxx 0.9.3-virtroid.1 (`fauxx-source-0.9.3-virtroid.1.tar.gz`) | 24 | `20b0fd3a33158631711ddcb6ffb863592ea2429c121f70dce2a14a547507a7cb` | `a6ef324b7618854412beafad8c587b49b98f5ea149f4d70e38c68f22e5a1dbd8` |
 | Shield 0.2.0 (`shield-source-5254d5b.tar.gz`) | 24 | `148d1800c27e1edb9b66abc0a608bc3a3a2d5db14fc7381e423a4f7c627d2747` | `2f4d80b86fef00e1349e97b1002e156a7c0005101391db26ebf79ee58226dab7` |
+| Fauxx 0.9.3-virtroid.2 (`fauxx-source-0.9.3-virtroid.2.tar.gz`) | 26 | `d29d7488f7c50865c70e43a06a29565850c4b0900fa459d4ff2fe991d6b915a3` | `c3dd43228f449960c72aff7ce85beb50fb0c4fcf404c70fb146af6ae96211ae8` |
+| Shield 0.2.1 (`shield-source-16a7703.tar.gz`) | 26 | `e3a3a5537db7ed7cfa95dfab2df6981f6de18e695d724f425aaaeaa699731c5d` | `00b2ef526a491497f36fdf2f9689597ef8dbfbfb1deecca04fa979c2237ba557` |
 
 ## Container confinement
 
