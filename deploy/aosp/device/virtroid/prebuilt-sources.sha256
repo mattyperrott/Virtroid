@@ -12,12 +12,12 @@ c859abd363ebc551c55b165241501c88e484fc09b7892d7c34d2932e60e7f0f3  org.fossify.no
 # LibreOffice Viewer 26.2.6.3 (MPL-2.0), F-Droid build 129. About 1 GB: it
 # changes only when the app does, so it's the same Aleph object until then.
 1d4264ae8b7f68c55124c3f68d38caa3dda31781fcf6f88c7b0a08e091963f1f  org.documentfoundation.libreoffice_129_src.tar.gz  https://f-droid.org/repo/org.documentfoundation.libreoffice_129_src.tar.gz
-# Fauxx 0.9.3-virtroid.1 (AGPL-3.0-only): upstream's tree at v0.9.3 with
+# Fauxx 0.9.3-virtroid.2 (AGPL-3.0-only): upstream's tree at v0.9.3 with
 # apps/fauxx/patches applied, as apps/fauxx/build.sh writes it (git archive of
 # the patched commit, which the patches' dates make the same every time).
-a6ef324b7618854412beafad8c587b49b98f5ea149f4d70e38c68f22e5a1dbd8  fauxx-source-0.9.3-virtroid.1.tar.gz  local
-# Shield 0.2.0 (GPL-3.0-or-later): Virtroid's tree at 5254d5b and 0xbow's
+c3dd43228f449960c72aff7ce85beb50fb0c4fcf404c70fb146af6ae96211ae8  fauxx-source-0.9.3-virtroid.2.tar.gz  local
+# Shield 0.2.1 (GPL-3.0-or-later): Virtroid's tree at 16a7703 and 0xbow's
 # monorepo at the commit android-client/shield/engine/sdk.lock pins, with a
 # SOURCE.md; GNU tar --sort=name --mtime=@0 --owner=0 --group=0
 # --numeric-owner, gzip -n -9.
-2f4d80b86fef00e1349e97b1002e156a7c0005101391db26ebf79ee58226dab7  shield-source-5254d5b.tar.gz  local
+00b2ef526a491497f36fdf2f9689597ef8dbfbfb1deecca04fa979c2237ba557  shield-source-16a7703.tar.gz  local
