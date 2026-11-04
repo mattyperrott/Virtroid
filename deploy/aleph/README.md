@@ -33,8 +33,10 @@ accepts the measurement has checked all of it:
   - the Android runtime image, loaded at boot and never pulled;
   - the pinned apps.
 
-  There is no SSH, login shell, package manager or compiler. Anyone can
-  rebuild it from this repository and get the same root hash.
+  There is no SSH, login shell, package manager or compiler. Given the same
+  Android image, runtime agent and settings, anyone can rebuild it from this
+  repository and get the same root hash; the Android build itself isn't
+  reproducible byte for byte ([Build host](../aosp/README.md#build-host)).
 
 Writable state lives only in memory and on the VM's own data disk, which the
 VM encrypts with a key only it and the provisioner hold. Once booted, the VM
@@ -146,10 +148,10 @@ with Nix for builds (a small Aleph VM works).
      agent hash;
    - `apks/`: the VPS's `/srv/virtroid/apks` without `cache/`;
    - the Android image: `runtime-image.json` pins a registry image by digest,
-     or put our own build in `runtime-image.tar`. Runtimes use ReDroid's
-     Android 16 image with Google's ARM translation added, so ARM-only apps
-     such as SimpleX run; `sudo deploy/aleph/build-runtime-image.sh OUT`
-     builds it from both pinned sources and writes `runtime-image.tar` and
+     or put our own build in `runtime-image.tar`. Runtimes use our LineageOS
+     build with Google's ARM translation added, so ARM-only apps such as
+     SimpleX run; `sudo deploy/aleph/build-runtime-image.sh OUT BASE_TAR` adds
+     it to the build and writes `runtime-image.tar` and
      `runtime-image.json` (whose `androidRelease` the personas claim).
 
    Refresh the satellite orbits built into the node, from which each

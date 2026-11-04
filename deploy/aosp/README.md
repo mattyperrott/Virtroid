@@ -3,7 +3,7 @@
 Status: first build done; boot test and upgrade from today's runtime data
 passed (milestones 2 and 3, 2026-10-26). Cuts and built-in apps applied
 (milestone 4, [components.md](components.md)); signed with our own release
-keys (2026-10-27, [below](#release-keys)). Not released.
+keys (2026-10-27, [below](#release-keys)). Live since VM image 19 (2026-10-28).
 Written 2026-10-21.
 
 Every runtime VM image up to 15 carries stock ReDroid 14
@@ -494,8 +494,8 @@ takes:
 6. **Hardening.** Unprivileged container: built (2026-10-27), see
    [Container confinement](#container-confinement); user namespaces next.
    Still open: the BPF setting and `hardened_malloc`.
-7. **Release.** A VM image carrying it, through the usual release, then a
-   written monthly rebuild runbook.
+7. **Release.** Done: VM image 19 (2026-10-28). Still to write: a monthly
+   rebuild runbook.
 
 ## Decisions needed
 
@@ -526,7 +526,7 @@ takes:
   `/srv/virtroid` gave I/O errors until the VM restarted. Our image no longer
   does it (`patches/system/core` 0002: init leaves `/data`'s filesystem to
   the host): with build 17, Android rebooting in a privileged runtime left
-  the VM's storage intact. Stock ReDroid 16, which runtimes run today, never
+  the VM's storage intact. Stock ReDroid 16, which runtimes ran then, never
   reached the ioctl in the same test, so they were not exposed.
 - The release keys sit on the build host ([Release keys](#release-keys)).
   Whoever takes them can sign an app that every runtime treats as part of
