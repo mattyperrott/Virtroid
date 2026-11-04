@@ -407,6 +407,11 @@ tcp=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "ss -ltn 2>/dev
 perms=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "stat -c '%a %U' /data/local/tmp/virtroid-viewer" 2>/dev/null | \$B tr -d '\r')
 echo "boot-test: viewer socket directory: \$perms"
 [ "\$perms" = "700 system" ] || fail "the viewer socket directory is open to others: \$perms"
+# The streaming server reads the clipboard as the system user, under the android
+# package's name, so what the owner copies reaches their phone (patches/frameworks/base 0003).
+clip=\$(\$B timeout 30 C /bin/docker exec smoke /system/bin/sh -c "dumpsys package android | grep -E '(READ_CLIPBOARD_IN_BACKGROUND|SUPPRESS_CLIPBOARD_ACCESS_NOTIFICATION): granted=true' | sort -u | wc -l" 2>/dev/null | \$B tr -d ' \r')
+[ "\$clip" = 2 ] || fail "the system user may not read the clipboard in the background (\${clip:-0} of 2 permissions granted)"
+echo "boot-test: the system user may read the clipboard in the background"
 leftover=\$(\$B timeout 20 C /bin/docker exec smoke /system/bin/sh -c "ls /data/local/tmp/virtroid-viewer-auth.key 2>/dev/null")
 [ -z "\$leftover" ] || fail "viewercrypt left the viewer key on disk"
 # A viewer without the runtime's viewer key gets only viewercrypt's greeting

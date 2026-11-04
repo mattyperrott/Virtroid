@@ -169,6 +169,17 @@ Still open:
   personas. SettingsProvider now sets both from the build at each boot
   (`patches/frameworks/base` 0002); a name the owner gave the device stays.
   The boot test checks it across starts and on an older image's data.
+- **The viewer may read the clipboard (2026-11-05):** Android lets a caller
+  read the clipboard, or hear that it changed, only with input focus or
+  `READ_CLIPBOARD_IN_BACKGROUND`, checked against the package it names. The
+  streaming server runs as the system user, to capture secure windows, and
+  names `android`, which shell's permission doesn't reach, so what the owner
+  copied in a runtime could never leave it. The `android` package now asks for
+  that and for `SUPPRESS_CLIPBOARD_ACCESS_NOTIFICATION`, without which every
+  copy would raise "Android pasted from your clipboard" in the runtime
+  (`patches/frameworks/base` 0003). The grant covers the whole system uid: the
+  system server and the platform's own apps, which hold far more already. The
+  boot test checks both.
 - **Trade-off to review:** a runtime without Bluetooth declares fewer
   features than any phone, which apps can read, while personas claim real
   phone models.
