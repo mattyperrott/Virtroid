@@ -86,10 +86,10 @@ android_app_import {
     },
 }
 
-// Shield (GPL-3.0-or-later, android-client/shield): shields, privately sends
-// and withdraws the user's own crypto through Privacy Pools, with their own
-// wallet over WalletConnect. Signed with Virtroid's release key; its source
-// goes out with each image (app-sources.sh).
+// Shield (GPL-3.0-or-later, android-client/shield): a deposit address that moves
+// the user's own ETH, USDC and USDT into Privacy Pools, and sends them out again.
+// Signed with Virtroid's release key; its source goes out with each image
+// (app-sources.sh).
 android_app_import {
     name: "Shield",
     apk: "prebuilt/Shield.apk",

@@ -17,13 +17,13 @@
 # F-Droid signed it. Its native code is compressed; build-lineage.sh
 # extracts the x86_64 libraries beside it (Android.mk).
 cfaf9eea5fd695c449e92eb10cc0b1617ec51d068345068cea9b7e1c67968df5  LibreOfficeViewer.apk  https://f-droid.org/repo/org.documentfoundation.libreoffice_129.apk
-# Fauxx 0.9.3-virtroid.2 (versionCode 903): upstream v0.9.3 with the widget
+# Fauxx 0.9.3-virtroid.3 (versionCode 903): upstream v0.9.3 with the widget
 # patch, built and signed with Virtroid's release key by apps/fauxx/build.sh.
-4c9f100f84de7f0bf434bac29dc0738abb5158b8fd7aa593c28b232e1caf3b71  Fauxx.apk  local
+c00ededf50dda3d2f563b6a2fa2b291ef2aae5c82a77daa194234d87c1e6c0b1  Fauxx.apk  local
 # The runtime agent 0.1.0, signed with Virtroid's release key: the APK the
 # VM image's assets carry and node.env pins (NODE_NOTIFICATION_AGENT_APK_SHA256).
 f4fb0185a904d7080bd9c182dd73ecfcb9eb9d4aa9e6d1d9052cc0052ced5f91  virtroid-runtime-agent.apk  local
-# Shield 0.2.1 (versionCode 4), signed with Virtroid's release key: built at
-# 16a7703 by android-client's signing/build-signed-release.sh values and
+# Shield 0.3.0 (versionCode 5), signed with Virtroid's release key: built from
+# git tree ad275c7 by android-client's signing/build-signed-release.sh values and
 # `./gradlew :shield:assembleRelease` (android-client/shield/README.md).
-2712277bd926e27c4cbf1f80a596c70df4cb5235204d6eee5882f29cfa43d475  Shield.apk  local
+9ff9ff8ec76442b233e7358162e316c8fff492beadc145e4b7ab3a36bacdd508  Shield.apk  local
