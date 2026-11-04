@@ -646,6 +646,7 @@
     <string name="account_storage_operator_managed">Operator managed</string>
     <string name="session_microphone_permission_denied">Phone microphone access was denied. Runtime microphone passthrough is disabled for this session.</string>
     <string name="session_microphone_runtime_unavailable">This runtime image could not activate microphone passthrough.</string>
+    <string name="session_clipboard_copied">Copied from your cloud phone</string>
     <string name="session_microphone_bridge_failed">Phone microphone passthrough could not start.</string>
     <string name="session_stream_resume_delayed">Live display did not resume. Retry the viewer connection.</string>
 

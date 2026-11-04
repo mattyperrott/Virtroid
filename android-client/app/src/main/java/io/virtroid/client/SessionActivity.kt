@@ -179,6 +179,12 @@ class SessionActivity : AppCompatActivity() {
             }
         }
 
+        override fun onClipboardCopied() {
+            runOnUiThread {
+                Notice.confirm(this@SessionActivity, getString(R.string.session_clipboard_copied))
+            }
+        }
+
         override fun onDisconnected(message: String) {
             runOnUiThread {
                 stopLatencyProbe()
@@ -410,6 +416,11 @@ class SessionActivity : AppCompatActivity() {
         hideSystemBars()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        sessionHost?.onWindowFocusChanged(hasFocus)
+    }
+
     // The manifest keeps this screen through rotation and resizes rather than
     // recreating it, which would drop the stream and reconnect from scratch.
     // The surface container's layout listener refits the stream.
@@ -483,7 +494,10 @@ class SessionActivity : AppCompatActivity() {
             displayHeight = binding.sessionSurfaceView.height.takeIf { it > 0 }
                 ?: resources.displayMetrics.heightPixels,
             callback = sessionCallback,
-        ).also { it.connect() }
+        ).also {
+            it.onWindowFocusChanged(hasWindowFocus())
+            it.connect()
+        }
     }
 
     private fun disconnectViewer() {
