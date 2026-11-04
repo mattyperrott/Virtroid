@@ -12,12 +12,18 @@ ip max_size bit_rate tunnel_forward audio_enabled
 ```
 
 The node passes the runtime's `audio_enabled` value through both viewer launch
-paths. Audio, video, control, and demand-gated physical-microphone packets share
+paths. Audio, video, control, clipboard, and demand-gated physical-microphone packets share
 one synchronized multiplexed stream before the encrypted viewer proxy,
 preventing concurrent packet writes from corrupting the transport. The server
 uses its existing Android shell identity to register the runtime microphone
 injection policy; no separately installed microphone package or public listener
 port is required.
+
+The server touches the clipboard only once a client asks with `CLIPBOARD_READY`,
+and answers only if it can, so an older client or server on the other end sees no
+change. Without `deploy/aosp/patches/frameworks/base` 0003 in the runtime image,
+the system user may set the clipboard but not read it: clips still reach the
+runtime and no longer come back.
 
 CI builds the vendored module and compares the complete unsigned APK
 byte-for-byte with the tracked payload. This is source/build evidence; an

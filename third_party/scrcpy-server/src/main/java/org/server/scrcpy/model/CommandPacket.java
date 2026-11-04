@@ -78,7 +78,13 @@ public class CommandPacket extends MediaPacket<CommandPacket> {
         VIDEO_NEW_KEY_FRAME((byte) 1),
         MICROPHONE_AUDIO((byte) 2),
         MICROPHONE_END((byte) 3),
-        MICROPHONE_STATE((byte) 4);
+        MICROPHONE_STATE((byte) 4),
+        // Each end ignores a command it does not know, so these are safe to
+        // send to an older one. The client says READY first; a server that can
+        // carry clips answers READY, and only then does either touch a clipboard.
+        CLIPBOARD_READY((byte) 5),
+        // UTF-8 text, in either direction: see ClipboardText.
+        CLIPBOARD_TEXT((byte) 6);
 
         private byte type;
 
