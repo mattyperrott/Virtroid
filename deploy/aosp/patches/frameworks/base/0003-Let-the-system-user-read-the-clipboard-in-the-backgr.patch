@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Thu, 5 Nov 2026 01:00:00 +0000
+Subject: [PATCH] Let the system user read the clipboard in the background
+
+ClipboardService lets a caller read the clipboard, or hear that it changed,
+only with input focus or READ_CLIPBOARD_IN_BACKGROUND, and checks that against
+the package the caller names. Runtime viewers run as the system user, so they
+can capture windows marked secure, and name the android package. Shell holds
+the permission and the system user doesn't, so what the owner copied in the
+runtime never reached their phone.
+
+Ask for it here, with the permission that keeps Android from showing "Android
+pasted from ..." each time the viewer reads a clip. Both are signature
+permissions this package defines, and they go to the whole system uid: the
+system server and the platform's own apps, which run with far more already.
+---
+ core/res/AndroidManifest.xml | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/core/res/AndroidManifest.xml b/core/res/AndroidManifest.xml
+index 769c3d3..e464d7f 100644
+--- a/core/res/AndroidManifest.xml
++++ b/core/res/AndroidManifest.xml
+@@ -8377,6 +8377,10 @@
+          <p>Not for use by third-party applications. -->
+     <permission android:name="android.permission.SUPPRESS_CLIPBOARD_ACCESS_NOTIFICATION"
+                 android:protectionLevel="signature" />
++    <!-- The viewer's streaming server runs as the system user, under this package's name,
++         and takes what the owner copies in the runtime to their phone. -->
++    <uses-permission android:name="android.permission.READ_CLIPBOARD_IN_BACKGROUND" />
++    <uses-permission android:name="android.permission.SUPPRESS_CLIPBOARD_ACCESS_NOTIFICATION" />
+ 
+     <!-- @SystemApi Allows modifying accessibility state.
+         <p> The only approved role for this permission is COMPANION_DEVICE_APP_STREAMING.
