@@ -15,7 +15,9 @@ import android.view.MotionEvent;
 import org.server.scrcpy.model.CommandPacket;
 import org.server.scrcpy.model.ControlPacket;
 import org.server.scrcpy.model.MediaPacket;
+import org.server.scrcpy.wrappers.ClipboardManager;
 import org.server.scrcpy.wrappers.InputManager;
+import org.server.scrcpy.wrappers.ServiceManager;
 import org.server.scrcpy.control.PointersState;
 import org.server.scrcpy.control.Pointer;
 import org.server.scrcpy.device.Point;
@@ -36,6 +38,7 @@ public class EventController {
     private final boolean microphoneEnabled;
     private final CountDownLatch streamHeaderWritten;
     private MicrophoneInjector microphoneInjector;
+    private ClipboardBridge clipboardBridge;
 
     private final MotionEvent.PointerProperties[] pointerProperties = new MotionEvent.PointerProperties[PointersState.MAX_POINTERS];
     private final MotionEvent.PointerCoords[] pointerCoords = new MotionEvent.PointerCoords[PointersState.MAX_POINTERS];
@@ -165,8 +168,28 @@ public class EventController {
                     microphoneInjector.endInput();
                 }
                 break;
+            case CLIPBOARD_READY:
+                startClipboard();
+                break;
+            case CLIPBOARD_TEXT:
+                if (clipboardBridge != null) {
+                    clipboardBridge.apply(commandPacket.data);
+                }
+                break;
             default:
                 break;
+        }
+    }
+
+    private void startClipboard() {
+        ClipboardManager clipboard = ServiceManager.getClipboardManager();
+        if (clipboardBridge != null || clipboard == null) {
+            return;
+        }
+        try {
+            clipboardBridge = ClipboardBridge.start(clipboard, mediaStream);
+        } catch (IOException error) {
+            Ln.e("Could not start the clipboard", error);
         }
     }
 
@@ -219,6 +242,10 @@ public class EventController {
             if (microphoneInjector != null) {
                 microphoneInjector.close();
                 microphoneInjector = null;
+            }
+            if (clipboardBridge != null) {
+                clipboardBridge.close();
+                clipboardBridge = null;
             }
         }
     }

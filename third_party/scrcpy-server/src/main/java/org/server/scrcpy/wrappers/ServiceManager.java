@@ -16,6 +16,7 @@ public final class ServiceManager {
     private static PowerManager powerManager;
 
     private static ActivityManager activityManager;
+    private static ClipboardManager clipboardManager;
 
     static {
         try {
@@ -72,5 +73,13 @@ public final class ServiceManager {
             activityManager = ActivityManager.create();
         }
         return activityManager;
+    }
+
+    /** The clipboard service, or null where it cannot be used. */
+    public static ClipboardManager getClipboardManager() {
+        if (clipboardManager == null) {
+            clipboardManager = ClipboardManager.create();
+        }
+        return clipboardManager;
     }
 }

@@ -24,7 +24,7 @@ from pathlib import Path
 
 built_path = Path(sys.argv[1])
 embedded_path = Path(sys.argv[2])
-expected_embedded_sha256 = "9ade0f8587b3b27e059d1938925c0c92e14733151df1b39caea0d7c4bb3194bf"
+expected_embedded_sha256 = "ceb1f9eb8ee1582680f8f398e9591458c8ff933494e00b21ceb4206c71a15b2c"
 
 actual_embedded_sha256 = hashlib.sha256(embedded_path.read_bytes()).hexdigest()
 if actual_embedded_sha256 != expected_embedded_sha256:
