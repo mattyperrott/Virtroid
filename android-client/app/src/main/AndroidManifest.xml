@@ -110,6 +110,9 @@
         <receiver
             android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".security.ClipboardBackstopReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

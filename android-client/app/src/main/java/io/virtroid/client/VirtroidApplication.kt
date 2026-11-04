@@ -4,9 +4,11 @@ import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.os.Bundle
+import android.view.ViewTreeObserver
 import io.virtroid.client.api.VirtroidApi
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.security.AppLockStore
+import io.virtroid.client.security.ClipboardAutoClear
 import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.RuntimeCapabilityStore
@@ -19,6 +21,13 @@ import kotlinx.coroutines.runBlocking
 class VirtroidApplication : Application(), Application.ActivityLifecycleCallbacks {
     private var startedActivities = 0
     private var wasBackgrounded = false
+
+    // Focus, not resume: Android shows the clipboard only once a window has it.
+    private val clipboardFocusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+        if (hasFocus) {
+            ClipboardAutoClear.get(this).onFocusGained()
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -68,6 +77,7 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
     }
 
     override fun onActivityResumed(activity: Activity) {
+        activity.window.decorView.viewTreeObserver.addOnWindowFocusChangeListener(clipboardFocusListener)
         activity.applyScreenCaptureProtection()
         if (activity.excludedFromResumeLock()) {
             return
@@ -93,8 +103,11 @@ class VirtroidApplication : Application(), Application.ActivityLifecycleCallback
         }
     }
 
+    override fun onActivityPaused(activity: Activity) {
+        activity.window.decorView.viewTreeObserver.removeOnWindowFocusChangeListener(clipboardFocusListener)
+    }
+
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-    override fun onActivityPaused(activity: Activity) = Unit
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
     override fun onActivityDestroyed(activity: Activity) = Unit
 

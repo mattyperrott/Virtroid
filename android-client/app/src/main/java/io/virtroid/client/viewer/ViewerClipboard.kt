@@ -5,11 +5,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.security.copySensitiveToClipboard
 
 // Long enough to open a wallet on the phone and paste an address into it.
-internal const val RUNTIME_CLIP_CLEAR_AFTER_MS = 120_000L
+private const val RUNTIME_CLIP_CLEAR_AFTER_MS = 120_000L
 
 /**
  * When the viewer may touch the phone's clipboard. Each clip is known by the
@@ -24,7 +23,6 @@ internal class ClipboardGate {
     var focused = false
 
     private var settledClip: Long? = null
-    private var runtimeClip: Long? = null
 
     /**
      * Only while the owner is in the viewer: a runtime app in the background
@@ -44,12 +42,7 @@ internal class ClipboardGate {
     /** Marks a clip as one that came from the runtime, so it doesn't go back. */
     fun settleFromRuntime(clipTimestamp: Long?) {
         settledClip = clipTimestamp
-        runtimeClip = clipTimestamp
     }
-
-    /** Whether this clip is still the one the runtime sent, and has outlived its time. */
-    fun isOverdue(clipTimestamp: Long, now: Long): Boolean =
-        clipTimestamp == runtimeClip && now - clipTimestamp >= RUNTIME_CLIP_CLEAR_AFTER_MS
 }
 
 /**
@@ -96,7 +89,6 @@ internal class ViewerClipboard(
     fun onWindowFocusChanged(hasFocus: Boolean) {
         gate.focused = hasFocus
         if (hasFocus) {
-            clearOverdueRuntimeClip()
             sendCurrentClip()
         }
     }
@@ -105,18 +97,6 @@ internal class ViewerClipboard(
         closed = true
         main.removeCallbacksAndMessages(null)
         clipboard.removePrimaryClipChangedListener(listener)
-    }
-
-    // copySensitiveToClipboard's timer leaves the clip if it fires while the
-    // viewer lacks focus, when Android hides the clipboard from it: the owner
-    // is usually off pasting this clip into another app.
-    private fun clearOverdueRuntimeClip() {
-        runCatching {
-            val timestamp = clipboard.primaryClipDescription?.timestamp ?: return
-            if (gate.isOverdue(timestamp, System.currentTimeMillis()) && AppSettingsStore(context).autoClearClipboard) {
-                clipboard.clearPrimaryClip()
-            }
-        }
     }
 
     private fun sendCurrentClip() {

@@ -19,6 +19,7 @@ import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenPrivacySecurityBinding
 import io.virtroid.client.security.AppLockStore
+import io.virtroid.client.security.ClipboardAutoClear
 import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptPinCode
@@ -116,6 +117,9 @@ class PrivacySecurityActivity : AppCompatActivity() {
         binding.autoClearClipboardSwitch.setOnCheckedChangeListener { _, checked ->
             if (!bindingSettings) {
                 appSettings.autoClearClipboard = checked
+                if (!checked) {
+                    ClipboardAutoClear.get(this).cancel()
+                }
                 appLogs.info("Auto-clear clipboard set to $checked", "privacy")
             }
         }

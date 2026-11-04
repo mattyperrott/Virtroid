@@ -563,7 +563,7 @@
     <string name="privacy_ui_inactivity_timeout">Close Viewer When Idle</string>
     <string name="privacy_data_cache_hygiene">Data &amp; Cache Hygiene</string>
     <string name="privacy_auto_clear_clipboard">Auto-clear Clipboard</string>
-    <string name="privacy_auto_clear_clipboard_body">Wipe local clipboard after session ends</string>
+    <string name="privacy_auto_clear_clipboard_body">Wipes what you copy here soon after. If you\'re away in another app, the whole clipboard is wiped after about 10 minutes.</string>
     <string name="privacy_force_clear_cache">Force Clear Local Cache Now</string>
     <string name="privacy_cache_cleared">Local cache cleared</string>
     <string name="privacy_cache_clear_failed">Some cache items could not be cleared</string>

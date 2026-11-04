@@ -134,7 +134,7 @@ In **Privacy & Security**:
 | :--- | :--- |
 | **Block Screen Capture** | Keeps the viewer out of screenshots and the recent-apps preview. |
 | **Close Viewer When Idle** | Closes the viewer after a while without input. The runtime keeps running. |
-| **Auto-clear Clipboard** | Clears the phone's clipboard when a session ends. |
+| **Auto-clear Clipboard** | Clears what you copy in the app or the runtime a short time later. Android hides the clipboard from apps you aren't using, so if you've left, it clears when you return, or after about 10 minutes even if you've copied something else since. Closing an idle viewer and **Force Clear Local Cache Now** clear it too. |
 | **Require unlock on app resume** | Asks for the PIN whenever you return to the app. |
 | **Auto-lock Timer** | Sets when the app locks. |
 | **Force Clear Local Cache Now** | Deletes the app's cached files on the phone. |
