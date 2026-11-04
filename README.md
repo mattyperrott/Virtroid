@@ -198,6 +198,8 @@ Rebuilding a snapshot from its shards gives only ciphertext. Decrypting it needs
 
 Android's screen is captured inside the runtime and encoded as H.264. A proxy inside the VM encrypts it for the phone's session key, and the phone decrypts and decodes it. The same encrypted session carries touch and keyboard input, the clipboard, audio, the microphone (only on request) and imports. Imported photos and files are sealed for the VM, so the control plane can neither read them nor plant its own.
 
+The clipboard crosses as text, up to 256 KiB, only while the viewer has the phone's focus. What you copy in the runtime lands on the phone's clipboard, and what you copied on the phone is ready to paste in the runtime. Images and other clips without text stay where they are.
+
 Capture runs as Android's `system` user, so apps that block screenshots, such as SimpleX Chat, still appear in the viewer: the phone is the runtime's screen. On the phone, **Block Screen Capture** keeps the viewer itself out of screenshots and the recent-apps preview.
 
 ### Apps

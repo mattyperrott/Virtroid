@@ -29,6 +29,7 @@ import org.client.scrcpy.crypto.ViewerEncryption;
 import org.client.scrcpy.audio.PhysicalMicrophoneBridge;
 import org.client.scrcpy.model.AudioPacket;
 import org.client.scrcpy.model.ByteUtils;
+import org.client.scrcpy.model.ClipboardText;
 import org.client.scrcpy.model.CommandPacket;
 import org.client.scrcpy.model.ControlPacket;
 import org.client.scrcpy.model.MediaPacket;
@@ -591,6 +592,9 @@ public class Scrcpy extends Service {
                 socketOutputStream = dataOutputStream;
 
                 socket_status = true;
+                // An older server ignores this and never answers, and then the
+                // phone's clipboard is left alone.
+                enqueueCommand(CommandPacket.CmdType.CLIPBOARD_READY, new byte[0], true);
 
                 phase = "stream";
                 loop(dataInputStream, dataOutputStream, delay);
@@ -935,6 +939,19 @@ public class Scrcpy extends Service {
 
     private void handleRuntimeCommand(CommandPacket command) {
         CommandPacket.CmdType type = CommandPacket.CmdType.getFlag(command.cmdType);
+        if (type == CommandPacket.CmdType.CLIPBOARD_READY) {
+            if (serviceCallbacks != null) {
+                serviceCallbacks.clipboardReady();
+            }
+            return;
+        }
+        if (type == CommandPacket.CmdType.CLIPBOARD_TEXT) {
+            String text = ClipboardText.decode(command.data);
+            if (text != null && serviceCallbacks != null) {
+                serviceCallbacks.runtimeClipboardChanged(text);
+            }
+            return;
+        }
         if (type != CommandPacket.CmdType.MICROPHONE_STATE || command.data == null || command.data.length != 1) {
             return;
         }
@@ -996,6 +1013,14 @@ public class Scrcpy extends Service {
 
     private void sendMicrophoneEnd() {
         enqueueCommand(CommandPacket.CmdType.MICROPHONE_END, new byte[0], true);
+    }
+
+    /** Sends a clip to the runtime, unless it is empty or too long to carry. */
+    public void sendClipboardText(String text) {
+        byte[] data = ClipboardText.encode(text);
+        if (data != null) {
+            enqueueCommand(CommandPacket.CmdType.CLIPBOARD_TEXT, data, true);
+        }
     }
 
     private boolean enqueueControl(byte[] controlData) {
@@ -1091,6 +1116,11 @@ public class Scrcpy extends Service {
 
         /** Which path the stream takes to a remote node, and the timings behind the choice. */
         void routeChosen(String description);
+
+        /** The runtime handles clips. An older one never says so. */
+        void clipboardReady();
+
+        void runtimeClipboardChanged(String text);
     }
 
     public static final String EXTRA_PHYSICAL_MICROPHONE_ENABLED =

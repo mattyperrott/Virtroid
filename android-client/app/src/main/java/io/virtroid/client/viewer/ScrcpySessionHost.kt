@@ -36,6 +36,11 @@ class ScrcpySessionHost(
     private var serviceBound = false
     private var destroyed = false
     private var displayLandscape = displayWidth > displayHeight
+    private val clipboard = ViewerClipboard(
+        context,
+        sendToRuntime = { text -> scrcpy?.sendClipboardText(text) },
+        onCopiedUnconfirmed = { callback.onClipboardCopied() },
+    )
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -140,8 +145,13 @@ class ScrcpySessionHost(
         scrcpy?.sendKeyevent(keyCode)
     }
 
+    fun onWindowFocusChanged(hasFocus: Boolean) {
+        clipboard.onWindowFocusChanged(hasFocus)
+    }
+
     fun destroy() {
         destroyed = true
+        clipboard.close()
         scrcpy?.StopService()
         if (serviceBound) {
             runCatching { context.unbindService(serviceConnection) }
@@ -171,6 +181,14 @@ class ScrcpySessionHost(
         callback.onRouteChosen(description)
     }
 
+    override fun clipboardReady() {
+        clipboard.runtimeReady()
+    }
+
+    override fun runtimeClipboardChanged(text: String) {
+        clipboard.applyFromRuntime(text)
+    }
+
     interface Callback {
         fun onConnected(remoteWidth: Int, remoteHeight: Int)
 
@@ -181,6 +199,9 @@ class ScrcpySessionHost(
 
         /** Which path the stream takes to a remote node, and why. */
         fun onRouteChosen(description: String)
+
+        /** A runtime clip reached the phone's clipboard, on an Android that doesn't say so itself. */
+        fun onClipboardCopied()
         fun onDisconnected(message: String)
     }
 }
