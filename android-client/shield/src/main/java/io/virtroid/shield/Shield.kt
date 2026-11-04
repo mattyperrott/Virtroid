@@ -1,198 +1,269 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.virtroid.shield
 
-import android.content.Context
-import androidx.core.content.edit
+import io.virtroid.shield.engine.EngineEvent
 import io.virtroid.shield.engine.EngineException
+import io.virtroid.shield.watch.WatchList
 import io.virtroid.shield.widget.ShieldWidget
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
 import java.math.BigInteger
 
-data class AssetInfo(val symbol: String, val token: String, val decimals: Int, val yield: Boolean)
+data class AssetInfo(val symbol: String, val token: String, val decimals: Int)
 
-data class ChainInfo(val chainId: Int, val name: String, val explorerUrl: String, val assets: List<AssetInfo>)
+data class ChainInfo(val chainId: Int, val name: String, val explorerUrl: String, val rpcUrls: List<String>, val assets: List<AssetInfo>)
 
-data class PendingDeposit(val commitment: String, val value: BigInteger, val label: String?)
+data class Deposit(val commitment: String, val value: BigInteger, val label: String?)
 
 data class Balance(
     val symbol: String,
     val decimals: Int,
     val spendable: BigInteger,
     val pending: BigInteger,
-    val maxSingle: BigInteger,
-    val waiting: List<PendingDeposit>,
-    val declined: List<PendingDeposit>,
+    val waiting: List<Deposit>,
+    val declined: List<Deposit>,
 )
 
-/** A send or withdrawal the engine has proved and the relayer priced; [id] is what confirms it. */
-data class Quote(val id: Long, val receive: BigInteger, val fee: BigInteger, val expiresAt: Long?)
+/** Funds at a deposit address, on their way in or waiting to be (engine.ts `Incoming`). */
+data class Incoming(
+    val symbol: String,
+    val decimals: Int,
+    val amount: BigInteger,
+    val state: State,
+    val minimum: BigInteger?,
+    val fee: BigInteger?,
+    val txHash: String?,
+) {
+    enum class State { BELOW_MINIMUM, FEE_HIGH, GAS_UNAVAILABLE, SHIELDING }
+}
 
-/** What the wallet holds of an asset, and for ETH what to leave in it for gas. */
-data class WalletFunds(val balance: BigInteger, val reserve: BigInteger)
+/** A send the relayer priced; [id] is what sends it. It goes as [parts] withdrawals, one per deposit. */
+data class Quote(val id: Long, val symbol: String, val receive: BigInteger, val fee: BigInteger, val parts: Int, val recent: Boolean)
 
-/** What a shield of a given amount comes to (engine.ts shieldPlan); [cost] is exact, or at most that when not [exact]. */
-data class ShieldPlan(
-    val hold: BigInteger,
-    val fee: BigInteger,
-    val cost: BigInteger,
-    val exact: Boolean,
-    val approvals: Int,
-    val minimum: BigInteger,
-)
+data class ExitPlan(val owner: String, val needed: BigInteger, val balance: BigInteger)
 
-/** Where the account stands, for the screens and the widget. */
+/** Where the wallet stands, for the screens and the widget. */
 sealed interface AccountState {
+    data object Loading : AccountState
     data object NoWallet : AccountState
-    data class NeedsSetup(val owner: String) : AccountState
-    data class Ready(val owner: String, val chainId: Int, val balances: List<Balance>, val syncedAt: Long) : AccountState
+    data class Ready(
+        val owner: String,
+        /** The deposit address to show. */
+        val address: String,
+        /** Every address that's been shown. */
+        val watch: List<String>,
+        val balances: List<Balance>,
+        val incoming: List<Incoming>,
+    ) : AccountState
 }
 
 /**
- * The app's operations, over the engine: one account per wallet address and
- * chain. The screens call these and show [state]; everything about notes,
- * proofs and the relayer stays in the engine.
+ * The app's operations, over the engine: one wallet, on one chain. The screens
+ * and the watcher call these and show [state]; everything about notes, proofs
+ * and the relayer stays in the engine. One thing at a time goes to the engine,
+ * as they all read and write the same notes.
  */
 class Shield(private val app: ShieldApp) {
-    private val prefs = app.getSharedPreferences("shield", Context.MODE_PRIVATE)
-    private val _state = MutableStateFlow<AccountState>(AccountState.NoWallet)
+    private val _state = MutableStateFlow<AccountState>(AccountState.Loading)
     val state: StateFlow<AccountState> = _state
+    private val lock = Mutex()
+    private var chainCache: ChainInfo? = null
 
-    private var chainCache: List<ChainInfo>? = null
+    /** The send or exit going on, run in the app's scope so it outlives the screen that started it. */
+    sealed interface Work {
+        data class Sending(val symbol: String, val stage: String, val part: Int, val parts: Int, val txHash: String?) : Work
+        data class Sent(val txHashes: List<String>) : Work
+        data class Failed(val code: String, val message: String) : Work
+    }
 
-    var chainId: Int
-        get() = app.localTest?.let { LOCAL_CHAIN } ?: prefs.getInt("chainId", DEFAULT_CHAIN)
-        set(value) = prefs.edit { putInt("chainId", value) }
+    private val _work = MutableStateFlow<Work?>(null)
+    val work: StateFlow<Work?> = _work
 
-    suspend fun chains(): List<ChainInfo> = chainCache ?: (app.engine.request("chains") as JSONArray).let { list ->
-        (0 until list.length()).map { i ->
-            val c = list.getJSONObject(i)
-            val assets = c.getJSONArray("assets")
-            ChainInfo(
-                chainId = c.getInt("chainId"),
-                name = c.getString("name"),
-                explorerUrl = c.getString("explorerUrl"),
-                assets = (0 until assets.length()).map { j ->
-                    val a = assets.getJSONObject(j)
-                    AssetInfo(a.getString("symbol"), a.getString("token"), a.getInt("decimals"), a.getBoolean("yield"))
-                },
-            )
+    suspend fun chain(): ChainInfo = chainCache ?: (app.engine.request("info") as JSONObject).let { c ->
+        val assets = c.getJSONArray("assets")
+        val rpcs = c.getJSONArray("rpcUrls")
+        ChainInfo(
+            chainId = c.getInt("chainId"),
+            name = c.getString("name"),
+            explorerUrl = c.getString("explorerUrl"),
+            rpcUrls = (0 until rpcs.length()).map { rpcs.getString(it) },
+            assets = (0 until assets.length()).map { i ->
+                val a = assets.getJSONObject(i)
+                AssetInfo(a.getString("symbol"), a.getString("token"), a.getInt("decimals"))
+            },
+        )
+    }.also {
+        chainCache = it
+        saveForWidget()
+    }
+
+    /** What the wallet looks like on start: the store's answer first, then the chain's. */
+    suspend fun load() {
+        val status = lock.withLock { app.engine.request("status") as JSONObject }
+        if (!status.getBoolean("ready")) {
+            _state.value = AccountState.NoWallet
+            ShieldWidget.clear(app)
+            return
         }
-    }.also { chainCache = it }
+        chain()
+        ready(status, keepBalances = true)
+        refresh()
+    }
 
-    suspend fun chain(): ChainInfo = chains().let { all -> all.firstOrNull { it.chainId == chainId } ?: all.first() }
+    /** Makes the wallet and returns its 12 words, which the user sees here and writes down. */
+    suspend fun create(): String {
+        chain()
+        val made = lock.withLock { app.engine.request("create") as JSONObject }
+        ready(made, keepBalances = false)
+        return made.getString("words")
+    }
 
-    /** Opens the connected wallet's account on the current chain, if it's been set up. */
-    suspend fun load(): AccountState {
-        val owner = app.ownerAddress() ?: return AccountState.NoWallet.also { _state.value = it }
-        return try {
-            app.engine.request("open", account(owner))
-            refresh(owner)
-        } catch (error: EngineException) {
-            if (error.code != "needs_signature") throw error
-            AccountState.NeedsSetup(owner).also { _state.value = it }
-        }
+    suspend fun restore(words: String) {
+        chain()
+        val restored = lock.withLock { app.engine.request("restore", JSONObject().put("words", words)) as JSONObject }
+        ready(restored, keepBalances = false)
+        refresh()
+    }
+
+    suspend fun words(): String = lock.withLock { (app.engine.request("words") as JSONObject).getString("words") }
+
+    /** Reads what's in the pool. */
+    suspend fun refresh() {
+        val list = lock.withLock { app.engine.request("sync") as JSONArray }
+        val balances = (0 until list.length()).map { parseBalance(list.getJSONObject(it)) }
+        _state.update { (it as? AccountState.Ready)?.copy(balances = balances) ?: it }
+        saveForWidget()
     }
 
     /**
-     * Makes the account's keys: the wallet signs the account message twice
-     * (both must match, see engine.ts open()), then publishes the keys on
-     * chain if they aren't yet, which the wallet sends and pays gas for.
+     * Looks at the deposit addresses and moves what can go into the pool.
+     * `force` names assets the user has said to shield despite the fee.
+     * Returns what's waiting at them, or being moved.
      */
-    suspend fun setUp(owner: String): AccountState {
-        val typed = app.engine.request("derivation", JSONObject().put("owner", owner)) as JSONObject
-        val params = JSONArray().put(owner).put(typed.toString())
-        val first = app.wallet.request(chainId, "eth_signTypedData_v4", params) as String
-        val second = app.wallet.request(chainId, "eth_signTypedData_v4", params) as String
-        val opened = app.engine.request("open", account(owner).put("signatures", JSONArray().put(first).put(second))) as JSONObject
-        if (!opened.getBoolean("registered")) app.engine.request("register", account(owner))
-        return refresh(owner)
+    suspend fun check(force: List<String> = emptyList()): List<Incoming> {
+        val result = lock.withLock {
+            val params = JSONObject().put("force", JSONArray(force))
+            app.engine.request("check", params) as JSONObject
+        }
+        val incoming = result.getJSONArray("incoming").let { list -> (0 until list.length()).map { parseIncoming(list.getJSONObject(it)) } }
+        _state.update { state -> (state as? AccountState.Ready)?.copy(address = result.getString("address"), watch = strings(result.getJSONArray("watch")), incoming = incoming) ?: state }
+        saveForWidget()
+        if (result.getBoolean("moved")) refresh()
+        return incoming
     }
 
-    suspend fun refresh(owner: String = currentOwner()): AccountState {
-        val list = app.engine.request("sync", account(owner)) as JSONArray
-        val balances = (0 until list.length()).map { parseBalance(list.getJSONObject(it)) }
-        val ready = AccountState.Ready(owner, chainId, balances, System.currentTimeMillis())
-        _state.value = ready
-        ShieldWidget.save(app, ready, chain().name)
-        return ready
+    suspend fun quoteOut(symbol: String, amount: BigInteger?, recipient: String): Quote {
+        val params = JSONObject().put("symbol", symbol).put("amount", amount?.toString() ?: "max").put("recipient", recipient)
+        val q = lock.withLock { app.engine.request("quoteOut", params) as JSONObject }
+        return Quote(q.getLong("id"), symbol, BigInteger(q.getString("receive")), BigInteger(q.getString("fee")), q.getInt("parts"), q.getBoolean("recent"))
     }
 
-    suspend fun walletBalance(symbol: String): WalletFunds {
-        val r = app.engine.request("walletBalance", account(currentOwner()).put("symbol", symbol)) as JSONObject
-        return WalletFunds(BigInteger(r.getString("balance")), BigInteger(r.getString("reserve")))
+    /** Sends the accepted quote; [work] follows it, and closing the screen doesn't stop it. */
+    fun sendOut(quote: Quote) = run(quote.symbol) {
+        val result = lock.withLock { app.engine.request("sendOut", JSONObject().put("id", quote.id)) as JSONObject }
+        strings(result.getJSONArray("txHashes"))
     }
 
-    suspend fun shieldPlan(symbol: String, amount: BigInteger): ShieldPlan {
-        val r = app.engine.request("shieldPlan", account(currentOwner()).put("symbol", symbol).put("amount", amount.toString())) as JSONObject
-        return ShieldPlan(
-            hold = BigInteger(r.getString("hold")),
-            fee = BigInteger(r.getString("fee")),
-            cost = BigInteger(r.getString("cost")),
-            exact = r.getBoolean("exact"),
-            approvals = r.getInt("approvals"),
-            minimum = BigInteger(r.getString("minimum")),
-        )
+    suspend fun exitPlan(): ExitPlan {
+        val p = lock.withLock { app.engine.request("exitPlan") as JSONObject }
+        return ExitPlan(p.getString("owner"), BigInteger(p.getString("needed")), BigInteger(p.getString("balance")))
     }
 
-    /** Whether `recipient` has a Privacy Pools account on this chain, so a private send reaches it. */
-    suspend fun canReceive(recipient: String): Boolean {
-        val r = app.engine.request("canReceive", JSONObject().put("chainId", chainId).put("recipient", recipient)) as JSONObject
-        return r.getBoolean("registered")
+    fun exit(symbol: String, commitment: String, recipient: String) = run(symbol) {
+        val params = JSONObject().put("commitment", commitment).put("recipient", recipient).put("symbol", symbol)
+        val result = lock.withLock { app.engine.request("exit", params) as JSONObject }
+        strings(result.getJSONArray("txHashes"))
     }
 
-    /** Shields up to `amount` from the wallet; returns the shield's transaction. */
-    suspend fun shield(symbol: String, amount: BigInteger): String? {
-        val result = app.engine.request("shield", account(currentOwner()).put("symbol", symbol).put("amount", amount.toString())) as JSONObject
-        refresh()
-        return result.optJSONArray("txHashes")?.let { hashes -> hashes.optString(hashes.length() - 1).ifEmpty { null } }
+    fun dismissWork() = _work.update { if (it is Work.Sending) it else null }
+
+    private fun run(symbol: String, block: suspend () -> List<String>) {
+        if (_work.value is Work.Sending) return
+        _work.value = Work.Sending(symbol, "starting", 1, 1, null)
+        app.scope.launch {
+            // Listening before the block runs, so the first stage isn't missed.
+            val follow = launch(start = CoroutineStart.UNDISPATCHED) {
+                app.engine.events.collect { event -> follow(event) }
+            }
+            _work.value = try {
+                Work.Sent(block())
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: EngineException) {
+                Work.Failed(error.code, error.message ?: error.code)
+            } catch (error: Exception) {
+                Work.Failed("error", error.message ?: error.javaClass.simpleName)
+            } finally {
+                follow.cancel()
+            }
+            runCatching { refresh() }
+        }
     }
 
-    suspend fun quoteWithdraw(symbol: String, amount: BigInteger?, recipient: String): Quote =
-        quote("quoteWithdraw", symbol, amount, recipient)
-
-    suspend fun quoteSend(symbol: String, amount: BigInteger?, recipient: String): Quote =
-        quote("quoteSend", symbol, amount, recipient)
-
-    suspend fun confirm(quoteId: Long): String {
-        val result = app.engine.request("confirm", JSONObject().put("id", quoteId)) as JSONObject
-        refresh()
-        return result.getString("txHash")
+    private fun follow(event: EngineEvent) {
+        if (event.name != "progress") return
+        val p = event.params
+        _work.update { work ->
+            (work as? Work.Sending)?.copy(
+                stage = p.optString("stage", work.stage),
+                part = p.optInt("part", work.part),
+                parts = p.optInt("parts", work.parts),
+                txHash = p.optString("txHash").ifEmpty { work.txHash },
+            ) ?: work
+        }
     }
 
-    suspend fun exit(commitment: String): String {
-        val result = app.engine.request("exit", account(currentOwner()).put("commitment", commitment)) as JSONObject
-        refresh()
-        return result.getString("txHash")
+    private fun ready(status: JSONObject, keepBalances: Boolean) {
+        _state.update { state ->
+            val before = state as? AccountState.Ready
+            AccountState.Ready(
+                owner = status.getString("owner"),
+                address = status.getString("address"),
+                watch = strings(status.getJSONArray("watch")),
+                balances = if (keepBalances) before?.balances.orEmpty() else emptyList(),
+                incoming = before?.incoming.orEmpty(),
+            )
+        }
+        saveForWidget()
     }
 
-    private suspend fun quote(method: String, symbol: String, amount: BigInteger?, recipient: String): Quote {
-        val params = account(currentOwner())
-            .put("symbol", symbol)
-            .put("amount", amount?.toString() ?: "max")
-            .put("recipient", recipient)
-        val q = app.engine.request(method, params) as JSONObject
-        // The relayer gives its fee's expiry in seconds or milliseconds, depending on the route.
-        val expires = q.optLong("expiresAt").takeIf { it > 0 }?.let { if (it < 100_000_000_000L) it * 1000 else it }
-        return Quote(q.getLong("id"), BigInteger(q.getString("receive")), BigInteger(q.getString("fee")), expires)
+    private fun saveForWidget() {
+        val ready = _state.value as? AccountState.Ready ?: return
+        ShieldWidget.save(app, ready)
+        chainCache?.let { WatchList.save(app, ready, it) }
     }
 
-    private fun currentOwner(): String = when (val s = _state.value) {
-        is AccountState.Ready -> s.owner
-        is AccountState.NeedsSetup -> s.owner
-        AccountState.NoWallet -> throw EngineException("no_wallet", "Connect a wallet first")
-    }
+    private fun strings(list: JSONArray) = (0 until list.length()).map { list.getString(it) }
 
-    private fun account(owner: String) = JSONObject().put("chainId", chainId).put("owner", owner)
+    private fun parseIncoming(i: JSONObject) = Incoming(
+        symbol = i.getString("symbol"),
+        decimals = i.getInt("decimals"),
+        amount = BigInteger(i.getString("amount")),
+        state = when (i.getString("state")) {
+            "below_minimum" -> Incoming.State.BELOW_MINIMUM
+            "fee_high" -> Incoming.State.FEE_HIGH
+            "gas_unavailable" -> Incoming.State.GAS_UNAVAILABLE
+            else -> Incoming.State.SHIELDING
+        },
+        minimum = i.optString("minimum").ifEmpty { null }?.let(::BigInteger),
+        fee = i.optString("fee").ifEmpty { null }?.let(::BigInteger),
+        txHash = i.optString("txHash").ifEmpty { null },
+    )
 
     private fun parseBalance(b: JSONObject): Balance {
         fun deposits(name: String) = b.optJSONArray(name)?.let { a ->
             (0 until a.length()).map { i ->
                 val d = a.getJSONObject(i)
-                PendingDeposit(d.getString("commitment"), BigInteger(d.getString("value")), d.optString("label").ifEmpty { null })
+                Deposit(d.getString("commitment"), BigInteger(d.getString("value")), d.optString("label").ifEmpty { null })
             }
         }.orEmpty()
         return Balance(
@@ -200,29 +271,16 @@ class Shield(private val app: ShieldApp) {
             decimals = b.getInt("decimals"),
             spendable = BigInteger(b.getString("spendable")),
             pending = BigInteger(b.getString("pending")),
-            maxSingle = BigInteger(b.getString("maxSingle")),
             waiting = deposits("pendingDeposits"),
             declined = deposits("declined"),
         )
     }
 
     companion object {
-        /** Arbitrum: cheap gas, and USDT, USDC and ETH all earn Aave yield in the pool. */
-        const val DEFAULT_CHAIN = 42161
-
-        /** The local test chain's id (0xbow's e2e anvil runs as Sepolia). */
-        private const val LOCAL_CHAIN = 11155111
-
         fun format(units: BigInteger, decimals: Int, maxFraction: Int = 6): String {
             val value = BigDecimal(units, decimals)
             val shown = value.setScale(minOf(decimals, maxFraction), java.math.RoundingMode.DOWN).stripTrailingZeros()
             return if (shown.scale() < 0) shown.setScale(0).toPlainString() else shown.toPlainString()
         }
-
-        /** Parses what the user typed in the asset's whole units, or null if it isn't an amount. */
-        fun parse(text: String, decimals: Int): BigInteger? = runCatching {
-            val value = BigDecimal(text.trim().replace(',', '.'))
-            if (value.signum() <= 0 || value.scale() > decimals) null else value.movePointRight(decimals).toBigIntegerExact()
-        }.getOrNull()
     }
 }

@@ -21,6 +21,7 @@ export function localChain(deployment, host, relayerSigner) {
         aspUrl: at(3001),
         relayerUrl: at(3210),
         relayerSigner,
+        gasless: null,
         assets: [
             {
                 symbol: "ETH",
@@ -51,7 +52,6 @@ export function localChain(deployment, host, relayerSigner) {
                     underlyingSymbol: "yUSDC",
                 },
             },
-            { symbol: "mUSD", token: deployment.mockErc20Address, decimals: 18, yield: null },
         ],
     };
 }

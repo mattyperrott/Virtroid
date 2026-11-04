@@ -5,36 +5,40 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import io.virtroid.shield.widget.ShieldWidget
-import java.math.BigDecimal
 import java.math.BigInteger
 
 /**
- * Debug builds only: puts the widget in a state to look at, with no wallet
- * or chain, through the same ShieldWidget.save an account's refresh calls:
- *   adb shell am broadcast -n io.virtroid.shield/.DebugWidget [--es chain Arbitrum]
- *     [--es USDC 1250.5] [--es ETH 0.42] [--ei waiting 1] [--ei declined 1] [--ez show true]
- * A fresh install, before any of these, is the widget before set-up.
+ * Debug builds only: puts the widget in a state to look at, with no wallet or
+ * chain behind it. All extras are optional:
+ *   adb shell am broadcast -n io.virtroid.shield/.DebugWidget --es USDC 250000000 \
+ *     --es waiting 250000000 --es incoming fee_high --ei declined 1 --ez show true
  */
 class DebugWidget : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val waiting = intent.getIntExtra("waiting", 0)
-        val declined = intent.getIntExtra("declined", 0)
-        val deposit = PendingDeposit("0x0", BigInteger.ONE, null)
-        val balances = listOf("ETH" to 18, "USDC" to 6).mapIndexed { index, (symbol, decimals) ->
-            val amount = intent.getStringExtra(symbol)?.let { BigDecimal(it).movePointRight(decimals).toBigInteger() }
-            Balance(
-                symbol = symbol,
-                decimals = decimals,
-                spendable = amount ?: BigInteger.ZERO,
-                pending = BigInteger.ZERO,
-                maxSingle = BigInteger.ZERO,
-                // Every waiting or declined deposit on the first asset: the widget only counts them.
-                waiting = if (index == 0) List(waiting) { deposit } else emptyList(),
-                declined = if (index == 0) List(declined) { deposit } else emptyList(),
+        fun units(name: String) = intent.getStringExtra(name)?.let(::BigInteger) ?: BigInteger.ZERO
+        fun deposit(value: BigInteger) = if (value.signum() > 0) listOf(Deposit("0x0", value, null)) else emptyList()
+        val usdc = Balance(
+            "USDC",
+            6,
+            units("USDC"),
+            units("waiting"),
+            deposit(units("waiting")),
+            if (intent.getIntExtra("declined", 0) > 0) deposit(BigInteger.valueOf(250_000_000)) else emptyList(),
+        )
+        val incoming = intent.getStringExtra("incoming")?.let { state ->
+            listOf(
+                Incoming(
+                    "USDC",
+                    6,
+                    BigInteger.valueOf(250_000_000),
+                    Incoming.State.valueOf(state.uppercase()),
+                    BigInteger.valueOf(11_500_000),
+                    BigInteger.valueOf(30_000_000),
+                    null,
+                ),
             )
-        }
-        val state = AccountState.Ready("0x0", 0, balances, System.currentTimeMillis())
+        }.orEmpty()
         ShieldWidget.setShowBalances(context, intent.getBooleanExtra("show", false))
-        ShieldWidget.save(context, state, intent.getStringExtra("chain") ?: "Arbitrum")
+        ShieldWidget.save(context, AccountState.Ready("0x0", "0x12aB34cD56eF78aB90cD12eF34aB56cD78eF9f3C", emptyList(), listOf(usdc), incoming))
     }
 }

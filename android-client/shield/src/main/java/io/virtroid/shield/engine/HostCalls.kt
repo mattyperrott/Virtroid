@@ -18,21 +18,15 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-/** The user's wallet, as the engine reaches it: WalletConnect, in the app. */
-fun interface WalletRequests {
-    suspend fun request(chainId: Int, method: String, params: JSONArray): Any?
-}
-
 /**
- * What the engine asks of the app (engine/src: net.ts, storage.ts,
- * wallet.ts, main.ts's cache). Requests go out with OkHttp over the cloud
+ * What the engine asks of the app (engine/src: net.ts, storage.ts, main.ts's
+ * cache). Requests go out with OkHttp over the cloud
  * phone's own network, so Tor carries them when it's on, and only to hosts
  * the engine's chains name; nothing identifying is added.
  */
 class HostCalls(
     context: Context,
     private val store: SecureStore,
-    private val wallet: WalletRequests,
     /** Hosts a debug build's local test reaches over plain HTTP; empty otherwise. */
     private val cleartextHosts: Set<String> = emptySet(),
 ) {
@@ -61,7 +55,6 @@ class HostCalls(
         "store.clear" -> withContext(Dispatchers.IO) { store.clear(p.getString("prefix")); null }
         "cache.get" -> withContext(Dispatchers.IO) { cacheFile(p.getString("key")).takeIf { it.isFile }?.readText() ?: JSONObject.NULL }
         "cache.set" -> withContext(Dispatchers.IO) { cacheFile(p.getString("key")).writeText(p.getString("value")); null }
-        "wallet" -> wallet.request(p.getInt("chainId"), p.getString("method"), p.optJSONArray("params") ?: JSONArray())
         else -> throw EngineException("no_method", "The app has no $method")
     }
 

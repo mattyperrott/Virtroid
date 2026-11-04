@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-package io.virtroid.shield.ui.card
+package io.virtroid.shield.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
@@ -112,11 +110,9 @@ fun QuietButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier
     ) { Text(text, style = MaterialTheme.typography.titleMedium) }
 }
 
-/** The few icons the card uses, from Material's 24-unit paths. */
-object CardIcons {
-    val Forward = icon("M12,4l-1.41,1.41L16.17,11H4v2h12.17l-5.58,5.59L12,20l8,-8z")
+/** The few icons the app uses, from Material's 24-unit paths. */
+object Icons {
     val Back = icon("M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z")
-    val Expand = icon("M16.59,8.59L12,13.17 7.41,8.59 6,10l6,6 6,-6z")
     val Check = icon("M9,16.17L4.83,12l-1.42,1.41L9,19 21,7l-1.41,-1.41z")
     val Paste = icon(
         "M19,2h-4.18C14.4,0.84 13.3,0 12,0c-1.3,0 -2.4,0.84 -2.82,2L5,2c-1.1,0 -2,0.9 -2,2v16c0,1.1 0.9,2 2,2h14" +
@@ -128,6 +124,10 @@ object CardIcons {
             "c1.1,0 2,-0.9 2,-2L21,7c0,-1.1 -0.9,-2 -2,-2zM19,21L8,21L8,7h11v14z",
     )
     val Warning = icon("M1,21h22L12,2 1,21zM13,18h-2v-2h2v2zM13,14h-2v-4h2v4z")
+    val More = icon(
+        "M12,8c1.1,0 2,-0.9 2,-2s-0.9,-2 -2,-2 -2,0.9 -2,2 0.9,2 2,2zM12,10c-1.1,0 -2,0.9 -2,2s0.9,2 2,2 2,-0.9 2,-2 -0.9,-2 -2,-2z" +
+            "M12,16c-1.1,0 -2,0.9 -2,2s0.9,2 2,2 2,-0.9 2,-2 -0.9,-2 -2,-2z",
+    )
 
     private fun icon(path: String): ImageVector =
         ImageVector.Builder(defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
@@ -135,20 +135,9 @@ object CardIcons {
             .build()
 }
 
-/**
- * A token's mark with its chain's badge: each in its own recognisable colour
- * and glyph, drawn here rather than copied from the projects' artwork.
- */
+/** A token's mark, in its own recognisable colour and glyph, drawn here rather than copied from the projects' artwork. */
 @Composable
-fun TokenMark(symbol: String, chainId: Int, size: Dp = 28.dp) {
-    Box(Modifier.size(size + size / 6)) {
-        Coin(symbol, size, Modifier.align(Alignment.TopStart))
-        Box(
-            Modifier.align(Alignment.BottomEnd).offset(x = 1.dp, y = 1.dp).size(size * 0.5f)
-                .clip(CircleShape).background(Palette.Panel).border(1.5.dp, Palette.Panel, CircleShape),
-        ) { ChainBadge(chainId, size * 0.5f) }
-    }
-}
+fun TokenMark(symbol: String, size: Dp = 28.dp, modifier: Modifier = Modifier) = Coin(symbol, size, modifier)
 
 @Composable
 private fun Coin(symbol: String, size: Dp, modifier: Modifier = Modifier) {
@@ -160,19 +149,6 @@ private fun Coin(symbol: String, size: Dp, modifier: Modifier = Modifier) {
             size = size,
             modifier = modifier,
         )
-    }
-}
-
-@Composable
-fun ChainBadge(chainId: Int, size: Dp) {
-    when (chainId) {
-        42161 -> Glyph("A", Color(0xFF213147), size, foreground = Color(0xFF28A0F0))
-        8453 -> Canvas(Modifier.size(size)) {
-            drawCircle(Color(0xFF0052FF))
-            drawRect(Color.White, topLeft = Offset(0f, this.size.height * 0.44f), size = androidx.compose.ui.geometry.Size(this.size.width * 0.62f, this.size.height * 0.12f))
-        }
-        10 -> Glyph("OP", Color(0xFFFF0420), size)
-        else -> Diamond(Color(0xFF627EEA), size)
     }
 }
 

@@ -27,23 +27,17 @@ val releaseSigningValues = linkedMapOf(
 )
 val releaseSigningConfigured = releaseSigningValues.values.all { !it.isNullOrBlank() }
 
-// The WalletConnect project id the app's relay connection names. Not a
-// secret (every WalletConnect app ships its own), but it's the user's
-// account at Reown, so it comes from local.properties or the environment.
-val walletConnectProjectId = signingValue("SHIELD_WALLETCONNECT_PROJECT_ID") ?: ""
-
 android {
     namespace = "io.virtroid.shield"
     compileSdk = 36
 
     defaultConfig {
         applicationId = "io.virtroid.shield"
-        // The cloud phone runs Android 16; 31 keeps the emulator tests easy.
-        minSdk = 31
+        // The cloud phone runs Android 16; the watcher's special-use foreground service needs 34.
+        minSdk = 34
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.2.1"
-        buildConfigField("String", "WALLETCONNECT_PROJECT_ID", "\"$walletConnectProjectId\"")
+        versionCode = 5
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -108,9 +102,6 @@ val verifyReleaseSigningConfiguration = tasks.register("verifyReleaseSigningConf
         if (missing.isNotEmpty()) {
             throw GradleException("Shield release requires signing configuration: ${missing.joinToString()}.")
         }
-        if (walletConnectProjectId.isBlank()) {
-            throw GradleException("Shield release requires SHIELD_WALLETCONNECT_PROJECT_ID.")
-        }
     }
 }
 tasks.matching { it.name == "assembleRelease" }.configureEach { dependsOn(verifyReleaseSigningConfiguration) }
@@ -121,7 +112,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("androidx.webkit:webkit:1.17.1")
     implementation("com.google.android.material:material:1.13.0")
-    // The transaction card (ui/card): Compose, for its animated steps. Compose 1.11 and
+    // The screens (ui): Compose. Compose 1.11 and
     // lifecycle 2.9: their next versions need compileSdk 37, which AGP 9.1 doesn't take.
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.material3:material3")
@@ -131,9 +122,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // WalletConnect's crypto: X25519, ChaCha20-Poly1305, HKDF, Ed25519.
+    // Keccak, for an address's EIP-55 checksum.
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
-    // The pairing QR code a wallet on another device scans.
+    // The deposit address's QR code.
     implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is only a stub in JVM unit tests.

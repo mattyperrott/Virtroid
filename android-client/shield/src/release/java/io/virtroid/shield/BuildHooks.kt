@@ -3,7 +3,7 @@ package io.virtroid.shield
 
 import android.content.Context
 
-/** Release builds have no test mode: the engine's own chains and WalletConnect, nothing else. */
+/** Release builds have no test mode: the engine's own chain, nothing else. */
 object BuildHooks {
     fun localTest(context: Context): LocalTest? = null
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Virtroid's palette (design-brief.md): the same light or dark, as ui/card/Theme.kt's. -->
+<!-- Virtroid's palette (design-brief.md): the same light or dark, as ui/Theme.kt's. -->
 <resources>
     <color name="outer">#131313</color>
     <color name="panel">#1B1B1B</color>

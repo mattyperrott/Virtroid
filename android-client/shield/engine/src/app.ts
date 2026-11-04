@@ -13,11 +13,6 @@ import type { ChainConfig } from "./chains.js";
 import { Engine } from "./engine.js";
 import { fromBase64, installFetch, toBase64 } from "./net.js";
 
-interface AccountParams {
-    chainId: number;
-    owner: Address;
-}
-
 export function start(port: HostPort, chains: ChainConfig[]): void {
     const bridge = new Bridge(port);
     installFetch(bridge, location.origin);
@@ -55,44 +50,40 @@ export function start(port: HostPort, chains: ChainConfig[]): void {
     const engine = new Engine(bridge, chains, `${location.origin}/assets/circuits`, cacheStore, hostLogger());
 
     bridge.serve(async (method, raw) => {
-        const p = (raw ?? {}) as Record<string, unknown> & AccountParams;
+        const p = (raw ?? {}) as Record<string, unknown>;
         switch (method) {
-            case "chains":
-                return engine.listChains();
-            case "derivation":
-                return engine.derivationRequest(p.owner);
-            case "open":
-                return engine.open(p.chainId, p.owner, p.signatures as Hex[] | undefined);
-            case "register":
-                return engine.register(p.chainId, p.owner);
+            case "info":
+                return engine.info();
+            case "status":
+                return engine.status();
+            case "create":
+                return engine.create();
+            case "restore":
+                return engine.restore(String(p.words));
+            case "words":
+                return engine.words();
+            case "check":
+                return engine.check((p.force as string[] | undefined) ?? []);
             case "sync":
-                return engine.sync(p.chainId, p.owner);
-            case "walletBalance":
-                return engine.walletBalance(p.chainId, p.owner, String(p.symbol));
-            case "shieldPlan":
-                return engine.shieldPlan(p.chainId, p.owner, String(p.symbol), String(p.amount));
-            case "canReceive":
-                return engine.canReceive(p.chainId, p.recipient as Address);
-            case "shield":
-                return engine.shield(p.chainId, p.owner, String(p.symbol), String(p.amount));
-            case "quoteWithdraw":
-                return engine.quoteWithdraw(p.chainId, p.owner, String(p.symbol), String(p.amount), p.recipient as Address);
-            case "quoteSend":
-                return engine.quoteSend(p.chainId, p.owner, String(p.symbol), String(p.amount), p.recipient as Address);
-            case "confirm":
-                return engine.confirm(typeof p.id === "number" ? p.id : undefined);
+                return engine.sync();
+            case "quoteOut":
+                return engine.quoteOut(String(p.symbol), String(p.amount), p.recipient as Address);
+            case "sendOut":
+                return engine.sendOut(Number(p.id));
+            case "exitPlan":
+                return engine.exitPlan();
             case "exit":
-                return engine.exit(p.chainId, p.owner, p.commitment as Hex);
+                return engine.exit(p.commitment as Hex, p.recipient as Address, String(p.symbol));
             default:
                 throw new EngineError("unknown_method", `No engine method ${method}`);
         }
     });
 
-    // The hosts the app lets the engine reach: the chains' RPCs, 0xbow's
-    // relayer and ASP, and the IPFS gateway rarer circuits come from.
+    // The hosts the app lets the engine reach: the chain's RPCs, 0xbow's relayer
+    // and ASP, the gas service, and the IPFS gateway rarer circuits come from.
     const hosts = new Set<string>();
     for (const chain of chains) {
-        for (const url of [...chain.rpcUrls, chain.relayerUrl, chain.aspUrl]) hosts.add(new URL(url).host);
+        for (const url of [...chain.rpcUrls, chain.relayerUrl, chain.aspUrl, ...(chain.gasless ? [chain.gasless.url] : [])]) hosts.add(new URL(url).host);
     }
     for (const url of DEFAULT_IPFS_GATEWAY_URLS) hosts.add(new URL(url).host);
     bridge.emit("ready", { chains: chains.length, hosts: [...hosts] });

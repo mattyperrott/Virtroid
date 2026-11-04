@@ -2,10 +2,11 @@
 //
 // Runs the engine end to end in a real Chromium against 0xbow's local e2e
 // stack (anvil with their contracts, their relayer, their mock ASP), with
-// this server playing the app's part: the network, the encrypted store (a
-// plain map here), and the user's wallet (a throwaway key on the local
-// chain). Open http://127.0.0.1:8099/?run=1 and the page runs scenario.js,
-// posting each step here; the steps print and land in harness-report.json.
+// this server playing the app's part: the network and the encrypted store (a
+// plain map here), and the user's other wallet, which sends to the deposit
+// address. Open http://127.0.0.1:8099/?run=1 (HARNESS_PORT to move it) and the
+// page runs scenario.js, posting each step here; the steps print and land in
+// harness-report.json.
 //
 //   node test/harness/server.mjs <0xbow monorepo>/packages/evm-sdk/e2e/deployments/local-8545.json
 //
@@ -30,19 +31,40 @@ const viem = await import(pathToFileURL(join(viemDir, "index.js")));
 const { privateKeyToAccount, generatePrivateKey } = await import(pathToFileURL(join(viemDir, "accounts/index.js")));
 const { createPublicClient, createWalletClient, http, parseAbi, defineChain } = viem;
 
-const deployment = JSON.parse(await readFile(process.argv[2], "utf8"));
-const RPC = "http://127.0.0.1:8545";
+// HARNESS_FORK=<rpc url>: the real contracts on a fork of mainnet at that url,
+// with test/fork's stand-in gas service, and test/fork/scenario.js.
+const FORK = process.env.HARNESS_FORK;
+const PORT = Number(process.env.HARNESS_PORT ?? 8099);
+const deployment = FORK ? null : JSON.parse(await readFile(process.argv[2], "utf8"));
+const RPC = FORK ?? "http://127.0.0.1:8545";
 // 0xbow's e2e keys (their packages/evm-sdk/e2e network.ts and relayer.ts): local chain only.
 const DEPLOYER_KEY = "0x77d28084a5fdd3067a2f59f001775187199e1f1da27ffb5765545135cb21b7b3";
 const RELAYER_KEY = "0xb9dacf9a665e631e115b28d780600d4238ff202e6c37c661d5c20c86005ec0f8";
 
-const chain = defineChain({ id: 11155111, name: "local", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [RPC] } } });
+const chain = defineChain({ id: FORK ? 1 : 11155111, name: "local", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [RPC] } } });
 const publicClient = createPublicClient({ chain, transport: http(RPC), pollingInterval: 200 });
-// HARNESS_KEY keeps the test wallet across restarts (an app set up against it stays usable).
+// HARNESS_KEY keeps the paying wallet across restarts.
 const user = privateKeyToAccount(process.env.HARNESS_KEY ?? generatePrivateKey());
 const wallet = createWalletClient({ account: user, chain, transport: http(RPC) });
 
-const localChainConfig = localChain(deployment, "127.0.0.1", privateKeyToAccount(RELAYER_KEY).address);
+const localChainConfig = FORK ? await forkChain() : localChain(deployment, "127.0.0.1", privateKeyToAccount(RELAYER_KEY).address);
+
+async function forkChain() {
+    const out = join(here, ".out/chains.mjs");
+    await build({ entryPoints: [join(engineDir, "src/chains.ts")], bundle: true, format: "esm", outfile: out, logLevel: "error" });
+    const { CHAINS } = await import(pathToFileURL(out));
+    const real = CHAINS[0];
+    const head = await publicClient.getBlockNumber();
+    return {
+        ...real,
+        rpcUrls: [RPC],
+        // Nothing of this wallet's is older than the fork.
+        fromBlock: `0x${(head - 2n).toString(16)}`,
+        logsChunk: 5000,
+        aspUrl: `http://localhost:${PORT}/asp`,
+        gasless: { ...real.gasless, url: `http://localhost:${PORT}/gas`, paymaster: process.env.HARNESS_PAYMASTER },
+    };
+}
 
 const store = new Map();
 const cache = new Map();
@@ -76,31 +98,24 @@ const host = {
     },
     "cache.get": ({ key }) => cache.get(key) ?? null,
     "cache.set": ({ key, value }) => void cache.set(key, value),
-    async wallet({ method, params }) {
-        if (method === "eth_signTypedData_v4") {
-            const typed = typeof params[1] === "string" ? JSON.parse(params[1]) : params[1];
-            const { EIP712Domain: _domain, ...types } = typed.types;
-            return user.signTypedData({ domain: typed.domain, types, primaryType: typed.primaryType, message: typed.message });
-        }
-        if (method === "eth_sendTransaction") {
-            const tx = params[0];
-            return wallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value ? BigInt(tx.value) : 0n, ...(tx.gas ? { gas: BigInt(tx.gas) } : {}) });
-        }
-        if (method === "personal_sign") return user.signMessage({ message: { raw: params[0] } });
-        if (method === "wallet_switchEthereumChain") return null;
-        throw new Error(`The test wallet doesn't do ${method}`);
-    },
 };
 
 // Test-only controls the scenario uses: funding, the ASP's approvals, chain reads.
 const control = {
-    async fund() {
+    /** The user's other wallet sends ETH and test USDC to `address`, as a user would. */
+    async send({ address, eth, usdc }) {
         await rpc("anvil_setBalance", [user.address, "0x56BC75E2D63100000"]); // 100 ETH
-        const mint = await wallet.writeContract({ address: deployment.yieldUnderlyingAddress, abi: erc20, functionName: "mint", args: [user.address, 1_000_000_000n] });
-        await publicClient.waitForTransactionReceipt({ hash: mint });
-        const mintPlain = await wallet.writeContract({ address: deployment.mockErc20Address, abi: erc20, functionName: "mint", args: [user.address, 10n ** 21n] });
-        await publicClient.waitForTransactionReceipt({ hash: mintPlain });
-        return { owner: user.address };
+        if (eth) await publicClient.waitForTransactionReceipt({ hash: await wallet.sendTransaction({ to: address, value: BigInt(eth) }) });
+        if (usdc) {
+            const mint = await wallet.writeContract({ address: deployment.yieldUnderlyingAddress, abi: erc20, functionName: "mint", args: [address, BigInt(usdc)] });
+            await publicClient.waitForTransactionReceipt({ hash: mint });
+        }
+        return null;
+    },
+    /** A wipe of the app's data, as on a new phone. */
+    wipe() {
+        store.clear();
+        return null;
     },
     async approve({ label }) {
         const response = await fetch("http://127.0.0.1:3001/admin/approve-label", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) });
@@ -126,6 +141,81 @@ const control = {
     },
 };
 
+if (FORK) await forkControls();
+
+async function forkControls() {
+    const { gasService } = await import(pathToFileURL(join(here, "../fork/service.mjs")));
+    const assets = localChainConfig.assets;
+    const tokens = Object.fromEntries(assets.map((a) => [a.symbol, a.token]));
+    // Where each token keeps balances (mapping slot), for the fork's cheat code.
+    const SLOTS = { USDT: 2n, USDC: 9n };
+    const bundler = createWalletClient({ account: privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"), chain, transport: http(RPC) });
+    const rates = {
+        [tokens.USDT.toLowerCase()]: 2_445_000_000n,
+        [tokens.USDC.toLowerCase()]: 2_440_000_000n,
+    };
+    const service = gasService({ publicClient, bundler, paymaster: process.env.HARNESS_PAYMASTER, rates, log: (line) => console.log(`     gas service: ${line}`) });
+    host.gas = async ({ method, params }) => {
+        const fn = service[method];
+        if (!fn) throw new Error(`no ${method}`);
+        return fn(params);
+    };
+    const realHttp = host.http;
+    host.http = async (request) => {
+        if (request.url.endsWith("/gas")) {
+            const { id, method, params } = JSON.parse(Buffer.from(request.body, "base64").toString("utf8"));
+            let answer;
+            try {
+                answer = { jsonrpc: "2.0", id, result: await host.gas({ method, params }) };
+            } catch (error) {
+                console.log(`     gas service ${method} failed: ${error.message}`);
+                answer = { jsonrpc: "2.0", id, error: { code: -32500, message: error.message.slice(0, 300) } };
+            }
+            return { status: 200, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(answer)).toString("base64") };
+        }
+        // The real ASP, but for its cache of the chain's events, which can't hold the fork's.
+        if (request.url.includes("/asp/")) {
+            if (request.url.includes("/note-events")) return { status: 503, headers: {}, body: "" };
+            return realHttp({ ...request, url: request.url.replace(/^.*\/asp/, "https://api-v2.0xbow.io") });
+        }
+        return realHttp(request);
+    };
+    const { keccak256, encodeAbiParameters, toHex } = viem;
+    Object.assign(control, {
+        async giveToken({ symbol, address, amount }) {
+            const slot = keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [address, SLOTS[symbol]]));
+            const have = await control.balance({ address, token: tokens[symbol] });
+            await rpc("anvil_setStorageAt", [tokens[symbol], slot, toHex(BigInt(have) + BigInt(amount), { size: 32 })]);
+            return null;
+        },
+        async giveEth({ address, wei }) {
+            await rpc("anvil_setBalance", [address, toHex(BigInt(wei))]);
+            return null;
+        },
+        async gasPrice({ gwei }) {
+            await rpc("anvil_setNextBlockBaseFeePerGas", [toHex(BigInt(Math.round(gwei * 1e9)))]);
+            await rpc("anvil_mine", ["0x1"]);
+            return null;
+        },
+        async afterSweep({ symbol, address }) {
+            const token = tokens[symbol];
+            const left = token.toLowerCase().startsWith("0xeeee") ? await control.balance({ address }) : await control.balance({ address, token });
+            const paid = token.toLowerCase().startsWith("0xeeee") ? "0" : await control.balance({ address: process.env.HARNESS_PAYMASTER, token });
+            return { left, paymasterHolds: paid };
+        },
+        async registered({ owner }) {
+            const key = await publicClient.readContract({
+                address: localChainConfig.keystore,
+                abi: parseAbi(["function nullifyingKeys(address) view returns (uint256)"]),
+                functionName: "nullifyingKeys",
+                args: [owner],
+            });
+            if (key === 0n) throw new Error("not registered");
+            return { nullifyingKey: toHex(key) };
+        },
+    });
+}
+
 const bundle = join(here, ".out/harness.js");
 await build(engineOptions(join(here, "entry.ts"), bundle));
 
@@ -136,7 +226,7 @@ const json = (res, status, value) => {
 };
 
 createServer(async (req, res) => {
-    const url = new URL(req.url, "http://127.0.0.1:8099");
+    const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
     try {
         if (req.method === "POST") {
             const chunks = [];
@@ -163,10 +253,10 @@ createServer(async (req, res) => {
         const file =
             url.pathname === "/" ? join(here, "page.html")
             : url.pathname === "/harness.js" ? bundle
-            : url.pathname === "/scenario.js" ? join(here, "scenario.js")
+            : url.pathname === "/scenario.js" ? join(here, FORK ? "../fork/scenario.js" : "scenario.js")
             : url.pathname.startsWith("/assets/circuits/") ? normalize(join(assets, url.pathname.slice("/assets/".length)))
             : null;
-        if (!file || (file.startsWith(assets) === false && !file.startsWith(here))) {
+        if (!file || (file.startsWith(assets) === false && !normalize(file).startsWith(normalize(join(here, ".."))))) {
             res.writeHead(404).end();
             return;
         }
@@ -176,4 +266,4 @@ createServer(async (req, res) => {
     } catch (error) {
         res.writeHead(500).end(String(error));
     }
-}).listen(8099, "127.0.0.1", () => console.log(`harness: http://127.0.0.1:8099/?run=1 (test wallet ${user.address})`));
+}).listen(PORT, "127.0.0.1", () => console.log(`harness: http://127.0.0.1:${PORT}/?run=1`));

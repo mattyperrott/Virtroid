@@ -1,20 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The full width of the home screen and two rows: Launcher3 takes the 5x2 target on a
+<!-- The full width of the home screen and one row: Launcher3 takes the 5x1 target on a
      five-column grid (a runtime's), and on a narrower one sizes the widget from minWidth,
-     capped at the grid's width, so 400dp fills any phone's row. minResizeWidth/Height keep it
-     shrinkable to one row (left unset they would default to minWidth/Height, and the widget
-     would never fit); ShieldWidget draws a compact layout there. -->
+     capped at the grid's width, so 400dp fills any phone's row. It only honours the target if
+     the minimum height fits one cell of every profile it knows, landscape's short ones
+     included, so the heights are well below what the layout wants (a real row is about 100dp).
+     It's a row however tall it's dragged, so only its width resizes. minResizeWidth stays below
+     minWidth so it can be narrowed (left unset it would default to minWidth). -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:description="@string/wallet_connect_description"
+    android:description="@string/widget_description"
     android:initialLayout="@layout/widget_shield"
     android:minWidth="400dp"
-    android:minHeight="110dp"
+    android:minHeight="40dp"
     android:minResizeWidth="250dp"
-    android:minResizeHeight="90dp"
+    android:minResizeHeight="40dp"
     android:previewLayout="@layout/widget_shield"
-    android:resizeMode="horizontal|vertical"
+    android:resizeMode="horizontal"
     android:targetCellWidth="5"
-    android:targetCellHeight="2"
+    android:targetCellHeight="1"
     android:updatePeriodMillis="0"
     android:widgetCategory="home_screen" />

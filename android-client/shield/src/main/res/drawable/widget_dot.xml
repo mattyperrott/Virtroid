@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The status line's dot; the widget tints it (ShieldWidget). -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="#FFFFFF" />
-    <size android:width="8dp" android:height="8dp" />
-</shape>

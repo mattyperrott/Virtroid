@@ -17,10 +17,8 @@ import java.io.File
 
 /**
  * Debug builds only: has the local test stack's mock screening approve every
- * deposit the account is waiting on, or with `--es verdict decline` approve
- * and then revoke them (the SDK only declines a deposit it had approved),
- * for trying the card's flows by hand. Shield must be in the foreground, or
- * Android cuts its network:
+ * deposit the wallet is waiting on, or with `--es verdict decline` approve and
+ * then revoke them (the SDK only declines a deposit it had approved):
  *   adb shell am broadcast -n io.virtroid.shield/.DebugScreening [--es verdict decline]
  */
 class DebugScreening : BroadcastReceiver() {
@@ -31,7 +29,8 @@ class DebugScreening : BroadcastReceiver() {
         app.scope.launch {
             try {
                 val harness = File(context.filesDir, "harness-url").readText().trim()
-                val ready = app.shield.refresh() as AccountState.Ready
+                app.shield.refresh()
+                val ready = app.shield.state.value as AccountState.Ready
                 val labels = ready.balances.flatMap { it.waiting }.mapNotNull { it.label }
                 for (label in labels) control(harness, "approve", label)
                 app.shield.refresh()

@@ -1,139 +1,75 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The widget at two rows or more: the chain, the private balance (hidden unless the user
-     shows it), what screening is doing with deposits, and the card's three ways in.
-     @android:id/background lets the launcher grow the card out of the widget when it opens. -->
+<!-- One row, the same shape as Fauxx's beside it on the home screen: the mark, what's going on
+     in two lines, and the one thing to do next. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     android:id="@android:id/background"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_background"
-    android:orientation="vertical"
-    android:padding="16dp">
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="16dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="14dp"
+    android:paddingBottom="12dp">
+
+    <ImageView
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/widget_ic_mark" />
 
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="24dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:importantForAccessibility="no"
-                android:src="@drawable/widget_ic_mark" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:fontFamily="sans-serif-medium"
-                android:maxLines="1"
-                android:text="@string/app_name"
-                android:textColor="@color/text"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/widget_chain"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:background="@drawable/widget_chip"
-                android:maxLines="1"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="2dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:visibility="gone" />
-        </LinearLayout>
-
-        <!-- Its own margin, so the balance keeps its place under the header when there is no
-             label over it (before set-up). -->
-        <LinearLayout
-            android:layout_width="match_parent"
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:orientation="vertical">
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:text="@string/widget_not_set_up"
+            android:textColor="@color/text"
+            android:textSize="16sp" />
 
-            <TextView
-                android:id="@+id/widget_label"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:maxLines="1"
-                android:text="@string/widget_private_balance"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
-
-            <!-- The icon comes and goes, and the dot takes the status's colour, on their own. -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                tools:ignore="UseCompoundDrawables">
-
-                <ImageView
-                    android:id="@+id/widget_hidden_icon"
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_marginEnd="10dp"
-                    android:importantForAccessibility="no"
-                    android:src="@drawable/widget_ic_hidden" />
-
-                <!-- Several balances shrink to fit rather than wrap or cut off. -->
-                <TextView
-                    android:id="@+id/widget_balance"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:autoSizeMaxTextSize="28sp"
-                    android:autoSizeMinTextSize="14sp"
-                    android:autoSizeTextType="uniform"
-                    android:gravity="center_vertical"
-                    android:maxLines="1"
-                    android:text="@string/widget_hidden"
-                    android:textColor="@color/text"
-                    android:textSize="28sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/widget_status_row"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:visibility="gone"
-                tools:ignore="UseCompoundDrawables">
-
-                <ImageView
-                    android:id="@+id/widget_status_dot"
-                    android:layout_width="8dp"
-                    android:layout_height="8dp"
-                    android:layout_marginEnd="8dp"
-                    android:importantForAccessibility="no"
-                    android:src="@drawable/widget_dot" />
-
-                <TextView
-                    android:id="@+id/widget_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp" />
-            </LinearLayout>
-        </LinearLayout>
+        <TextView
+            android:id="@+id/widget_detail"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/widget_set_up_detail"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
     </LinearLayout>
 
-    <include layout="@layout/widget_shield_buttons" />
+    <ProgressBar
+        android:id="@+id/widget_progress"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_marginStart="10dp"
+        android:indeterminateTint="@color/lime"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_action"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_marginStart="10dp"
+        android:background="@drawable/widget_button_primary"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:maxLines="1"
+        android:paddingHorizontal="16dp"
+        android:text="@string/widget_set_up_action"
+        android:textColor="@color/on_lime"
+        android:textSize="14sp" />
 </LinearLayout>

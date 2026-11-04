@@ -45,7 +45,7 @@ class EngineHost(context: Context, private val calls: HostCalls, private val pag
     private var reply: JavaScriptReplyProxy? = null
     private val _events = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 64)
 
-    /** Progress the screens show: proving, a wallet prompt, a transaction confirming. */
+    /** Progress the screens show: proving, sending, a transaction confirming. */
     val events: SharedFlow<EngineEvent> = _events
 
     private val assets = WebViewAssetLoader.Builder()

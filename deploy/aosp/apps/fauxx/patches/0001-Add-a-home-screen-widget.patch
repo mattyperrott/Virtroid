@@ -1,11 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattyperrott <mattyperrott@outlook.com>
-Date: Tue, 3 Nov 2026 06:00:00 +0000
+Date: Wed, 4 Nov 2026 06:00:00 +0000
 Subject: [PATCH] Add a home-screen widget
 
 For the copy of Fauxx built into Virtroid's cloud phones (VIRTROID.md).
-The widget fills the home screen's width and two rows (on Android 12+,
-resized to one row, a compact layout): whether the engine is generating
+The widget fills the home screen's width and one row (on Android 12+,
+dragged to two rows, a fuller layout): whether the engine is generating
 decoy activity or why it is paused, a switch that starts or stops it as
 the notification's Start and the dashboard's switch do (before the
 consent dialog has been accepted it opens the app instead), every decoy
@@ -23,7 +23,7 @@ Settings' "Clear All Data" forgets that count. MainActivity takes the
 widget's "?" and the navigation graph opens the FAQ for it.
 
 The About screen says the build is modified and links to its source,
-and the version name is 0.9.3-virtroid.2.
+and the version name is 0.9.3-virtroid.3.
 ---
  VIRTROID.md                                   |  37 +++
  app/src/main/AndroidManifest.xml              |  17 +
@@ -56,10 +56,10 @@ and the version name is 0.9.3-virtroid.2.
  app/src/main/res/values/strings.xml           |  27 ++
  app/src/main/res/values/widget.xml            |  20 ++
  app/src/main/res/values/widget_styles.xml     |  25 ++
- app/src/main/res/xml/fauxx_widget_info.xml    |  24 ++
+ app/src/main/res/xml/fauxx_widget_info.xml    |  27 ++
  .../java/com/fauxx/widget/WidgetStatusTest.kt |  76 +++++
  app/version.properties                        |   2 +-
- 34 files changed, 1222 insertions(+), 4 deletions(-)
+ 34 files changed, 1225 insertions(+), 4 deletions(-)
  create mode 100644 VIRTROID.md
  create mode 100644 app/src/main/java/com/fauxx/widget/FauxxWidget.kt
  create mode 100644 app/src/main/java/com/fauxx/widget/WidgetActionReceiver.kt
@@ -85,7 +85,7 @@ and the version name is 0.9.3-virtroid.2.
 
 diff --git a/VIRTROID.md b/VIRTROID.md
 new file mode 100644
-index 0000000..230bec4
+index 0000000..f0cf327
 --- /dev/null
 +++ b/VIRTROID.md
 @@ -0,0 +1,37 @@
@@ -93,7 +93,7 @@ index 0000000..230bec4
 +
 +This is Fauxx 0.9.3 (<https://github.com/digital-grease/fauxx>, tag `v0.9.3`,
 +commit `1598ac1e5813d06079da4f65ab6392970c4e3f43`) as modified by Virtroid on
-+2 and 3 November 2026, for the copy of Fauxx built into Virtroid's cloud phones.
++2 to 4 November 2026, for the copy of Fauxx built into Virtroid's cloud phones.
 +Like Fauxx, it is licensed under the GNU Affero General Public License,
 +version 3 only (`LICENSE`).
 +
@@ -101,11 +101,11 @@ index 0000000..230bec4
 +
 +- A home-screen widget (`app/src/main/java/com/fauxx/widget`, its layout,
 +  provider info, drawables and strings), the full width of the home screen
-+  and two rows tall (on Android 12+ a compact layout at one row): whether the engine is generating decoy activity or why it is paused, a
++  and one row tall (on Android 12+ dragged to two rows it adds the tiles and a "?" that opens the FAQ): whether the engine is generating decoy activity or why it is paused, a
 +  switch that starts or stops it as the notification's Start and the
 +  dashboard's switch do (before the consent dialog has been accepted it
 +  opens the app instead), every decoy action Fauxx has made, and its hourly
-+  rate over the last day, as the dashboard counts it. A "?" opens the FAQ.
++  rate over the last day, as the dashboard counts it.
 +  It shows no persona, categories or log.
 +- `PhantomForegroundService` publishes the state it shows in its
 +  notification to the widget (`updateNotification` is synchronized, so the
@@ -120,7 +120,7 @@ index 0000000..230bec4
 +  colours, and before that a drawn one.
 +- The About screen says that this build is modified and links to its
 +  source.
-+- The version name is `0.9.3-virtroid.2`; the version code is upstream's.
++- The version name is `0.9.3-virtroid.3`; the version code is upstream's.
 +
 +Virtroid builds it with `./gradlew assembleFullRelease` (JDK 21, Android SDK
 +platform 37) and signs it with Virtroid's release key. The build script, this
@@ -1555,31 +1555,34 @@ index 0000000..e36a711
 +</resources>
 diff --git a/app/src/main/res/xml/fauxx_widget_info.xml b/app/src/main/res/xml/fauxx_widget_info.xml
 new file mode 100644
-index 0000000..fda6719
+index 0000000..8a7b10a
 --- /dev/null
 +++ b/app/src/main/res/xml/fauxx_widget_info.xml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,27 @@
 +<?xml version="1.0" encoding="utf-8"?>
-+<!-- The full width of the home screen, two rows tall. Launcher3 takes the 5x2 target on a
++<!-- The full width of the home screen, one row tall. Launcher3 takes the 5x1 target on a
 +     five-column grid, and on a narrower one sizes the widget from minWidth, capped at the grid's
-+     width, so 400dp fills any phone's row. minResizeWidth/Height keep it shrinkable to one row
-+     (left unset they would default to minWidth/Height, and the widget would never fit), where
-+     Android 12+ draws a compact layout (FauxxWidget). The engine publishes
++     width, so 400dp fills any phone's row. It only honours the target if the minimum height
++     fits one cell of every profile it knows, landscape's short ones included, so the heights
++     here are well below what the layout wants (a real row is about 100dp). It can be dragged
++     taller, where Android 12+ draws the full layout with the tiles (FauxxWidget). minResizeWidth
++     stays below minWidth so it can also be narrowed (left unset it would default to minWidth).
++     The engine publishes
 +     every state change (FauxxWidget.publish); the hourly update keeps the hourly rate, a count
 +     over the last day, current while the engine is off. previewLayout and the target cells are
 +     for Android 12+ launchers. -->
 +<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
 +    xmlns:tools="http://schemas.android.com/tools"
 +    android:description="@string/widget_description"
-+    android:initialLayout="@layout/widget_fauxx"
++    android:initialLayout="@layout/widget_fauxx_compact"
 +    android:minWidth="400dp"
-+    android:minHeight="110dp"
++    android:minHeight="40dp"
 +    android:minResizeWidth="250dp"
-+    android:minResizeHeight="90dp"
-+    android:previewLayout="@layout/widget_fauxx"
++    android:minResizeHeight="40dp"
++    android:previewLayout="@layout/widget_fauxx_compact"
 +    android:resizeMode="horizontal|vertical"
 +    android:targetCellWidth="5"
-+    android:targetCellHeight="2"
++    android:targetCellHeight="1"
 +    android:updatePeriodMillis="3600000"
 +    android:widgetCategory="home_screen"
 +    tools:ignore="UnusedAttribute" />
@@ -1666,10 +1669,10 @@ index 0000000..873d53a
 +    }
 +}
 diff --git a/app/version.properties b/app/version.properties
-index 5ddc279..dc7c5c1 100644
+index 5ddc279..ab5467b 100644
 --- a/app/version.properties
 +++ b/app/version.properties
 @@ -1,2 +1,2 @@
  versionCode=903
 -versionName=0.9.3
-+versionName=0.9.3-virtroid.2
++versionName=0.9.3-virtroid.3

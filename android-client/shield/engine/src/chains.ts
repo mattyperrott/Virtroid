@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The Privacy Pools v2 deployments the app serves. 0xbow deployed the same
-// contract addresses on every chain; verify-chains.mjs reads each value back
-// from the chain (code at every address, the pool's own keystore, ASP
-// registry and access router, each router's share, entrypoint and pool) and
-// is what to run before changing anything here.
+// The Privacy Pools v2 deployment the app serves: Ethereum, with ETH, USDC and
+// USDT. verify-chains.mjs reads each value back from the chain (code at every
+// address, the pool's own keystore, ASP registry and access router, each
+// router's share, entrypoint and pool) and is what to run before changing
+// anything here.
 //
-// On these chains the pool holds stablecoins and ETH as 0xbow's Aave-backed
-// shares (ppUSDC, ppUSDT, ppETH): a shield wraps the user's USDC, USDT or ETH
-// through the asset's router, a withdrawal unwraps back to it. Plain USDC and
-// USDT pools there take no new deposits. Base has no ppUSDT, so its USDT is
-// a plain pool.
+// The pool holds all three as 0xbow's Aave-backed shares (ppETH, ppUSDC,
+// ppUSDT): a shield wraps the asset through its router, a withdrawal unwraps
+// back to it. Plain USDC and ETH pools take no new deposits.
 
 import type { Address, Hex, YieldDeployment } from "@privacy-pools-v2/evm-sdk";
 
@@ -20,8 +18,8 @@ export interface Asset {
     /** The ERC-20 the user deposits, or NATIVE for ETH. */
     token: Address;
     decimals: number;
-    /** The router that wraps it into the pool's share, or null for a plain pool. */
-    yield: YieldDeployment | null;
+    /** The router that wraps it into the pool's share. */
+    yield: YieldDeployment;
 }
 
 export interface ChainConfig {
@@ -45,7 +43,19 @@ export interface ChainConfig {
     relayerUrl: string;
     /** The relayer's signer: msg.sender, and so the bound processor, on the transfer route. */
     relayerSigner: Address;
+    /** Who takes gas in USDC or USDT for an address that holds no ETH; none on the local test chain. */
+    gasless: GaslessConfig | null;
     assets: Asset[];
+}
+
+/** An ERC-4337 bundler and token paymaster, reached with an EIP-7702 delegation (gasless.ts). */
+export interface GaslessConfig {
+    /** Answers both the bundler's and the paymaster's methods. */
+    url: string;
+    /** Refused if the service names another: it's the spender the app approves. */
+    paymaster: Address;
+    /** eth-infinitism's Simple7702Account for EntryPoint 0.8, the code a deposit address delegates to. */
+    delegate: Address;
 }
 
 export const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as Address;
@@ -99,80 +109,30 @@ function share(
     };
 }
 
-function plain(symbol: string, token: Address, decimals: number): Asset {
-    return { symbol, token, decimals, yield: null };
-}
-
 const a = (address: string) => address as Address;
 const block = (n: number) => `0x${n.toString(16)}` as Hex;
 
 export const CHAINS: ChainConfig[] = [
     {
-        chainId: 42161,
-        name: "Arbitrum",
-        rpcUrls: ["https://arb1.arbitrum.io/rpc", "https://arbitrum-one-rpc.publicnode.com"],
-        explorerUrl: "https://arbiscan.io",
-        ...core,
-        fromBlock: block(514_746_410),
-        logsChunk: 50_000n,
-        assets: [
-            share("ETH", a("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"), 18,
-                a("0xc0FBB5D5936a6f089C1B30Ff0Fd0BEAd27b9F766"), a("0x6C17bE9c864254CA4b2d36223f31AdE94B4d64c2"),
-                a("0x319aBEE703b5f6c3dB9c2f126475ef49B20Fdd49"), true),
-            share("USDC", a("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"), 6,
-                a("0xaaE55aFcF94c1604C5713CD19510c5140e8Afa0e"), a("0x34F9F5c4788a60eae7A8901d83E0bbe56Ab43251"),
-                a("0x4a5B11c3898367664D94B43bE1DcEA163BB1D094")),
-            share("USDT", a("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"), 6,
-                a("0x19918499f1d06162A18B208cA4c97032A828dF0a"), a("0x12a78A1EA6F12d2a2cF37070cF93c872BFC2Da7E"),
-                a("0xFe4DcdDD59027384462207c2b9101F9CDcd58a3C")),
-        ],
-    },
-    {
-        chainId: 8453,
-        name: "Base",
-        rpcUrls: ["https://mainnet.base.org", "https://base-rpc.publicnode.com"],
-        explorerUrl: "https://basescan.org",
-        ...core,
-        fromBlock: block(52_595_825),
-        logsChunk: 2_000n,
-        assets: [
-            share("ETH", a("0x4200000000000000000000000000000000000006"), 18,
-                a("0xc0FBB5D5936a6f089C1B30Ff0Fd0BEAd27b9F766"), a("0x6C17bE9c864254CA4b2d36223f31AdE94B4d64c2"),
-                a("0x319aBEE703b5f6c3dB9c2f126475ef49B20Fdd49"), true),
-            share("USDC", a("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), 6,
-                a("0xaaE55aFcF94c1604C5713CD19510c5140e8Afa0e"), a("0x34F9F5c4788a60eae7A8901d83E0bbe56Ab43251"),
-                a("0x4a5B11c3898367664D94B43bE1DcEA163BB1D094")),
-            plain("USDT", a("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2"), 6),
-        ],
-    },
-    {
-        chainId: 10,
-        name: "Optimism",
-        rpcUrls: ["https://mainnet.optimism.io", "https://optimism-rpc.publicnode.com"],
-        explorerUrl: "https://optimistic.etherscan.io",
-        ...core,
-        fromBlock: block(158_189_808),
-        logsChunk: 3_000n,
-        assets: [
-            share("ETH", a("0x4200000000000000000000000000000000000006"), 18,
-                a("0xc0FBB5D5936a6f089C1B30Ff0Fd0BEAd27b9F766"), a("0x6C17bE9c864254CA4b2d36223f31AdE94B4d64c2"),
-                a("0x319aBEE703b5f6c3dB9c2f126475ef49B20Fdd49"), true),
-            share("USDC", a("0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"), 6,
-                a("0xaaE55aFcF94c1604C5713CD19510c5140e8Afa0e"), a("0x34F9F5c4788a60eae7A8901d83E0bbe56Ab43251"),
-                a("0x4a5B11c3898367664D94B43bE1DcEA163BB1D094")),
-            share("USDT", a("0x94b008aA00579c1307B0EF2c499aD98a8ce58e58"), 6,
-                a("0x19918499f1d06162A18B208cA4c97032A828dF0a"), a("0x12a78A1EA6F12d2a2cF37070cF93c872BFC2Da7E"),
-                a("0xFe4DcdDD59027384462207c2b9101F9CDcd58a3C")),
-        ],
-    },
-    {
         chainId: 1,
         name: "Ethereum",
-        rpcUrls: ["https://ethereum-rpc.publicnode.com"],
+        // The public RPCs that answered historical logs on 2026-11-04 from a 5,000-block
+        // window up (publicnode, llamarpc, cloudflare and others refuse or cap far below it).
+        rpcUrls: [
+            "https://rpc.mevblocker.io",
+            "https://gateway.tenderly.co/public/mainnet",
+            "https://ethereum.public.blockpi.network/v1/rpc/public",
+            "https://0xrpc.io/eth",
+        ],
         explorerUrl: "https://etherscan.io",
         ...core,
         fromBlock: block(25_884_228),
-        logsChunk: 50_000n,
+        logsChunk: 5_000n,
+        gasless: {
+            url: "https://api.candide.dev/public/v3/1",
+            paymaster: a("0xa8151918eac3818deb713d3dbbb7930329fe86ed"),
+            delegate: a("0xe6Cae83BdE06E4c305530e199D7217f42808555B"),
+        },
         assets: [
             share("ETH", a("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), 18,
                 a("0x77613D670BB9fD48A9898D0eac8ebf21B566F960"), a("0x33c1eEf370bBb447414156CFc4fDABD434776EAf"),

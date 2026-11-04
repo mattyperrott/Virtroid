@@ -12,7 +12,8 @@
     "paths": {
       "@privacy-pools-v2/evm-sdk": [".sdk/pp2/packages/evm-sdk/dist/index.d.ts"],
       "viem": [".sdk/pp2/packages/evm-sdk/node_modules/viem"],
-      "viem/*": [".sdk/pp2/packages/evm-sdk/node_modules/viem/*"]
+      "viem/*": [".sdk/pp2/packages/evm-sdk/node_modules/viem/*"],
+      "@scure/bip39": [".sdk/pp2/node_modules/.pnpm/node_modules/@scure/bip39"]
     }
   },
   "include": ["src"]
