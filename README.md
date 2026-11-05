@@ -413,7 +413,7 @@ _Updated 5 November 2026._
 | Area | Details |
 | :--- | :--- |
 | **Identity and recovery** | Sign-up with automatically issued invitations, device signing, linked phones, password changes, fingerprint unlock, account deletion and recovery on a replacement phone. |
-| **Confidential runtime VMs** | Image 28. Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured images and deleted 30 minutes after last use. |
+| **Confidential runtime VMs** | Image 29. Per-account SEV-SNP VMs on Aleph Cloud in Europe, created on demand from measured images and deleted 30 minutes after last use. |
 | **Our own Android** | Since 28 October 2026: LineageOS 23.2 (Android 16) with October 2026's security patch, signed with our own keys, with no Google, in a container without `--privileged`. ARM-only apps such as SimpleX run through Google's translation. Runtimes saved on older images upgrade on their next start. |
 | **Attestation and signed images** | Every VM checked against AMD's root and the offline-signed image list. |
 | **Encrypted Sia storage** | 50 storage contracts on Sia mainnet. |
