@@ -23,7 +23,7 @@ c00ededf50dda3d2f563b6a2fa2b291ef2aae5c82a77daa194234d87c1e6c0b1  Fauxx.apk  loc
 # The runtime agent 0.1.0, signed with Virtroid's release key: the APK the
 # VM image's assets carry and node.env pins (NODE_NOTIFICATION_AGENT_APK_SHA256).
 f4fb0185a904d7080bd9c182dd73ecfcb9eb9d4aa9e6d1d9052cc0052ced5f91  virtroid-runtime-agent.apk  local
-# Shield 0.3.0 (versionCode 5), signed with Virtroid's release key: built from
-# git tree ad275c7 by android-client's signing/build-signed-release.sh values and
+# Shield 0.3.1 (versionCode 6), signed with Virtroid's release key: built from
+# git tree 91b17fa by android-client's signing/build-signed-release.sh values and
 # `./gradlew :shield:assembleRelease` (android-client/shield/README.md).
-9ff9ff8ec76442b233e7358162e316c8fff492beadc145e4b7ab3a36bacdd508  Shield.apk  local
+5cffef88b7fdac3f08e465a3d28d8dd4d6e4460536f7a3f4e3e439eae183e241  Shield.apk  local
