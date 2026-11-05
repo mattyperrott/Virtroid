@@ -2,7 +2,6 @@
 package io.virtroid.shield.ui
 
 import android.content.ClipData
-import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -53,11 +52,8 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra(EXTRA_SEND_OUT, false) == true) model.openSendOut()
     }
 
-    private fun copy(text: String, sensitive: Boolean) {
+    private fun copy(text: String) {
         val clip = ClipData.newPlainText(getString(R.string.app_name), text)
-        if (sensitive) {
-            clip.description.extras = android.os.PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
-        }
         getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
         Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
     }

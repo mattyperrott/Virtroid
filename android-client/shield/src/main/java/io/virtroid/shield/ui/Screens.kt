@@ -62,7 +62,7 @@ import io.virtroid.shield.Shield
 import io.virtroid.shield.widget.ShieldWidget
 
 @Composable
-fun Screens(model: ShieldModel, copy: (String, Boolean) -> Unit, paste: () -> String?, openAbout: () -> Unit) {
+fun Screens(model: ShieldModel, copy: (String) -> Unit, paste: () -> String?, openAbout: () -> Unit) {
     val state by model.shield.state.collectAsState()
     Box(Modifier.fillMaxSize().background(Palette.Outer).safeDrawingPadding()) {
         when (val s = model.screen) {
@@ -72,7 +72,7 @@ fun Screens(model: ShieldModel, copy: (String, Boolean) -> Unit, paste: () -> St
                 is AccountState.Ready -> Home(model, account, copy, openAbout)
             }
             Screen.Restore -> Restore(model)
-            is Screen.Backup -> Backup(model, s, copy)
+            is Screen.Backup -> Backup(model, s)
             Screen.SendForm -> (state as? AccountState.Ready)?.let { SendForm(model, it, paste) }
             is Screen.SendReview -> SendReview(model, s)
             Screen.Working -> Working(model, copy)
@@ -116,7 +116,7 @@ private fun Restore(model: ShieldModel) {
 }
 
 @Composable
-private fun Backup(model: ShieldModel, backup: Screen.Backup, copy: (String, Boolean) -> Unit) {
+private fun Backup(model: ShieldModel, backup: Screen.Backup) {
     var saved by remember { mutableStateOf(false) }
     Frame(
         action = {
@@ -152,15 +152,13 @@ private fun Backup(model: ShieldModel, backup: Screen.Backup, copy: (String, Boo
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        TextButton(onClick = { copy(backup.words, true) }) { Text(stringResource(R.string.backup_copy), color = Palette.Lime) }
     }
 }
 
 // --- the wallet ------------------------------------------------------------------
 
 @Composable
-private fun Home(model: ShieldModel, account: AccountState.Ready, copy: (String, Boolean) -> Unit, openAbout: () -> Unit) {
+private fun Home(model: ShieldModel, account: AccountState.Ready, copy: (String) -> Unit, openAbout: () -> Unit) {
     val hasBalance = account.balances.any { it.spendable.signum() > 0 }
     Frame(
         action = if (hasBalance) ({ LimeButton(stringResource(R.string.send_out), onClick = model::openSendOut) }) else null,
@@ -206,7 +204,7 @@ private fun Home(model: ShieldModel, account: AccountState.Ready, copy: (String,
             Spacer(Modifier.height(8.dp))
             Text(account.address, style = MaterialTheme.typography.bodyLarge, color = Palette.Text, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(12.dp))
-            QuietButton(stringResource(R.string.home_copy), onClick = { copy(account.address, false) })
+            QuietButton(stringResource(R.string.home_copy), onClick = { copy(account.address) })
             Spacer(Modifier.height(12.dp))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Image(
@@ -377,7 +375,7 @@ private fun SendReview(model: ShieldModel, review: Screen.SendReview) {
 }
 
 @Composable
-private fun Working(model: ShieldModel, copy: (String, Boolean) -> Unit) {
+private fun Working(model: ShieldModel, copy: (String) -> Unit) {
     val work by model.shield.work.collectAsState()
     when (val w = work) {
         is Shield.Work.Sending -> Frame(action = { QuietButton(stringResource(R.string.action_close_keep), onClick = model::finish) }) {
@@ -401,7 +399,7 @@ private fun Working(model: ShieldModel, copy: (String, Boolean) -> Unit) {
             Title(stringResource(R.string.send_done))
             Spacer(Modifier.height(10.dp))
             for (hash in w.txHashes) {
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { copy(hash, false) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { copy(hash) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${hash.take(12)}…${hash.takeLast(8)}", style = MaterialTheme.typography.bodyMedium, color = Palette.Secondary, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
                     Icon(Icons.Copy, contentDescription = stringResource(R.string.home_copy), tint = Palette.Secondary, modifier = Modifier.size(18.dp))
                 }
@@ -419,7 +417,7 @@ private fun Working(model: ShieldModel, copy: (String, Boolean) -> Unit) {
 // --- taking a declined deposit back ----------------------------------------------
 
 @Composable
-private fun Exit(model: ShieldModel, exit: Screen.Exit, copy: (String, Boolean) -> Unit, paste: () -> String?) {
+private fun Exit(model: ShieldModel, exit: Screen.Exit, copy: (String) -> Unit, paste: () -> String?) {
     val plan = exit.plan
     val funded = plan != null && plan.balance >= plan.needed
     Frame(
@@ -442,7 +440,7 @@ private fun Exit(model: ShieldModel, exit: Screen.Exit, copy: (String, Boolean) 
                 Spacer(Modifier.height(8.dp))
                 Text(plan.owner, style = MaterialTheme.typography.bodyLarge, color = Palette.Text, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(10.dp))
-                QuietButton(stringResource(R.string.home_copy), onClick = { copy(plan.owner, false) })
+                QuietButton(stringResource(R.string.home_copy), onClick = { copy(plan.owner) })
             }
         } else if (plan != null) {
             Field(model.recipient, { model.recipient = it.trim() }, stringResource(R.string.send_to), mono = true, singleLine = false)

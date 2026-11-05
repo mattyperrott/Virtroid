@@ -12,8 +12,9 @@ uses the Privacy Pools circuits, which are too.
 ## How it works
 
 - **The wallet** (`engine/src/keys.ts`) is one set of 12 words on the phone,
-  sealed with an Android Keystore key and shown once to write down. They're
-  standard BIP-39 and BIP-44: address 0 owns the notes and never holds money,
+  sealed with an Android Keystore key and shown to write down. Nothing copies
+  them: the viewer carries the cloud phone's clipboard to the real phone, where
+  they'd sit within reach of its apps. They're standard BIP-39 and BIP-44: address 0 owns the notes and never holds money,
   and each address from 1 up is a deposit address. There's no other backup.
 - **Deposits** (`engine.ts` `check`): the address changes after each deposit
   and older ones keep working. A deposit is built by the owner's session and

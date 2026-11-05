@@ -17,7 +17,6 @@
 
     <string name="backup_title">Your 12 backup words</string>
     <string name="backup_explain">These are the only way back to your funds if this phone is lost, and anyone who has them can spend your funds. Write them down and keep them somewhere safe.</string>
-    <string name="backup_copy">Copy the words</string>
     <string name="backup_saved">I\'ve written them down</string>
     <string name="backup_continue">Continue</string>
 
