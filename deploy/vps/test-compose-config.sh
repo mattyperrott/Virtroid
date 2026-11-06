@@ -60,6 +60,8 @@ docker compose \
 
 grep -q 'BOOTSTRAP_ENABLED: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'PROVISIONER_MAX_VMS: "0"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'PROVISIONER_TRIAL_MAX_VMS: "10"' "${tmp_dir}/rendered-compose.yml"
+grep -q 'PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR: "3"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-provisioner' "${tmp_dir}/rendered-compose.yml"
 grep -q 'BOOTSTRAP_REQUIRE_INVITE: "true"' "${tmp_dir}/rendered-compose.yml"
 grep -q 'BOOTSTRAP_AUTO_ISSUE_INVITE: "true"' "${tmp_dir}/rendered-compose.yml"

@@ -26,7 +26,9 @@ costs; see [Treasury](#treasury).
 A new account starts on a free trial: one runtime and an hour of running
 time. virtroidd meters the time every minute while a runtime runs (booting
 does not count). When the hour is used up the runtime stops, keeping its
-data, and cannot start again until the account deposits.
+data, and cannot start again until the account deposits. Trials may hold only
+some of the runtime VMs, and the rest are kept for paying accounts; see
+[Cost](../aleph/README.md#cost).
 
 The first deposit ends the trial and lifts its limits: up to 10 runtimes,
 1,000 starts a day and 64 GiB of stored data. One runtime still runs at a

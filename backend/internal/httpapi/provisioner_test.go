@@ -103,6 +103,7 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 		ProvisionerPublicKey:    provisioner.public,
 		ProvisionedRegions:      []string{region},
 		ProvisionerMaxVMs:       len(live) + 1,
+		ProvisionerTrialMaxVMs:  len(live) + 1,
 		ProvisionerSetupTimeout: 30 * time.Minute,
 		ProvisionerRetireAfter:  time.Hour,
 	}
@@ -119,7 +120,7 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 
 	// Shared region: the usual no-node error.
 	resp := httptest.NewRecorder()
-	api.writeNoReadyHost(resp, httptest.NewRequest(http.MethodPost, "/", nil), accountID, store.ErrNoReadyHost)
+	api.writeNoReadyHost(resp, httptest.NewRequest(http.MethodPost, "/", nil), accountID, "", store.ErrNoReadyHost)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), store.NoReadyHostCode) {
 		t.Fatalf("shared-region response = %d %s", resp.Code, resp.Body.String())
 	}
@@ -129,7 +130,7 @@ func TestProvisionedVMFlowPostgresIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp = httptest.NewRecorder()
-	api.writeNoReadyHost(resp, httptest.NewRequest(http.MethodPost, "/", nil), accountID, store.ErrNoReadyHost)
+	api.writeNoReadyHost(resp, httptest.NewRequest(http.MethodPost, "/", nil), accountID, "", store.ErrNoReadyHost)
 	if resp.Code != http.StatusServiceUnavailable || resp.Header().Get("Retry-After") == "" ||
 		!strings.Contains(resp.Body.String(), store.RuntimeHostProvisioningCode) {
 		t.Fatalf("provisioned-region response = %d %s", resp.Code, resp.Body.String())
@@ -402,4 +403,155 @@ func TestProvisioningRetryAfterShortensOnceTheVMBoots(t *testing.T) {
 			t.Errorf("%s/%s: retry after %v, want %v", c.state, c.desired, got, c.want)
 		}
 	}
+}
+
+func TestTrialVMLimitsPostgresIntegration(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	defer st.Close()
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	live, err := st.ProvisionerWork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	region := "ci-trial-api-" + uuid.NewString()[:8]
+	defer func() { _, _ = db.Exec(`DELETE FROM provisioned_vms WHERE region = $1`, region) }()
+	handler := New(config.ServerConfig{
+		AppEnv:                           "production",
+		ProvisionedRegions:               []string{region},
+		ProvisionerMaxVMs:                len(live) + 100,
+		ProvisionerTrialMaxVMs:           len(live) + 2,
+		ProvisionerTrialVMsPerSourceHour: 1,
+		ProvisionerSetupTimeout:          30 * time.Minute,
+		ProvisionerRetireAfter:           time.Hour,
+		TrustProxyHeaders:                true,
+	}, st)
+
+	const verifier = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	type actor struct {
+		device  testDevice
+		runtime string
+	}
+	newActor := func(source string, withData bool) actor {
+		t.Helper()
+		device := newTestDevice(t)
+		if _, err := st.BootstrapAccountWithIdentity(ctx, device.accountID, device.deviceID, "CI device", device.publicKey(t), store.CreateRuntimeInput{}); err != nil {
+			t.Fatalf("bootstrap: %v", err)
+		}
+		t.Cleanup(func() { _ = st.DeleteAccount(context.Background(), device.accountID) })
+		if err := st.SetAccountRuntimeRegion(ctx, device.accountID, region); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE devices SET blob_key_verifier = $2 WHERE id = $1`, device.deviceID, verifier); err != nil {
+			t.Fatalf("set verifier: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE account_entitlements SET source = $2 WHERE account_id = $1`, device.accountID, source); err != nil {
+			t.Fatalf("set entitlement: %v", err)
+		}
+		runtime, err := st.CreateRuntime(ctx, device.accountID, store.CreateRuntimeInput{Name: "CI runtime", FileMode: "upload-only"})
+		if err != nil {
+			t.Fatalf("create runtime: %v", err)
+		}
+		if withData {
+			if _, err := db.ExecContext(ctx,
+				`UPDATE runtimes SET blob_store_kind = 'sia-indexd', blob_manifest_json = '{"version":3,"generation":1,"total_bytes":1}' WHERE id = $1`,
+				runtime.ID,
+			); err != nil {
+				t.Fatalf("store a snapshot: %v", err)
+			}
+		}
+		return actor{device: device, runtime: runtime.ID}
+	}
+	// ask sends what the app does first for each of these: the lease it needs
+	// the account's VM for.
+	ask := func(who actor, operation, address string) (*httptest.ResponseRecorder, map[string]any) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{
+			"account_id": who.device.accountID, "device_id": who.device.deviceID,
+			"operation": operation, "blob_key_verifier": verifier,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := who.device.request(t, http.MethodPost, "/api/v1/me/runtimes/"+who.runtime+"/blob-key-lease", body)
+		req.Header.Set("X-Forwarded-For", address)
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		var answer map[string]any
+		if err := json.Unmarshal(resp.Body.Bytes(), &answer); err != nil {
+			t.Fatalf("answer %d %q: %v", resp.Code, resp.Body.String(), err)
+		}
+		return resp, answer
+	}
+	expect := func(resp *httptest.ResponseRecorder, answer map[string]any, status int, code string) {
+		t.Helper()
+		if resp.Code != status || answer["code"] != code {
+			t.Fatalf("answer = %d %v, want %d %s", resp.Code, answer, status, code)
+		}
+	}
+
+	const sourceA, sourceB, sourceC = "203.0.113.1", "203.0.113.2", "203.0.113.3"
+
+	first := newActor("trial", false)
+	resp, answer := ask(first, "start", sourceA)
+	expect(resp, answer, http.StatusServiceUnavailable, store.RuntimeHostProvisioningCode)
+	// The app asks again every few seconds while it waits. That isn't another VM.
+	for range 3 {
+		resp, answer = ask(first, "start", sourceA)
+		expect(resp, answer, http.StatusServiceUnavailable, store.RuntimeHostProvisioningCode)
+	}
+
+	// Another account at the same address has used up what the address may ask for.
+	second := newActor("trial", false)
+	resp, answer = ask(second, "start", sourceA)
+	expect(resp, answer, http.StatusTooManyRequests, store.TrialVMRateCode)
+	if resp.Header().Get("Retry-After") == "" || answer["retry_after_seconds"] == nil ||
+		!strings.Contains(answer["error"].(string), "deposit") {
+		t.Fatalf("source refusal = %v %v", resp.Header(), answer)
+	}
+	resp, answer = ask(second, "start", sourceB)
+	expect(resp, answer, http.StatusServiceUnavailable, store.RuntimeHostProvisioningCode)
+
+	// The pool is full now, from any address.
+	third := newActor("trial", false)
+	resp, answer = ask(third, "start", sourceC)
+	expect(resp, answer, http.StatusServiceUnavailable, store.TrialVMCapacityCode)
+	if resp.Header().Get("Retry-After") != "300" || !strings.Contains(answer["error"].(string), "deposit") {
+		t.Fatalf("capacity refusal = %v %v", resp.Header(), answer)
+	}
+	// Deleting a runtime with nothing stored waits too, and isn't told to pay.
+	resp, answer = ask(third, "delete", sourceC)
+	expect(resp, answer, http.StatusServiceUnavailable, store.TrialVMCapacityCode)
+	if strings.Contains(answer["error"].(string), "deposit") {
+		t.Fatalf("a deletion was told to deposit: %v", answer)
+	}
+
+	// A paying account from the same busy address gets its VM.
+	resp, answer = ask(newActor("operator", false), "start", sourceA)
+	expect(resp, answer, http.StatusServiceUnavailable, store.RuntimeHostProvisioningCode)
+
+	// So does deleting or wiping stored data, past the full pool and that address's limit.
+	resp, answer = ask(newActor("trial", true), "delete", sourceA)
+	expect(resp, answer, http.StatusServiceUnavailable, store.RuntimeHostProvisioningCode)
+	resp, answer = ask(newActor("trial", true), "wipe", sourceA)
+	expect(resp, answer, http.StatusServiceUnavailable, store.RuntimeHostProvisioningCode)
+	// But starting one has no such claim.
+	resp, answer = ask(newActor("trial", true), "start", sourceC)
+	expect(resp, answer, http.StatusServiceUnavailable, store.TrialVMCapacityCode)
 }

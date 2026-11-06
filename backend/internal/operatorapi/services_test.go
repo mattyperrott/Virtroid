@@ -37,7 +37,7 @@ func TestAttachServices(t *testing.T) {
 	ready := now.Add(-time.Hour)
 	cfg := config.ServerConfig{
 		TronDepositXPub: "xpub-test", RuntimePriceHourMicro: 200_000, StoragePriceGiBMonthMicro: 50_000,
-		ProvisionerMaxVMs: 2, ProvisionedRegions: []string{"snp-eu"}, RuntimeVMCostHourMicro: 57_000,
+		ProvisionerMaxVMs: 2, ProvisionerTrialMaxVMs: 1, ProvisionedRegions: []string{"snp-eu"}, RuntimeVMCostHourMicro: 57_000,
 	}
 	payments := store.OperatorPayments{
 		WalletAccounts: 3, PaidAccounts: 1, DepositCount: 1, DepositTotalMicro: 20_000_000,
@@ -48,7 +48,7 @@ func TestAttachServices(t *testing.T) {
 		Accounts: []store.OperatorBalance{{AccountID: "account-12345678", Source: "paid", BalanceMicro: -1, LastEntryAt: &recent}},
 	}
 	fleet := store.OperatorVMs{
-		VMHours24h: 10, ProvisionerSeen: &stale, StoredBytesByKind: map[string]int64{"sia-indexd": 1 << 30},
+		TrialVMs: 1, VMHours24h: 10, ProvisionerSeen: &stale, StoredBytesByKind: map[string]int64{"sia-indexd": 1 << 30},
 		VMs: []store.OperatorVM{
 			{ID: "pvm-aaaaaaaaaaaa", AccountID: "account-12345678", State: "ready", Desired: "present", RequestedAt: ready, ReadyAt: &ready},
 			{ID: "pvm-bbbbbbbbbbbb", State: "booting", Desired: "present", RequestedAt: recent, Failure: "boot loop"},
@@ -70,6 +70,9 @@ func TestAttachServices(t *testing.T) {
 	vms := result.VMs
 	if vms.Live != 2 || vms.Ready != 1 || vms.Starting != 1 || vms.Failed != 1 || vms.EstimatedCost24h != "$0.57" || vms.HourlyBurn != "$0.114/h" {
 		t.Fatalf("vms = %+v", vms)
+	}
+	if vms.TrialVMs != 1 || vms.TrialMaxVMs != 1 {
+		t.Fatalf("trial VMs = %d of %d", vms.TrialVMs, vms.TrialMaxVMs)
 	}
 	if result.Sia.Enabled || result.Sia.StoredByKind[0].Bytes != "1.0 GiB" {
 		t.Fatalf("sia = %+v", result.Sia)

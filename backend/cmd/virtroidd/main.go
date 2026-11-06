@@ -231,6 +231,7 @@ func provisioningLoop(ctx context.Context, pg *store.Store, cfg config.ServerCon
 	policy := store.ProvisioningPolicy{
 		Regions:      cfg.ProvisionedRegions,
 		MaxVMs:       cfg.ProvisionerMaxVMs,
+		TrialMaxVMs:  cfg.ProvisionerTrialMaxVMs,
 		WarmSpares:   cfg.ProvisionerWarmSpares,
 		SetupTimeout: cfg.ProvisionerSetupTimeout,
 		RetireAfter:  cfg.ProvisionerRetireAfter,
@@ -238,7 +239,7 @@ func provisioningLoop(ctx context.Context, pg *store.Store, cfg config.ServerCon
 		NodeSilentAfter: cfg.ProvisionerNodeSilentAfter,
 		UpSince:         time.Now(),
 	}
-	log.Printf("runtime VM provisioning: regions=%v max_vms=%d warm_spares=%d node_silent_after=%s", policy.Regions, policy.MaxVMs, policy.WarmSpares, policy.NodeSilentAfter)
+	log.Printf("runtime VM provisioning: regions=%v max_vms=%d trial_max_vms=%d trial_vms_per_source_hour=%d warm_spares=%d node_silent_after=%s", policy.Regions, policy.MaxVMs, policy.TrialMaxVMs, cfg.ProvisionerTrialVMsPerSourceHour, policy.WarmSpares, policy.NodeSilentAfter)
 	reconcile := func() {
 		runBackgroundIteration("provisioning", func() {
 			summary, err := pg.ReconcileProvisionedVMs(ctx, policy)

@@ -125,6 +125,8 @@ export interface VmsOverview {
   enabled: boolean;
   regions: string[];
   maxVms: number;
+  trialVms: number;
+  trialMaxVms: number;
   warmSpares: number;
   live: number;
   ready: number;

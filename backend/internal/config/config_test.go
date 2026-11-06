@@ -246,3 +246,39 @@ func TestNodeDiskHeadroomInvalidValuesFailToSafeDefaults(t *testing.T) {
 		})
 	}
 }
+
+func TestTrialVMSettings(t *testing.T) {
+	t.Setenv("PROVISIONER_MAX_VMS", "1000")
+	cfg := LoadServer()
+	if cfg.ProvisionerTrialMaxVMs != defaultProvisionerTrialMaxVMs || cfg.ProvisionerTrialVMsPerSourceHour != defaultProvisionerTrialVMsPerSourceHour {
+		t.Fatalf("defaults = %d, %d", cfg.ProvisionerTrialMaxVMs, cfg.ProvisionerTrialVMsPerSourceHour)
+	}
+	t.Setenv("PROVISIONER_TRIAL_MAX_VMS", "40")
+	t.Setenv("PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR", "0")
+	cfg = LoadServer()
+	if cfg.ProvisionerTrialMaxVMs != 40 || cfg.ProvisionerTrialVMsPerSourceHour != 0 {
+		t.Fatalf("set = %d, %d", cfg.ProvisionerTrialMaxVMs, cfg.ProvisionerTrialVMsPerSourceHour)
+	}
+	t.Setenv("PROVISIONER_TRIAL_MAX_VMS", "0")
+	if got := LoadServer().ProvisionerTrialMaxVMs; got != 0 {
+		t.Fatalf("closed trials = %d", got)
+	}
+	for _, invalid := range []string{"-1", "lots"} {
+		t.Setenv("PROVISIONER_TRIAL_MAX_VMS", invalid)
+		t.Setenv("PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR", invalid)
+		cfg = LoadServer()
+		if cfg.ProvisionerTrialMaxVMs != defaultProvisionerTrialMaxVMs || cfg.ProvisionerTrialVMsPerSourceHour != defaultProvisionerTrialVMsPerSourceHour {
+			t.Fatalf("for %q = %d, %d, want the defaults", invalid, cfg.ProvisionerTrialMaxVMs, cfg.ProvisionerTrialVMsPerSourceHour)
+		}
+	}
+
+	// However it's set, half the VMs stay for paying accounts, trials' data
+	// removal included: a quarter of them, rounded up, for trials.
+	t.Setenv("PROVISIONER_TRIAL_MAX_VMS", "500")
+	for maxVMs, want := range map[string]int{"0": 0, "1": 1, "4": 1, "5": 2, "20": 5, "1000": 250} {
+		t.Setenv("PROVISIONER_MAX_VMS", maxVMs)
+		if got := LoadServer().ProvisionerTrialMaxVMs; got != want {
+			t.Fatalf("trial VMs of %s = %d, want %d", maxVMs, got, want)
+		}
+	}
+}

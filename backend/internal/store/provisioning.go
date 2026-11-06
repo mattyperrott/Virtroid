@@ -31,6 +31,8 @@ const (
 
 	RuntimeHostProvisioningCode = "runtime_host_provisioning"
 	ProvisioningCapacityCode    = "runtime_host_capacity"
+	TrialVMCapacityCode         = "runtime_host_trial_capacity"
+	TrialVMRateCode             = "runtime_host_trial_rate"
 
 	// Serializes VM requests, spare top-ups, and the capacity check.
 	provisioningLockKey        int64 = 0x5669727450564d73
@@ -39,6 +41,8 @@ const (
 
 var (
 	ErrProvisioningCapacity    = errors.New("no runtime VM capacity is available")
+	ErrTrialVMCapacity         = errors.New("free trial accounts hold all the runtime VMs they may")
+	ErrTrialVMRate             = errors.New("too many free trial runtime VMs were requested from this source")
 	ErrProvisionedVMNotFound   = errors.New("provisioned VM not found")
 	ErrProvisionedVMTransition = errors.New("provisioned VM cannot move to that state")
 )
@@ -68,8 +72,11 @@ type ProvisionedVM struct {
 
 // ProvisioningPolicy bounds what the control plane asks the provisioner for.
 type ProvisioningPolicy struct {
-	Regions      []string
-	MaxVMs       int
+	Regions []string
+	MaxVMs  int
+	// TrialMaxVMs is how many of MaxVMs free trial accounts may hold, which
+	// keeps the rest for paying accounts and bounds what trials can spend.
+	TrialMaxVMs  int
 	WarmSpares   int
 	SetupTimeout time.Duration
 	RetireAfter  time.Duration
@@ -82,9 +89,25 @@ type ProvisioningPolicy struct {
 	UpSince         time.Time
 }
 
+// VMRequest says what a VM is wanted for, for the limits on free trials.
+type VMRequest struct {
+	// CleanupRuntimeID is the runtime a wipe or deletion needs the VM for.
+	CleanupRuntimeID string
+	// AllowTrialVM is asked when a trial account is about to get a VM, and only
+	// then: asking again for a VM it already has doesn't count.
+	AllowTrialVM func() bool
+}
+
 // A node heartbeats every 30 s; a ready spare quiet for longer than this is
 // not handed to an account.
 const spareNodeQuietAfter = 5 * time.Minute
+
+// trialVMsSQL counts the VMs free trials hold. An account's entitlement goes
+// with the account but its VM is paid for until it is deleted, so deleting an
+// account doesn't free the slot early.
+const trialVMsSQL = `SELECT COUNT(*) FROM provisioned_vms p
+	 LEFT JOIN account_entitlements e ON e.account_id = p.account_id
+	WHERE p.state <> 'deleted' AND p.account_id IS NOT NULL AND COALESCE(e.source, 'trial') = 'trial'`
 
 // provisionedVMLastSeenSQL is when the VM aliased p last showed signs of
 // life: its node's last heartbeat, or else when it became ready.
@@ -209,8 +232,9 @@ func (s *Store) AccountProvisionedRegion(ctx context.Context, accountID string, 
 }
 
 // EnsureAccountVM returns the account's runtime VM, claiming a warm spare or
-// requesting a new VM when it has none. It never exceeds policy.MaxVMs.
-func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, policy ProvisioningPolicy) (ProvisionedVM, error) {
+// requesting a new VM when it has none. It never exceeds policy.MaxVMs, and a
+// free trial account gets one only within policy.TrialMaxVMs.
+func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, policy ProvisioningPolicy, request VMRequest) (ProvisionedVM, error) {
 	accountID = strings.TrimSpace(accountID)
 	region = strings.ToLower(strings.TrimSpace(region))
 	if !policy.RegionIsProvisioned(region) {
@@ -236,6 +260,10 @@ func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, p
 		return vm, tx.Commit()
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
+		return ProvisionedVM{}, err
+	}
+
+	if err := checkTrialVMLimitsTX(ctx, tx, accountID, policy, request); err != nil {
 		return ProvisionedVM{}, err
 	}
 
@@ -285,6 +313,59 @@ func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, p
 		return ProvisionedVM{}, err
 	}
 	return vm, tx.Commit()
+}
+
+// checkTrialVMLimitsTX refuses a free trial account a VM its share of the fleet
+// has no room for. Paying accounts are limited only by MaxVMs.
+//
+// Removing stored data can't wait on a queue of new trials, or anyone able to
+// fill it could keep people from deleting their data. So a wipe or deletion of
+// a runtime with data may go as far past the limit again, whichever source it
+// comes from. A runtime without data has no such claim: wiping or deleting one
+// asks for a VM too, and an account that costs nothing to make can always have
+// an empty runtime.
+func checkTrialVMLimitsTX(ctx context.Context, tx *sql.Tx, accountID string, policy ProvisioningPolicy, request VMRequest) error {
+	var source string
+	err := tx.QueryRowContext(ctx,
+		`SELECT source FROM account_entitlements WHERE account_id::text = $1`,
+		accountID,
+	).Scan(&source)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && source != "trial" {
+		return nil
+	}
+
+	removesData := false
+	if request.CleanupRuntimeID != "" {
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (
+			     SELECT 1 FROM runtimes
+			      WHERE id::text = $1 AND account_id::text = $2 AND deleted_at IS NULL
+			        AND NULLIF(TRIM(COALESCE(blob_manifest_json, '')), '') IS NOT NULL
+			 )`,
+			request.CleanupRuntimeID,
+			accountID,
+		).Scan(&removesData); err != nil {
+			return err
+		}
+	}
+	limit := policy.TrialMaxVMs
+	if removesData {
+		limit = max(2*limit, 1)
+	}
+	var held int
+	if err := tx.QueryRowContext(ctx, trialVMsSQL).Scan(&held); err != nil {
+		return err
+	}
+	if held >= limit {
+		return ErrTrialVMCapacity
+	}
+	if !removesData && request.AllowTrialVM != nil && !request.AllowTrialVM() {
+		return ErrTrialVMRate
+	}
+	return nil
 }
 
 // ProvisionerWork lists every VM the provisioner still has to act on or

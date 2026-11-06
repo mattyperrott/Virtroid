@@ -79,6 +79,8 @@ export const previewOverview: OverviewResponse = {
     enabled: true,
     regions: ["snp-eu"],
     maxVms: 4,
+    trialVms: 1,
+    trialMaxVms: 1,
     warmSpares: 0,
     live: 2,
     ready: 1,

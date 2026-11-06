@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -26,6 +27,10 @@ const (
 	provisioningBootingRetryAfter = 2 * time.Second
 )
 
+// A trial's slot comes free only when its VM has sat unused for
+// PROVISIONER_RETIRE_AFTER and is deleted, so asking every few seconds won't help.
+const trialVMCapacityRetryAfter = 5 * time.Minute
+
 func provisioningRetryAfterFor(vm store.ProvisionedVM) time.Duration {
 	if vm.Desired == "present" && (vm.State == "booting" || vm.State == "ready") {
 		return provisioningBootingRetryAfter
@@ -37,16 +42,18 @@ func (a *API) provisioningPolicy() store.ProvisioningPolicy {
 	return store.ProvisioningPolicy{
 		Regions:      a.cfg.ProvisionedRegions,
 		MaxVMs:       a.cfg.ProvisionerMaxVMs,
+		TrialMaxVMs:  a.cfg.ProvisionerTrialMaxVMs,
 		WarmSpares:   a.cfg.ProvisionerWarmSpares,
 		SetupTimeout: a.cfg.ProvisionerSetupTimeout,
 		RetireAfter:  a.cfg.ProvisionerRetireAfter,
 	}
 }
 
-// writeNoReadyHost answers a start that found no node. For an account whose
+// writeNoReadyHost answers a request that found no node. For an account whose
 // region is served by dedicated VMs it requests (or finds) the account's VM
-// and tells the app to retry once the VM is up.
-func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID string, cause error) {
+// and tells the app to retry once the VM is up. cleanupRuntimeID names the
+// runtime when a wipe or deletion is what needs the VM.
+func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID, cleanupRuntimeID string, cause error) {
 	if a.store == nil {
 		writeRuntimeMutationError(w, cause)
 		return
@@ -57,9 +64,31 @@ func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID
 		writeRuntimeMutationError(w, cause)
 		return
 	}
-	vm, err := a.store.EnsureAccountVM(r.Context(), accountID, region, policy)
+	var trialRateWait time.Duration
+	vm, err := a.store.EnsureAccountVM(r.Context(), accountID, region, policy, store.VMRequest{
+		CleanupRuntimeID: cleanupRuntimeID,
+		AllowTrialVM: func() bool {
+			allowed, wait := a.trialVMLimiter.allow(bootstrapClientKey(r, a.cfg.TrustProxyHeaders))
+			trialRateWait = wait
+			return allowed
+		},
+	})
 	if errors.Is(err, store.ErrProvisioningCapacity) {
 		writeAPIError(w, http.StatusServiceUnavailable, store.ProvisioningCapacityCode, "no private runtime server is available right now")
+		return
+	}
+	if errors.Is(err, store.ErrTrialVMCapacity) {
+		message := "All free trial servers are in use right now. Try again in a few minutes, or make a deposit to start now."
+		if cleanupRuntimeID != "" {
+			message = "This needs your private server, and all free trial servers are in use right now. Try again in a few minutes."
+		}
+		writeTrialVMRefusal(w, http.StatusServiceUnavailable, store.TrialVMCapacityCode, message, trialVMCapacityRetryAfter)
+		return
+	}
+	if errors.Is(err, store.ErrTrialVMRate) {
+		minutes := int(trialRateWait.Round(time.Minute) / time.Minute)
+		message := fmt.Sprintf("Too many free trial servers were requested from your network. Try again in %d min, or make a deposit to start now.", max(minutes, 1))
+		writeTrialVMRefusal(w, http.StatusTooManyRequests, store.TrialVMRateCode, message, trialRateWait)
 		return
 	}
 	if err != nil {
@@ -77,6 +106,16 @@ func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID
 		"vm_progress":         vm.Progress,
 		"vm_region":           vm.Region,
 		"vm_elapsed_seconds":  int(time.Since(vm.RequestedAt).Seconds()),
+	})
+}
+
+func writeTrialVMRefusal(w http.ResponseWriter, status int, code, message string, wait time.Duration) {
+	retryAfter := max(int(wait/time.Second), 1)
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	writeJSON(w, status, map[string]any{
+		"error":               message,
+		"code":                code,
+		"retry_after_seconds": retryAfter,
 	})
 }
 

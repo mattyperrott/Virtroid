@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 	policy := ProvisioningPolicy{
 		Regions:      []string{region},
 		MaxVMs:       baseline + 2,
+		TrialMaxVMs:  baseline + 3,
 		SetupTimeout: 30 * time.Minute,
 		RetireAfter:  time.Hour,
 	}
@@ -49,7 +51,7 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 	})
 	ensure := func(accountID string) (ProvisionedVM, error) {
 		t.Helper()
-		vm, err := st.EnsureAccountVM(ctx, accountID, region, policy)
+		vm, err := st.EnsureAccountVM(ctx, accountID, region, policy, VMRequest{})
 		if err == nil && !containsString(vmIDs, vm.ID) {
 			vmIDs = append(vmIDs, vm.ID)
 		}
@@ -487,7 +489,8 @@ func TestPostgresRetiresReadyVMsWhoseNodeWentSilent(t *testing.T) {
 	}
 	claimPolicy := policy
 	claimPolicy.MaxVMs = 100
-	vm, err := st.EnsureAccountVM(ctx, accountID, region, claimPolicy)
+	claimPolicy.TrialMaxVMs = 100
+	vm, err := st.EnsureAccountVM(ctx, accountID, region, claimPolicy, VMRequest{})
 	if err != nil || vm.ID != alsoHealthy2 {
 		t.Fatalf("claimed VM %q err=%v, want the reporting spare %q", vm.ID, err, alsoHealthy2)
 	}
@@ -585,5 +588,310 @@ func TestPostgresHostHeartbeatKeepsTheSiaIndexdStoreKind(t *testing.T) {
 		if err != nil || host.BlobStoreKind != want {
 			t.Fatalf("heartbeat with %q recorded %q err=%v, want %q", kind, host.BlobStoreKind, err, want)
 		}
+	}
+}
+
+// trialVMFixture is a region of its own, with accounts of any entitlement.
+type trialVMFixture struct {
+	t      *testing.T
+	ctx    context.Context
+	st     *Store
+	region string
+	policy ProvisioningPolicy
+}
+
+func newTrialVMFixture(t *testing.T, ctx context.Context) (*trialVMFixture, int) {
+	t.Helper()
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	region := "ci-trial-" + uuid.NewString()[:8]
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM provisioned_vms WHERE region = $1`, region)
+	})
+	var trialsBefore int
+	if err := st.db.QueryRowContext(ctx, trialVMsSQL).Scan(&trialsBefore); err != nil {
+		t.Fatalf("count trial VMs: %v", err)
+	}
+	return &trialVMFixture{t: t, ctx: ctx, st: st, region: region, policy: ProvisioningPolicy{
+		Regions:      []string{region},
+		MaxVMs:       1000,
+		SetupTimeout: 30 * time.Minute,
+		RetireAfter:  time.Hour,
+	}}, trialsBefore
+}
+
+func (f *trialVMFixture) account(source string) string {
+	f.t.Helper()
+	accountID := uuid.NewString()
+	f.t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = f.st.db.ExecContext(cleanupCtx, `DELETE FROM accounts WHERE id = $1`, accountID)
+	})
+	if _, err := f.st.BootstrapAccountWithIdentity(
+		f.ctx, accountID, uuid.NewString(), "CI device", integrationNodePublicKey(f.t), CreateRuntimeInput{},
+	); err != nil {
+		f.t.Fatalf("bootstrap account: %v", err)
+	}
+	if err := f.st.SetAccountRuntimeRegion(f.ctx, accountID, f.region); err != nil {
+		f.t.Fatalf("set account region: %v", err)
+	}
+	if _, err := f.st.db.ExecContext(f.ctx,
+		`UPDATE account_entitlements SET source = $2 WHERE account_id = $1`, accountID, source,
+	); err != nil {
+		f.t.Fatalf("set entitlement: %v", err)
+	}
+	return accountID
+}
+
+// runtime makes a runtime for accountID, holding a stored snapshot if withData.
+func (f *trialVMFixture) runtime(accountID string, withData bool) string {
+	f.t.Helper()
+	runtime, err := f.st.CreateRuntime(f.ctx, accountID, CreateRuntimeInput{Name: "CI runtime", FileMode: "upload-only"})
+	if err != nil {
+		f.t.Fatalf("create runtime: %v", err)
+	}
+	if withData {
+		if _, err := f.st.db.ExecContext(f.ctx,
+			`UPDATE runtimes SET blob_store_kind = 'sia-indexd', blob_manifest_json = '{"version":3,"generation":1,"total_bytes":1}' WHERE id = $1`,
+			runtime.ID,
+		); err != nil {
+			f.t.Fatalf("store a snapshot: %v", err)
+		}
+	}
+	return runtime.ID
+}
+
+func (f *trialVMFixture) ensure(accountID string, request VMRequest) (ProvisionedVM, error) {
+	f.t.Helper()
+	return f.st.EnsureAccountVM(f.ctx, accountID, f.region, f.policy, request)
+}
+
+func (f *trialVMFixture) mustEnsure(accountID string, request VMRequest) ProvisionedVM {
+	f.t.Helper()
+	vm, err := f.ensure(accountID, request)
+	if err != nil {
+		f.t.Fatalf("ensure VM: %v", err)
+	}
+	return vm
+}
+
+func (f *trialVMFixture) refused(accountID string, request VMRequest, want error) {
+	f.t.Helper()
+	if vm, err := f.ensure(accountID, request); !errors.Is(err, want) {
+		f.t.Fatalf("ensure VM = %q, %v, want %v", vm.ID, err, want)
+	}
+	var held int
+	if err := f.st.db.QueryRowContext(f.ctx,
+		`SELECT COUNT(*) FROM provisioned_vms WHERE account_id::text = $1 AND state <> 'deleted'`, accountID,
+	).Scan(&held); err != nil {
+		f.t.Fatalf("count the account's VMs: %v", err)
+	}
+	if held != 0 {
+		f.t.Fatalf("a refused account holds %d VMs", held)
+	}
+}
+
+func (f *trialVMFixture) deleteVM(id string) {
+	f.t.Helper()
+	if _, err := f.st.db.ExecContext(f.ctx,
+		`UPDATE provisioned_vms SET state = 'deleted', desired = 'absent', deleted_at = NOW() WHERE id = $1`, id,
+	); err != nil {
+		f.t.Fatalf("delete VM: %v", err)
+	}
+}
+
+func TestPostgresTrialVMsLeaveTheRestForPayingAccounts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	f, trialsBefore := newTrialVMFixture(t, ctx)
+	f.policy.TrialMaxVMs = trialsBefore + 2
+
+	asked := 0
+	counted := VMRequest{AllowTrialVM: func() bool { asked++; return true }}
+	mustNotAsk := VMRequest{AllowTrialVM: func() bool {
+		t.Error("asked about a trial VM for a request that isn't one")
+		return false
+	}}
+
+	// The source's limit can refuse a trial with room in the pool.
+	f.refused(f.account("trial"), VMRequest{AllowTrialVM: func() bool { return false }}, ErrTrialVMRate)
+
+	first, second := f.account("trial"), f.account("trial")
+	firstVM := f.mustEnsure(first, counted)
+	secondVM := f.mustEnsure(second, counted)
+	if asked != 2 {
+		t.Fatalf("asked %d times for two new VMs", asked)
+	}
+	// Coming back for the VM it has isn't a new VM, even with the pool full.
+	if again := f.mustEnsure(first, mustNotAsk); again.ID != firstVM.ID {
+		t.Fatalf("second ensure = %q, want %q", again.ID, firstVM.ID)
+	}
+
+	third := f.account("trial")
+	f.refused(third, mustNotAsk, ErrTrialVMCapacity)
+
+	// Paying and operator accounts aren't held back, and don't use the pool.
+	f.mustEnsure(f.account("paid"), mustNotAsk)
+	f.mustEnsure(f.account("operator"), mustNotAsk)
+	f.refused(third, mustNotAsk, ErrTrialVMCapacity)
+
+	// A first deposit moves the account and its VM out of the trials at once.
+	wallet, err := f.st.AccountWallet(ctx, first)
+	if err != nil {
+		t.Fatalf("open wallet: %v", err)
+	}
+	if credited, err := f.st.CreditDeposit(ctx, DepositCredit{
+		TxID: strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", ""), Address: "T-test-" + first, Index: wallet.DepositIndex,
+		AmountMicro: 1_000_000, BlockTime: time.Now(),
+	}); err != nil || !credited {
+		t.Fatalf("credit deposit = %v, %v", credited, err)
+	}
+	thirdVM := f.mustEnsure(third, counted)
+
+	// Deleting an account doesn't free the slot before its VM is gone.
+	if err := f.st.DeleteAccount(ctx, second); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	fourth := f.account("trial")
+	f.refused(fourth, mustNotAsk, ErrTrialVMCapacity)
+	if _, err := f.st.ReconcileProvisionedVMs(ctx, f.policy); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	f.refused(fourth, mustNotAsk, ErrTrialVMCapacity)
+	f.deleteVM(secondVM.ID)
+	f.mustEnsure(fourth, counted)
+
+	// A full pool stays full for a spare, which a paying account still gets.
+	spareID, err := newProvisionedVMID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertSpare := func(id string) {
+		t.Helper()
+		if _, err := f.st.db.ExecContext(ctx, `INSERT INTO provisioned_vms (id, region) VALUES ($1, $2)`, id, f.region); err != nil {
+			t.Fatalf("insert spare: %v", err)
+		}
+	}
+	insertSpare(spareID)
+	fifth := f.account("trial")
+	f.refused(fifth, mustNotAsk, ErrTrialVMCapacity)
+	if vm := f.mustEnsure(f.account("paid"), mustNotAsk); vm.ID != spareID {
+		t.Fatalf("paying account got %q, want the spare %q", vm.ID, spareID)
+	}
+
+	// A spare a trial claims counts against the pool like any other.
+	f.deleteVM(thirdVM.ID)
+	spareID, err = newProvisionedVMID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertSpare(spareID)
+	if vm := f.mustEnsure(fifth, counted); vm.ID != spareID {
+		t.Fatalf("trial got %q, want the spare %q", vm.ID, spareID)
+	}
+	f.refused(f.account("trial"), mustNotAsk, ErrTrialVMCapacity)
+}
+
+func TestPostgresRemovingDataGoesPastAFullTrialPool(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	f, trialsBefore := newTrialVMFixture(t, ctx)
+	room := 2
+	f.policy.TrialMaxVMs = trialsBefore + room
+	for range room {
+		f.mustEnsure(f.account("trial"), VMRequest{})
+	}
+
+	mustNotAsk := func() bool {
+		t.Error("the source's limit was asked about removing data")
+		return false
+	}
+	refuseSource := func() bool { return false }
+
+	// A runtime with nothing stored has no claim on the extra room: a new
+	// account can always have one.
+	empty := f.account("trial")
+	emptyRuntime := f.runtime(empty, false)
+	f.refused(empty, VMRequest{CleanupRuntimeID: emptyRuntime, AllowTrialVM: mustNotAsk}, ErrTrialVMCapacity)
+
+	// Nor does naming another account's runtime that has data.
+	owner := f.account("trial")
+	ownerRuntime := f.runtime(owner, true)
+	f.refused(empty, VMRequest{CleanupRuntimeID: ownerRuntime, AllowTrialVM: mustNotAsk}, ErrTrialVMCapacity)
+
+	// Starting a runtime with data has no claim either.
+	f.refused(owner, VMRequest{AllowTrialVM: mustNotAsk}, ErrTrialVMCapacity)
+
+	// Removing data goes past the limit, by as much again, whatever the source.
+	f.mustEnsure(owner, VMRequest{CleanupRuntimeID: ownerRuntime, AllowTrialVM: refuseSource})
+	for range f.policy.TrialMaxVMs - 1 {
+		account := f.account("trial")
+		f.mustEnsure(account, VMRequest{CleanupRuntimeID: f.runtime(account, true), AllowTrialVM: refuseSource})
+	}
+	last := f.account("trial")
+	f.refused(last, VMRequest{CleanupRuntimeID: f.runtime(last, true), AllowTrialVM: mustNotAsk}, ErrTrialVMCapacity)
+}
+
+func TestPostgresClosedTrialsStillLetDataBeRemoved(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	f, trialsBefore := newTrialVMFixture(t, ctx)
+	if trialsBefore != 0 {
+		t.Skipf("%d trial VMs already exist", trialsBefore)
+	}
+	f.policy.TrialMaxVMs = 0
+
+	account := f.account("trial")
+	runtimeID := f.runtime(account, true)
+	f.refused(account, VMRequest{}, ErrTrialVMCapacity)
+	f.mustEnsure(account, VMRequest{CleanupRuntimeID: runtimeID})
+	// One at a time.
+	other := f.account("trial")
+	f.refused(other, VMRequest{CleanupRuntimeID: f.runtime(other, true)}, ErrTrialVMCapacity)
+}
+
+func TestPostgresTrialVMsStayWithinTheLimitWhenRacing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	f, trialsBefore := newTrialVMFixture(t, ctx)
+	room := 3
+	f.policy.TrialMaxVMs = trialsBefore + room
+
+	accounts := make([]string, 12)
+	for i := range accounts {
+		accounts[i] = f.account("trial")
+	}
+	var wg sync.WaitGroup
+	results := make([]error, len(accounts))
+	for i, accountID := range accounts {
+		wg.Go(func() {
+			_, results[i] = f.st.EnsureAccountVM(ctx, accountID, f.region, f.policy, VMRequest{})
+		})
+	}
+	wg.Wait()
+	granted := 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			granted++
+		case !errors.Is(err, ErrTrialVMCapacity):
+			t.Fatalf("ensure VM: %v", err)
+		}
+	}
+	if granted != room {
+		t.Fatalf("%d VMs granted, want %d", granted, room)
 	}
 }

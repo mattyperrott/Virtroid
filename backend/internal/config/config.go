@@ -10,6 +10,11 @@ import (
 
 const defaultRuntimeImportSpoolMaxBytes int64 = 1 << 30
 
+const (
+	defaultProvisionerTrialMaxVMs           = 10
+	defaultProvisionerTrialVMsPerSourceHour = 3
+)
+
 type ServerConfig struct {
 	AppEnv                           string
 	BindAddr                         string
@@ -52,12 +57,17 @@ type ServerConfig struct {
 	ReleaseDeploymentTreeSHA256     string
 	// Provisioning of dedicated runtime VMs on Aleph Cloud. ProvisionerMaxVMs
 	// of 0 turns it off; the provisioner authenticates with ProvisionerPublicKey.
-	ProvisionerPublicKey    string
-	ProvisionedRegions      []string
-	ProvisionerMaxVMs       int
-	ProvisionerWarmSpares   int
-	ProvisionerSetupTimeout time.Duration
-	ProvisionerRetireAfter  time.Duration
+	ProvisionerPublicKey string
+	ProvisionedRegions   []string
+	ProvisionerMaxVMs    int
+	// ProvisionerTrialMaxVMs is how many of those free trial accounts may hold;
+	// the rest are kept for paying accounts. ProvisionerTrialVMsPerSourceHour
+	// is how many new ones one source address may ask for (0 = no limit).
+	ProvisionerTrialMaxVMs           int
+	ProvisionerTrialVMsPerSourceHour int
+	ProvisionerWarmSpares            int
+	ProvisionerSetupTimeout          time.Duration
+	ProvisionerRetireAfter           time.Duration
 	// ProvisionerNodeSilentAfter retires a ready VM whose node has not
 	// reported for this long (0 = never).
 	ProvisionerNodeSilentAfter time.Duration
@@ -236,6 +246,17 @@ func LoadServer() ServerConfig {
 	if err != nil || provisionerMaxVMs < 0 {
 		provisionerMaxVMs = 0
 	}
+	provisionerTrialMaxVMs, err := parseEnvInt("PROVISIONER_TRIAL_MAX_VMS", defaultProvisionerTrialMaxVMs)
+	if err != nil || provisionerTrialMaxVMs < 0 {
+		provisionerTrialMaxVMs = defaultProvisionerTrialMaxVMs
+	}
+	// Trials may hold a quarter of the VMs at most and removing their data as
+	// much again, so at least half always stays for paying accounts.
+	provisionerTrialMaxVMs = min(provisionerTrialMaxVMs, (provisionerMaxVMs+3)/4)
+	provisionerTrialVMsPerSourceHour, err := parseEnvInt("PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR", defaultProvisionerTrialVMsPerSourceHour)
+	if err != nil || provisionerTrialVMsPerSourceHour < 0 {
+		provisionerTrialVMsPerSourceHour = defaultProvisionerTrialVMsPerSourceHour
+	}
 	provisionerWarmSpares, err := parseEnvInt("PROVISIONER_WARM_SPARES", 0)
 	if err != nil || provisionerWarmSpares < 0 {
 		provisionerWarmSpares = 0
@@ -283,6 +304,8 @@ func LoadServer() ServerConfig {
 		ProvisionerPublicKey:             strings.TrimSpace(os.Getenv("PROVISIONER_PUBLIC_KEY")),
 		ProvisionedRegions:               parseEnvCSV("PROVISIONED_REGIONS", ""),
 		ProvisionerMaxVMs:                provisionerMaxVMs,
+		ProvisionerTrialMaxVMs:           provisionerTrialMaxVMs,
+		ProvisionerTrialVMsPerSourceHour: provisionerTrialVMsPerSourceHour,
 		ProvisionerWarmSpares:            provisionerWarmSpares,
 		ProvisionerSetupTimeout:          parseEnvDuration("PROVISIONER_SETUP_TIMEOUT", 30*time.Minute),
 		RuntimeAndroidVersion:            envOrDefault("RUNTIME_ANDROID_VERSION", "android-14"),

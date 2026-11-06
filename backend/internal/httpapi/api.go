@@ -17,6 +17,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ type API struct {
 	activeBlobKeys      *activeBlobKeyVault
 	bootstrapLimiter    *bootstrapRateLimiter
 	notificationLimiter *bootstrapRateLimiter
+	trialVMLimiter      *bootstrapRateLimiter
 	observability       *observability.Service
 	httpClient          *http.Client
 	notificationHub     *notificationStreamHub
@@ -381,6 +383,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 		activeBlobKeys:      activeBlobKeys,
 		bootstrapLimiter:    newBootstrapRateLimiter(cfg.BootstrapRateLimitPerMinute, bootstrapRateLimitWindow),
 		notificationLimiter: newBootstrapRateLimiter(cfg.RuntimeNotificationRateLimit, time.Minute),
+		trialVMLimiter:      newBootstrapRateLimiter(cfg.ProvisionerTrialVMsPerSourceHour, time.Hour),
 		observability:       telemetry,
 		httpClient:          &http.Client{Transport: telemetry.Transport(http.DefaultTransport), Timeout: runtimeMediaProxyTimeout},
 		notificationHub:     newNotificationStreamHub(),
@@ -759,9 +762,23 @@ func bootstrapClientKey(r *http.Request, trustProxyHeaders bool) string {
 		remoteHost = "unknown"
 	}
 	if forwardedFor == "" {
-		return remoteHost
+		return sourceAddressKey(remoteHost)
 	}
-	return remoteHost + "|" + forwardedFor
+	return remoteHost + "|" + sourceAddressKey(forwardedFor)
+}
+
+// sourceAddressKey counts an IPv6 address by its /64, since one site holds a
+// whole /64 and could otherwise never run out of addresses.
+func sourceAddressKey(address string) string {
+	parsed, err := netip.ParseAddr(address)
+	if err != nil {
+		return address
+	}
+	parsed = parsed.WithZone("").Unmap()
+	if !parsed.Is6() {
+		return parsed.String()
+	}
+	return netip.PrefixFrom(parsed, 64).Masked().String()
 }
 
 func validateNodeAdvertiseAddr(raw string, allowed []string, appEnv string) (string, error) {
@@ -1796,7 +1813,11 @@ func (a *API) createRuntimeBlobKeyLease(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 		}
-		a.writeNoReadyHost(w, r, actor.accountID, err)
+		cleanupRuntimeID := ""
+		if operation != "start" {
+			cleanupRuntimeID = runtimeID
+		}
+		a.writeNoReadyHost(w, r, actor.accountID, cleanupRuntimeID, err)
 		return
 	}
 	if err != nil {
@@ -1895,7 +1916,7 @@ func (a *API) startMyRuntime(w http.ResponseWriter, r *http.Request) {
 	runtime, err := a.store.StartRuntimeOnHost(r.Context(), actor.accountID, runtimeID, lease.hostID, req.FreshIdentity)
 	if errors.Is(err, store.ErrNoReadyHost) {
 		a.activeBlobKeys.clear(runtimeID)
-		a.writeNoReadyHost(w, r, actor.accountID, err)
+		a.writeNoReadyHost(w, r, actor.accountID, "", err)
 		return
 	}
 	if err != nil {

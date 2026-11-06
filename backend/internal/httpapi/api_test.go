@@ -964,3 +964,37 @@ func TestRewrapProofCoversTheVersion3Fields(t *testing.T) {
 		t.Fatalf("canonical = %q", got)
 	}
 }
+
+func TestBootstrapClientKeyCountsIPv6BySite(t *testing.T) {
+	key := func(remote, forwarded string) string {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", nil)
+		req.RemoteAddr = remote
+		if forwarded != "" {
+			req.Header.Set("X-Forwarded-For", forwarded)
+		}
+		return bootstrapClientKey(req, forwarded != "")
+	}
+	const site = "10.0.0.5|2001:db8:1:2::/64"
+	for _, address := range []string{"2001:db8:1:2::1", "2001:db8:1:2:aaaa:bbbb:cccc:dddd", "2001:DB8:1:2::1%eth0"} {
+		if got := key("10.0.0.5:42312", address); got != site {
+			t.Fatalf("key for %s = %q, want %q", address, got, site)
+		}
+	}
+	if got := key("10.0.0.5:42312", "2001:db8:1:3::1"); got == site {
+		t.Fatalf("the next /64 shares a key: %q", got)
+	}
+	if got := key("[2001:db8:1:2::1]:42312", ""); got != "2001:db8:1:2::/64" {
+		t.Fatalf("key for a direct IPv6 client = %q", got)
+	}
+	// An IPv4 client is itself, however it's written, and an address that won't
+	// parse still gets a key of its own.
+	for address, want := range map[string]string{
+		"203.0.113.9":        "10.0.0.5|203.0.113.9",
+		"::ffff:203.0.113.9": "10.0.0.5|203.0.113.9",
+		"not-an-address":     "10.0.0.5|not-an-address",
+	} {
+		if got := key("10.0.0.5:42312", address); got != want {
+			t.Fatalf("key for %s = %q, want %q", address, got, want)
+		}
+	}
+}

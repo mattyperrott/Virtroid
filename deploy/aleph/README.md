@@ -202,6 +202,8 @@ with Nix for builds (a small Aleph VM works).
    - `PROVISIONED_REGIONS=snp-eu`. New accounts start in the first region
      listed; move older accounts with `virtroid-admin set-account-region`;
    - `PROVISIONER_MAX_VMS`: your spending cap;
+   - optionally `PROVISIONER_TRIAL_MAX_VMS`, what free trials may spend (see
+     [Cost](#cost));
    - optionally `PROVISIONER_WARM_SPARES=1`;
    - `RUNTIME_ANDROID_VERSION`: the Android `ALEPH_RUNTIME`/`ALEPH_IMAGE` run
      (`android-16` from image 16, `android-14` before). Change it together
@@ -252,6 +254,19 @@ hour, or $41 a month while it exists, plus storage. VMs are deleted after
 them, and `PROVISIONER_MAX_VMS` caps how many exist at once. A ready VM whose
 node has sent no heartbeat for `PROVISIONER_NODE_SILENT_AFTER` (default 1 h,
 0 turns it off) is deleted too, unless most ready VMs went quiet at once.
+
+Accounts cost nothing to make, so free trials can't use all of that.
+`PROVISIONER_TRIAL_MAX_VMS` (default 10, at most a quarter of
+`PROVISIONER_MAX_VMS`, 0 closes them) is how many VMs they may hold, which keeps
+the rest for paying accounts, and `PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR`
+(default 3, 0 turns it off) is how many new ones one address may ask for in an
+hour, across all its accounts. Past either, a trial is asked to try again, or to
+deposit: a deposit moves an account out of the trials at once.
+
+Wiping or deleting a runtime that holds data needs its account's VM too, and
+can't be left waiting behind new trials. It may hold as many VMs again, and the
+limit per address doesn't apply. So free trials cost at most
+2 × `PROVISIONER_TRIAL_MAX_VMS` VMs: about $1.14 an hour with the default.
 
 ## Known gaps
 

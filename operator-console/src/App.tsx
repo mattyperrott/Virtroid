@@ -1233,8 +1233,8 @@ function RuntimeVMsWorkspace({ overview }: { overview: OverviewResponse }) {
     </WorkspaceHeader>
     <SummaryCards items={[
       { label: "Live VMs", value: `${vms.live}/${vms.maxVms}`, detail: `${vms.ready} ready · ${vms.starting} starting · ${vms.retiring} retiring`, tone: vms.failed ? "warn" : vms.live ? "good" : "muted" },
-      { label: "Burn now", value: vms.hourlyBurn, detail: "estimated Aleph cost", tone: "muted" },
-      { label: "Cost, 24 h", value: vms.estimatedCost24h, detail: `${vms.vmHours24h} VM-hours`, tone: "muted" },
+      { label: "Free trials", value: `${vms.trialVms}/${vms.trialMaxVms}`, detail: `${vms.maxVms - vms.trialMaxVms} kept for paying accounts`, tone: vms.trialVms >= vms.trialMaxVms ? "warn" : "muted" },
+      { label: "Cost, 24 h", value: vms.estimatedCost24h, detail: `${vms.vmHours24h} VM-hours · ${vms.hourlyBurn} now, estimated`, tone: "muted" },
       { label: "Regions", value: vms.regions.join(", ") || "none", detail: vms.enabled ? `${vms.warmSpares} warm spares` : "provisioning is off", tone: vms.enabled ? "good" : "muted" },
     ]} literal />
     <section className="panel workspace-panel reveal">

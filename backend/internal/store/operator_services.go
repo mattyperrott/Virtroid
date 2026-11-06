@@ -62,6 +62,7 @@ type OperatorVM struct {
 // last week, and how many VM-hours existed in the last 24 hours.
 type OperatorVMs struct {
 	VMs               []OperatorVM
+	TrialVMs          int
 	VMHours24h        float64
 	ProvisionerSeen   *time.Time
 	SiaAccounts       int
@@ -199,6 +200,9 @@ func (s *Store) OperatorVMs(ctx context.Context) (OperatorVMs, error) {
 		out.VMs = append(out.VMs, vm)
 	}
 	if err := rows.Close(); err != nil {
+		return out, err
+	}
+	if err := s.db.QueryRowContext(ctx, trialVMsSQL).Scan(&out.TrialVMs); err != nil {
 		return out, err
 	}
 	// A VM is paid for from its request until it is deleted.

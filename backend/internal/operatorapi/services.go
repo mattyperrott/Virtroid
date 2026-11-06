@@ -71,6 +71,8 @@ type vmsResponse struct {
 	Enabled          bool         `json:"enabled"`
 	Regions          []string     `json:"regions"`
 	MaxVMs           int          `json:"maxVms"`
+	TrialVMs         int          `json:"trialVms"`
+	TrialMaxVMs      int          `json:"trialMaxVms"`
 	WarmSpares       int          `json:"warmSpares"`
 	Live             int          `json:"live"`
 	Ready            int          `json:"ready"`
@@ -188,6 +190,7 @@ func buildVMs(cfg config.ServerConfig, fleet store.OperatorVMs, now time.Time) v
 	out := vmsResponse{
 		Enabled: cfg.ProvisionerMaxVMs > 0 && len(cfg.ProvisionedRegions) > 0,
 		Regions: append([]string{}, cfg.ProvisionedRegions...), MaxVMs: cfg.ProvisionerMaxVMs,
+		TrialVMs: fleet.TrialVMs, TrialMaxVMs: cfg.ProvisionerTrialMaxVMs,
 		WarmSpares: cfg.ProvisionerWarmSpares, VMs: []vmResponse{},
 		VMHours24h: fmt.Sprintf("%.1f", fleet.VMHours24h),
 	}

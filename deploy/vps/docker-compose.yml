@@ -62,6 +62,10 @@ services:
       PROVISIONER_PUBLIC_KEY: ${PROVISIONER_PUBLIC_KEY:-}
       PROVISIONED_REGIONS: ${PROVISIONED_REGIONS:-}
       PROVISIONER_MAX_VMS: ${PROVISIONER_MAX_VMS:-0}
+      # How many of those free trials may hold, and how many new ones one address
+      # may ask for in an hour; the rest are kept for paying accounts.
+      PROVISIONER_TRIAL_MAX_VMS: ${PROVISIONER_TRIAL_MAX_VMS:-10}
+      PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR: ${PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR:-3}
       PROVISIONER_WARM_SPARES: ${PROVISIONER_WARM_SPARES:-0}
       PROVISIONER_SETUP_TIMEOUT: ${PROVISIONER_SETUP_TIMEOUT:-30m}
       # The Android the runtime VM image (ALEPH_RUNTIME/ALEPH_IMAGE) runs.
