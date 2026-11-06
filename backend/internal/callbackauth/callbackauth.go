@@ -43,16 +43,25 @@ func Canonical(method, requestURI, timestamp, nonce, bodyHash string) string {
 }
 
 func Sign(privateKey *ecdsa.PrivateKey, method, requestURI, timestamp, nonce string, body []byte) (string, string, error) {
-	if privateKey == nil {
-		return "", "", ErrMissingPrivateKey
-	}
 	bodyHash := BodyHash(body)
-	digest := sha256.Sum256([]byte(Canonical(method, requestURI, timestamp, nonce, bodyHash)))
-	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
+	signature, err := SignHash(privateKey, method, requestURI, timestamp, nonce, bodyHash)
 	if err != nil {
 		return "", "", err
 	}
-	return bodyHash, base64.RawURLEncoding.EncodeToString(signature), nil
+	return bodyHash, signature, nil
+}
+
+// SignHash signs a body by its hash, for one too large to hold in memory.
+func SignHash(privateKey *ecdsa.PrivateKey, method, requestURI, timestamp, nonce, bodyHash string) (string, error) {
+	if privateKey == nil {
+		return "", ErrMissingPrivateKey
+	}
+	digest := sha256.Sum256([]byte(Canonical(method, requestURI, timestamp, nonce, bodyHash)))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(signature), nil
 }
 
 func Verify(publicKeyMaterial, method, requestURI, timestamp, nonce, bodyHash, signatureMaterial string) error {
@@ -72,7 +81,12 @@ func Verify(publicKeyMaterial, method, requestURI, timestamp, nonce, bodyHash, s
 }
 
 func ApplySignedHeaders(req *http.Request, privateKey *ecdsa.PrivateKey, body []byte, timestamp, nonce string) error {
-	bodyHash, signature, err := Sign(privateKey, req.Method, req.URL.RequestURI(), timestamp, nonce, body)
+	return ApplySignedHash(req, privateKey, BodyHash(body), timestamp, nonce)
+}
+
+// ApplySignedHash is ApplySignedHeaders for a body known by its hash.
+func ApplySignedHash(req *http.Request, privateKey *ecdsa.PrivateKey, bodyHash, timestamp, nonce string) error {
+	signature, err := SignHash(privateKey, req.Method, req.URL.RequestURI(), timestamp, nonce, bodyHash)
 	if err != nil {
 		return err
 	}

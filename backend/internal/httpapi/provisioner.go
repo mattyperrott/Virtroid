@@ -140,15 +140,6 @@ func (a *API) requireServiceRequest(w http.ResponseWriter, r *http.Request, sign
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": signerID + " signature timestamp is outside the allowed window"})
 		return false
 	}
-	body, err := readAndRestoreBody(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
-		return false
-	}
-	if nodeauth.BodyHash(body) != bodyHash {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": signerID + " signature body hash mismatch"})
-		return false
-	}
 	if err := nodeauth.Verify(
 		publicKey,
 		r.Method,
@@ -160,6 +151,16 @@ func (a *API) requireServiceRequest(w http.ResponseWriter, r *http.Request, sign
 		signature,
 	); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": signerID + " signature verification failed"})
+		return false
+	}
+	// The signature covers the body's hash, so the body waits until it checks out.
+	body, err := readAndRestoreBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
+		return false
+	}
+	if nodeauth.BodyHash(body) != bodyHash {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": signerID + " signature body hash mismatch"})
 		return false
 	}
 	if a.store == nil {

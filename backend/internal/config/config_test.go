@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+func TestRuntimeImportSpoolSettings(t *testing.T) {
+	t.Setenv("RUNTIME_IMPORT_SPOOL_DIR", "/var/spool/imports")
+	t.Setenv("RUNTIME_IMPORT_SPOOL_MAX_BYTES", "2048")
+	cfg := LoadServer()
+	if cfg.RuntimeImportSpoolDir != "/var/spool/imports" || cfg.RuntimeImportSpoolMaxBytes != 2048 {
+		t.Fatalf("spool settings = %q, %d", cfg.RuntimeImportSpoolDir, cfg.RuntimeImportSpoolMaxBytes)
+	}
+	for _, invalid := range []string{"", "-1", "0", "lots"} {
+		t.Setenv("RUNTIME_IMPORT_SPOOL_MAX_BYTES", invalid)
+		if got := LoadServer().RuntimeImportSpoolMaxBytes; got != defaultRuntimeImportSpoolMaxBytes {
+			t.Fatalf("spool limit for %q = %d, want the default", invalid, got)
+		}
+	}
+}
+
 func TestBootstrapAndNodeAdvertiseDefaultsFailClosedInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("BOOTSTRAP_ENABLED", "")

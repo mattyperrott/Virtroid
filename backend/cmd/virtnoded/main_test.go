@@ -29,6 +29,77 @@ import (
 	"virtroid/backend/internal/nodeauth"
 )
 
+// countedReader is a request body that records how much of it was taken.
+type countedReader struct {
+	remaining int64
+	taken     int64
+}
+
+func (b *countedReader) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		return 0, io.EOF
+	}
+	n := min(int64(len(p)), b.remaining)
+	clear(p[:n])
+	b.remaining -= n
+	b.taken += n
+	return int(n), nil
+}
+
+// The VM's public port serves this route, so a stranger's made-up headers must
+// not make the node hold 32 MiB per request.
+func TestRequireControlPlaneCallbackLeavesBodyUnreadUntilSignatureChecks(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	publicKey, err := nodeauth.PublicKeyMaterial(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("PublicKeyMaterial: %v", err)
+	}
+	strangerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	node := &nodeAgent{cfg: config.NodeConfig{ControlPlaneCallbackPublicKey: publicKey}}
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	body := &countedReader{remaining: maxRuntimeFileImportBytes}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/runtimes/runtime-1/files?sealed=1", body)
+	if err := callbackauth.ApplySignedHeaders(req, strangerKey, []byte("sealed"), timestamp, "0123456789abcdef"); err != nil {
+		t.Fatalf("ApplySignedHeaders: %v", err)
+	}
+	response := httptest.NewRecorder()
+	if node.requireControlPlaneCallback(response, req) || response.Code != http.StatusUnauthorized {
+		t.Fatalf("a stranger's callback: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if body.taken != 0 {
+		t.Fatalf("took %d bytes before the signature checked out", body.taken)
+	}
+
+	// A valid signature over another body still fails on the bytes that arrive,
+	// and leaves the nonce unspent.
+	tampered := httptest.NewRequest(http.MethodPost, "/api/v1/internal/viewer/prepare", strings.NewReader("tampered"))
+	if err := callbackauth.ApplySignedHeaders(tampered, privateKey, []byte("signed"), timestamp, "fedcba9876543210"); err != nil {
+		t.Fatalf("ApplySignedHeaders: %v", err)
+	}
+	response = httptest.NewRecorder()
+	if node.requireControlPlaneCallback(response, tampered) || response.Code != http.StatusUnauthorized {
+		t.Fatalf("a tampered callback: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "body hash mismatch") {
+		t.Fatalf("a tampered callback: %s", response.Body.String())
+	}
+	retry := httptest.NewRequest(http.MethodPost, "/api/v1/internal/viewer/prepare", strings.NewReader("signed"))
+	if err := callbackauth.ApplySignedHeaders(retry, privateKey, []byte("signed"), timestamp, "fedcba9876543210"); err != nil {
+		t.Fatalf("ApplySignedHeaders: %v", err)
+	}
+	response = httptest.NewRecorder()
+	if !node.requireControlPlaneCallback(response, retry) {
+		t.Fatalf("the retry was refused: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestRequireControlPlaneCallbackVerifiesBodyAndRejectsReplay(t *testing.T) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

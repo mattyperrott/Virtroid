@@ -1064,6 +1064,12 @@ func (n *nodeAgent) requireControlPlaneCallback(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback predates this node's start"})
 		return false
 	}
+	// This listener faces the internet, and the signature covers the body's
+	// hash, so nothing of the body is taken until the signature checks out.
+	if err := callbackauth.Verify(publicKey, r.Method, r.URL.RequestURI(), timestampRaw, nonce, bodyHash, signature); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid control-plane callback signature"})
+		return false
+	}
 	limit := nodeCallbackBodyLimit(r.URL.Path)
 	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
@@ -1077,10 +1083,6 @@ func (n *nodeAgent) requireControlPlaneCallback(w http.ResponseWriter, r *http.R
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if callbackauth.BodyHash(body) != bodyHash {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "control-plane callback body hash mismatch"})
-		return false
-	}
-	if err := callbackauth.Verify(publicKey, r.Method, r.URL.RequestURI(), timestampRaw, nonce, bodyHash, signature); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid control-plane callback signature"})
 		return false
 	}
 

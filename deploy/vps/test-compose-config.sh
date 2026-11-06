@@ -78,6 +78,8 @@ awk '
 ' "${tmp_dir}/rendered-compose.yml" > "${tmp_dir}/virtroidd-compose.yml"
 grep -q 'group_add:' "${tmp_dir}/virtroidd-compose.yml"
 grep -q -- '- "65534"' "${tmp_dir}/virtroidd-compose.yml"
+grep -q 'RUNTIME_IMPORT_SPOOL_DIR: /var/spool/virtroid-imports' "${tmp_dir}/virtroidd-compose.yml"
+grep -q 'target: /var/spool/virtroid-imports' "${tmp_dir}/virtroidd-compose.yml"
 grep -q 'source: .*/operator-console-disabled' "${tmp_dir}/rendered-compose.yml"
 grep -q 'target: /run/secrets/operator-console-token' "${tmp_dir}/rendered-compose.yml"
 grep -q "NODE_NOTIFICATION_AGENT_APK_SHA256: ${digest}" "${tmp_dir}/rendered-compose.yml"

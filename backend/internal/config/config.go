@@ -2,10 +2,13 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
+
+const defaultRuntimeImportSpoolMaxBytes int64 = 1 << 30
 
 type ServerConfig struct {
 	AppEnv                           string
@@ -32,10 +35,14 @@ type ServerConfig struct {
 	SessionReaperInterval           time.Duration
 	ActiveSessionTimeout            time.Duration
 	// AppCatalogSyncEnabled follows F-Droid's signed index (on by default).
-	AppCatalogSyncEnabled           bool
-	AppCatalogSyncInterval          time.Duration
-	AppCatalogSyncMaxApps           int
-	RuntimeNotificationRateLimit    int
+	AppCatalogSyncEnabled        bool
+	AppCatalogSyncInterval       time.Duration
+	AppCatalogSyncMaxApps        int
+	RuntimeNotificationRateLimit int
+	// RuntimeImportSpoolDir holds sealed imports on their way to a VM, at most
+	// RuntimeImportSpoolMaxBytes of them at once.
+	RuntimeImportSpoolDir           string
+	RuntimeImportSpoolMaxBytes      int64
 	OperatorConsoleEnabled          bool
 	OperatorConsoleToken            string
 	OperatorSessionTTL              time.Duration
@@ -233,6 +240,10 @@ func LoadServer() ServerConfig {
 	if err != nil || provisionerWarmSpares < 0 {
 		provisionerWarmSpares = 0
 	}
+	runtimeImportSpoolMaxBytes, err := parseEnvInt64("RUNTIME_IMPORT_SPOOL_MAX_BYTES", defaultRuntimeImportSpoolMaxBytes)
+	if err != nil || runtimeImportSpoolMaxBytes <= 0 {
+		runtimeImportSpoolMaxBytes = defaultRuntimeImportSpoolMaxBytes
+	}
 
 	return ServerConfig{
 		AppEnv:                           appEnv,
@@ -260,6 +271,8 @@ func LoadServer() ServerConfig {
 		AppCatalogSyncInterval:           appCatalogSyncInterval,
 		AppCatalogSyncMaxApps:            appCatalogSyncMaxApps,
 		RuntimeNotificationRateLimit:     runtimeNotificationRateLimit,
+		RuntimeImportSpoolDir:            envOrDefault("RUNTIME_IMPORT_SPOOL_DIR", filepath.Join(os.TempDir(), "virtroid-imports")),
+		RuntimeImportSpoolMaxBytes:       runtimeImportSpoolMaxBytes,
 		OperatorConsoleEnabled:           parseEnvBool("OPERATOR_CONSOLE_ENABLED", false),
 		OperatorConsoleToken:             secretFileOrEnv("OPERATOR_CONSOLE_TOKEN_FILE", "OPERATOR_CONSOLE_TOKEN"),
 		OperatorSessionTTL:               parseEnvDuration("OPERATOR_SESSION_TTL", 8*time.Hour),

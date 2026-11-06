@@ -46,6 +46,11 @@ type API struct {
 	sia *siaindexd.Registry
 	// relayLegs times the edge relay's path to remote nodes.
 	relayLegs *relayLegTimer
+	// signedBodies bounds the phones' request bodies held in memory.
+	signedBodies *byteBudget
+	// importSpool holds sealed imports on their way to a VM; nil when its
+	// directory can't be used, which turns imports off.
+	importSpool *importSpool
 }
 
 type durableBlobKeyHandoffStore interface {
@@ -380,12 +385,18 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 		httpClient:          &http.Client{Transport: telemetry.Transport(http.DefaultTransport), Timeout: runtimeMediaProxyTimeout},
 		notificationHub:     newNotificationStreamHub(),
 		relayLegs:           newRelayLegTimer(),
+		signedBodies:        newByteBudget(signedBodyBudgetBytes, signedBodyAccountBudgetBytes),
 	}
 	sia, err := NewSiaRegistry(cfg)
 	if err != nil {
 		log.Printf("sia storage is off: %v", err)
 	}
 	api.sia = sia
+	spool, err := newImportSpool(cfg.RuntimeImportSpoolDir, cfg.RuntimeImportSpoolMaxBytes)
+	if err != nil {
+		log.Printf("runtime imports are off: %v", err)
+	}
+	api.importSpool = spool
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.healthz)
@@ -1141,6 +1152,8 @@ func (a *API) beginAccountRecovery(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusTooManyRequests, "account_recovery_rate_limited", "account recovery rate limit exceeded")
 		return
 	}
+	// A recovering phone has no key this server knows, so the body is read unproven.
+	r.Body = http.MaxBytesReader(w, r.Body, a.cfg.BootstrapMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read recovery request body"})
@@ -1239,6 +1252,7 @@ func (a *API) accountRecoveryParameters(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *API) completeAccountRecovery(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, a.cfg.BootstrapMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read recovery completion body"})
@@ -2219,10 +2233,8 @@ func (a *API) importMyRuntimeVideo(w http.ResponseWriter, r *http.Request) {
 // VM. Nodes refuse anything else, so an unsealed upload would only show its
 // contents to this server.
 func (a *API) importMyRuntimeMedia(w http.ResponseWriter, r *http.Request, kind, route string, maxBytes int64) {
-	// Before the body is read for the signature check.
-	extendDeadlines(w, runtimeImportUploadTimeout, runtimeImportWriteTimeout)
 	runtimeID := strings.TrimSpace(r.PathValue("id"))
-	actor, ok := a.requireRuntimeCapabilityRequest(w, r, runtimeID)
+	signed, ok := a.verifyRuntimeCapabilitySignature(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -2230,37 +2242,30 @@ func (a *API) importMyRuntimeMedia(w http.ResponseWriter, r *http.Request, kind,
 		writeAPIError(w, http.StatusBadRequest, kind+"_not_sealed", "imports must be sealed for the runtime's VM; update the app")
 		return
 	}
-	a.forwardSealedRuntimeImport(w, r, actor, runtimeID, kind, route, maxBytes)
-}
-
-// sealedImportOverhead bounds what a phone's seal adds to an imported file.
-const sealedImportOverhead int64 = 512
-
-// forwardSealedRuntimeImport passes on an import the phone sealed for the
-// runtime's VM. This server can read neither its name nor its contents, so
-// the node opens and checks it.
-func (a *API) forwardSealedRuntimeImport(w http.ResponseWriter, r *http.Request, actor runtimeActor, runtimeID, kind, route string, maxBytes int64) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			writeAPIError(w, http.StatusRequestEntityTooLarge, kind+"_too_large", "sealed "+kind+" is too large")
-			return
-		}
-		writeAPIError(w, http.StatusBadRequest, kind+"_read_failed", "could not read sealed "+kind)
+	// Nothing is taken for a runtime that couldn't receive it.
+	if _, _, ok := a.runtimeMediaTarget(w, r, signed.actor, runtimeID, kind); !ok {
 		return
 	}
-	if len(body) == 0 || int64(len(body)) > maxBytes+sealedImportOverhead {
-		writeAPIError(w, http.StatusRequestEntityTooLarge, kind+"_too_large", "sealed "+kind+" is empty or too large")
+	extendDeadlines(w, runtimeImportUploadTimeout, runtimeImportWriteTimeout)
+	spooled, ok := a.spoolSealedImport(w, r, signed, kind, maxBytes)
+	if !ok {
 		return
 	}
-	_, host, ok := a.runtimeMediaTarget(w, r, actor, runtimeID, kind)
+	defer spooled.discard()
+	if !a.finishRuntimeCapabilityRequest(w, r, signed) {
+		return
+	}
+	// The runtime may have stopped or moved during a slow upload.
+	_, host, ok := a.runtimeMediaTarget(w, r, signed.actor, runtimeID, kind)
 	if !ok {
 		return
 	}
 	callbackPath := "/api/v1/internal/runtimes/" + url.PathEscape(runtimeID) + "/" + route + "?sealed=1"
-	a.proxyRuntimeMedia(w, r, host, callbackPath, body, map[string]string{"Content-Type": "application/octet-stream"})
+	a.forwardSpooledImport(w, r, host, callbackPath, spooled)
 }
+
+// sealedImportOverhead bounds what a phone's seal adds to an imported file.
+const sealedImportOverhead int64 = 512
 
 func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor runtimeActor, runtimeID, operation string) (store.Runtime, store.Host, bool) {
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
@@ -2313,7 +2318,10 @@ func (a *API) runtimeMediaTarget(w http.ResponseWriter, r *http.Request, actor r
 	return runtime, host, true
 }
 
-func (a *API) proxyRuntimeMedia(w http.ResponseWriter, r *http.Request, host store.Host, callbackPath string, body []byte, headers map[string]string) {
+// forwardSpooledImport sends an import the phone sealed for the runtime's VM to
+// its node. This server can read neither its name nor its contents, so the node
+// opens and checks it.
+func (a *API) forwardSpooledImport(w http.ResponseWriter, r *http.Request, host store.Host, callbackPath string, spooled *spooledImport) {
 	baseURL, client, err := a.nodeCallbackTarget(r.Context(), host)
 	if err != nil {
 		writeServerAPIError(w, http.StatusBadGateway, "node_address_rejected", "assigned node address is unavailable", err)
@@ -2321,15 +2329,22 @@ func (a *API) proxyRuntimeMedia(w http.ResponseWriter, r *http.Request, host sto
 	}
 	proxyCtx, cancel := context.WithTimeout(r.Context(), runtimeMediaProxyTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(proxyCtx, http.MethodPost, baseURL+callbackPath, bytes.NewReader(body))
+	body, err := spooled.open()
 	if err != nil {
 		writeInternalAPIError(w, "runtime_media_proxy_request_failed", err)
 		return
 	}
-	for name, value := range headers {
-		req.Header.Set(name, value)
+	defer body.Close()
+	req, err := http.NewRequestWithContext(proxyCtx, http.MethodPost, baseURL+callbackPath, body)
+	if err != nil {
+		writeInternalAPIError(w, "runtime_media_proxy_request_failed", err)
+		return
 	}
-	if err := a.signNodeCallback(req, body); err != nil {
+	// A stale idle connection is retried from the start, as a memory body would be.
+	req.ContentLength = spooled.size
+	req.GetBody = spooled.open
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if err := a.signNodeCallbackHash(req, spooled.bodyHash); err != nil {
 		writeInternalAPIError(w, "runtime_media_proxy_sign_failed", err)
 		return
 	}
@@ -3036,6 +3051,11 @@ func (a *API) verifyBlobKeyEnvelopeWithNode(ctx context.Context, host store.Host
 }
 
 func (a *API) signNodeCallback(req *http.Request, body []byte) error {
+	return a.signNodeCallbackHash(req, callbackauth.BodyHash(body))
+}
+
+// signNodeCallbackHash signs a callback whose body is known by its hash.
+func (a *API) signNodeCallbackHash(req *http.Request, bodyHash string) error {
 	privateKey, _, err := nodeauth.LoadPrivateKey(a.cfg.ControlPlaneCallbackPrivateKey)
 	if err != nil {
 		return fmt.Errorf("load control-plane callback signing key: %w", err)
@@ -3047,10 +3067,10 @@ func (a *API) signNodeCallback(req *http.Request, body []byte) error {
 	if _, err := rand.Read(nonceBytes); err != nil {
 		return err
 	}
-	return callbackauth.ApplySignedHeaders(
+	return callbackauth.ApplySignedHash(
 		req,
 		privateKey,
-		body,
+		bodyHash,
 		strconv.FormatInt(time.Now().Unix(), 10),
 		base64.RawURLEncoding.EncodeToString(nonceBytes),
 	)
@@ -3091,6 +3111,30 @@ func (a *API) requireSessionActor(w http.ResponseWriter, r *http.Request) (runti
 }
 
 func (a *API) requireRuntimeCapabilityRequest(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeActor, bool) {
+	signed, ok := a.verifyRuntimeCapabilitySignature(w, r, runtimeID)
+	if !ok {
+		return runtimeActor{}, false
+	}
+	if !a.readSignedBody(w, r, signed.actor.accountID, signed.bodyHash, "runtime capability signature") {
+		return runtimeActor{}, false
+	}
+	if !a.finishRuntimeCapabilityRequest(w, r, signed) {
+		return runtimeActor{}, false
+	}
+	return signed.actor, true
+}
+
+// signedCapabilityRequest is a request whose signature checks out, with its
+// body still unread. The signature covers the body's hash, so nothing of the
+// body is taken from anyone who can't produce one.
+type signedCapabilityRequest struct {
+	actor    runtimeActor
+	nonce    string
+	expires  time.Time
+	bodyHash string
+}
+
+func (a *API) verifyRuntimeCapabilitySignature(w http.ResponseWriter, r *http.Request, runtimeID string) (signedCapabilityRequest, bool) {
 	capabilityID := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-ID"))
 	timestampRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-Timestamp"))
 	nonce := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-Nonce"))
@@ -3098,73 +3142,70 @@ func (a *API) requireRuntimeCapabilityRequest(w http.ResponseWriter, r *http.Req
 	signatureRaw := strings.TrimSpace(r.Header.Get("X-Virtroid-Capability-Signature"))
 	if capabilityID == "" || timestampRaw == "" || nonce == "" || bodyHash == "" || signatureRaw == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature headers are required"})
-		return runtimeActor{}, false
+		return signedCapabilityRequest{}, false
 	}
 
 	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid runtime capability signature timestamp"})
-		return runtimeActor{}, false
+		return signedCapabilityRequest{}, false
 	}
 	if skew := time.Since(time.Unix(timestamp, 0)); skew > 5*time.Minute || skew < -5*time.Minute {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature timestamp is outside the allowed window"})
-		return runtimeActor{}, false
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
-		return runtimeActor{}, false
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-
-	actualBodyHashBytes := sha256.Sum256(body)
-	actualBodyHash := base64.RawURLEncoding.EncodeToString(actualBodyHashBytes[:])
-	if bodyHash != actualBodyHash {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature body hash mismatch"})
-		return runtimeActor{}, false
+		return signedCapabilityRequest{}, false
 	}
 
 	accountID, publicKeyMaterial, err := a.store.RuntimeCapabilityPublicKey(r.Context(), runtimeID, capabilityID)
 	if err != nil {
 		if errors.Is(err, store.ErrRuntimeCapability) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
-			return runtimeActor{}, false
+			return signedCapabilityRequest{}, false
 		}
 		writeInternalAPIError(w, "runtime_capability_lookup_failed", err)
-		return runtimeActor{}, false
+		return signedCapabilityRequest{}, false
 	}
 	publicKey, err := parseECDSAPublicKeyMaterial(publicKeyMaterial)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "stored runtime capability public key is invalid"})
-		return runtimeActor{}, false
+		return signedCapabilityRequest{}, false
 	}
 	signatureDER, err := base64.RawURLEncoding.DecodeString(signatureRaw)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature is invalid"})
-		return runtimeActor{}, false
+		return signedCapabilityRequest{}, false
 	}
 	canonical := capabilityRequestCanonical(r.Method, r.URL.RequestURI(), capabilityID, timestampRaw, nonce, bodyHash)
 	digest := sha256.Sum256([]byte(canonical))
 	if !ecdsa.VerifyASN1(publicKey, digest[:], signatureDER) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "runtime capability signature verification failed"})
-		return runtimeActor{}, false
+		return signedCapabilityRequest{}, false
 	}
 
-	if err := a.store.RememberRuntimeCapabilityNonce(r.Context(), capabilityID, nonce, time.Unix(timestamp, 0).Add(5*time.Minute)); err != nil {
+	return signedCapabilityRequest{
+		actor:    runtimeActor{accountID: accountID, capabilityID: capabilityID, capability: true},
+		nonce:    nonce,
+		expires:  time.Unix(timestamp, 0).Add(5 * time.Minute),
+		bodyHash: bodyHash,
+	}, true
+}
+
+// finishRuntimeCapabilityRequest spends the request's nonce once its body is
+// known to match, so an upload that breaks off can be retried as it is.
+func (a *API) finishRuntimeCapabilityRequest(w http.ResponseWriter, r *http.Request, signed signedCapabilityRequest) bool {
+	capabilityID := signed.actor.capabilityID
+	if err := a.store.RememberRuntimeCapabilityNonce(r.Context(), capabilityID, signed.nonce, signed.expires); err != nil {
 		if err == store.ErrRuntimeCapabilityReplay {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
-			return runtimeActor{}, false
+			return false
 		}
 		writeInternalAPIError(w, "runtime_capability_nonce_failed", err)
-		return runtimeActor{}, false
+		return false
 	}
 	if err := a.store.TouchRuntimeCapability(r.Context(), capabilityID); err != nil {
 		writeInternalAPIError(w, "runtime_capability_touch_failed", err)
-		return runtimeActor{}, false
+		return false
 	}
-
-	return runtimeActor{accountID: accountID, capabilityID: capabilityID, capability: true}, true
+	return true
 }
 
 func (a *API) validateSignedDeviceBody(w http.ResponseWriter, signedAccountID, signedDeviceID, bodyAccountID, bodyDeviceID string) bool {
@@ -3557,20 +3598,6 @@ func (a *API) requireSignedRequest(
 		return "", "", false
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
-		return "", "", false
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-
-	actualBodyHashBytes := sha256.Sum256(body)
-	actualBodyHash := base64.RawURLEncoding.EncodeToString(actualBodyHashBytes[:])
-	if bodyHash != actualBodyHash {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "device signature body hash mismatch"})
-		return "", "", false
-	}
-
 	publicKeyMaterial, err := lookupPublicKey(r.Context(), accountID, deviceID)
 	if err != nil {
 		if err == store.ErrDeviceNotFound {
@@ -3605,6 +3632,11 @@ func (a *API) requireSignedRequest(
 	digest := sha256.Sum256([]byte(canonical))
 	if !ecdsa.VerifyASN1(publicKey, digest[:], signatureDER) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "device signature verification failed"})
+		return "", "", false
+	}
+
+	// The signature covers the body's hash, so the body waits until it checks out.
+	if !a.readSignedBody(w, r, accountID, bodyHash, "device signature") {
 		return "", "", false
 	}
 
@@ -3706,17 +3738,6 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowDe
 		return nodeRequestIdentity{}, false
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
-		return nodeRequestIdentity{}, false
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-
-	if actualBodyHash := nodeauth.BodyHash(body); bodyHash != actualBodyHash {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node signature body hash mismatch"})
-		return nodeRequestIdentity{}, false
-	}
 	if a.store == nil {
 		writeInternalAPIError(w, "store_unavailable", errors.New("store is not configured"))
 		return nodeRequestIdentity{}, false
@@ -3772,6 +3793,16 @@ func (a *API) requireNodeRequest(w http.ResponseWriter, r *http.Request, allowDe
 	}
 	if verifiedPublicKey == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node signature verification failed"})
+		return nodeRequestIdentity{}, false
+	}
+	// The signature covers the body's hash, so the body waits until it checks out.
+	body, err := readAndRestoreBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read request body"})
+		return nodeRequestIdentity{}, false
+	}
+	if actualBodyHash := nodeauth.BodyHash(body); bodyHash != actualBodyHash {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "node signature body hash mismatch"})
 		return nodeRequestIdentity{}, false
 	}
 	if developmentEnrollment {

@@ -491,6 +491,12 @@ user grants Android microphone permission. Temporary client captures are
 removed after import. This does not require a VPS video device, V4L2 loopback
 module, `ffmpeg`, camera slot, or ReDroid camera HAL.
 
+On its way to the VM, an import waits in the `virtroidd-import-spool` volume,
+which holds only what phones sealed for their VMs and is emptied whenever
+`virtroidd` starts. `RUNTIME_IMPORT_SPOOL_MAX_BYTES` (1 GiB by default) bounds it
+in all, and an account gets room for two full-size imports at once. Past either
+limit, phones are asked to try again shortly.
+
 Each runtime has its own F-Droid apps, chosen when it is created or from its
 controls. They are reconciled while the runtime is online, so a new selection
 does not require a restart. The node installs each app once and records it in

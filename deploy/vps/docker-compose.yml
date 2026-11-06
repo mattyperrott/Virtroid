@@ -99,6 +99,8 @@ services:
       APP_CATALOG_SYNC_INTERVAL: ${APP_CATALOG_SYNC_INTERVAL:-1h}
       APP_CATALOG_SYNC_MAX_APPS: ${APP_CATALOG_SYNC_MAX_APPS:-10000}
       RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE: ${RUNTIME_NOTIFICATION_RATE_LIMIT_PER_MINUTE:-120}
+      RUNTIME_IMPORT_SPOOL_DIR: /var/spool/virtroid-imports
+      RUNTIME_IMPORT_SPOOL_MAX_BYTES: ${RUNTIME_IMPORT_SPOOL_MAX_BYTES:-1073741824}
       OPERATOR_CONSOLE_ENABLED: ${OPERATOR_CONSOLE_ENABLED:-false}
       OPERATOR_CONSOLE_TOKEN_FILE: /run/secrets/operator-console-token
       OPERATOR_SESSION_TTL: ${OPERATOR_SESSION_TTL:-8h}
@@ -128,6 +130,8 @@ services:
       - ${SNP_MEASUREMENTS_FILE:-./snp-measurements-disabled}:/run/virtroid/snp-measurements.json:ro
       - ${SIA_INDEXER_ADMIN_PASSWORD_FILE:-./sia-disabled}:/run/secrets/sia-indexer-admin-password:ro
       - ${SIA_KEY_SECRET_FILE:-./sia-disabled}:/run/secrets/sia-key-secret:ro
+      # Only what phones sealed for their VMs, on its way there.
+      - virtroidd-import-spool:/var/spool/virtroid-imports
     logging:
       driver: local
       options:
@@ -753,6 +757,7 @@ networks:
 
 volumes:
   postgres-data:
+  virtroidd-import-spool:
   provisioner-state:
   renterd-data:
   renterd-mysql-data:
