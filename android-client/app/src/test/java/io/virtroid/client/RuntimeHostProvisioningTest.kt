@@ -118,4 +118,29 @@ class RuntimeHostProvisioningTest {
         assertEquals("45s", formatElapsed(45))
         assertEquals("2m 05s", formatElapsed(125))
     }
+
+    // A VM the cloud won't create isn't coming, so the screen stops waiting and
+    // shows the server's message. Published apps rely on any other code doing this.
+    @Test
+    fun stopsWaitingWhenTheServerCannotBeCreated() = runBlocking {
+        val refused = VirtroidApiException(
+            503,
+            "runtime_host_unavailable",
+            "Your private server can't be created right now.",
+            JSONObject().put("code", "runtime_host_unavailable").put("retry_after_seconds", 300),
+        )
+        var calls = 0
+        var waits = 0
+        try {
+            retryWhileRuntimeHostProvisioning<Unit>(onWaiting = { _, _ -> waits++ }, sleep = { fail("slept") }) {
+                calls++
+                throw refused
+            }
+            fail("expected the refusal")
+        } catch (error: VirtroidApiException) {
+            assertSame(refused, error)
+        }
+        assertEquals(1, calls)
+        assertEquals(0, waits)
+    }
 }

@@ -6,92 +6,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
+
+	"virtroid/backend/internal/alephapi"
 )
 
 // alephAPI reads an address's Aleph credits from Aleph's public API.
 type alephAPI struct {
-	baseURL string
-	client  *http.Client
+	client alephapi.Client
 }
 
 func (a alephAPI) creditBalance(ctx context.Context, address string) (int64, error) {
-	var response struct {
-		CreditBalance int64 `json:"credit_balance"`
-	}
-	if err := a.get(ctx, "/api/v0/addresses/"+url.PathEscape(address)+"/balance", &response); err != nil {
-		return 0, err
-	}
-	return response.CreditBalance, nil
+	return a.client.CreditBalance(ctx, address)
 }
 
-// dailySpend is the credits the address spent per day, on average, over the
-// last days days.
 func (a alephAPI) dailySpend(ctx context.Context, address string, days int, now time.Time) (int64, error) {
-	since := now.Add(-time.Duration(days) * 24 * time.Hour)
-	var spent int64
-	for page := 1; page <= 100; page++ {
-		var response struct {
-			History []struct {
-				Amount        int64  `json:"amount"`
-				PaymentMethod string `json:"payment_method"`
-				Timestamp     string `json:"message_timestamp"`
-			} `json:"credit_history"`
-		}
-		route := fmt.Sprintf("/api/v0/addresses/%s/credit_history?pagination=200&page=%d", url.PathEscape(address), page)
-		if err := a.get(ctx, route, &response); errors.Is(err, errAlephNotFound) {
-			break // past the last page, or no history at all
-		} else if err != nil {
-			return 0, err
-		}
-		if len(response.History) == 0 {
-			break
-		}
-		older := false
-		for _, entry := range response.History {
-			at, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
-			if err != nil {
-				return 0, fmt.Errorf("unreadable credit history time %q", entry.Timestamp)
-			}
-			if at.Before(since) {
-				older = true
-				continue
-			}
-			if entry.PaymentMethod == "credit_expense" && entry.Amount < 0 {
-				spent -= entry.Amount
-			}
-		}
-		if older {
-			break
-		}
-	}
-	return spent / int64(days), nil
-}
-
-var errAlephNotFound = errors.New("not found on Aleph")
-
-func (a alephAPI) get(ctx context.Context, route string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(a.baseURL, "/")+route, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return errAlephNotFound
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: status %d", req.URL.Path, resp.StatusCode)
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, maxAPIResponse)).Decode(out)
+	return a.client.DailySpend(ctx, address, days, now)
 }
 
 // ethereumRPC reads ETH balances from an Ethereum JSON-RPC node.

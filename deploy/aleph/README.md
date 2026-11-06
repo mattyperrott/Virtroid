@@ -249,7 +249,10 @@ with Nix for builds (a small Aleph VM works).
 ## Cost
 
 A 2 vCPU, 4 GiB confidential VM is 2 Aleph compute units: about $0.057 an
-hour, or $41 a month while it exists, plus storage. VMs are deleted after
+hour, or $41 a month while it exists, plus storage. Aleph refuses a new VM unless
+the paying account holds a day of everything it pays for plus the new VM; see
+[Running short of Aleph credits](../vps/payments.md#running-short-of-aleph-credits).
+VMs are deleted after
 `PROVISIONER_RETIRE_AFTER` (default 2 h) once their account has no runtime on
 them, and `PROVISIONER_MAX_VMS` caps how many exist at once. A ready VM whose
 node has sent no heartbeat for `PROVISIONER_NODE_SILENT_AFTER` (default 1 h,

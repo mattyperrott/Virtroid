@@ -31,6 +31,10 @@ const (
 // PROVISIONER_RETIRE_AFTER and is deleted, so asking every few seconds won't help.
 const trialVMCapacityRetryAfter = 5 * time.Minute
 
+// Aleph's refusal lifts only when someone acts, so the app isn't asked to retry
+// soon; asking again later is harmless.
+const runtimeHostUnavailableRetryAfter = 5 * time.Minute
+
 func provisioningRetryAfterFor(vm store.ProvisionedVM) time.Duration {
 	if vm.Desired == "present" && (vm.State == "booting" || vm.State == "ready") {
 		return provisioningBootingRetryAfter
@@ -95,6 +99,10 @@ func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID
 		writeInternalAPIError(w, "runtime_vm_request_failed", err)
 		return
 	}
+	if vm.Refusal != "" {
+		writeRuntimeHostUnavailable(w, cleanupRuntimeID != "")
+		return
+	}
 	retryAfter := int(provisioningRetryAfterFor(vm) / time.Second)
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -106,6 +114,23 @@ func (a *API) writeNoReadyHost(w http.ResponseWriter, r *http.Request, accountID
 		"vm_progress":         vm.Progress,
 		"vm_region":           vm.Region,
 		"vm_elapsed_seconds":  int(time.Since(vm.RequestedAt).Seconds()),
+	})
+}
+
+// writeRuntimeHostUnavailable ends the app's wait for a VM Aleph won't create
+// just now. Apps that don't know this code show the message and stop too. Why
+// it was refused goes to the operator, not to everyone waiting.
+func writeRuntimeHostUnavailable(w http.ResponseWriter, cleanup bool) {
+	message := "Your private server can't be created right now because of a problem on our side. Your data is safe. Please try again later."
+	if cleanup {
+		message = "Nothing was deleted. This needs your private server, which can't be created right now because of a problem on our side. Please try again later."
+	}
+	retryAfter := int(runtimeHostUnavailableRetryAfter / time.Second)
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"error":               message,
+		"code":                store.RuntimeHostUnavailableCode,
+		"retry_after_seconds": retryAfter,
 	})
 }
 
@@ -246,6 +271,7 @@ func (a *API) provisionerReport(w http.ResponseWriter, r *http.Request) {
 		NodePublicKey string `json:"node_public_key"`
 		Failure       string `json:"failure"`
 		Progress      string `json:"progress"`
+		Refusal       string `json:"refusal"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -259,6 +285,7 @@ func (a *API) provisionerReport(w http.ResponseWriter, r *http.Request) {
 		NodePublicKey: req.NodePublicKey,
 		Failure:       req.Failure,
 		Progress:      req.Progress,
+		Refusal:       req.Refusal,
 	})
 	switch {
 	case errors.Is(err, store.ErrProvisionedVMNotFound):
@@ -269,8 +296,40 @@ func (a *API) provisionerReport(w http.ResponseWriter, r *http.Request) {
 		log.Printf("provisioner report rejected vm=%q state=%q", r.PathValue("id"), req.State)
 		writeAPIError(w, http.StatusBadRequest, "provisioner_report_rejected", err.Error())
 	default:
+		if req.Refusal != "" {
+			a.noticeVMRefused(r.Context(), vm)
+		}
 		writeJSON(w, http.StatusOK, vm)
 	}
+}
+
+// provisionerCredits records how the account that pays for VMs stands, and
+// tells the operator when it is running short.
+func (a *API) provisionerCredits(w http.ResponseWriter, r *http.Request) {
+	if !a.requireProvisionerRequest(w, r) {
+		return
+	}
+	var req struct {
+		Address       string `json:"address"`
+		Credits       int64  `json:"credits"`
+		CreditsPerDay int64  `json:"credits_per_day"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	address := strings.TrimSpace(req.Address)
+	if !evmAddressPattern.MatchString(address) || req.CreditsPerDay < 0 {
+		writeAPIError(w, http.StatusBadRequest, "provisioner_report_rejected", "address must be an EVM address and credits_per_day not negative")
+		return
+	}
+	status := store.AlephCreditStatus{Address: address, Credits: req.Credits, CreditsPerDay: req.CreditsPerDay}
+	if err := a.store.SaveAlephCreditStatus(r.Context(), status); err != nil {
+		writeInternalAPIError(w, "provisioner_credits_failed", err)
+		return
+	}
+	a.noticeCredits(r.Context(), status, time.Now().UTC())
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func readAndRestoreBody(r *http.Request) ([]byte, error) {

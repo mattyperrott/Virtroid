@@ -89,6 +89,46 @@ func TestAttachServices(t *testing.T) {
 	}
 }
 
+func TestCreditService(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	vms := func(credits, perDay int64, age time.Duration) vmsResponse {
+		return vmsResponse{Enabled: true, Credits: buildCredits(store.AlephCreditStatus{
+			Address: "0x0aBe3c402B41CC339B7A101Ad940214cFB947a08", Credits: credits, CreditsPerDay: perDay, CheckedAt: now.Add(-age),
+		}, 57_000, now)}
+	}
+	for name, tc := range map[string]struct {
+		vms    vmsResponse
+		status string
+		detail string
+	}{
+		"off":     {vmsResponse{}, "off", "runtime VMs are off"},
+		"unread":  {vmsResponse{Enabled: true}, "warn", "no reading yet"},
+		"plenty":  {vms(118_746_705, 1_469_099, time.Hour), "good", "about 79 days until new VMs are refused"},
+		"soon":    {vms(20_466_287, 1_469_099, time.Hour), "warn", "about 12 days until new VMs are refused"},
+		"refused": {vms(1_659_418, 1_469_099, time.Hour), "bad", "too low for new VMs"},
+		"idle":    {vms(10_000_000, 0, time.Hour), "good", "not spending"},
+		"stale":   {vms(118_746_705, 1_469_099, 4*time.Hour), "warn", "reading is out of date; about 79 days until new VMs are refused"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := creditService(tc.vms); got.Status != tc.status || got.Detail != tc.detail {
+				t.Fatalf("service = %+v, want %s %q", got, tc.status, tc.detail)
+			}
+		})
+	}
+	// A refusal degrades the overview, as any bad service does.
+	result := overviewResponse{Status: "healthy"}
+	attachServices(&result, config.ServerConfig{
+		ProvisionerMaxVMs: 1, ProvisionedRegions: []string{"snp-eu"}, RuntimeVMCostHourMicro: 57_000,
+	}, store.OperatorPayments{}, store.OperatorVMs{
+		ProvisionerSeen: &now,
+		Credits:         &store.AlephCreditStatus{Credits: 1, CreditsPerDay: 1, CheckedAt: now},
+		VMs:             []store.OperatorVM{{ID: "pvm-a", State: "requested", Desired: "present", RequestedAt: now, Refusal: "Aleph refused the VM"}},
+	}, siaStatus{}, now)
+	if result.Status != "degraded" || result.VMs.Credits == nil || result.VMs.VMs[0].Refusal != "Aleph refused the VM" {
+		t.Fatalf("status=%q vms=%+v", result.Status, result.VMs)
+	}
+}
+
 func TestSiaMonitor(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, password, _ := r.BasicAuth(); password != "admin-secret" {

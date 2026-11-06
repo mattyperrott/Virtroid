@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"virtroid/backend/internal/alephapi"
 	"virtroid/backend/internal/nodeauth"
 )
 
@@ -34,7 +35,29 @@ func main() {
 	r.progress = nodes
 	r.boots = agentBoots{nodes: nodes}
 	log.Printf("virtroid-provisioner: regions=%d runtime=%s image=%s", len(cfg.RegionCRNs), cfg.Runtime, cfg.Image)
-	if buyer, err := loadCreditBuyer(driver); err != nil {
+	aleph := alephapi.Client{
+		BaseURL: envOr("ALEPH_API_URL", "https://api2.aleph.im"),
+		HTTP:    &http.Client{Timeout: 30 * time.Second},
+	}
+	r.messages = aleph
+	if payer := payerAddress(); payer != "" {
+		r.payerCredits = func(ctx context.Context) (int64, error) { return aleph.CreditBalance(ctx, payer) }
+		if reporter, ok := cp.(httpControlPlane); ok {
+			watch := newCreditWatch(payer, aleph.CreditBalance, aleph.DailySpend, reporter.ReportCredits)
+			log.Printf("virtroid-provisioner: watching the credits of %s", payer)
+			go func() {
+				for {
+					watch.runOnce(ctx)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(creditWatchEvery):
+					}
+				}
+			}()
+		}
+	}
+	if buyer, err := loadCreditBuyer(driver, aleph); err != nil {
 		log.Fatalf("virtroid-provisioner: %v", err)
 	} else if buyer != nil {
 		log.Printf("virtroid-provisioner: credit purchases %s for %s", buyer.mode, buyer.address)
@@ -167,9 +190,22 @@ func load() (provisionerConfig, controlPlane, alephDriver, time.Duration, error)
 	return cfg, cp, driver, interval, nil
 }
 
+// payerAddress is the account VMs are charged to: the owner's while the
+// provisioner deploys on its behalf, else the provisioner's own. It is "" when
+// neither is configured.
+func payerAddress() string {
+	if owner := strings.TrimSpace(os.Getenv("ALEPH_OWNER_ADDRESS")); owner != "" {
+		return owner
+	}
+	if address := strings.TrimSpace(os.Getenv("PROVISIONER_ADDRESS")); isEVMAddress(address) {
+		return address
+	}
+	return ""
+}
+
 // loadCreditBuyer sets up turning ETH into Aleph credits on the provisioner's
 // own address (PROVISIONER_ADDRESS), or nil when that address is not set.
-func loadCreditBuyer(driver alephDriver) (*creditBuyer, error) {
+func loadCreditBuyer(driver alephDriver, aleph alephapi.Client) (*creditBuyer, error) {
 	address := strings.TrimSpace(os.Getenv("PROVISIONER_ADDRESS"))
 	if address == "" {
 		return nil, nil
@@ -189,7 +225,7 @@ func loadCreditBuyer(driver alephDriver) (*creditBuyer, error) {
 	if !ok {
 		return nil, errors.New("credit purchases need the aleph CLI driver")
 	}
-	return newCreditBuyer(mode, address, envOr("ETH_RPC_URL", "https://ethereum-rpc.publicnode.com"), cli), nil
+	return newCreditBuyer(mode, address, envOr("ETH_RPC_URL", "https://ethereum-rpc.publicnode.com"), cli, aleph), nil
 }
 
 // parseRegionCRNs reads "region=hash[@Product],hash;region2=hash" into the

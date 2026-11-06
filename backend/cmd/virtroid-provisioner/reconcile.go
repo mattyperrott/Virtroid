@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"virtroid/backend/internal/alephapi"
 	"virtroid/backend/internal/nodeauth"
 )
 
@@ -48,6 +49,11 @@ const (
 	// INSTANCE message) is given to appear in the listing before the VM is
 	// created again. Setup times out after 30 minutes by default.
 	createSettles = 5 * time.Minute
+	// refusalRetryEvery paces asking again after Aleph refused a VM. A refused
+	// create leaves nothing behind, and credits can arrive at any moment.
+	refusalRetryEvery = time.Minute
+	// rejectionCheckEvery paces asking Aleph what became of a submitted create.
+	rejectionCheckEvery = 30 * time.Second
 )
 
 type crnTarget struct {
@@ -85,6 +91,18 @@ type reconciler struct {
 	restarts      map[string]int
 	// forgotten holds instances deleted recently, by item hash.
 	forgotten map[string]time.Time
+	// messages, when set, says what became of a submitted create: Aleph can
+	// accept one and reject it afterwards. payerCredits, when set, reads what
+	// the paying account holds, to say why a create was refused.
+	messages           messageReader
+	payerCredits       func(ctx context.Context) (int64, error)
+	lastRejectionCheck map[string]time.Time
+	lastRefused        map[string]time.Time
+}
+
+// messageReader says what became of a message submitted to Aleph.
+type messageReader interface {
+	Message(ctx context.Context, itemHash string) (alephapi.Message, error)
 }
 
 func newReconciler(cfg provisionerConfig, cp controlPlane, aleph alephDriver) *reconciler {
@@ -99,6 +117,9 @@ func newReconciler(cfg provisionerConfig, cp controlPlane, aleph alephDriver) *r
 		seenBoot:      map[string]string{},
 		restarts:      map[string]int{},
 		forgotten:     map[string]time.Time{},
+
+		lastRejectionCheck: map[string]time.Time{},
+		lastRefused:        map[string]time.Time{},
 	}
 }
 
@@ -205,6 +226,9 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			// Created before a restart; record it instead of creating another.
 			return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateCreating, ItemHash: instance.ItemHash, CRNHash: instance.NodeHash})
 		}
+		if at, refused := r.lastRefused[vm.ID]; refused && r.now().Sub(at) < refusalRetryEvery {
+			return nil
+		}
 		pending, err := r.loadCreate(vm.ID)
 		if err != nil {
 			// Not knowing what was submitted, creating another could double it.
@@ -235,9 +259,16 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			DataMiB:    r.cfg.DataMiB,
 			AMDProduct: target.AMDProduct,
 		})
+		if errors.Is(err, errCreateRefused) {
+			if err := r.forgetCreate(vm.ID); err != nil {
+				return err
+			}
+			return r.reportRefusal(ctx, vm.ID, "", r.describeRefusal(ctx))
+		}
 		if err != nil {
 			return err
 		}
+		delete(r.lastRefused, vm.ID)
 		record.ItemHash = itemHash
 		if err := r.saveCreate(vm.ID, record); err != nil {
 			log.Printf("provisioner: vm=%s record created instance %s: %v", vm.ID, itemHash, err)
@@ -246,6 +277,16 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 		return r.controlPlane.Report(ctx, vm.ID, vmReport{State: vmStateCreating, ItemHash: itemHash, CRNHash: target.Hash})
 
 	case vmStateCreating:
+		if !found {
+			if rejection := r.rejection(ctx, vm); rejection != "" {
+				// No instance exists or ever will, so it goes back to being
+				// requested, and is asked for again under the same VM.
+				if err := r.forgetCreate(vm.ID); err != nil {
+					return err
+				}
+				return r.reportRefusal(ctx, vm.ID, vmStateRequested, rejection)
+			}
+		}
 		if !found || instance.IPv6 == "" {
 			// Still being scheduled, downloaded or booted.
 			if r.progress != nil && vm.ItemHash != "" {
@@ -282,6 +323,45 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 		return r.watchBoot(ctx, vm)
 	}
 	return nil
+}
+
+// rejection says why Aleph rejected a VM's create, or "" when it hasn't.
+func (r *reconciler) rejection(ctx context.Context, vm provisionedVM) string {
+	if r.messages == nil || vm.ItemHash == "" {
+		return ""
+	}
+	if last, ok := r.lastRejectionCheck[vm.ID]; ok && r.now().Sub(last) < rejectionCheckEvery {
+		return ""
+	}
+	r.lastRejectionCheck[vm.ID] = r.now()
+	message, err := r.messages.Message(ctx, vm.ItemHash)
+	if err != nil || message.Status != alephapi.StatusRejected {
+		return ""
+	}
+	return message.Describe()
+}
+
+// describeRefusal says why a create was refused, as far as is known: the CLI
+// doesn't pass on Aleph's reason, and credits are what has refused VMs so far.
+func (r *reconciler) describeRefusal(ctx context.Context) string {
+	const refused = "Aleph refused the VM (HTTP 422)"
+	if r.payerCredits == nil {
+		return refused
+	}
+	credits, err := r.payerCredits(ctx)
+	if err != nil {
+		return refused
+	}
+	return refused + ", most likely for lack of credits: the paying account holds " + alephapi.GroupDigits(credits)
+}
+
+// reportRefusal tells the control plane Aleph won't create the VM just now,
+// optionally moving it to state, and holds off asking again for a while.
+func (r *reconciler) reportRefusal(ctx context.Context, vmID, state, refusal string) error {
+	r.lastRefused[vmID] = r.now()
+	delete(r.lastProgress, vmID)
+	log.Printf("provisioner: vm=%s refused: %s", vmID, refusal)
+	return r.controlPlane.Report(ctx, vmID, vmReport{State: state, Refusal: refusal})
 }
 
 // unlock attests the VM and injects its secrets. When the VM shows the same
@@ -437,6 +517,15 @@ func (r *reconciler) loadCreate(vmID string) (createRecord, error) {
 	return record, nil
 }
 
+// forgetCreate removes a VM's create record, for a create known to have left
+// nothing behind.
+func (r *reconciler) forgetCreate(vmID string) error {
+	if err := os.Remove(r.createPath(vmID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (r *reconciler) saveCreate(vmID string, record createRecord) error {
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -506,6 +595,8 @@ func (r *reconciler) remove(ctx context.Context, vm provisionedVM, instance alep
 	delete(r.lastBootCheck, vm.ID)
 	delete(r.seenBoot, vm.ID)
 	delete(r.restarts, vm.ID)
+	delete(r.lastRejectionCheck, vm.ID)
+	delete(r.lastRefused, vm.ID)
 	for _, path := range []string{r.nodeKeyPath(vm.ID), r.legacyDataKeyPath(vm.ID), r.bootPath(vm.ID), r.createPath(vm.ID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

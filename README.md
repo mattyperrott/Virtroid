@@ -426,7 +426,7 @@ _Updated 5 November 2026._
 | **Fauxx** | Decoy activity against ad-tech profiling, with a one-row widget. |
 | **Wallet and billing** | USDT (TRC20) deposits, the free trial, and charges for running time and storage. |
 | **Treasury** | Deposits swept into a treasury and swapped for Siacoin, ETH for Aleph credits, and TRX as balances run low, within caps. |
-| **Operator console** | The Observatory: fleet, runtime VMs, payments, Sia, security and release telemetry. |
+| **Operator console** | The Observatory: fleet, runtime VMs, Aleph credit runway, payments, Sia, security and release telemetry, with a phone notification before credits run short. |
 | **Control-plane hardening** | Falco, Suricata, firewalling, AppArmor and protected releases. |
 | **Database backups** | Nightly copies of the control-plane and `indexd` databases, sealed with a key derived from the `indexd` recovery phrase and stored on Aleph. [Restoring](deploy/vps/indexd.md#backups) needs only the phrase. |
 

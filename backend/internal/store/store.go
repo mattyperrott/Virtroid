@@ -3488,6 +3488,11 @@ func (s *Store) ListPendingNotificationDeliveries(
 		                s.envelope_ciphertext, s.created_at, s.expires_at
 		           FROM security_notice_deliveries s
 		          WHERE s.delivered_at IS NULL AND s.expires_at > NOW()
+		         UNION ALL
+		         SELECT o.id, ''::text AS runtime_id, o.event_id, o.device_id,
+		                o.envelope_ciphertext, o.created_at, o.expires_at
+		           FROM operator_notice_deliveries o
+		          WHERE o.delivered_at IS NULL AND o.expires_at > NOW()
 		        ) q
 		   JOIN device_notification_subscriptions p ON p.device_id = q.device_id
 		   JOIN devices d ON d.id = p.device_id AND d.account_id = p.account_id
@@ -3529,26 +3534,9 @@ func (s *Store) MarkNotificationDeliveryDelivered(ctx context.Context, accountID
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx,
-		`UPDATE runtime_notification_deliveries n
-		    SET delivered_at = COALESCE(n.delivered_at, NOW())
-		   FROM device_notification_subscriptions p, devices d, accounts a
-		  WHERE n.id = $3 AND n.device_id = $2
-		    AND p.device_id = n.device_id AND p.account_id = $1
-		    AND d.id = p.device_id AND d.account_id = p.account_id
-		    AND a.id = p.account_id AND d.revoked_at IS NULL AND a.deleted_at IS NULL`,
-		strings.TrimSpace(accountID), strings.TrimSpace(deviceID), strings.TrimSpace(deliveryID),
-	)
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		result, err = tx.ExecContext(ctx,
-			`UPDATE security_notice_deliveries n
+	for _, table := range []string{"runtime_notification_deliveries", "security_notice_deliveries", "operator_notice_deliveries"} {
+		result, err := tx.ExecContext(ctx,
+			`UPDATE `+table+` n
 			    SET delivered_at = COALESCE(n.delivered_at, NOW())
 			   FROM device_notification_subscriptions p, devices d, accounts a
 			  WHERE n.id = $3 AND n.device_id = $2
@@ -3560,15 +3548,15 @@ func (s *Store) MarkNotificationDeliveryDelivered(ctx context.Context, accountID
 		if err != nil {
 			return err
 		}
-		rows, err = result.RowsAffected()
+		rows, err := result.RowsAffected()
 		if err != nil {
 			return err
 		}
-		if rows == 0 {
-			return ErrNotificationDelivery
+		if rows > 0 {
+			return tx.Commit()
 		}
 	}
-	return tx.Commit()
+	return ErrNotificationDelivery
 }
 
 func (s *Store) RememberDeviceRequestNonce(ctx context.Context, accountID, deviceID, nonce string, expiresAt time.Time) error {

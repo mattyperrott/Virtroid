@@ -50,6 +50,7 @@ type OperatorVM struct {
 	Desired      string
 	ItemHash     string
 	Progress     string
+	Refusal      string
 	RetireReason string
 	Failure      string
 	RequestedAt  time.Time
@@ -65,6 +66,7 @@ type OperatorVMs struct {
 	TrialVMs          int
 	VMHours24h        float64
 	ProvisionerSeen   *time.Time
+	Credits           *AlephCreditStatus
 	SiaAccounts       int
 	StoredBytesByKind map[string]int64
 }
@@ -177,7 +179,7 @@ func (s *Store) OperatorVMs(ctx context.Context) (OperatorVMs, error) {
 	out := OperatorVMs{StoredBytesByKind: map[string]int64{}}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(account_id::text, ''), region, state, desired, COALESCE(item_hash, ''),
-		       COALESCE(progress, ''), COALESCE(retire_reason, ''), COALESCE(failure, ''),
+		       COALESCE(progress, ''), COALESCE(refusal, ''), COALESCE(retire_reason, ''), COALESCE(failure, ''),
 		       requested_at, ready_at, last_used_at, deleted_at
 		  FROM provisioned_vms
 		 WHERE deleted_at IS NULL OR deleted_at > NOW() - INTERVAL '7 days'
@@ -190,7 +192,7 @@ func (s *Store) OperatorVMs(ctx context.Context) (OperatorVMs, error) {
 		var vm OperatorVM
 		var ready, used, deleted sql.NullTime
 		if err := rows.Scan(&vm.ID, &vm.AccountID, &vm.Region, &vm.State, &vm.Desired, &vm.ItemHash,
-			&vm.Progress, &vm.RetireReason, &vm.Failure, &vm.RequestedAt, &ready, &used, &deleted); err != nil {
+			&vm.Progress, &vm.Refusal, &vm.RetireReason, &vm.Failure, &vm.RequestedAt, &ready, &used, &deleted); err != nil {
 			rows.Close()
 			return out, err
 		}
@@ -217,6 +219,9 @@ func (s *Store) OperatorVMs(ctx context.Context) (OperatorVMs, error) {
 		return out, err
 	}
 	if out.ProvisionerSeen, err = serviceSeenAt(ctx, s.db, "provisioner"); err != nil {
+		return out, err
+	}
+	if out.Credits, err = s.LatestAlephCreditStatus(ctx); err != nil {
 		return out, err
 	}
 	if err := s.db.QueryRowContext(ctx,

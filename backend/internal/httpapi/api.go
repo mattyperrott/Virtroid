@@ -465,6 +465,7 @@ func New(cfg config.ServerConfig, st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/internal/sessions/{id}/relay-route", api.sessionRelayRoute)
 	mux.HandleFunc("GET /api/v1/internal/provisioner/vms", api.provisionerWork)
 	mux.HandleFunc("POST /api/v1/internal/provisioner/vms/{id}/report", api.provisionerReport)
+	mux.HandleFunc("POST /api/v1/internal/provisioner/credits", api.provisionerCredits)
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/blob-key", api.runtimeBlobKey)
 	mux.HandleFunc("GET /api/v1/internal/runtimes/{id}/sia-credentials", api.runtimeSiaCredentials)
 	mux.HandleFunc("GET /api/v1/internal/payments/watch", api.paymentsWatchList)

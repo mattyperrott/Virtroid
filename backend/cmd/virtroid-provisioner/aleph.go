@@ -57,6 +57,11 @@ type alephDriver interface {
 // it is the expected confidential VM. Such a VM is deleted, never retried.
 var errAttestation = errors.New("attestation failed")
 
+// errCreateRefused marks a create Aleph turned down outright: nothing was
+// submitted, so nothing can show up later. Asking again can work once what
+// stopped it is fixed, which is usually the paying account's credits.
+var errCreateRefused = errors.New("Aleph refused the create")
+
 // cliDriver drives Aleph's official `aleph` CLI, which builds and signs the
 // INSTANCE message, computes the SEV-SNP launch measurements from the runtime
 // bundle, and verifies the guest over attested TLS before sending secrets.
@@ -129,9 +134,18 @@ func (d cliDriver) Create(ctx context.Context, spec createSpec) (string, error) 
 	}
 	out, err := d.run(ctx, "--account", args...)
 	if err != nil {
+		if isCreateRefusal(err.Error()) {
+			return "", fmt.Errorf("%w: %v", errCreateRefused, err)
+		}
 		return "", err
 	}
 	return parseItemHash(out, "instance create")
+}
+
+// isCreateRefusal recognizes Aleph's answer to a message it rejects, which the
+// CLI reports without the reason (pyaleph: MessageStatus.REJECTED is HTTP 422).
+func isCreateRefusal(message string) bool {
+	return strings.Contains(message, "HTTP 422")
 }
 
 func (d cliDriver) Unlock(ctx context.Context, spec unlockSpec) error {

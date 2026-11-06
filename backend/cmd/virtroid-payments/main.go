@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"virtroid/backend/internal/alephapi"
 	"virtroid/backend/internal/nodeauth"
 	"virtroid/backend/internal/tron"
 )
@@ -184,7 +185,7 @@ func run() error {
 	}
 	vault := newTreasury(treasuryCfg, wallet, control, grid,
 		simpleSwap{baseURL: envOrDefault("SIMPLESWAP_URL", "https://api.simpleswap.io"), apiKey: swapKey, client: client},
-		alephAPI{baseURL: envOrDefault("ALEPH_API_URL", "https://api2.aleph.im"), client: client},
+		alephAPI{client: alephapi.Client{BaseURL: envOrDefault("ALEPH_API_URL", "https://api2.aleph.im"), HTTP: client}},
 		ethereumRPC{url: envOrDefault("ETH_RPC_URL", "https://ethereum-rpc.publicnode.com"), client: client},
 	)
 

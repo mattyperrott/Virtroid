@@ -113,6 +113,7 @@ export interface RuntimeVM {
   desired: string;
   image: string;
   progress?: string;
+  refusal?: string;
   age: string;
   ready: string;
   lastUsed: string;
@@ -136,7 +137,19 @@ export interface VmsOverview {
   vmHours24h: string;
   estimatedCost24h: string;
   hourlyBurn: string;
+  // Absent until the provisioner has read the paying account once.
+  credits?: AlephCredits;
   vms: RuntimeVM[];
+}
+
+export interface AlephCredits {
+  address: string;
+  credits: string;
+  perDay: string;
+  needed: string;
+  runway: string;
+  level: "good" | "warn" | "bad";
+  checked: string;
 }
 
 export interface SiaOverview {

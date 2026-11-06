@@ -1236,6 +1236,7 @@ function RuntimeVMsWorkspace({ overview }: { overview: OverviewResponse }) {
       { label: "Free trials", value: `${vms.trialVms}/${vms.trialMaxVms}`, detail: `${vms.maxVms - vms.trialMaxVms} kept for paying accounts`, tone: vms.trialVms >= vms.trialMaxVms ? "warn" : "muted" },
       { label: "Cost, 24 h", value: vms.estimatedCost24h, detail: `${vms.vmHours24h} VM-hours · ${vms.hourlyBurn} now, estimated`, tone: "muted" },
       { label: "Regions", value: vms.regions.join(", ") || "none", detail: vms.enabled ? `${vms.warmSpares} warm spares` : "provisioning is off", tone: vms.enabled ? "good" : "muted" },
+      ...(vms.credits ? [{ label: "Aleph credits", value: vms.credits.credits, detail: `${vms.credits.runway} · ${vms.credits.perDay} a day · ${vms.credits.needed} needed · read ${vms.credits.checked} ago`, tone: vms.credits.level === "good" ? "good" as const : "warn" as const }] : []),
     ]} literal />
     <section className="panel workspace-panel reveal">
       <WorkspaceToolbar query={query} onQuery={setQuery} placeholder="Search VM, account, state or image…" filters={[
@@ -1245,9 +1246,10 @@ function RuntimeVMsWorkspace({ overview }: { overview: OverviewResponse }) {
         {rows.map((vm) => <div className="data-row" key={vm.id}>
           <span className="data-row__icon"><Cpu size={17} /></span>
           <span className="data-row__identity"><strong>VM {vm.shortId}</strong><small>{vm.accountShortId === "spare" ? "warm spare" : `account ${vm.accountShortId}`} · {vm.region} · image {vm.image}</small></span>
-          <span className="data-row__cell"><small>State</small><strong className={`tone-${vm.failed ? "warn" : vmStateTone[vm.state] ?? "muted"}`}>{vm.failed ? "failing" : vm.desired === "absent" && !vm.deleted ? "retiring" : vm.state}</strong></span>
+          <span className="data-row__cell"><small>State</small><strong className={`tone-${vm.failed || vm.refusal ? "warn" : vmStateTone[vm.state] ?? "muted"}`}>{vm.failed ? "failing" : vm.refusal ? "refused" : vm.desired === "absent" && !vm.deleted ? "retiring" : vm.state}</strong></span>
           <span className="data-row__cell"><small>{vm.deleted ? "Deleted" : vm.progress ? "Progress" : "Last used"}</small><strong>{vm.deleted ?? (vm.progress || vm.lastUsed)}</strong></span>
           <span className="data-row__cell"><small>Age</small><strong>{vm.age}</strong></span>
+          {vm.refusal ? <p className="data-row__note tone-warn">{vm.refusal}</p> : null}
         </div>)}
       </div> : <EmptyWorkspace title="No VMs" detail={vms.vms.length ? "No VM matches this filter." : "VMs appear when accounts start runtimes."} />}
     </section>

@@ -193,6 +193,7 @@ func attachServices(result *overviewResponse, cfg config.ServerConfig, payments 
 	result.Services = []serviceResponse{
 		serviceHealth("Payments", result.Payments.Enabled, payments.PaymentsSeenAt, now, "USDT deposits are off"),
 		serviceHealth("VM provisioner", result.VMs.Enabled, fleet.ProvisionerSeen, now, "runtime VMs are off"),
+		creditService(result.VMs),
 		siaService,
 	}
 	for _, service := range result.Services {

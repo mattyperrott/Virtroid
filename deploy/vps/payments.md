@@ -70,11 +70,14 @@ The treasury is the seed's address at index 0 (accounts start at 1). Every
      reports indexd's balance; the swap goes nowhere unless the reported
      wallet is the pinned one.
    - **ETH** to `PAYMENTS_ALEPH_FUND_ADDRESS` (the provisioner's address),
-     when its Aleph credits, plus the ETH already waiting there, cover less
-     than 90% of `PAYMENTS_ALEPH_DAYS` (7) days of what
-     `PAYMENTS_ALEPH_SPEND_ADDRESS` spent per day over the last week. The
-     provisioner buys credits with that ETH (`PROVISIONER_CREDIT_BUY`),
-     keeping 0.002 ETH for gas.
+     when the Aleph credits of that address and of
+     `PAYMENTS_ALEPH_SPEND_ADDRESS`, plus the ETH already waiting, cover less
+     than 90% of `PAYMENTS_ALEPH_DAYS` (7) days of what the spend address
+     spent per day over the last week. The provisioner buys credits with that
+     ETH (`PROVISIONER_CREDIT_BUY`), keeping 0.002 ETH for gas. A purchase
+     lands on the provisioner's own account, so while `ALEPH_OWNER_ADDRESS` is
+     set it forwards them there within the hour; that is the account VMs are
+     charged to.
 
 Each swap is at least `PAYMENTS_MIN_SWAP_USDT` (25) and at most
 `PAYMENTS_MAX_SWAP_USDT` (200) USDT, and no more than
@@ -109,9 +112,35 @@ move nothing. `live` signs and sends; `off` stops them.
    deploys on its behalf).
 4. Read a few dry-run cycles, then set `PAYMENTS_TREASURY=live` and
    `PROVISIONER_CREDIT_BUY=live`, and release.
-5. Once the provisioner's own credits cover a week, remove
+5. Optional, to stop giving the provisioner permission over your wallet: send
+   it a week of credits (`aleph credit transfer`), remove
    `ALEPH_OWNER_ADDRESS` so it pays for its VMs itself, set
    `PAYMENTS_ALEPH_SPEND_ADDRESS` to the provisioner's address, and release.
+   It then keeps what it buys.
+
+## Running short of Aleph credits
+
+Aleph refuses a new VM unless the paying account holds a day of everything it
+already pays for, plus a day of the new VM. It refuses long before the balance
+reaches zero, and starts, wipes and deletions all need the account's VM.
+
+The provisioner reads the paying account every hour (`ALEPH_OWNER_ADDRESS`,
+else `PROVISIONER_ADDRESS`) and reports it to `virtroidd`:
+
+- **Operator console.** Runtime VMs and the service list show the credits, the
+  spend per day and the days until new VMs are refused.
+- **Phone.** Devices of `operator` accounts that take notifications get one
+  from "Virtroid operator" every 3 days when VMs are 14 days or less from being
+  refused, and daily at 3 days or less.
+
+When Aleph does refuse a VM, the provisioner keeps asking every minute under the
+same VM until the setup timeout. Meanwhile the app stops waiting and says the
+server can't be created, and the operator's devices are told why, once a day.
+Nothing needs restarting: once credits arrive the next attempt goes through, and
+people try again.
+
+To top up, buy credits from the paying account in the
+[Aleph console](https://app.aleph.cloud/account) or with `aleph credit buy`.
 
 ## What each party sees
 
@@ -120,7 +149,8 @@ move nothing. `live` signs and sends; `off` stops them.
 - VPS root can read the seed and spend every deposit.
 - SimpleSwap sees each swap: the treasury address, the amounts, and the
   indexd and provisioner addresses it pays. Aleph's API and the Ethereum
-  node see which addresses' credits and ETH the treasury reads.
+  node see which addresses' credits and ETH the treasury and the provisioner
+  read.
 
 ## Turning it on
 

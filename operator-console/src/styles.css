@@ -2374,6 +2374,7 @@ kbd {
 
 .data-row strong { overflow: hidden; font-size: 10px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
 .data-row small { overflow: hidden; color: var(--dim); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.data-row__note { grid-column: 2 / -1; margin: 0; font-size: 10px; line-height: 1.4; }
 .data-row > svg { color: var(--dim); }
 
 .tone-good { color: var(--mint) !important; }

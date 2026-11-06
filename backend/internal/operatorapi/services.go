@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"virtroid/backend/internal/alephapi"
 	"virtroid/backend/internal/config"
 	"virtroid/backend/internal/store"
 )
@@ -68,21 +69,33 @@ type balanceResponse struct {
 }
 
 type vmsResponse struct {
-	Enabled          bool         `json:"enabled"`
-	Regions          []string     `json:"regions"`
-	MaxVMs           int          `json:"maxVms"`
-	TrialVMs         int          `json:"trialVms"`
-	TrialMaxVMs      int          `json:"trialMaxVms"`
-	WarmSpares       int          `json:"warmSpares"`
-	Live             int          `json:"live"`
-	Ready            int          `json:"ready"`
-	Starting         int          `json:"starting"`
-	Retiring         int          `json:"retiring"`
-	Failed           int          `json:"failed"`
-	VMHours24h       string       `json:"vmHours24h"`
-	EstimatedCost24h string       `json:"estimatedCost24h"`
-	HourlyBurn       string       `json:"hourlyBurn"`
-	VMs              []vmResponse `json:"vms"`
+	Enabled          bool     `json:"enabled"`
+	Regions          []string `json:"regions"`
+	MaxVMs           int      `json:"maxVms"`
+	TrialVMs         int      `json:"trialVms"`
+	TrialMaxVMs      int      `json:"trialMaxVms"`
+	WarmSpares       int      `json:"warmSpares"`
+	Live             int      `json:"live"`
+	Ready            int      `json:"ready"`
+	Starting         int      `json:"starting"`
+	Retiring         int      `json:"retiring"`
+	Failed           int      `json:"failed"`
+	VMHours24h       string   `json:"vmHours24h"`
+	EstimatedCost24h string   `json:"estimatedCost24h"`
+	HourlyBurn       string   `json:"hourlyBurn"`
+	// Credits is absent until the provisioner has read them once.
+	Credits *creditsResponse `json:"credits,omitempty"`
+	VMs     []vmResponse     `json:"vms"`
+}
+
+type creditsResponse struct {
+	Address string `json:"address"`
+	Credits string `json:"credits"`
+	PerDay  string `json:"perDay"`
+	Needed  string `json:"needed"`
+	Runway  string `json:"runway"`
+	Level   string `json:"level"` // good, warn, bad
+	Checked string `json:"checked"`
 }
 
 type vmResponse struct {
@@ -94,6 +107,7 @@ type vmResponse struct {
 	Desired        string `json:"desired"`
 	Image          string `json:"image"`
 	Progress       string `json:"progress,omitempty"`
+	Refusal        string `json:"refusal,omitempty"`
 	Age            string `json:"age"`
 	Ready          string `json:"ready"`
 	LastUsed       string `json:"lastUsed"`
@@ -198,7 +212,7 @@ func buildVMs(cfg config.ServerConfig, fleet store.OperatorVMs, now time.Time) v
 		entry := vmResponse{
 			ID: vm.ID, ShortID: shortID(strings.TrimPrefix(vm.ID, "pvm-")), AccountShortID: "spare",
 			Region: vm.Region, State: vm.State, Desired: vm.Desired, Image: shortID(vm.ItemHash),
-			Progress: vm.Progress, Age: relativeAge(now, vm.RequestedAt), Ready: "not yet", LastUsed: "never",
+			Progress: vm.Progress, Refusal: vm.Refusal, Age: relativeAge(now, vm.RequestedAt), Ready: "not yet", LastUsed: "never",
 			RetireReason: vm.RetireReason, Failed: strings.TrimSpace(vm.Failure) != "",
 		}
 		if vm.AccountID != "" {
@@ -232,7 +246,48 @@ func buildVMs(cfg config.ServerConfig, fleet store.OperatorVMs, now time.Time) v
 	cost := float64(cfg.RuntimeVMCostHourMicro) / 1e6
 	out.EstimatedCost24h = fmt.Sprintf("$%.2f", fleet.VMHours24h*cost)
 	out.HourlyBurn = fmt.Sprintf("$%.3f/h", float64(out.Live)*cost)
+	if fleet.Credits != nil {
+		out.Credits = buildCredits(*fleet.Credits, cfg.RuntimeVMCostHourMicro, now)
+	}
 	return out
+}
+
+// creditReadingStaleAfter is three missed hourly readings.
+const creditReadingStaleAfter = 3 * time.Hour
+
+func buildCredits(status store.AlephCreditStatus, vmCreditsPerHour int64, now time.Time) *creditsResponse {
+	runway := status.Runway(vmCreditsPerHour)
+	out := &creditsResponse{
+		Address: status.Address, Credits: alephapi.GroupDigits(status.Credits),
+		PerDay: alephapi.GroupDigits(status.CreditsPerDay), Needed: alephapi.GroupDigits(runway.Needed),
+		Level: runway.Level, Checked: relativeAge(now, status.CheckedAt),
+	}
+	switch {
+	case runway.BelowNeeded:
+		out.Runway = "too low for new VMs"
+	case runway.DaysLeft < 0:
+		out.Runway = "not spending"
+	default:
+		out.Runway = fmt.Sprintf("about %.0f days until new VMs are refused", runway.DaysLeft)
+	}
+	if out.Level == store.CreditLevelGood && now.Sub(status.CheckedAt) > creditReadingStaleAfter {
+		out.Level = store.CreditLevelWarn
+		out.Runway = "reading is out of date; " + out.Runway
+	}
+	return out
+}
+
+// creditService is the paying account's credits as a service line.
+func creditService(vms vmsResponse) serviceResponse {
+	service := serviceResponse{Name: "Aleph credits", Status: "off", Detail: "runtime VMs are off"}
+	switch {
+	case !vms.Enabled:
+	case vms.Credits == nil:
+		service.Status, service.Detail = "warn", "no reading yet"
+	default:
+		service.Status, service.Detail = vms.Credits.Level, vms.Credits.Runway
+	}
+	return service
 }
 
 func buildSia(cfg config.ServerConfig, fleet store.OperatorVMs, status siaStatus, now time.Time) siaResponse {

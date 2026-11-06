@@ -52,7 +52,8 @@ type treasuryConfig struct {
 	SiaTargetSC int64
 	// AlephFundAddress receives ETH for credits; AlephSpendAddress is whose
 	// spending sets how much (the owner's, while the provisioner deploys on
-	// its behalf; the provisioner's own once it pays).
+	// its behalf; the provisioner's own once it pays). The provisioner forwards
+	// what it buys to the spender, so credits at either address count.
 	AlephFundAddress  string
 	AlephSpendAddress string
 	AlephDays         int
@@ -492,6 +493,14 @@ func (t *treasury) alephNeed(ctx context.Context) (swapNeed, bool) {
 		t.logf("treasury: Aleph credit balance unknown, so ETH waits: %v", err)
 		return swapNeed{}, false
 	}
+	if !strings.EqualFold(spender, t.cfg.AlephFundAddress) {
+		charged, err := t.credits.creditBalance(ctx, spender)
+		if err != nil {
+			t.logf("treasury: Aleph credit balance unknown, so ETH waits: %v", err)
+			return swapNeed{}, false
+		}
+		have += charged
+	}
 	wei, err := t.eth.balanceWei(ctx, t.cfg.AlephFundAddress)
 	if err != nil {
 		t.logf("treasury: ETH balance unknown, so ETH waits: %v", err)
@@ -517,8 +526,8 @@ func (t *treasury) alephNeed(ctx context.Context) (swapNeed, bool) {
 	waiting := new(big.Rat).Mul(new(big.Rat).SetFrac(spare, big.NewInt(1e18)), usdPerETH)
 	waiting.Mul(waiting, big.NewRat(1_000_000, 1))
 	target := new(big.Rat).SetInt64(perDay * int64(t.cfg.AlephDays))
-	t.logf("treasury: %s spends %d Aleph credits a day; %s holds %d credits and %s ETH, %s days of the %d wanted",
-		spender, perDay, t.cfg.AlephFundAddress, have, new(big.Rat).SetFrac(wei, big.NewInt(1e18)).FloatString(6),
+	t.logf("treasury: %s spends %d Aleph credits a day; %d credits and %s ETH at %s are %s days of the %d wanted",
+		spender, perDay, have, new(big.Rat).SetFrac(wei, big.NewInt(1e18)).FloatString(6), t.cfg.AlephFundAddress,
 		daysCovered(have, waiting, perDay), t.cfg.AlephDays)
 	short := new(big.Rat).Sub(target, new(big.Rat).Add(new(big.Rat).SetInt64(have), waiting))
 	if target.Sign() == 0 || short.Cmp(new(big.Rat).Mul(target, big.NewRat(int64(refillShare*100), 100))) < 0 {
@@ -530,8 +539,8 @@ func (t *treasury) alephNeed(ctx context.Context) (swapNeed, bool) {
 	}
 	return swapNeed{
 		to: ether, amount: ethNeeded.FloatString(6), addressTo: t.cfg.AlephFundAddress,
-		why: fmt.Sprintf("Aleph credits at %s cover %s of the %d days wanted (%d credits a day)",
-			t.cfg.AlephFundAddress, daysCovered(have, waiting, perDay), t.cfg.AlephDays, perDay),
+		why: fmt.Sprintf("Aleph credits for %s cover %s of the %d days wanted (%d credits a day)",
+			spender, daysCovered(have, waiting, perDay), t.cfg.AlephDays, perDay),
 	}, true
 }
 

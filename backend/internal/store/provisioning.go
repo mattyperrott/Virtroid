@@ -33,10 +33,14 @@ const (
 	ProvisioningCapacityCode    = "runtime_host_capacity"
 	TrialVMCapacityCode         = "runtime_host_trial_capacity"
 	TrialVMRateCode             = "runtime_host_trial_rate"
+	// RuntimeHostUnavailableCode is a VM Aleph won't create just now. The app
+	// shows the message and stops waiting.
+	RuntimeHostUnavailableCode = "runtime_host_unavailable"
 
 	// Serializes VM requests, spare top-ups, and the capacity check.
 	provisioningLockKey        int64 = 0x5669727450564d73
 	maxProvisionerFailureRunes       = 1024
+	maxProvisionerRefusalRunes       = 512
 )
 
 var (
@@ -60,6 +64,7 @@ type ProvisionedVM struct {
 	Failure        string     `json:"failure,omitempty"`
 	RetireReason   string     `json:"retire_reason,omitempty"`
 	Progress       string     `json:"progress,omitempty"`
+	Refusal        string     `json:"refusal,omitempty"`
 	RequestedAt    time.Time  `json:"requested_at"`
 	StateChangedAt time.Time  `json:"state_changed_at"`
 	ReadyAt        *time.Time `json:"ready_at,omitempty"`
@@ -124,6 +129,10 @@ type ProvisionerReport struct {
 	Failure       string
 	// Progress is a short note on what the VM is doing while it comes up.
 	Progress string
+	// Refusal is why Aleph won't create the VM just now. The VM stays, to be
+	// asked for again; State may take it back to requested when Aleph rejected
+	// a create it had first accepted.
+	Refusal string
 }
 
 type ProvisioningSummary struct {
@@ -145,7 +154,7 @@ type ProvisioningSummary struct {
 const lostRuntimeDataMessage = "This runtime's private server was replaced, and the data stored on it could not be kept. It starts fresh next time."
 
 const provisionedVMColumns = `id, account_id::text, region, state, desired, item_hash, crn_hash,
-	public_ip, node_public_key, failure, retire_reason, progress, requested_at, state_changed_at,
+	public_ip, node_public_key, failure, retire_reason, progress, refusal, requested_at, state_changed_at,
 	ready_at, last_used_at, deleted_at`
 
 type rowScanner interface {
@@ -169,6 +178,7 @@ func scanProvisionedVM(row rowScanner) (ProvisionedVM, error) {
 		&vm.Failure,
 		&vm.RetireReason,
 		&vm.Progress,
+		&vm.Refusal,
 		&vm.RequestedAt,
 		&vm.StateChangedAt,
 		&readyAt,
@@ -551,12 +561,18 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 		}); err != nil {
 			return ProvisionedVM{}, err
 		}
+	case ProvisionedVMRequested:
+		// Only a rejected create goes back: nothing exists, so its hash goes too.
+		if strings.TrimSpace(report.Refusal) == "" {
+			return ProvisionedVM{}, ErrProvisionedVMTransition
+		}
 	case ProvisionedVMBooting:
 	default:
 		return ProvisionedVM{}, ErrProvisionedVMTransition
 	}
 
 	allowedFrom := map[string][]string{
+		ProvisionedVMRequested: {ProvisionedVMRequested, ProvisionedVMCreating},
 		ProvisionedVMCreating:  {ProvisionedVMRequested, ProvisionedVMCreating},
 		ProvisionedVMUnlocking: {ProvisionedVMCreating, ProvisionedVMUnlocking},
 		ProvisionedVMBooting:   {ProvisionedVMUnlocking, ProvisionedVMBooting},
@@ -567,19 +583,25 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 
 	failure := boundedRegistryText(report.Failure, maxProvisionerFailureRunes)
 	progress := boundedRegistryText(report.Progress, 256)
+	refusal := boundedRegistryText(report.Refusal, maxProvisionerRefusalRunes)
 	vm, err := scanProvisionedVM(s.db.QueryRowContext(ctx,
 		`UPDATE provisioned_vms
 		    SET state = CASE WHEN $2 = '' THEN state ELSE $2 END,
 		        state_changed_at = CASE WHEN $2 = '' OR $2 = state THEN state_changed_at ELSE NOW() END,
-		        item_hash = CASE WHEN $3 = '' THEN item_hash ELSE $3 END,
-		        crn_hash = CASE WHEN $4 = '' THEN crn_hash ELSE $4 END,
+		        item_hash = CASE WHEN $2 = 'requested' THEN '' WHEN $3 = '' THEN item_hash ELSE $3 END,
+		        crn_hash = CASE WHEN $2 = 'requested' THEN '' WHEN $4 = '' THEN crn_hash ELSE $4 END,
 		        public_ip = CASE WHEN $5 = '' THEN public_ip ELSE $5 END,
 		        node_public_key = CASE WHEN $6 = '' THEN node_public_key ELSE $6 END,
 		        failure = CASE WHEN $7 = '' THEN failure ELSE $7 END,
 		        desired = CASE WHEN $7 = '' THEN desired ELSE 'absent' END,
 		        retire_reason = CASE WHEN $7 <> '' AND desired = 'present' THEN 'failed' ELSE retire_reason END,
 		        deleted_at = CASE WHEN $2 = 'deleted' THEN NOW() ELSE deleted_at END,
-		        progress = CASE WHEN $8 <> '' THEN $8 WHEN $2 <> '' AND $2 <> state THEN '' ELSE progress END
+		        progress = CASE WHEN $8 <> '' THEN $8 WHEN $2 <> '' AND $2 <> state THEN '' ELSE progress END,
+		        refusal = CASE
+		            WHEN $9 <> '' AND ($2 = 'requested' OR ($2 = '' AND state = 'requested')) THEN $9
+		            WHEN $2 <> '' THEN ''
+		            ELSE refusal
+		        END
 		  WHERE id = $1 AND state <> 'deleted'
 		  RETURNING `+provisionedVMColumns,
 		id,
@@ -590,6 +612,7 @@ func (s *Store) ApplyProvisionerReport(ctx context.Context, id string, report Pr
 		nodePublicKey,
 		failure,
 		progress,
+		refusal,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return s.ProvisionedVM(ctx, id)
@@ -630,7 +653,11 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 		`UPDATE provisioned_vms
 		    SET desired = 'absent',
 		        retire_reason = 'setup-timeout',
-		        failure = CASE WHEN failure = '' THEN 'setup did not finish in time' ELSE failure END
+		        failure = CASE
+		            WHEN failure <> '' THEN failure
+		            WHEN refusal <> '' THEN refusal
+		            ELSE 'setup did not finish in time'
+		        END
 		  WHERE desired = 'present'
 		    AND state IN ('requested', 'creating', 'unlocking', 'booting')
 		    AND requested_at < NOW() - make_interval(secs => $1)`,

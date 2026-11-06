@@ -90,6 +90,7 @@ export const previewOverview: OverviewResponse = {
     vmHours24h: "21.4",
     estimatedCost24h: "$1.22",
     hourlyBurn: "$0.114/h",
+    credits: { address: "0x0aBe3c402B41CC339B7A101Ad940214cFB947a08", credits: "118,746,705", perDay: "1,469,099", needed: "2,837,099", runway: "about 79 days until new VMs are refused", level: "good", checked: "12 min" },
     vms: [
       { id: "pvm-5c1e0a77d2b94f3c", shortId: "5c1e0a77", accountShortId: "1f4a9c2e", region: "snp-eu", state: "ready", desired: "present", image: "66616de6", age: "3 hr", ready: "3 hr", lastUsed: "1 min", failed: false },
       { id: "pvm-9ad3e1f04c6b7720", shortId: "9ad3e1f0", accountShortId: "7b20de41", region: "snp-eu", state: "booting", desired: "present", image: "66616de6", progress: "Starting the secure node", age: "4 min", ready: "not yet", lastUsed: "4 min", failed: false },

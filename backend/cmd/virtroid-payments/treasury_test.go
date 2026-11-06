@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +119,18 @@ type fakeCredits struct {
 
 func (f fakeCredits) creditBalance(context.Context, string) (int64, error) { return f.balance, nil }
 func (f fakeCredits) dailySpend(context.Context, string, int, time.Time) (int64, error) {
+	return f.perDay, nil
+}
+
+type perAddressCredits struct {
+	perDay   int64
+	balances map[string]int64
+}
+
+func (f perAddressCredits) creditBalance(_ context.Context, address string) (int64, error) {
+	return f.balances[address], nil
+}
+func (f perAddressCredits) dailySpend(context.Context, string, int, time.Time) (int64, error) {
 	return f.perDay, nil
 }
 
@@ -333,6 +343,28 @@ func TestAlephNeedBuysTheDaysOfCreditsMissing(t *testing.T) {
 	}
 }
 
+func TestAlephNeedCountsCreditsOnTheChargedAccount(t *testing.T) {
+	h := newHarness(t, treasuryDryRun)
+	h.t.cfg.AlephFundAddress = "0x4631b0613fF21cd5715f1b1572b4CD5bc0916c4C"
+	h.t.cfg.AlephSpendAddress = "0x0aBe3c402B41CC339B7A101Ad940214cFB947a08"
+	// The owner pays for the VMs and holds a week's credits, the provisioner none.
+	h.t.credits = perAddressCredits{perDay: 4_000_000, balances: map[string]int64{h.t.cfg.AlephSpendAddress: 28_000_000}}
+	if need, ok := h.t.alephNeed(context.Background()); ok {
+		t.Fatalf("bought credits the charged account already holds: %+v", need)
+	}
+	// What the provisioner bought and hasn't forwarded yet counts too.
+	h.t.credits = perAddressCredits{perDay: 4_000_000, balances: map[string]int64{
+		h.t.cfg.AlephSpendAddress: 14_000_000, h.t.cfg.AlephFundAddress: 14_000_000,
+	}}
+	if need, ok := h.t.alephNeed(context.Background()); ok {
+		t.Fatalf("bought again with credits on their way: %+v", need)
+	}
+	h.t.credits = perAddressCredits{perDay: 4_000_000, balances: map[string]int64{h.t.cfg.AlephSpendAddress: 10_000_000}}
+	if _, ok := h.t.alephNeed(context.Background()); !ok {
+		t.Fatalf("no need with 10M of the 28M wanted; logs = %q", h.logs)
+	}
+}
+
 func TestDecimalToMicroRounds(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
@@ -347,23 +379,6 @@ func TestDecimalToMicroRounds(t *testing.T) {
 		if got, err := decimalToMicro(tc.in, tc.up); err != nil || got != tc.want {
 			t.Fatalf("decimalToMicro(%q, %v) = %d, %v", tc.in, tc.up, got, err)
 		}
-	}
-}
-
-func TestDailySpendStopsAtAlephsLastPage(t *testing.T) {
-	now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("page") != "1" {
-			http.Error(w, "No credit history found for this address", http.StatusNotFound)
-			return
-		}
-		fmt.Fprintf(w, `{"credit_history":[{"amount":-7000000,"payment_method":"credit_expense","message_timestamp":%q},{"amount":5000000,"payment_method":"credit_purchase","message_timestamp":%q}]}`,
-			now.Add(-time.Hour).Format(time.RFC3339Nano), now.Add(-2*time.Hour).Format(time.RFC3339Nano))
-	}))
-	defer server.Close()
-	perDay, err := alephAPI{baseURL: server.URL, client: server.Client()}.dailySpend(context.Background(), "0x4631b0613fF21cd5715f1b1572b4CD5bc0916c4C", 7, now)
-	if err != nil || perDay != 1_000_000 {
-		t.Fatalf("dailySpend = %d, %v; want 1,000,000", perDay, err)
 	}
 }
 

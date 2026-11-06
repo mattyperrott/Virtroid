@@ -263,6 +263,7 @@ services:
       PROVISIONER_ADDRESS: ${PROVISIONER_ADDRESS:-}
       PROVISIONER_CREDIT_BUY: ${PROVISIONER_CREDIT_BUY:-dry-run}
       ETH_RPC_URL: ${ETH_RPC_URL:-https://ethereum-rpc.publicnode.com}
+      ALEPH_API_URL: ${ALEPH_API_URL:-https://api2.aleph.im}
     volumes:
       - provisioner-state:/var/lib/virtroid-provisioner
       - /etc/virtroid/secrets/provisioner-key:/run/secrets/provisioner-key:ro

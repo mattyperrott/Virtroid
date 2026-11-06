@@ -44,6 +44,9 @@ type vmReport struct {
 	NodePublicKey string `json:"node_public_key,omitempty"`
 	Failure       string `json:"failure,omitempty"`
 	Progress      string `json:"progress,omitempty"`
+	// Refusal is why Aleph won't create the VM just now. Unlike a failure it
+	// keeps the VM, which is asked for again until it is created or times out.
+	Refusal string `json:"refusal,omitempty"`
 }
 
 type controlPlane interface {
@@ -103,4 +106,13 @@ func (c httpControlPlane) Report(ctx context.Context, vmID string, report vmRepo
 		return err
 	}
 	return c.do(ctx, http.MethodPost, "/api/v1/internal/provisioner/vms/"+url.PathEscape(vmID)+"/report", body, nil)
+}
+
+// ReportCredits tells the control plane how the paying account's credits stand.
+func (c httpControlPlane) ReportCredits(ctx context.Context, report creditReport) error {
+	body, err := json.Marshal(report)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/api/v1/internal/provisioner/credits", body, nil)
 }

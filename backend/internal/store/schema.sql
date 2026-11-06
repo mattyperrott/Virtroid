@@ -709,6 +709,22 @@ CREATE INDEX IF NOT EXISTS idx_security_notice_deliveries_pending
     ON security_notice_deliveries (device_id, created_at)
     WHERE delivered_at IS NULL;
 
+-- Something the operator has to act on, such as running short of Aleph credits.
+CREATE TABLE IF NOT EXISTS operator_notice_deliveries (
+    id UUID PRIMARY KEY,
+    event_id UUID NOT NULL,
+    device_id UUID NOT NULL REFERENCES device_notification_subscriptions(device_id) ON DELETE CASCADE,
+    envelope_ciphertext TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    delivered_at TIMESTAMPTZ,
+    UNIQUE (event_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_operator_notice_deliveries_pending
+    ON operator_notice_deliveries (device_id, created_at)
+    WHERE delivered_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_security_notice_deliveries_expires
     ON security_notice_deliveries (expires_at);
 
@@ -819,6 +835,18 @@ CREATE TABLE IF NOT EXISTS provisioned_vms (
 -- The provisioner's latest word on a VM that is still coming up, shown to
 -- the account's app while it waits.
 ALTER TABLE provisioned_vms ADD COLUMN IF NOT EXISTS progress TEXT NOT NULL DEFAULT '';
+
+-- Why Aleph won't create this VM just now, while the provisioner keeps asking.
+-- The app is told, rather than left waiting for a VM that isn't coming.
+ALTER TABLE provisioned_vms ADD COLUMN IF NOT EXISTS refusal TEXT NOT NULL DEFAULT '';
+
+-- The provisioner's last reading of the account that pays for VMs.
+CREATE TABLE IF NOT EXISTS aleph_credit_status (
+    address TEXT PRIMARY KEY,
+    credits BIGINT NOT NULL,
+    credits_per_day BIGINT NOT NULL,
+    checked_at TIMESTAMPTZ NOT NULL
+);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_provisioned_vms_one_per_account
     ON provisioned_vms (account_id)

@@ -40,6 +40,69 @@ func TestCreditBuyerKeepsGasAndBuysOnlyWhenLive(t *testing.T) {
 	}
 }
 
+func testForwarder(mode string, credits int64) (*creditBuyer, *[]string, *[]string) {
+	b, logs, _ := testBuyer(mode, big.NewInt(0))
+	var forwarded []string
+	b.chargedAddress = "0x0aBe3c402B41CC339B7A101Ad940214cFB947a08"
+	b.minForward = 100_000
+	b.credits = func(_ context.Context, address string) (int64, error) {
+		if address != b.address {
+			return 0, fmt.Errorf("read the credits of %s", address)
+		}
+		return credits, nil
+	}
+	b.forward = func(_ context.Context, to string, amount int64) (string, error) {
+		forwarded = append(forwarded, fmt.Sprintf("%d to %s", amount, to))
+		return "hash", nil
+	}
+	return b, logs, &forwarded
+}
+
+func TestCreditBuyerForwardsCreditsToTheChargedAccount(t *testing.T) {
+	const owner = "0x0aBe3c402B41CC339B7A101Ad940214cFB947a08"
+	b, logs, forwarded := testForwarder(creditBuyDryRun, 5_000_000)
+	b.runOnce(context.Background())
+	if len(*forwarded) != 0 || len(*logs) != 1 || !strings.Contains((*logs)[0], "would forward 5000000 credits") {
+		t.Fatalf("dry run: forwarded=%v logs=%q", *forwarded, *logs)
+	}
+	b, _, forwarded = testForwarder(creditBuyLive, 5_000_000)
+	b.runOnce(context.Background())
+	if len(*forwarded) != 1 || (*forwarded)[0] != "5000000 to "+owner {
+		t.Fatalf("live forwarded %v", *forwarded)
+	}
+}
+
+func TestCreditBuyerForwardsOnlyWhenThereIsSomewhereToForward(t *testing.T) {
+	b, _, forwarded := testForwarder(creditBuyLive, 99_999)
+	b.runOnce(context.Background())
+	if len(*forwarded) != 0 {
+		t.Fatalf("forwarded dust: %v", *forwarded)
+	}
+	// The provisioner pays for its own VMs: its credits are already in place.
+	for _, charged := range []string{"", strings.ToLower(b.address)} {
+		b, _, forwarded = testForwarder(creditBuyLive, 5_000_000)
+		b.chargedAddress = charged
+		b.runOnce(context.Background())
+		if len(*forwarded) != 0 {
+			t.Fatalf("charged=%q forwarded %v", charged, *forwarded)
+		}
+	}
+	b, _, forwarded = testForwarder(creditBuyOff, 5_000_000)
+	b.runOnce(context.Background())
+	if len(*forwarded) != 0 {
+		t.Fatalf("off, yet forwarded %v", *forwarded)
+	}
+}
+
+func TestCreditBuyerForwardsEvenWithoutETHToSpend(t *testing.T) {
+	b, _, forwarded := testForwarder(creditBuyLive, 5_000_000)
+	b.balance = func(context.Context, string) (*big.Int, error) { return nil, fmt.Errorf("RPC down") }
+	b.runOnce(context.Background())
+	if len(*forwarded) != 1 {
+		t.Fatalf("forwarded %v", *forwarded)
+	}
+}
+
 func TestCreditBuyerWaitsForEnoughETH(t *testing.T) {
 	b, logs, bought := testBuyer(creditBuyLive, big.NewInt(4_000_000_000_000_000)) // 0.004: 0.002 spare
 	b.runOnce(context.Background())
