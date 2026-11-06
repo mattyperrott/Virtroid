@@ -82,6 +82,7 @@ grep -q 'source: .*/operator-console-disabled' "${tmp_dir}/rendered-compose.yml"
 grep -q 'target: /run/secrets/operator-console-token' "${tmp_dir}/rendered-compose.yml"
 grep -q "NODE_NOTIFICATION_AGENT_APK_SHA256: ${digest}" "${tmp_dir}/rendered-compose.yml"
 grep -q 'NODE_PUBLIC_CONTROL_PLANE_URL: https://virtroid.example' "${tmp_dir}/rendered-compose.yml"
+grep -q 'net.ipv4.tcp_rmem: 4096 131072 1048576' "${tmp_dir}/rendered-compose.yml"
 grep -q 'container_name: virtroid-suricata' "${tmp_dir}/rendered-compose.yml"
 if grep -Eq 'container_name: virtroid-(prometheus|alertmanager)|prometheus-data:|alertmanager-data:' "${tmp_dir}/rendered-compose.yml"; then
   echo "retired operational monitoring resources remain in Compose" >&2

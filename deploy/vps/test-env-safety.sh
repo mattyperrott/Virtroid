@@ -261,7 +261,8 @@ if PATH="${fake_bin}:${PATH}" \
 fi
 
 grep -q 'ssl-min-ver TLSv1.2' "${script_dir}/haproxy.cfg"
-grep -q '^    maxconn 4096$' "${script_dir}/haproxy.cfg"
+grep -q '^    maxconn 1500$' "${script_dir}/haproxy.cfg"
+grep -q 'reject if { sc0_conn_cur gt 256 }' "${script_dir}/haproxy.cfg"
 grep -q '^    log global$' "${script_dir}/haproxy.cfg"
 grep -q 'Strict-Transport-Security' "${script_dir}/haproxy.cfg"
 grep -q 'set-header X-Forwarded-For %\[src\]' "${script_dir}/haproxy.cfg"

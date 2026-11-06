@@ -557,7 +557,13 @@ services:
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ${HAPROXY_CERT_PATH:-/srv/virtroid/tls/virtroid.pem}:/usr/local/etc/haproxy/certs/virtroid.pem:ro
-    mem_limit: "${HAPROXY_MEMORY_LIMIT:-256m}"
+    # Sockets queue at most 1 MiB, in the kernel but charged to this container, so
+    # haproxy.cfg's 1500 connections fit this limit at about 1.2 MiB each, TLS and
+    # all. A socket's own limit (tune.rcvbuf) would turn off autotuning, and it held
+    # phones to 1.8 Mbit/s over a 300 ms route; this leaves them about 3.5.
+    sysctls:
+      net.ipv4.tcp_rmem: "4096 131072 1048576"
+    mem_limit: "${HAPROXY_MEMORY_LIMIT:-1800m}"
     cpus: "${HAPROXY_CPU_LIMIT:-0.5}"
     pids_limit: ${HAPROXY_PIDS_LIMIT:-128}
     logging:
