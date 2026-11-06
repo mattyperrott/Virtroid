@@ -555,3 +555,117 @@ func TestTrialVMLimitsPostgresIntegration(t *testing.T) {
 	resp, answer = ask(newActor("trial", true), "start", sourceC)
 	expect(resp, answer, http.StatusServiceUnavailable, store.TrialVMCapacityCode)
 }
+
+func TestWithoutGuestLogcat(t *testing.T) {
+	const socket = "encrypted viewer socket /x did not open after 30 seconds"
+	for _, test := range []struct{ message, want string }{
+		// What nodes on images through 29 send, with and without the viewer's own logs.
+		{
+			"Viewer prepare failed: " + socket + ": host viewer log: a | guest viewer log: b | logcat: 11-06 12:00:00 I bank: code 4821.",
+			"Viewer prepare failed: " + socket + ": host viewer log: a | guest viewer log: b.",
+		},
+		{
+			"Viewer prewarm failed: " + socket + ": logcat: 11-06 I bank: first line\n11-06 I bank: code 4821\n.",
+			"Viewer prewarm failed: " + socket + ".",
+		},
+		// What they send when there's no logcat, and what any node sends otherwise.
+		{
+			"Viewer prepare failed: " + socket + ": host viewer log: a | guest viewer log: b.",
+			"Viewer prepare failed: " + socket + ": host viewer log: a | guest viewer log: b.",
+		},
+		{"Encrypted viewer bridge prewarmed.", "Encrypted viewer bridge prewarmed."},
+		{"The word logcat: on its own stays.", "The word logcat: on its own stays."},
+	} {
+		if got := withoutGuestLogcat(test.message); got != test.want {
+			t.Errorf("withoutGuestLogcat(%q) = %q, want %q", test.message, got, test.want)
+		}
+	}
+}
+
+func TestRuntimeLogAppendKeepsGuestLogcatOutPostgresIntegration(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := store.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	defer st.Close()
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	device := newTestDevice(t)
+	if _, err := st.BootstrapAccountWithIdentity(ctx, device.accountID, device.deviceID, "CI device", device.publicKey(t), store.CreateRuntimeInput{}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	defer func() { _ = st.DeleteAccount(context.Background(), device.accountID) }()
+	runtime, err := st.CreateRuntime(ctx, device.accountID, store.CreateRuntimeInput{Name: "CI runtime", FileMode: "upload-only"})
+	if err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+
+	node := newProvisionerTestKey(t)
+	nodeID := "ci-log-" + uuid.NewString()
+	operatorID := "ci-log-operator-" + uuid.NewString()[:8]
+	if _, err := st.ApproveNode(ctx, store.ApproveNodeInput{
+		NodeID: nodeID, OperatorID: operatorID, OperatorName: "CI log operator", PublicKey: node.public,
+		Actor: "ci", Reason: "fixture",
+	}); err != nil {
+		t.Fatalf("approve node: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO hosts (id, name, advertise_addr, public_key) VALUES ($1, 'CI log', '127.0.0.1', $2)`, nodeID, node.public,
+	); err != nil {
+		t.Fatalf("insert host: %v", err)
+	}
+	defer func() {
+		_, _ = db.Exec(`UPDATE runtimes SET host_id = NULL WHERE host_id = $1`, nodeID)
+		_, _ = db.Exec(`DELETE FROM node_request_nonces WHERE node_id = $1`, nodeID)
+		_, _ = db.Exec(`DELETE FROM hosts WHERE id = $1`, nodeID)
+		_, _ = db.Exec(`DELETE FROM node_registry_audit WHERE node_id = $1`, nodeID)
+		_, _ = db.Exec(`DELETE FROM approved_nodes WHERE node_id = $1`, nodeID)
+		_, _ = db.Exec(`DELETE FROM operator_registry_audit WHERE operator_id = $1`, operatorID)
+		_, _ = db.Exec(`DELETE FROM node_operators WHERE id = $1`, operatorID)
+	}()
+	if _, err := db.ExecContext(ctx, `UPDATE runtimes SET host_id = $2 WHERE id = $1`, runtime.ID, nodeID); err != nil {
+		t.Fatalf("assign runtime: %v", err)
+	}
+
+	handler := New(config.ServerConfig{AppEnv: "development"}, st)
+	body, err := json.Marshal(map[string]string{
+		"source": "node", "level": "error",
+		"message": "Viewer prepare failed: socket did not open: guest viewer log: viewer stopped | logcat: I bank: code 4821.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, signedTestRequest(t, node, nodeID, http.MethodPost, "/api/v1/internal/runtimes/"+runtime.ID+"/logs", body))
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("append = %d %s", resp.Code, resp.Body.String())
+	}
+
+	logs, err := st.ListRuntimeLogs(ctx, device.accountID, runtime.ID, 50)
+	if err != nil {
+		t.Fatalf("list logs: %v", err)
+	}
+	found := false
+	for _, line := range logs {
+		if strings.Contains(line.Message, "4821") || strings.Contains(line.Message, "logcat") {
+			t.Fatalf("stored %q", line.Message)
+		}
+		found = found || line.Message == "Viewer prepare failed: socket did not open: guest viewer log: viewer stopped."
+	}
+	if !found {
+		t.Fatalf("the viewer's own diagnostics weren't stored: %+v", logs)
+	}
+}

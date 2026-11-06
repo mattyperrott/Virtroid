@@ -1379,3 +1379,88 @@ func TestRequireControlPlaneCallbackRejectsCallbackFromBeforeRestart(t *testing.
 		t.Fatalf("callback refused by a running node: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
+
+// fakeDockerExec answers the Docker API's exec calls with what each command prints.
+type fakeDockerExec struct {
+	output func(cmd []string) string
+	run    [][]string
+}
+
+func (f *fakeDockerExec) RoundTrip(r *http.Request) (*http.Response, error) {
+	respond := func(body []byte) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
+	}
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/exec"):
+		var created struct {
+			Cmd []string `json:"Cmd"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
+			return nil, err
+		}
+		f.run = append(f.run, created.Cmd)
+		return respond([]byte(`{"Id":"` + strconv.Itoa(len(f.run)-1) + `"}`))
+	case strings.HasSuffix(r.URL.Path, "/start"):
+		index, err := strconv.Atoi(strings.Split(r.URL.Path, "/")[2])
+		if err != nil {
+			return nil, err
+		}
+		payload := f.output(f.run[index])
+		frame := make([]byte, 8, 8+len(payload))
+		frame[0] = 1
+		binary.BigEndian.PutUint32(frame[4:8], uint32(len(payload)))
+		return respond(append(frame, payload...))
+	default:
+		return respond([]byte(`{"ExitCode":0,"Running":false}`))
+	}
+}
+
+func TestViewerFailureDiagnosticsHoldOnlyTheViewersOwnOutput(t *testing.T) {
+	root := t.TempDir()
+	docker := &fakeDockerExec{output: func(cmd []string) string {
+		if strings.Contains(strings.Join(cmd, " "), "logcat") {
+			return "a message from another app"
+		}
+		return "guest viewer stopped"
+	}}
+	node := &nodeAgent{cfg: config.NodeConfig{RuntimeRoot: root}, docker: &http.Client{Transport: docker}}
+	if err := os.MkdirAll(filepath.Dir(node.viewerCommandLogPath("rt")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(node.viewerCommandLogPath("rt"), []byte("host viewer stopped\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	diagnostics := node.viewerFailureDiagnostics(context.Background(), "rt", "container")
+
+	want := []string{"host viewer log: host viewer stopped", "guest viewer log: guest viewer stopped"}
+	if strings.Join(diagnostics, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
+	}
+	if len(docker.run) == 0 {
+		t.Fatal("nothing ran in the guest")
+	}
+	for _, cmd := range docker.run {
+		if strings.Contains(strings.Join(cmd, " "), "logcat") {
+			t.Fatalf("ran %q in the guest", cmd)
+		}
+	}
+}
+
+func TestAndroidInteractiveProbeOnlyReportsItsResult(t *testing.T) {
+	const foreground = "mCurrentFocus=Window{1a2b u0 com.example.bank/.MainActivity}"
+	for _, test := range []struct {
+		name, output, detail string
+		ready                bool
+	}{
+		{"ready", foreground + "\nmAwake=true\nvirtroid_ready=1 reason=focused", "virtroid_ready=1 reason=focused", true},
+		{"not ready", foreground + "\nvirtroid_ready=0 reason=no_focused_window", "virtroid_ready=0 reason=no_focused_window", false},
+		{"no result", foreground + "\nmAwake=true", "readiness probe gave no result", false},
+		{"empty", "  \n", "empty readiness probe output", false},
+	} {
+		ready, detail := parseAndroidInteractiveProbe(test.output)
+		if ready != test.ready || detail != test.detail {
+			t.Errorf("%s: probe = %v %q, want %v %q", test.name, ready, detail, test.ready, test.detail)
+		}
+	}
+}

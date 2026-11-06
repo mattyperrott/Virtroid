@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -3435,6 +3436,17 @@ func (a *API) runtimeStatusUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
+// guestLogcatDiagnostic is the last item of a failed viewer's diagnostics from
+// nodes on VM images through 29, which is the tail of the guest's logcat.
+var guestLogcatDiagnostic = regexp.MustCompile(`(?s)(: | \| )logcat: .*$`)
+
+// withoutGuestLogcat keeps the guest's logcat out of the runtime's log here: it
+// covers every app in the runtime, and images 26 and 29 go on sending it until
+// they're replaced. It can go once neither is approved.
+func withoutGuestLogcat(message string) string {
+	return guestLogcatDiagnostic.ReplaceAllString(message, ".")
+}
+
 func (a *API) runtimeLogAppend(w http.ResponseWriter, r *http.Request) {
 	node, ok := a.requireNodeRequest(w, r, false)
 	if !ok {
@@ -3469,7 +3481,7 @@ func (a *API) runtimeLogAppend(w http.ResponseWriter, r *http.Request) {
 		r.PathValue("id"),
 		trimForStorage(req.Source, maxRuntimeLogSourceRunes),
 		trimForStorage(req.Level, maxRuntimeLogLevelRunes),
-		trimForStorage(req.Message, maxRuntimeLogMessageRunes),
+		trimForStorage(withoutGuestLogcat(req.Message), maxRuntimeLogMessageRunes),
 	); err != nil {
 		writeInternalAPIError(w, "runtime_log_append_failed", err)
 		return

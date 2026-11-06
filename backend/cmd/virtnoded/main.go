@@ -4440,13 +4440,6 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func (n *nodeAgent) adbLogcatCapture(ctx context.Context, serial string, lines int) (string, error) {
-	if lines <= 0 {
-		lines = 200
-	}
-	return n.adbShellCapture(ctx, serial, fmt.Sprintf("logcat -b all -d -t %d 2>/dev/null", lines))
-}
-
 func (n *nodeAgent) startViewerServer(runtimeID string, adbSerial string, maxSize int, bitRate int, audioEnabled bool) error {
 	logPath := n.viewerCommandLogPath(runtimeID)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -5174,8 +5167,22 @@ func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssign
 		}
 	}
 
+	diagnostics := n.viewerFailureDiagnostics(ctx, runtime.ID, containerName)
+	if len(diagnostics) > 0 {
+		return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds: %s", encryptedViewerSocketPath, attempts, strings.Join(diagnostics, " | "))
+	}
+	if lastErr != nil {
+		return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds: %w", encryptedViewerSocketPath, attempts, lastErr)
+	}
+	return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds", encryptedViewerSocketPath, attempts)
+}
+
+// viewerFailureDiagnostics says why the viewer didn't come up, for the runtime's
+// log on the control plane. It holds only the viewer's own output: the guest's
+// logcat covers every app in the runtime, and what they log has no place there.
+func (n *nodeAgent) viewerFailureDiagnostics(ctx context.Context, runtimeID, containerName string) []string {
 	var diagnostics []string
-	if hostLog, err := os.ReadFile(n.viewerCommandLogPath(runtime.ID)); err == nil {
+	if hostLog, err := os.ReadFile(n.viewerCommandLogPath(runtimeID)); err == nil {
 		if trimmed := strings.TrimSpace(string(hostLog)); trimmed != "" {
 			diagnostics = append(diagnostics, "host viewer log: "+summarizeLogOutput(trimmed))
 		}
@@ -5188,21 +5195,7 @@ func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssign
 	}); guestErr == nil && strings.TrimSpace(guestLog) != "" {
 		diagnostics = append(diagnostics, "guest viewer log: "+summarizeLogOutput(guestLog))
 	}
-	if logOutput, logErr := n.execInContainerCaptureAny(ctx, containerName, "", nil, [][]string{
-		{"logcat", "-b", "all", "-d", "-t", "200"},
-		{"/system/bin/logcat", "-b", "all", "-d", "-t", "200"},
-		{"toybox", "logcat", "-b", "all", "-d", "-t", "200"},
-		{"/system/bin/toybox", "logcat", "-b", "all", "-d", "-t", "200"},
-	}); logErr == nil && strings.TrimSpace(logOutput) != "" {
-		diagnostics = append(diagnostics, "logcat: "+summarizeLogOutput(logOutput))
-	}
-	if len(diagnostics) > 0 {
-		return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds: %s", encryptedViewerSocketPath, attempts, strings.Join(diagnostics, " | "))
-	}
-	if lastErr != nil {
-		return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds: %w", encryptedViewerSocketPath, attempts, lastErr)
-	}
-	return fmt.Errorf("encrypted viewer socket %s did not open after %d seconds", encryptedViewerSocketPath, attempts)
+	return diagnostics
 }
 
 func (n *nodeAgent) androidBootCompleted(ctx context.Context, containerName string) (bool, error) {
@@ -5241,7 +5234,6 @@ func parseAndroidInteractiveProbe(output string) (bool, string) {
 	if trimmed == "" {
 		return false, "empty readiness probe output"
 	}
-	detail := summarizeLogOutput(trimmed)
 	for _, line := range strings.Split(trimmed, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
@@ -5251,7 +5243,9 @@ func parseAndroidInteractiveProbe(output string) (bool, string) {
 			return false, line
 		}
 	}
-	return false, detail
+	// The rest of the output names the app in the foreground, and this ends up
+	// in the runtime's log on the control plane.
+	return false, "readiness probe gave no result"
 }
 
 func (n *nodeAgent) getProp(ctx context.Context, containerName string, prop string) (string, error) {
