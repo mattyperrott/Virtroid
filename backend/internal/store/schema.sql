@@ -543,6 +543,12 @@ CREATE TABLE IF NOT EXISTS runtime_logs (
     message TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- A line the same as its runtime's latest one counts as a repeat of that row
+-- instead of adding another: a node retrying a failed stop every 10 seconds
+-- once filled half of all runtime log rows with one message. created_at stays
+-- the first time, last_seen_at is the latest.
+ALTER TABLE runtime_logs ADD COLUMN IF NOT EXISTS repeat_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE runtime_logs ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 
 -- Runtimes whose VM was deleted with their data before the floor existed:
 -- the lost generation was not recorded, so skip far past any it could have

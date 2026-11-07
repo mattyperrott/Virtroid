@@ -462,6 +462,10 @@ type RuntimeLogEntry struct {
 	Level     string    `json:"level"`
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
+	// RepeatCount is how many times the line came in a row; CreatedAt is
+	// the first and LastSeenAt the latest when it is more than one.
+	RepeatCount int        `json:"repeat_count"`
+	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
 }
 
 type RuntimeCapability struct {
@@ -4315,7 +4319,7 @@ func (s *Store) ListRuntimeLogs(ctx context.Context, accountID, runtimeID string
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, runtime_id, source, level, message, created_at
+		`SELECT id, runtime_id, source, level, message, created_at, repeat_count, last_seen_at
 		 FROM runtime_logs
 		 WHERE runtime_id = $1
 		 ORDER BY created_at DESC
@@ -4331,6 +4335,7 @@ func (s *Store) ListRuntimeLogs(ctx context.Context, accountID, runtimeID string
 	var items []RuntimeLogEntry
 	for rows.Next() {
 		var entry RuntimeLogEntry
+		var lastSeenAt sql.NullTime
 		if err := rows.Scan(
 			&entry.ID,
 			&entry.RuntimeID,
@@ -4338,8 +4343,13 @@ func (s *Store) ListRuntimeLogs(ctx context.Context, accountID, runtimeID string
 			&entry.Level,
 			&entry.Message,
 			&entry.CreatedAt,
+			&entry.RepeatCount,
+			&lastSeenAt,
 		); err != nil {
 			return nil, err
+		}
+		if lastSeenAt.Valid {
+			entry.LastSeenAt = &lastSeenAt.Time
 		}
 		items = append(items, entry)
 	}
@@ -4360,14 +4370,7 @@ func (s *Store) AppendRuntimeLog(ctx context.Context, runtimeID, source, level, 
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO runtime_logs (runtime_id, source, level, message)
-		 VALUES ($1, $2, $3, $4)`,
-		runtimeID,
-		truncateRunes(defaultString(source, "system"), runtimeLogSourceRunes),
-		truncateRunes(defaultString(level, "info"), runtimeLogLevelRunes),
-		truncateRunes(strings.TrimSpace(message), runtimeLogMessageRunes),
-	); err != nil {
+	if err := appendRuntimeLogTX(ctx, tx, runtimeID, source, level, message); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -4393,7 +4396,7 @@ func (s *Store) PruneRuntimeLogs(ctx context.Context, retention time.Duration) (
 	}
 	result, err := s.db.ExecContext(
 		ctx,
-		`DELETE FROM runtime_logs WHERE created_at < $1`,
+		`DELETE FROM runtime_logs WHERE COALESCE(last_seen_at, created_at) < $1`,
 		time.Now().UTC().Add(-retention),
 	)
 	if err != nil {
@@ -6571,7 +6574,7 @@ func (s *Store) ReapStaleSessions(ctx context.Context, activeSessionTimeout time
 
 	revokedStoppedRuntimeCapabilities := 0
 	for _, runtimeID := range stoppedRuntimeIDs {
-		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "info", "Runtime stopped and saved after its inactivity period with no viewer open."); err != nil {
+		if err := appendRuntimeLogTX(ctx, tx, runtimeID, "system", "info", "Stopping the runtime after its inactivity period with no viewer open."); err != nil {
 			return SessionReapResult{}, err
 		}
 	}
@@ -7998,14 +8001,35 @@ func appendRuntimeStartEventTX(ctx context.Context, tx *sql.Tx, accountID, runti
 	return err
 }
 
+// appendRuntimeLogTX adds a line to a runtime's log, or counts it as a repeat
+// when the runtime's latest line is the same.
 func appendRuntimeLogTX(ctx context.Context, tx *sql.Tx, runtimeID, source, level, message string) error {
+	source = truncateRunes(defaultString(source, "system"), runtimeLogSourceRunes)
+	level = truncateRunes(defaultString(level, "info"), runtimeLogLevelRunes)
+	message = truncateRunes(strings.TrimSpace(message), runtimeLogMessageRunes)
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO runtime_logs (runtime_id, source, level, message)
-		 VALUES ($1, $2, $3, $4)`,
+		`WITH latest AS (
+		     SELECT id, source, level, message
+		       FROM runtime_logs
+		      WHERE runtime_id = $1
+		      ORDER BY created_at DESC, id DESC
+		      LIMIT 1
+		 ), repeated AS (
+		     UPDATE runtime_logs l
+		        SET repeat_count = l.repeat_count + 1,
+		            last_seen_at = NOW()
+		       FROM latest
+		      WHERE l.id = latest.id
+		        AND latest.source = $2 AND latest.level = $3 AND latest.message = $4
+		     RETURNING l.id
+		 )
+		 INSERT INTO runtime_logs (runtime_id, source, level, message)
+		 SELECT $1, $2, $3, $4
+		  WHERE NOT EXISTS (SELECT 1 FROM repeated)`,
 		runtimeID,
-		defaultString(source, "system"),
-		defaultString(level, "info"),
-		strings.TrimSpace(message),
+		source,
+		level,
+		message,
 	)
 	return err
 }

@@ -483,7 +483,7 @@ func TestPruneRuntimeLogsUsesConfiguredRetention(t *testing.T) {
 	defer db.Close()
 
 	st := &Store{db: db}
-	mock.ExpectExec(`DELETE FROM runtime_logs WHERE created_at < \$1`).
+	mock.ExpectExec(`DELETE FROM runtime_logs WHERE COALESCE\(last_seen_at, created_at\) < \$1`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 7))
 
@@ -4027,7 +4027,7 @@ func TestReapStaleSessionsStopsIdleRuntime(t *testing.T) {
 			runtimeID,
 			"system",
 			"info",
-			"Runtime stopped and saved after its inactivity period with no viewer open.",
+			"Stopping the runtime after its inactivity period with no viewer open.",
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE runtime_capabilities").
