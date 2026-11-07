@@ -53,6 +53,17 @@ class AppSettingsStore(private val context: Context) {
         lastSessionEndReason = "${System.currentTimeMillis()}|$reason"
     }
 
+    /**
+     * True the first time it is asked about this error of this runtime, false
+     * after (see [RuntimeErrorNotices]).
+     */
+    fun firstNoticeOfRuntimeError(runtimeId: String, error: String): Boolean {
+        val remembered = prefs.getString(KEY_RUNTIME_ERROR_NOTICES, "").orEmpty()
+        val updated = RuntimeErrorNotices.record(remembered, runtimeId, error) ?: return false
+        prefs.edit().putString(KEY_RUNTIME_ERROR_NOTICES, updated).apply()
+        return true
+    }
+
     /** When the last session ended, or 0 if none has been recorded with a time. */
     fun lastSessionEndAtMs(): Long {
         return lastSessionEndReason.substringBefore('|', "").toLongOrNull()?.coerceAtLeast(0L) ?: 0L
@@ -236,6 +247,7 @@ class AppSettingsStore(private val context: Context) {
         private const val LEGACY_KEY_CLEAR_POST_TRANSFER_ARTIFACTS = "clear_post_transfer_artifacts"
         private const val KEY_AUTO_CLEAR_CLIPBOARD = "auto_clear_clipboard"
         private const val KEY_LAST_SESSION_END_REASON = "last_session_end_reason"
+        private const val KEY_RUNTIME_ERROR_NOTICES = "runtime_error_notices"
         private const val NAMESPACE = "app_settings"
     }
 }

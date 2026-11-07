@@ -404,15 +404,23 @@ class MainActivity : AppCompatActivity() {
         cardBinding.runtimeStatTwoValue.text = runtime.uptimeLabel()
         cardBinding.runtimeStatThreeValue.text = runtime.loadLabel()
 
-        // The card shows the runtime's own error; an account limit that blocks
-        // starting it is said in a red notice when Start is tapped.
-        val errorLine = runtime.lastError?.takeIf { it.isNotBlank() }
-        cardBinding.runtimeErrorText.isVisible = errorLine != null
-        cardBinding.runtimeErrorText.text = errorLine.orEmpty()
+        // The runtime's own error goes to the logs, not the card, and a notice
+        // that opens them says it happened, once per error and only while this
+        // screen is in front (the unlock screen covers it on resume). An account
+        // limit that blocks starting it is said in a red notice when Start is tapped.
         runtime.lastError?.takeIf { it.isNotBlank() }?.let { error ->
             if (reportedRuntimeErrors[runtime.id] != error) {
                 reportedRuntimeErrors[runtime.id] = error
                 appLogs.critical("Runtime ${runtime.name}: $error", "runtime")
+            }
+            if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                appSettings.firstNoticeOfRuntimeError(runtime.id, error)
+            ) {
+                Notice.errorWithAction(
+                    this,
+                    getString(R.string.runtime_error_notice, runtimeDisplayName(runtime.name)),
+                    getString(R.string.runtime_error_notice_action),
+                ) { startActivity(SystemLogsActivity.createIntent(this)) }
             }
         }
         cardBinding.liveRuntimeActionRow.isVisible = isLive

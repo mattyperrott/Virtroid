@@ -2,6 +2,7 @@ package io.virtroid.client.ui
 
 import android.app.Activity
 import android.content.res.ColorStateList
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -61,6 +62,53 @@ object Notice {
     }
 
     /**
+     * An error with one thing to do about it, such as opening the logs: red
+     * like [error], across the screen with the action at its end, and up long
+     * enough to tap it. Tapping the action closes the notice.
+     */
+    fun errorWithAction(activity: Activity, message: String, action: String, onAction: () -> Unit) {
+        if (message.isBlank() || activity.isFinishing || activity.isDestroyed) {
+            return
+        }
+        val onDanger = activity.getColor(R.color.v_bg)
+        val view = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(activity.dp(16), activity.dp(4), activity.dp(4), activity.dp(4))
+            setBackgroundColor(activity.getColor(R.color.v_danger))
+        }
+        view.addView(
+            TextView(activity).apply {
+                text = message
+                textSize = 13f
+                maxLines = 3
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(onDanger)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        view.addView(
+            TextView(activity).apply {
+                text = action
+                textSize = 13f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(onDanger)
+                paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
+                minHeight = activity.dp(44)
+                gravity = Gravity.CENTER
+                setPadding(activity.dp(14), 0, activity.dp(14), 0)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    onAction()
+                }
+            },
+        )
+        present(activity, view, message, fullWidth = true, minVisibleMs = 6_000L)
+    }
+
+    /**
      * Confirms something done, such as a copy, in the brand colour: a tick
      * and the message on the accent, under the top bar, clear of the
      * clipboard preview Android 13 and later show at the bottom.
@@ -96,7 +144,14 @@ object Notice {
         present(activity, view, message, atTop = true)
     }
 
-    private fun present(activity: Activity, view: View, message: String, atTop: Boolean = false) {
+    private fun present(
+        activity: Activity,
+        view: View,
+        message: String,
+        atTop: Boolean = false,
+        fullWidth: Boolean = false,
+        minVisibleMs: Long = 0L,
+    ) {
         val root = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
         root.findViewWithTag<View>(TAG)?.let { root.removeView(it) }
         view.tag = TAG
@@ -106,7 +161,7 @@ object Notice {
         view.contentDescription = message
         val bars = ViewCompat.getRootWindowInsets(root)?.getInsets(WindowInsetsCompat.Type.systemBars())
         val params = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            if (fullWidth) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             (if (atTop) Gravity.TOP else Gravity.BOTTOM) or Gravity.CENTER_HORIZONTAL,
         ).apply {
@@ -120,7 +175,7 @@ object Notice {
         root.addView(view, params)
         view.animate().alpha(1f).setDuration(FADE_MS).start()
         // Long messages stay up a little longer.
-        val visibleMs = (2_400L + message.length * 25L).coerceAtMost(6_000L)
+        val visibleMs = (2_400L + message.length * 25L).coerceAtMost(6_000L).coerceAtLeast(minVisibleMs)
         view.postDelayed({
             view.animate().alpha(0f).setDuration(FADE_MS).withEndAction { root.removeView(view) }.start()
         }, visibleMs)

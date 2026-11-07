@@ -297,6 +297,8 @@
     <string name="runtime_provisioning_detail_connect">waiting for encrypted display socket_</string>
     <string name="runtime_provisioning_title_error">Provisioning Failed ...</string>
     <string name="runtime_provisioning_command_error">&gt; reconcile runtime</string>
+    <string name="runtime_error_notice">%1$s reported an error.</string>
+    <string name="runtime_error_notice_action">View logs</string>
     <string name="runtime_provisioning_event_container">[ok] Creating runtime container</string>
     <string name="runtime_provisioning_event_storage">[ok] Allocating storage</string>
     <string name="runtime_provisioning_event_network">[ok] Preparing network route</string>
