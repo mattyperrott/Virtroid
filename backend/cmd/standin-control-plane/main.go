@@ -9,11 +9,13 @@
 //	standin-control-plane -listen 10.0.2.2:18080 -node-key KEY -node-id ID -runtime ID -image IMAGE
 //
 // The test drives it with GET and POST alone, as busybox's wget can: POST
-// /test/run hands the runtime to the node (until then it has none), POST
+// /test/run hands the runtime to the node to run (until then it has none),
+// POST /test/stop asks the node to stop it, which saves its data, POST
 // /test/region with {"latitude":,"longitude":,"timezone":} seals a region for
 // it, POST /test/region/remove takes the region away, and GET /test/runtime
 // returns what the node last reported ("status", "connection") and its logs,
-// a line each.
+// a line each. The snapshot a stop saves goes back to the node with the next
+// run, as the control plane keeps it; with no Sia here, it stays on the node.
 package main
 
 import (
@@ -59,11 +61,13 @@ type standIn struct {
 	// envelope sealed to its own key.
 	accountKey []byte
 
-	mu      sync.Mutex
-	running bool
-	region  *string
-	status  map[string]any
-	logs    []string
+	mu sync.Mutex
+	// desired is "" until the first /test/run, then "running" or "stopped".
+	desired  string
+	region   *string
+	manifest *string
+	status   map[string]any
+	logs     []string
 }
 
 func main() {
@@ -108,13 +112,19 @@ func (s *standIn) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/internal/hosts/"+s.nodeID+"/assignments":
 		s.mu.Lock()
-		running := s.running
+		assigned := s.desired != ""
 		s.mu.Unlock()
 		items := []any{}
-		if running {
+		if assigned {
 			items = append(items, s.assignment())
 		}
 		writeJSON(w, map[string]any{"items": items})
+	case r.Method == http.MethodGet && r.URL.Path == runtimePath+"sia-credentials":
+		// As virtroidd answers without an indexer: the node keeps its
+		// snapshots on its own disk.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "sia_not_configured"})
 	case r.Method == http.MethodGet && r.URL.Path == runtimePath+"blob-key":
 		envelope, err := s.envelope()
 		if err != nil {
@@ -137,6 +147,12 @@ func (s *standIn) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for key, value := range body {
 			s.status[key] = value
 		}
+		if manifest, ok := body["blob_manifest_json"].(string); ok && manifest != "" {
+			s.manifest = &manifest
+		}
+		if clear, _ := body["clear_blob_manifest"].(bool); clear {
+			s.manifest = nil
+		}
 		s.mu.Unlock()
 		log.Printf("status %v %v", body["status"], body["connection_status"])
 		writeJSON(w, map[string]any{})
@@ -153,9 +169,15 @@ func (s *standIn) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{})
 	case r.Method == http.MethodPost && r.URL.Path == "/test/run":
 		s.mu.Lock()
-		s.running = true
+		s.desired = "running"
 		s.mu.Unlock()
 		log.Printf("runtime handed to the node")
+		writeJSON(w, map[string]any{})
+	case r.Method == http.MethodPost && r.URL.Path == "/test/stop":
+		s.mu.Lock()
+		s.desired = "stopped"
+		s.mu.Unlock()
+		log.Printf("runtime to be stopped")
 		writeJSON(w, map[string]any{})
 	case r.Method == http.MethodPost && r.URL.Path == "/test/region":
 		var region struct {
@@ -205,8 +227,9 @@ func writeJSON(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-// assignment is the runtime as the control plane hands it to its node:
-// running, on direct egress, with the region the test last set.
+// assignment is the runtime as the control plane hands it to its node: on
+// direct egress, saved when it stops, with the region the test last set and
+// the snapshot its last stop saved.
 func (s *standIn) assignment() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -217,23 +240,25 @@ func (s *standIn) assignment() map[string]any {
 	}
 	viewerPort := 17001
 	return map[string]any{
-		"id":                s.runtimeID,
-		"name":              "boot test",
-		"status":            status,
-		"desired_state":     "running",
-		"connection_status": connection,
-		"persona_version":   1,
-		"android_image":     s.image,
-		"android_version":   "android-16",
-		"width_px":          720,
-		"height_px":         1280,
-		"density_dpi":       320,
-		"camera_mode":       "off",
-		"file_mode":         "off",
-		"viewer_port":       viewerPort,
-		"egress_mode":       "direct",
-		"region_sealed":     s.region,
-		"selected_apps":     []any{},
+		"id":                 s.runtimeID,
+		"name":               "boot test",
+		"status":             status,
+		"desired_state":      s.desired,
+		"blob_auto_snapshot": true,
+		"blob_manifest_json": s.manifest,
+		"connection_status":  connection,
+		"persona_version":    1,
+		"android_image":      s.image,
+		"android_version":    "android-16",
+		"width_px":           720,
+		"height_px":          1280,
+		"density_dpi":        320,
+		"camera_mode":        "off",
+		"file_mode":          "off",
+		"viewer_port":        viewerPort,
+		"egress_mode":        "direct",
+		"region_sealed":      s.region,
+		"selected_apps":      []any{},
 	}
 }
 

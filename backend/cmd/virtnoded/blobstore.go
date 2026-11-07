@@ -269,65 +269,121 @@ func (r *blobPreflightReport) addCheck(name, status, detail string) {
 	})
 }
 
-func (n *nodeAgent) prepareSessionData(ctx context.Context, runtime runtimeAssignment) (bool, error) {
+// sessionDataSource says where a starting runtime's /data came from.
+type sessionDataSource int
+
+const (
+	sessionDataFresh sessionDataSource = iota
+	sessionDataRestored
+	// sessionDataUnsaved is this VM's copy of a session that no stop has
+	// saved yet, which is newer than any saved snapshot.
+	sessionDataUnsaved
+)
+
+// unsavedSessionMarker sits beside a runtime's data, where the guest can't
+// reach it, from the moment a container starts using that data until a stop
+// has committed a snapshot of it. While it is there, the data on this VM is
+// newer than any saved snapshot, so a start must not restore one over it.
+const unsavedSessionMarker = "unsaved-session"
+
+func unsavedSessionPath(runtimeRoot, runtimeID string) string {
+	return filepath.Join(runtimeRoot, runtimeID, unsavedSessionMarker)
+}
+
+func markUnsavedSession(runtimeRoot, runtimeID string) error {
+	path := unsavedSessionPath(runtimeRoot, runtimeID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := writeFileAndSync(path, nil, 0o600); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func clearUnsavedSession(runtimeRoot, runtimeID string) error {
+	path := unsavedSessionPath(runtimeRoot, runtimeID)
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+// hasUnsavedSession errs toward yes: a marker it can't inspect may still be
+// there, and a wrong yes costs a restore while a wrong no costs a session.
+func hasUnsavedSession(runtimeRoot, runtimeID string) bool {
+	_, err := os.Lstat(unsavedSessionPath(runtimeRoot, runtimeID))
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+func (n *nodeAgent) prepareSessionData(ctx context.Context, runtime runtimeAssignment) (sessionDataSource, error) {
 	runtimeRoot := filepath.Join(n.cfg.RuntimeRoot, runtime.ID)
 	dataDir := filepath.Join(runtimeRoot, "data")
 	manifest, err := parseBlobManifest(runtime.BlobManifestJSON)
 	if err != nil {
-		return false, err
+		return sessionDataFresh, err
 	}
 	masterKey, err := n.runtimeBlobKeyWithContext(ctx, runtime)
 	if err != nil {
-		return false, err
+		return sessionDataFresh, err
 	}
 	defer clearBytes(masterKey)
 	floor, strict := n.snapshotFloor(runtime.ID)
 	if strict {
 		if err := checkSnapshotFloor(manifest, floor); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 	}
 
 	if err := os.MkdirAll(runtimeRoot, 0o755); err != nil {
-		return false, err
+		return sessionDataFresh, err
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return false, err
+		return sessionDataFresh, err
+	}
+
+	// A container exited or a stop couldn't save: either way this copy is
+	// newer than any snapshot, and restoring one over it would lose it.
+	if hasUnsavedSession(n.cfg.RuntimeRoot, runtime.ID) && directoryHasEntries(dataDir) {
+		return sessionDataUnsaved, nil
 	}
 
 	if manifest != nil {
 		store, err := n.blobStoreForManifest(manifest)
 		if err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := os.RemoveAll(dataDir); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := os.MkdirAll(dataDir, 0o755); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := store.restoreToDir(ctx, runtime.ID, manifest, dataDir, masterKey); err != nil {
 			fallback := manifest.MigrationFallback
 			if fallback == nil {
-				return false, err
+				return sessionDataFresh, err
 			}
 			if strict {
 				if floorErr := checkSnapshotFloor(fallback, floor); floorErr != nil {
-					return false, errors.Join(err, floorErr)
+					return sessionDataFresh, errors.Join(err, floorErr)
 				}
 			}
 			fallbackStore, fallbackErr := n.blobStoreForManifest(fallback)
 			if fallbackErr != nil {
-				return false, errors.Join(err, fallbackErr)
+				return sessionDataFresh, errors.Join(err, fallbackErr)
 			}
 			if resetErr := os.RemoveAll(dataDir); resetErr != nil {
-				return false, errors.Join(err, resetErr)
+				return sessionDataFresh, errors.Join(err, resetErr)
 			}
 			if resetErr := os.MkdirAll(dataDir, 0o755); resetErr != nil {
-				return false, errors.Join(err, resetErr)
+				return sessionDataFresh, errors.Join(err, resetErr)
 			}
 			if fallbackErr := fallbackStore.restoreToDir(ctx, runtime.ID, fallback, dataDir, masterKey); fallbackErr != nil {
-				return false, errors.Join(err, fmt.Errorf("restore migration fallback: %w", fallbackErr))
+				return sessionDataFresh, errors.Join(err, fmt.Errorf("restore migration fallback: %w", fallbackErr))
 			}
 			_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Primary userdata blob restore failed; the verified migration fallback was restored.")
 		} else if fallback := manifest.MigrationFallback; fallback != nil {
@@ -338,46 +394,56 @@ func (n *nodeAgent) prepareSessionData(ctx context.Context, runtime runtimeAssig
 			}
 		}
 		if err := repairLegacyAndroidSystemOwnership(dataDir); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := pruneEphemeralAndroidState(dataDir); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
-		return true, nil
+		return sessionDataRestored, nil
 	}
 
 	snapshotPath := legacySnapshotPath(n.cfg.RuntimeRoot, runtime.ID)
 	if fileExists(snapshotPath) {
 		if err := os.RemoveAll(dataDir); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := os.MkdirAll(dataDir, 0o755); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := restoreSnapshot(snapshotPath, dataDir, masterKey); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := repairLegacyAndroidSystemOwnership(dataDir); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
 		if err := pruneEphemeralAndroidState(dataDir); err != nil {
-			return false, err
+			return sessionDataFresh, err
 		}
-		return true, nil
+		return sessionDataRestored, nil
 	}
 
-	return directoryHasEntries(dataDir), nil
+	if directoryHasEntries(dataDir) {
+		return sessionDataRestored, nil
+	}
+	return sessionDataFresh, nil
 }
 
-func pruneEphemeralAndroidState(dataDir string) error {
-	paths := []string{
-		filepath.Join(dataDir, "anr"),
-		filepath.Join(dataDir, "system", "dropbox"),
-		filepath.Join(dataDir, "tombstones"),
+// pruneEphemeralAndroidState drops Android's crash and diagnostic leftovers.
+// The data is the guest's, which may hold links, so this works through a
+// handle on dataDir and leaves alone any path that runs through a link.
+func pruneEphemeralAndroidState(dataDir string) (resultErr error) {
+	root, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return err
 	}
-
-	for _, target := range paths {
-		if err := os.RemoveAll(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	defer func() {
+		resultErr = errors.Join(resultErr, root.Close())
+	}()
+	for _, target := range []string{"anr", "system/dropbox", "tombstones"} {
+		if err := ensureRootPathHasNoSymlinks(root, target, false); err != nil {
+			continue
+		}
+		if err := root.RemoveAll(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -2779,14 +2845,15 @@ func (w *snapshotTarWalker) addEntry(sourceRoot *os.Root, archivePrefix string, 
 		return fmt.Errorf("inspect snapshot source %q: %w", relativePath, err)
 	}
 	if lstatInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("snapshot source contains unsupported symlink %q", relativePath)
+		return w.addSymlinkEntry(sourceRoot, relativePath, entryName, lstatInfo)
 	}
 	// Android leaves transient Unix-domain sockets such as ndebugsocket and
-	// unsolzygotesocket in /data after the guest stops. They carry no persistent
-	// state and cannot be represented safely in the encrypted tar snapshot, so
-	// omit them without opening or following them. Continue rejecting every
-	// other special file type below.
-	if lstatInfo.Mode()&os.ModeSocket != 0 {
+	// unsolzygotesocket in /data after the guest stops, and an app may leave a
+	// named pipe or a device node. None carries persistent state or can be
+	// restored safely, so omit them without opening or following them: one
+	// of them must not keep a whole session from being saved. Continue
+	// rejecting every other special file type below.
+	if lstatInfo.Mode()&(os.ModeSocket|os.ModeNamedPipe|os.ModeDevice|os.ModeCharDevice) != 0 {
 		return nil
 	}
 	if !lstatInfo.IsDir() && !lstatInfo.Mode().IsRegular() {
@@ -2830,6 +2897,43 @@ func (w *snapshotTarWalker) addDirectoryEntry(sourceRoot *os.Root, relativePath,
 		return err
 	}
 	return w.walkDirectory(childRoot, relativePath, depth+1)
+}
+
+// addSymlinkEntry archives a symbolic link as a link. Apps keep links in
+// their data (F-Droid's files/fdroid/index.html is one), so a snapshot that
+// refused them could never be saved. Its target is stored as text and never
+// followed, here or on restore.
+func (w *snapshotTarWalker) addSymlinkEntry(sourceRoot *os.Root, relativePath, entryName string, lstatInfo fs.FileInfo) error {
+	target, err := sourceRoot.Readlink(entryName)
+	if err != nil {
+		return fmt.Errorf("read snapshot source symlink %q: %w", relativePath, err)
+	}
+	if err := validateArchiveSymlinkTarget(target); err != nil {
+		return fmt.Errorf("snapshot source symlink %q cannot be archived safely: %w", relativePath, err)
+	}
+	archiveName, err := canonicalArchiveRelativePath(relativePath, false)
+	if err != nil {
+		return fmt.Errorf("snapshot source path %q cannot be archived safely: %w", relativePath, err)
+	}
+	header, err := tar.FileInfoHeader(lstatInfo, target)
+	if err == nil {
+		header.Name = archiveName
+		err = populateTarOwnership(header, lstatInfo)
+	}
+	if err != nil {
+		return err
+	}
+	return w.writer.WriteHeader(header)
+}
+
+// validateArchiveSymlinkTarget bounds a link's target. Absolute targets and
+// ones with ".." are kept as they are: they point into the guest's own view
+// of its filesystem, and the node never resolves a link in runtime data.
+func validateArchiveSymlinkTarget(target string) error {
+	if target == "" || len(target) > maxArchivePathBytes || strings.IndexByte(target, 0) >= 0 {
+		return errors.New("link target is empty, too long, or contains NUL")
+	}
+	return nil
 }
 
 func (w *snapshotTarWalker) addRegularFileEntry(sourceRoot *os.Root, relativePath, entryName string, lstatInfo fs.FileInfo) error {
@@ -3003,7 +3107,23 @@ func extractTarToRoot(reader *tar.Reader, root *os.Root) error {
 				modTime: header.ModTime,
 			})
 		case tar.TypeSymlink:
-			return fmt.Errorf("archive symlink %q is not supported", header.Name)
+			// The link is made but never followed: no folder above it may
+			// be a link, and a later entry beneath it fails the same check.
+			if err := validateArchiveSymlinkTarget(header.Linkname); err != nil {
+				return fmt.Errorf("snapshot contains invalid archive link %q: %w", header.Name, err)
+			}
+			if err := ensureRootPathHasNoSymlinks(root, entryName, true); err != nil {
+				return err
+			}
+			if err := root.MkdirAll(path.Dir(entryName), 0o700); err != nil {
+				return fmt.Errorf("create parent for archive link %q: %w", header.Name, err)
+			}
+			if err := root.Symlink(header.Linkname, entryName); err != nil {
+				return fmt.Errorf("create archive link %q: %w", header.Name, err)
+			}
+			if err := root.Lchown(entryName, header.Uid, header.Gid); err != nil && !errors.Is(err, fs.ErrPermission) {
+				return fmt.Errorf("set archive link %q owner: %w", header.Name, err)
+			}
 		case tar.TypeReg, tar.TypeRegA:
 			if header.Size < 0 || header.Size > maxRestoredSnapshotData-restoredBytes {
 				return fmt.Errorf("snapshot restored data exceeds maximum %d bytes", maxRestoredSnapshotData)

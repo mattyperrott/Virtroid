@@ -38,7 +38,11 @@
 #                       node starts it, and the probe app
 #                       (deploy/aosp/test/gnss-probe) must get GPS fixes at
 #                       the place with the satellites used in them, then at a
-#                       new place, then none without a region.
+#                       new place, then none without a region. Then the node
+#                       stops the runtime, saving links in its data, and
+#                       starts it again with them restored, and a runtime
+#                       whose container is killed comes back with its
+#                       unsaved data.
 set -euo pipefail
 
 img="$(cd "${1:?usage: boot-test.sh IMAGE_DIR}" && pwd)"
@@ -655,6 +659,50 @@ if C /bin/test -f /tmp/gnss-probe.apk; then
   done
   echo "boot-test: location: without a region, \$fixes fixes in 6 s"
   [ "\$fixes" = 0 ] || fail "fixes go on without a region"
+  # The runtime's data outlives a stop and a crash. Apps keep links in their
+  # data, as F-Droid does, which a stop must save and a start bring back as
+  # links; a named pipe holds nothing and is left out. A container that dies
+  # mid-session comes back with what it had, not with the last save.
+  echo "boot-test: --- persistence: links through a stop and a start, then a crash ---"
+  L=/data/local/tmp/boot-test-links
+  X "mkdir -p \$L && echo page > \$L/index.html && ln -s /data/user/0/org.fdroid.fdroid/files/index.html \$L/absolute && ln -s index.html \$L/relative && ln -s /nowhere \$L/dangling && mkfifo \$L/pipe"
+  [ "\$(X "readlink \$L/absolute")" = /data/user/0/org.fdroid.fdroid/files/index.html ] || fail "could not make the test's links"
+  post /test/stop '{}'
+  for i in \$(\$B seq 1 60); do
+    state | \$B grep -q '^status stopped' && state | \$B grep -q 'Blob manifest prepared' && break
+    \$B sleep 4
+  done
+  state | \$B grep -E '^status|Reconcile failed|Blob manifest' | \$B tail -3 | \$B cut -c1-220 | \$B sed 's/^/boot-test:   /'
+  state | \$B grep -q 'Blob manifest prepared' || fail "the stop did not save the runtime's data"
+  post /test/run '{}'
+  for i in \$(\$B seq 1 150); do
+    state | \$B grep -q '^connection online' && break
+    \$B sleep 4
+  done
+  state | \$B grep -q '^connection online' || { C /bin/tail -20 /run/virtnoded.log; fail "the runtime did not come back after its stop"; }
+  state | \$B grep -q 'restored from encrypted userdata blob' || fail "the start did not restore the saved data"
+  [ "\$(X "readlink \$L/absolute")" = /data/user/0/org.fdroid.fdroid/files/index.html ] || fail "the absolute link did not come back"
+  [ "\$(X "readlink \$L/relative")" = index.html ] || fail "the relative link did not come back"
+  [ "\$(X "readlink \$L/dangling")" = /nowhere ] || fail "the dangling link did not come back"
+  [ "\$(X "cat \$L/relative")" = page ] || fail "the relative link does not lead to its file"
+  [ "\$(X "[ -e \$L/pipe ] && echo kept || echo left-out")" = left-out ] || fail "the named pipe came back"
+  echo "boot-test: persistence: links came back through a stop and a start, the pipe did not"
+  X "echo unsaved > \$L/after-the-save"
+  C /bin/docker kill "\$ct" >/dev/null || fail "could not kill the runtime's container"
+  for i in \$(\$B seq 1 60); do
+    state | \$B grep -q "unsaved copy of the last session" && break
+    \$B sleep 4
+  done
+  state | \$B grep -q "unsaved copy of the last session" || { C /bin/tail -20 /run/virtnoded.log; fail "the node did not start from the unsaved data after a crash"; }
+  # The node reports the start right after that line; wait past it.
+  \$B sleep 8
+  for i in \$(\$B seq 1 150); do
+    state | \$B grep -q '^connection online' && break
+    \$B sleep 4
+  done
+  state | \$B grep -q '^connection online' || fail "the runtime did not come back after its container died"
+  [ "\$(X "cat \$L/after-the-save")" = unsaved ] || fail "a crash lost what the session wrote after its last save"
+  echo "boot-test: persistence: a container that died came back with its unsaved data"
 fi
 echo "boot-test: --- virtnoded log ---"
 C /bin/cat /run/virtnoded.log | \$B tail -8

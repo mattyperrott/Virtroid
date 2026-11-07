@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,49 +67,68 @@ func nodeADBPublicKey(ctx context.Context, adbPath string) ([]byte, error) {
 }
 
 // authorizeADBKey makes publicKey the only key the runtime's adbd accepts.
-// chown sets Android's owners; tests pass their own.
-func authorizeADBKey(dataDir string, publicKey []byte, chown func(path string, uid, gid int) error) error {
+// Everything in dataDir belongs to the guest, which can leave a link where
+// Android keeps a directory, so the work goes through a handle on dataDir
+// and refuses links: nothing lands outside the runtime's data. chown sets
+// Android's owners without following links; tests pass their own.
+func authorizeADBKey(dataDir string, publicKey []byte, chown func(root *os.Root, name string, uid, gid int) error) (resultErr error) {
 	key := bytes.TrimSpace(publicKey)
 	if len(key) == 0 || bytes.ContainsAny(key, "\n\r") {
 		return errors.New("the adb public key is not a single line")
 	}
-	miscDir := filepath.Join(dataDir, "misc")
-	adbDir := filepath.Join(miscDir, "adb")
-	// The same modes and owners Android's init.rc gives these directories.
-	for _, dir := range []struct {
-		path string
-		mode os.FileMode
-		gid  int
-	}{
-		{miscDir, 0o771 | os.ModeSticky, androidMiscGID},
-		{adbDir, 0o750 | os.ModeSetgid, androidShellGID},
-	} {
-		if err := os.MkdirAll(dir.path, 0o700); err != nil {
-			return err
-		}
-		if err := chown(dir.path, androidSystemUID, dir.gid); err != nil {
-			return err
-		}
-		if err := os.Chmod(dir.path, dir.mode); err != nil {
-			return err
-		}
-	}
-	keysPath := filepath.Join(dataDir, adbKeysPath)
-	tmp, err := os.CreateTemp(adbDir, ".adb_keys-*")
+	root, err := os.OpenRoot(dataDir)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		resultErr = errors.Join(resultErr, root.Close())
+	}()
+	// The same modes and owners Android's init.rc gives these directories.
+	for _, dir := range []struct {
+		name string
+		mode os.FileMode
+		gid  int
+	}{
+		{"misc", 0o771 | os.ModeSticky, androidMiscGID},
+		{"misc/adb", 0o750 | os.ModeSetgid, androidShellGID},
+	} {
+		if err := root.Mkdir(dir.name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		info, err := root.Lstat(dir.name)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("runtime data has a %v where Android keeps the %s directory", info.Mode().Type(), dir.name)
+		}
+		if err := chown(root, dir.name, androidSystemUID, dir.gid); err != nil {
+			return err
+		}
+		if err := root.Chmod(dir.name, dir.mode); err != nil {
+			return err
+		}
+	}
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return err
+	}
+	tmpName := "misc/adb/.adb_keys-" + hex.EncodeToString(suffix)
+	tmp, err := root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmpName)
 	_, writeErr := tmp.Write(append(key, '\n'))
 	closeErr := tmp.Close()
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	if err := chown(tmp.Name(), androidSystemUID, androidShellGID); err != nil {
+	if err := chown(root, tmpName, androidSystemUID, androidShellGID); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o640); err != nil {
+	if err := root.Chmod(tmpName, 0o640); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), keysPath)
+	return root.Rename(tmpName, adbKeysPath)
 }

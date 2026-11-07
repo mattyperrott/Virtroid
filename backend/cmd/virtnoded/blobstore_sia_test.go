@@ -476,12 +476,12 @@ func TestLocalToSiaMigrationRestoresOnAnotherNode(t *testing.T) {
 	newNode := newSiaTestNode(t, newRoot, runtimeID, objects)
 	runtime.BlobManifestJSON = stringPtr(marshalBlobManifest(persisted.Manifest))
 	newNode.cacheRuntimeBlobKey(runtimeID, key)
-	restored, err := newNode.prepareSessionData(context.Background(), runtime)
+	source, err := newNode.prepareSessionData(context.Background(), runtime)
 	if err != nil {
 		t.Fatalf("prepareSessionData on the new node: %v", err)
 	}
-	if !restored {
-		t.Fatal("prepareSessionData reported nothing restored")
+	if source != sessionDataRestored {
+		t.Fatalf("prepareSessionData data source = %v, want restored", source)
 	}
 	assertFileContent(t, filepath.Join(newRoot, runtimeID, "data", "app", "state.db"), "durable user state")
 }

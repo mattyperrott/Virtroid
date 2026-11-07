@@ -11,9 +11,9 @@ type chownCall struct {
 	uid, gid int
 }
 
-func recordChowns(calls *[]chownCall) func(string, int, int) error {
-	return func(path string, uid, gid int) error {
-		*calls = append(*calls, chownCall{filepath.Base(path), uid, gid})
+func recordChowns(calls *[]chownCall) func(*os.Root, string, int, int) error {
+	return func(_ *os.Root, name string, uid, gid int) error {
+		*calls = append(*calls, chownCall{filepath.Base(name), uid, gid})
 		return nil
 	}
 }
@@ -84,6 +84,51 @@ func TestAuthorizeADBKeyRejectsAnythingButOneKey(t *testing.T) {
 		if err := authorizeADBKey(t.TempDir(), []byte(key), recordChowns(new([]chownCall))); err == nil {
 			t.Fatalf("authorizeADBKey(%q) succeeded, want an error", key)
 		}
+	}
+}
+
+// The guest owns /data, so it can leave a link where Android keeps misc or
+// misc/adb. The node must neither write through it nor change what it
+// points at.
+func TestAuthorizeADBKeyRefusesLinksInTheGuestData(t *testing.T) {
+	for _, linked := range []string{"misc", "misc/adb"} {
+		t.Run(linked, func(t *testing.T) {
+			dataDir := t.TempDir()
+			outside := t.TempDir()
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dataDir, linked)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(dataDir, linked)); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var calls []chownCall
+			if err := authorizeADBKey(dataDir, []byte("QAAAAKey root@virtroid"), recordChowns(&calls)); err == nil {
+				t.Fatal("authorizeADBKey followed a link in the guest's data")
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("authorizeADBKey wrote %d entries through the link", len(entries))
+			}
+			after, err := os.Stat(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Mode() != before.Mode() {
+				t.Fatalf("link target mode changed from %v to %v", before.Mode(), after.Mode())
+			}
+			for _, call := range calls {
+				if call.path == filepath.Base(linked) {
+					t.Fatalf("chown was called on the link %s", linked)
+				}
+			}
+		})
 	}
 }
 

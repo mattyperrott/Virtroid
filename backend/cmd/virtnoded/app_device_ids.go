@@ -2,11 +2,12 @@ package main
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Android keeps each app's device ID (Settings.Secure.ANDROID_ID, one per
@@ -32,23 +33,63 @@ func wantsAppDeviceIDReset(runtime runtimeAssignment) bool {
 }
 
 // resetAppDeviceIDs deletes the IDs once for personaVersion and reports
-// whether it did.
-func resetAppDeviceIDs(dataDir string, personaVersion int) (bool, error) {
-	marker := filepath.Join(dataDir, appDeviceIDResetMarker)
-	if previous, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(previous)) == strconv.Itoa(personaVersion) {
+// whether it did. dataDir belongs to the guest, so the marker and the ID
+// files are read, deleted and written through a handle on it, never through
+// a link the guest left.
+func resetAppDeviceIDs(dataDir string, personaVersion int) (reset bool, resultErr error) {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return false, err
+	}
+	root, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, root.Close())
+	}()
+	if previous, err := readResetMarker(root); err == nil && strings.TrimSpace(string(previous)) == strconv.Itoa(personaVersion) {
 		return false, nil
 	}
 	var errs []error
 	for _, name := range appDeviceIDFiles {
-		if err := os.Remove(filepath.Join(dataDir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := ensureRootPathHasNoSymlinks(root, name, false); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			errs = append(errs, err)
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return false, err
 	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	// Whatever holds the marker's name, a link included, is replaced rather
+	// than written through.
+	if err := root.Remove(appDeviceIDResetMarker); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	return true, os.WriteFile(marker, []byte(strconv.Itoa(personaVersion)+"\n"), 0o600)
+	marker, err := root.OpenFile(appDeviceIDResetMarker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return false, err
+	}
+	_, writeErr := marker.WriteString(strconv.Itoa(personaVersion) + "\n")
+	return true, errors.Join(writeErr, marker.Close())
+}
+
+// readResetMarker reads the marker if it is a small regular file, without
+// following a link at its name.
+func readResetMarker(root *os.Root) ([]byte, error) {
+	file, err := root.OpenFile(appDeviceIDResetMarker, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("the reset marker is not a regular file")
+	}
+	return io.ReadAll(io.LimitReader(file, 64))
 }

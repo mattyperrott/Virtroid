@@ -2064,9 +2064,12 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 		hadContainer = false
 	}
 
-	restoredSnapshot, err := n.prepareSessionData(ctx, runtime)
+	dataSource, err := n.prepareSessionData(ctx, runtime)
 	if err != nil {
 		return fmt.Errorf("prepare session data: %w", err)
+	}
+	if dataSource == sessionDataUnsaved {
+		_ = n.appendRuntimeLog(ctx, runtime.ID, "node", "warn", "Starting from this server's copy of the last session, which hasn't been saved yet and is newer than the saved snapshot. The next stop saves it.")
 	}
 	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
 	if wantsAppDeviceIDReset(runtime) {
@@ -2091,7 +2094,7 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	if err != nil {
 		return err
 	}
-	if err := authorizeADBKey(dataDir, adbKey, os.Lchown); err != nil {
+	if err := authorizeADBKey(dataDir, adbKey, (*os.Root).Lchown); err != nil {
 		return fmt.Errorf("authorize the node's adb key: %w", err)
 	}
 	if !hadContainer {
@@ -2101,6 +2104,11 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 		if err := n.createContainer(ctx, containerName, runtime, dataDir, adbPort, persona); err != nil {
 			return fmt.Errorf("create container: %w", err)
 		}
+	}
+	// From here the container changes the data, so it is newer than any
+	// snapshot until a stop commits one.
+	if err := markUnsavedSession(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+		return fmt.Errorf("mark the session unsaved before starting its container: %w", err)
 	}
 	if err := n.startContainer(ctx, containerName); err != nil {
 		return fmt.Errorf("start container: %w", err)
@@ -2113,8 +2121,11 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	}
 
 	restoreMessage := "fresh session container"
-	if restoredSnapshot {
+	switch dataSource {
+	case sessionDataRestored:
 		restoreMessage = "fresh session container restored from encrypted userdata blob"
+	case sessionDataUnsaved:
+		restoreMessage = "fresh session container started from this server's unsaved copy of the last session"
 	}
 	_ = n.appendRuntimeLog(
 		ctx,
@@ -2151,6 +2162,8 @@ func (n *nodeAgent) discardTaintedRuntime(ctx context.Context, runtime runtimeAs
 	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtime.ID, "data")
 	if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove tainted runtime userdata: %w", err))
+	} else if err := clearUnsavedSession(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("clear the tainted runtime's unsaved-session mark: %w", err))
 	}
 	n.clearCachedRuntimeBlobKey(runtime.ID)
 	return errors.Join(cleanupErrors...)
@@ -2174,6 +2187,12 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 	shouldPersistOrClearBlob := !cleanupPending && (hadContainer || directoryHasEntries(dataDir))
 	var persistencePlan *sessionPersistencePlan
 	if shouldPersistOrClearBlob {
+		// A container a node started before this marker existed has none,
+		// and the save below may fail: either way a start must not restore
+		// an older snapshot over this data.
+		if err := markUnsavedSession(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+			return fmt.Errorf("mark the session unsaved before stopping its container: %w", err)
+		}
 		var err error
 		persistencePlan, err = n.prepareSessionPersistence(ctx, runtime)
 		if err != nil {
@@ -2250,6 +2269,9 @@ func (n *nodeAgent) ensureRuntimeStopped(ctx context.Context, runtime runtimeAss
 	if err := os.RemoveAll(dataDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove plaintext userdata after manifest commit: %w", err)
 	}
+	if err := clearUnsavedSession(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+		return fmt.Errorf("clear the unsaved-session mark after manifest commit: %w", err)
+	}
 	if err := n.removeRuntimeNetwork(ctx, runtime.ID); err != nil {
 		return fmt.Errorf("remove isolated runtime network after manifest commit: %w", err)
 	}
@@ -2309,6 +2331,9 @@ func (n *nodeAgent) wipeRuntime(ctx context.Context, runtime runtimeAssignment) 
 	dataDir := filepath.Join(runtimeRoot, "data")
 	if err := os.RemoveAll(dataDir); err != nil {
 		return fmt.Errorf("remove runtime data dir: %w", err)
+	}
+	if err := clearUnsavedSession(n.cfg.RuntimeRoot, runtime.ID); err != nil {
+		return fmt.Errorf("clear the unsaved-session mark: %w", err)
 	}
 	if err := n.clearSnapshot(runtime); err != nil {
 		return fmt.Errorf("remove encrypted userdata blob: %w", err)

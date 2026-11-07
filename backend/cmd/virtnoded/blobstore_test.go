@@ -387,15 +387,95 @@ func TestValidateBlobManifestRejectsWrongRuntimeChunkKey(t *testing.T) {
 	}
 }
 
-func TestSnapshotWriterRejectsSymlinkSource(t *testing.T) {
+// Apps keep links in their data, as F-Droid does at files/fdroid/index.html.
+// The snapshot keeps each as a link and never reads what it points at, even
+// when that is a file outside the runtime's data.
+func TestSnapshotWriterArchivesSymlinksWithoutFollowingThem(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Symlink("target", filepath.Join(root, "link")); err != nil {
-		t.Fatalf("create source symlink: %v", err)
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	writeFile(t, outside, "not the guest's")
+	links := map[string]string{
+		"outside":  outside,
+		"relative": "../files/index.html",
+		"dangling": "/data/user/0/org.fdroid.fdroid/files/index.html",
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatalf("create source symlink: %v", err)
+		}
 	}
 	var archive bytes.Buffer
-	err := addDirectoryToTar(context.Background(), tar.NewWriter(&archive), root)
-	if err == nil || !strings.Contains(err.Error(), "unsupported symlink") {
-		t.Fatalf("addDirectoryToTar error = %v, want unsupported symlink", err)
+	writer := tar.NewWriter(&archive)
+	if err := addDirectoryToTar(context.Background(), writer, root); err != nil {
+		t.Fatalf("addDirectoryToTar: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+	if bytes.Contains(archive.Bytes(), []byte("not the guest's")) {
+		t.Fatal("the archive holds the contents of a link's target")
+	}
+	reader := tar.NewReader(bytes.NewReader(archive.Bytes()))
+	seen := 0
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read archive: %v", err)
+		}
+		want, ok := links[header.Name]
+		if !ok || header.Typeflag != tar.TypeSymlink || header.Linkname != want || header.Size != 0 {
+			t.Fatalf("archive entry %q type %c -> %q, want a link to %q", header.Name, header.Typeflag, header.Linkname, want)
+		}
+		seen++
+	}
+	if seen != len(links) {
+		t.Fatalf("archive has %d links, want %d", seen, len(links))
+	}
+}
+
+func TestSnapshotRoundTripKeepsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	restoreDir := filepath.Join(root, "restore")
+	snapshotPath := filepath.Join(root, "userdata.enc")
+	key := testBlobKey(3)
+
+	files := filepath.Join(sourceDir, "data", "org.fdroid.fdroid", "files")
+	writeFile(t, filepath.Join(files, "index.html"), "swap page")
+	if err := os.MkdirAll(filepath.Join(files, "fdroid"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	links := map[string]string{
+		"data/org.fdroid.fdroid/files/fdroid/index.html": "/data/user/0/org.fdroid.fdroid/files/index.html",
+		"data/org.fdroid.fdroid/files/repo":              "fdroid",
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(sourceDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := writeSnapshot(snapshotPath, sourceDir, key); err != nil {
+		t.Fatalf("writeSnapshot: %v", err)
+	}
+	if err := restoreSnapshot(snapshotPath, restoreDir, key); err != nil {
+		t.Fatalf("restoreSnapshot: %v", err)
+	}
+	assertFileContent(t, filepath.Join(restoreDir, "data", "org.fdroid.fdroid", "files", "index.html"), "swap page")
+	for name, want := range links {
+		info, err := os.Lstat(filepath.Join(restoreDir, name))
+		if err != nil {
+			t.Fatalf("restored link %s: %v", name, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("restored %s is %v, want a link", name, info.Mode())
+		}
+		if got, err := os.Readlink(filepath.Join(restoreDir, name)); err != nil || got != want {
+			t.Fatalf("restored link %s -> %q (%v), want %q", name, got, err, want)
+		}
 	}
 }
 
@@ -416,15 +496,36 @@ func TestSnapshotWriterRejectsSymlinkSourceRoot(t *testing.T) {
 	}
 }
 
-func TestSnapshotWriterRejectsSpecialSourceWithoutOpeningIt(t *testing.T) {
+// A named pipe holds no data, and opening one would block, so the snapshot
+// leaves it out without opening it rather than refusing the whole session.
+func TestSnapshotWriterSkipsNamedPipeWithoutOpeningIt(t *testing.T) {
 	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "persistent.txt"), "keep")
 	if err := syscall.Mkfifo(filepath.Join(root, "pipe"), 0o600); err != nil {
 		t.Fatalf("create source FIFO: %v", err)
 	}
 	var archive bytes.Buffer
-	err := addDirectoryToTar(context.Background(), tar.NewWriter(&archive), root)
-	if err == nil || !strings.Contains(err.Error(), "unsupported special file") {
-		t.Fatalf("addDirectoryToTar error = %v, want unsupported special file", err)
+	writer := tar.NewWriter(&archive)
+	if err := addDirectoryToTar(context.Background(), writer, root); err != nil {
+		t.Fatalf("addDirectoryToTar: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+	reader := tar.NewReader(bytes.NewReader(archive.Bytes()))
+	var names []string
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read archive: %v", err)
+		}
+		names = append(names, header.Name)
+	}
+	if len(names) != 1 || names[0] != "persistent.txt" {
+		t.Fatalf("archive entries = %#v, want only persistent.txt", names)
 	}
 }
 
@@ -630,20 +731,47 @@ func TestExtractTarPreservesCaseDistinctPaths(t *testing.T) {
 	}
 }
 
-func TestExtractTarRejectsLinkAndSpecialEntries(t *testing.T) {
+func TestExtractTarRejectsHardlinkAndSpecialEntries(t *testing.T) {
 	tests := []tar.Header{
-		{Name: "symlink", Typeflag: tar.TypeSymlink, Linkname: "target", Mode: 0o777},
 		{Name: "hardlink", Typeflag: tar.TypeLink, Linkname: "target", Mode: 0o600},
 		{Name: "fifo", Typeflag: tar.TypeFifo, Mode: 0o600},
+		{Name: "empty-link", Typeflag: tar.TypeSymlink, Mode: 0o777},
 	}
 	for _, header := range tests {
 		t.Run(header.Name, func(t *testing.T) {
 			archive := writeTestTar(t, []testTarEntry{{header: header}})
 			err := extractTarToDir(tar.NewReader(bytes.NewReader(archive)), t.TempDir())
-			if err == nil || !strings.Contains(err.Error(), "not supported") && !strings.Contains(err.Error(), "unsupported type") {
+			if err == nil || !strings.Contains(err.Error(), "not supported") && !strings.Contains(err.Error(), "unsupported type") && !strings.Contains(err.Error(), "invalid archive link") {
 				t.Fatalf("extractTarToDir error = %v, want unsupported entry rejection", err)
 			}
 		})
+	}
+}
+
+// A restored link may point anywhere, as it did in the guest, but nothing
+// is written through it: an entry beneath it is refused, and the folder it
+// names outside the restore root stays empty.
+func TestExtractTarRestoresSymlinkButNeverWritesThroughIt(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	archive := writeTestTar(t, []testTarEntry{
+		{header: tar.Header{Name: "app/", Typeflag: tar.TypeDir, Mode: 0o700}},
+		{header: tar.Header{Name: "app/link", Typeflag: tar.TypeSymlink, Linkname: outside, Mode: 0o777}},
+		{header: tar.Header{Name: "app/link/payload.txt", Typeflag: tar.TypeReg, Mode: 0o600}, body: "payload"},
+	})
+	err := extractTarToDir(tar.NewReader(bytes.NewReader(archive)), root)
+	if err == nil || !strings.Contains(err.Error(), "crosses symlink") {
+		t.Fatalf("extractTarToDir error = %v, want symlink crossing rejection", err)
+	}
+	if got, err := os.Readlink(filepath.Join(root, "app", "link")); err != nil || got != outside {
+		t.Fatalf("restored link -> %q (%v), want %q", got, err, outside)
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("restore wrote %d entries through the link", len(entries))
 	}
 }
 
@@ -1300,6 +1428,133 @@ func TestEnsureRuntimeStoppedPersistsDataWhenContainerMissing(t *testing.T) {
 	}
 	if !directoryHasEntries(filepath.Join(root, "_blobstore", "local")) {
 		t.Fatal("encrypted local blobstore was not populated")
+	}
+}
+
+// A stop whose save fails leaves this VM's copy as the only one with the
+// session in it. A start must use that copy rather than restore the older
+// snapshot over it, which is how a runtime lost a session on 2026-11-07.
+func TestPrepareSessionDataStartsFromAnUnsavedCopy(t *testing.T) {
+	root := t.TempDir()
+	runtimeID := "33333333-3333-3333-3333-333333333333"
+	dataDir := filepath.Join(root, runtimeID, "data")
+	key := testBlobKey(5)
+	writeFile(t, filepath.Join(dataDir, "app", "state.db"), "saved at 08:47")
+
+	node := &nodeAgent{cfg: config.NodeConfig{RuntimeRoot: root, BlobStoreKind: blobStoreLocal}}
+	runtime := runtimeAssignment{ID: runtimeID, BlobAutoSnapshot: true}
+	persisted, err := node.persistSessionData(context.Background(), runtime, &sessionPersistencePlan{
+		dataDir:   dataDir,
+		masterKey: append([]byte(nil), key...),
+		store:     &localBlobStore{root: filepath.Join(root, "_blobstore", "local"), chunkSize: 32},
+	})
+	if err != nil {
+		t.Fatalf("persist the older snapshot: %v", err)
+	}
+	runtime.BlobManifestJSON = stringPtr(marshalBlobManifest(persisted.Manifest))
+	node.cacheRuntimeBlobKey(runtimeID, key)
+
+	writeFile(t, filepath.Join(dataDir, "app", "state.db"), "the unsaved session")
+	if err := markUnsavedSession(root, runtimeID); err != nil {
+		t.Fatalf("markUnsavedSession: %v", err)
+	}
+	source, err := node.prepareSessionData(context.Background(), runtime)
+	if err != nil {
+		t.Fatalf("prepareSessionData: %v", err)
+	}
+	if source != sessionDataUnsaved {
+		t.Fatalf("data source = %v, want the unsaved copy", source)
+	}
+	assertFileContent(t, filepath.Join(dataDir, "app", "state.db"), "the unsaved session")
+
+	// Without the mark, the same start restores the snapshot, as before.
+	if err := clearUnsavedSession(root, runtimeID); err != nil {
+		t.Fatalf("clearUnsavedSession: %v", err)
+	}
+	source, err = node.prepareSessionData(context.Background(), runtime)
+	if err != nil {
+		t.Fatalf("prepareSessionData without the mark: %v", err)
+	}
+	if source != sessionDataRestored {
+		t.Fatalf("data source without the mark = %v, want restored", source)
+	}
+	assertFileContent(t, filepath.Join(dataDir, "app", "state.db"), "saved at 08:47")
+}
+
+func TestEnsureRuntimeStoppedKeepsTheUnsavedMarkUntilItsSaveIsCommitted(t *testing.T) {
+	t.Setenv("NODE_AGENT_CONTAINER_NAME", "virtnoded")
+	root := t.TempDir()
+	runtimeID := "44444444-4444-4444-4444-444444444444"
+	dataDir := filepath.Join(root, runtimeID, "data")
+	writeFile(t, filepath.Join(dataDir, "app", "state.db"), "the session")
+	nodePrivateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	envelope := testBlobKeyEnvelope(t, nodePrivateKey, runtimeID, "host-1", "stop", "lease-1", testBlobKey(6))
+
+	refuseCommit := true
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/blob-key"):
+			writeJSONForTest(t, w, map[string]any{
+				"blob_key_envelope":   envelope,
+				"blob_key_verifier":   blobKeyVerifierForPlaintext(testBlobKey(6)),
+				"blob_key_expires_at": time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+			})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/status"):
+			if refuseCommit {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/logs"):
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Fatalf("unexpected control-plane request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer controlPlane.Close()
+
+	node := &nodeAgent{
+		cfg: config.NodeConfig{
+			NodeID:            "host-1",
+			ControlPlaneURL:   controlPlane.URL,
+			RuntimeRoot:       root,
+			BlobStoreKind:     blobStoreLocal,
+			DockerNetworkName: "virtroid-guests",
+		},
+		controlPlane: controlPlane.Client(),
+		docker: &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader(`{"message":"not found"}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		nodePrivateKey: nodePrivateKey,
+	}
+	runtime := runtimeAssignment{ID: runtimeID, BlobAutoSnapshot: true}
+
+	if err := node.ensureRuntimeStopped(context.Background(), runtime, false); err == nil {
+		t.Fatal("ensureRuntimeStopped succeeded although the control plane refused the commit")
+	}
+	if !hasUnsavedSession(root, runtimeID) {
+		t.Fatal("an uncommitted save cleared the unsaved-session mark")
+	}
+	assertFileContent(t, filepath.Join(dataDir, "app", "state.db"), "the session")
+
+	refuseCommit = false
+	if err := node.ensureRuntimeStopped(context.Background(), runtime, false); err != nil {
+		t.Fatalf("ensureRuntimeStopped after the control plane recovered: %v", err)
+	}
+	if hasUnsavedSession(root, runtimeID) {
+		t.Fatal("a committed save left the unsaved-session mark")
+	}
+	if directoryHasEntries(dataDir) {
+		t.Fatal("plaintext data directory still has entries after a committed stop")
 	}
 }
 
