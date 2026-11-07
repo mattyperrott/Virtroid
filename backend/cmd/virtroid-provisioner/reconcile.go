@@ -295,6 +295,9 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 			return nil
 		}
 		_, publicKey, err := r.nodeKey(vm.ID)
+		if errors.Is(err, errNodeKeyLost) {
+			return r.retireForLostKey(ctx, vm.ID, err)
+		}
 		if err != nil {
 			return err
 		}
@@ -309,6 +312,9 @@ func (r *reconciler) step(ctx context.Context, vm provisionedVM, instance alephI
 		if errors.Is(err, errAttestation) {
 			log.Printf("provisioner: vm=%s failed attestation; retiring it", vm.ID)
 			return r.controlPlane.Report(ctx, vm.ID, vmReport{Failure: err.Error()})
+		}
+		if errors.Is(err, errNodeKeyLost) {
+			return r.retireForLostKey(ctx, vm.ID, err)
 		}
 		if err != nil {
 			r.noteProgress(ctx, vm.ID, "Waiting for the server to answer")
@@ -446,6 +452,9 @@ func (r *reconciler) watchBoot(ctx context.Context, vm provisionedVM) error {
 		log.Printf("provisioner: vm=%s failed attestation after a restart; retiring it", vm.ID)
 		return r.controlPlane.Report(ctx, vm.ID, vmReport{Failure: err.Error()})
 	}
+	if errors.Is(err, errNodeKeyLost) {
+		return r.retireForLostKey(ctx, vm.ID, err)
+	}
 	if err != nil {
 		return fmt.Errorf("unlock after a restart (will retry): %w", err)
 	}
@@ -479,11 +488,7 @@ func (r *reconciler) unlockedBoot(vmID string) (string, error) {
 }
 
 func (r *reconciler) saveUnlockedBoot(vmID, identity string) error {
-	path := r.bootPath(vmID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(identity+"\n"), 0o600)
+	return writeFileDurably(r.bootPath(vmID), []byte(identity+"\n"))
 }
 
 // createRecord is what the provisioner knows about a VM's create, written to
@@ -657,14 +662,24 @@ func (r *reconciler) nodeKeyPath(vmID string) string {
 	return filepath.Join(r.cfg.StateDir, "node-keys", filepath.Base(vmID)+".key")
 }
 
+// errNodeKeyLost is a VM's stored node key that can't be used. A new key
+// won't do: the control plane may already hold the old one's public key and
+// the VM the key itself. Such a VM can never be unlocked again.
+var errNodeKeyLost = errors.New("the VM's node key is lost")
+
 // nodeKey returns the VM's node key (base64 PKCS#8) and public key, creating
 // it on first use. Only this service and the VM it is injected into hold it.
+// A stored key that is empty or doesn't parse is errNodeKeyLost, and stays
+// as it is.
 func (r *reconciler) nodeKey(vmID string) (string, string, error) {
 	path := r.nodeKeyPath(vmID)
 	if data, err := os.ReadFile(path); err == nil {
-		_, publicKey, err := nodeauth.LoadPrivateKey(string(data))
+		privateKey, publicKey, err := nodeauth.LoadPrivateKey(string(data))
 		if err != nil {
-			return "", "", fmt.Errorf("stored node key for %s is unreadable: %w", vmID, err)
+			return "", "", fmt.Errorf("%w: stored node key for %s is unreadable: %w", errNodeKeyLost, vmID, err)
+		}
+		if privateKey == nil {
+			return "", "", fmt.Errorf("%w: stored node key for %s is empty", errNodeKeyLost, vmID)
 		}
 		return strings.TrimSpace(string(data)), publicKey, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -679,10 +694,7 @@ func (r *reconciler) nodeKey(vmID string) (string, string, error) {
 		return "", "", err
 	}
 	encoded := base64.StdEncoding.EncodeToString(der)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", "", err
-	}
-	if err := os.WriteFile(path, []byte(encoded+"\n"), 0o600); err != nil {
+	if err := writeFileDurably(path, []byte(encoded+"\n")); err != nil {
 		return "", "", err
 	}
 	publicKey, err := nodeauth.PublicKeyMaterial(&privateKey.PublicKey)
@@ -690,6 +702,13 @@ func (r *reconciler) nodeKey(vmID string) (string, string, error) {
 		return "", "", err
 	}
 	return encoded, publicKey, nil
+}
+
+// retireForLostKey retires a VM whose node key is lost, so the account gets a
+// new VM instead of waiting on one that can never be unlocked.
+func (r *reconciler) retireForLostKey(ctx context.Context, vmID string, err error) error {
+	log.Printf("provisioner: vm=%s %v; retiring it", vmID, err)
+	return r.controlPlane.Report(ctx, vmID, vmReport{Failure: err.Error()})
 }
 
 // legacyDataKeyPath is where VMs' disk keys were kept before each VM made

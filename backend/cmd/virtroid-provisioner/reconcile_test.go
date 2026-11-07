@@ -291,6 +291,81 @@ func TestCreatingVMWaitsForItsAddressThenGetsANodeKey(t *testing.T) {
 	}
 }
 
+// A key file that is empty or doesn't parse is never replaced: the control
+// plane may already hold its public key and the VM the key itself. Whether
+// the VM was about to report its key, be unlocked, or be unlocked again
+// after a restart, it is retired instead, and nothing is sent with the key.
+func TestALostNodeKeyRetiresTheVMAndIsNotReplaced(t *testing.T) {
+	for _, contents := range []string{"", "\n", "  \n", "not a key\n"} {
+		cp := &fakeControlPlane{vms: []provisionedVM{
+			{ID: "pvm-1", Region: "snp-eu", State: vmStateCreating, Desired: "present", ItemHash: hash, CRNHash: crnA},
+			{ID: "pvm-2", Region: "snp-eu", State: vmStateUnlocking, Desired: "present", ItemHash: strings.Repeat("d", 64), CRNHash: crnA},
+			{ID: "pvm-3", Region: "snp-eu", State: vmStateReady, Desired: "present", ItemHash: strings.Repeat("e", 64), CRNHash: crnA,
+				PublicIP: "2001:db8:3100:1781::30"},
+		}}
+		aleph := &fakeAleph{instances: []alephInstance{
+			{ItemHash: hash, Name: "virtroid-pvm-1", NodeHash: crnA, IPv6: "2001:db8:3100:1781::10"},
+			{ItemHash: strings.Repeat("d", 64), Name: "virtroid-pvm-2", NodeHash: crnA},
+			{ItemHash: strings.Repeat("e", 64), Name: "virtroid-pvm-3", NodeHash: crnA},
+		}}
+		r := testReconciler(t, cp, aleph)
+		r.boots = &fakeBoots{current: "boot-2"}
+		if err := r.saveUnlockedBoot("pvm-3", "boot-1"); err != nil {
+			t.Fatal(err)
+		}
+		ids := []string{"pvm-1", "pvm-2", "pvm-3"}
+		for _, id := range ids {
+			if err := os.WriteFile(r.nodeKeyPath(id), []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, _, err := r.nodeKey("pvm-1"); !errors.Is(err, errNodeKeyLost) {
+			t.Fatalf("key file %q: err = %v, want errNodeKeyLost", contents, err)
+		}
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(aleph.unlocked) != 0 {
+			t.Fatalf("key file %q: %d unlocks, want none", contents, len(aleph.unlocked))
+		}
+		retired := map[string]bool{}
+		for _, sent := range cp.reports {
+			if sent.report.State != "" || sent.report.NodePublicKey != "" {
+				t.Fatalf("key file %q: report %+v for %s moved the VM on", contents, sent.report, sent.vmID)
+			}
+			if strings.Contains(sent.report.Failure, errNodeKeyLost.Error()) {
+				retired[sent.vmID] = true
+			}
+		}
+		for _, id := range ids {
+			if !retired[id] {
+				t.Fatalf("key file %q: %s was not retired; reports %+v", contents, id, cp.reports)
+			}
+			if data, err := os.ReadFile(r.nodeKeyPath(id)); err != nil || string(data) != contents {
+				t.Fatalf("key file %q for %s became %q (err %v), want it left as it was", contents, id, data, err)
+			}
+		}
+	}
+}
+
+func TestANewNodeKeyIsWrittenWholeOrNotAtAll(t *testing.T) {
+	r := testReconciler(t, &fakeControlPlane{}, &fakeAleph{})
+	privateKey, publicKey, err := r.nodeKey("pvm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(r.nodeKeyPath("pvm-1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(r.nodeKeyPath("pvm-1")) {
+		t.Fatalf("key directory holds %v, want only the key", entries)
+	}
+	if again, againPublic, err := r.nodeKey("pvm-1"); err != nil || again != privateKey || againPublic != publicKey {
+		t.Fatalf("read back key changed (err %v)", err)
+	}
+}
+
 func TestUnlockingVMReceivesItsSecretsOnlyThroughTheCLI(t *testing.T) {
 	cp := &fakeControlPlane{vms: []provisionedVM{{ID: "pvm-1", Region: "snp-eu", State: vmStateUnlocking, Desired: "present", ItemHash: hash, CRNHash: crnB}}}
 	aleph := &fakeAleph{unlockErr: errors.New("connection refused")}
