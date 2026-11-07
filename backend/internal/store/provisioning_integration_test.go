@@ -363,6 +363,128 @@ func TestPostgresProvisionedVMLifecycle(t *testing.T) {
 	}
 }
 
+// A VM retired with a runtime on it keeps its host through the deleted
+// report, because the runtime still names it. The reconcile that moves the
+// runtime off removes the host too, so it isn't left as a stale node.
+func TestPostgresDeletedVMsHostGoesWithItsLastRuntime(t *testing.T) {
+	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("VIRTROID_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.EnsureSchema(ctx); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	var baseline int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM provisioned_vms WHERE state <> 'deleted'`).Scan(&baseline); err != nil {
+		t.Fatal(err)
+	}
+	region := "ci-snp-" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	policy := ProvisioningPolicy{Regions: []string{region}, MaxVMs: baseline + 1, TrialMaxVMs: baseline + 1, SetupTimeout: 30 * time.Minute}
+	accountID := uuid.NewString()
+	if _, err := st.BootstrapAccountWithIdentity(
+		ctx, accountID, uuid.NewString(), "CI device", integrationNodePublicKey(t), CreateRuntimeInput{},
+	); err != nil {
+		t.Fatalf("bootstrap account: %v", err)
+	}
+	if err := st.SetAccountRuntimeRegion(ctx, accountID, region); err != nil {
+		t.Fatal(err)
+	}
+	vm, err := st.EnsureAccountVM(ctx, accountID, region, policy, VMRequest{})
+	if err != nil {
+		t.Fatalf("ensure VM: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		for _, query := range []string{
+			`DELETE FROM runtimes WHERE account_id = $2`,
+			`DELETE FROM node_request_nonces WHERE node_id = $1`,
+			`DELETE FROM hosts WHERE id = $1`,
+			`DELETE FROM node_registry_audit WHERE node_id = $1`,
+			`DELETE FROM approved_nodes WHERE node_id = $1`,
+			`DELETE FROM provisioned_vms WHERE id = $1`,
+			`DELETE FROM accounts WHERE id = $2::uuid`,
+		} {
+			_, _ = st.db.ExecContext(cleanupCtx, query, vm.ID, accountID)
+		}
+	})
+	for _, report := range []ProvisionerReport{
+		{State: ProvisionedVMCreating, ItemHash: strings.Repeat("cd", 32)},
+		{State: ProvisionedVMUnlocking, PublicIP: "2001:db8:3100:1781::20", NodePublicKey: integrationNodePublicKey(t)},
+		{State: ProvisionedVMBooting},
+	} {
+		if vm, err = st.ApplyProvisionerReport(ctx, vm.ID, report); err != nil {
+			t.Fatalf("report %s: %v", report.State, err)
+		}
+	}
+	if _, err := st.UpsertHostHeartbeat(ctx, HostHeartbeat{
+		ID: vm.ID, Name: "CI provisioned VM", AdvertiseAddr: "2001:db8:3100:1781::20", RelayPort: 8090,
+		DockerSocket: true, Binder: true, AudioStreaming: true, FileImport: true,
+		PublicKey: vm.NodePublicKey, BlobStoreKind: "sia-indexd", Region: region,
+	}); err != nil {
+		t.Fatalf("VM heartbeat: %v", err)
+	}
+	if err := st.MarkProvisionedVMReady(ctx, vm.ID); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := st.CreateRuntime(ctx, accountID, CreateRuntimeInput{Name: "CI runtime", FileMode: "upload-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime, err = st.StartRuntime(ctx, accountID, runtime.ID); err != nil || valueOrEmpty(runtime.HostID) != vm.ID {
+		t.Fatalf("runtime host = %q err=%v, want %q", valueOrEmpty(runtime.HostID), err, vm.ID)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE runtimes SET blob_store_kind = 'sia-indexd', blob_manifest_json = '{"store":"sia-indexd"}' WHERE id = $1`, runtime.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	hostRows := func() int {
+		t.Helper()
+		var n int
+		if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM hosts WHERE id = $1`, vm.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	if _, err := st.RetireProvisionedVM(ctx, vm.ID, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApplyProvisionerReport(ctx, vm.ID, ProvisionerReport{State: ProvisionedVMDeleted}); err != nil {
+		t.Fatalf("deleted report: %v", err)
+	}
+	if hostRows() != 1 {
+		t.Fatal("the deleted report removed a host a runtime still names")
+	}
+	summary, err := st.ReconcileProvisionedVMs(ctx, policy)
+	if err != nil || summary.RuntimesReset != 1 || summary.HostsRemoved != 1 {
+		t.Fatalf("reconcile = %+v err=%v, want the runtime moved off and the host removed", summary, err)
+	}
+	if hostRows() != 0 {
+		t.Fatal("the deleted VM's host is still listed")
+	}
+	var host sql.NullString
+	var status string
+	if err := st.db.QueryRowContext(ctx, `SELECT host_id, status FROM runtimes WHERE id = $1`, runtime.ID).Scan(&host, &status); err != nil {
+		t.Fatal(err)
+	}
+	if host.Valid || status != "stopped" {
+		t.Fatalf("runtime host=%v status=%s, want stopped with no host", host, status)
+	}
+	if summary, err := st.ReconcileProvisionedVMs(ctx, policy); err != nil || summary.HostsRemoved != 0 {
+		t.Fatalf("second reconcile = %+v err=%v, want nothing left to remove", summary, err)
+	}
+}
+
 func TestPostgresRetiresReadyVMsWhoseNodeWentSilent(t *testing.T) {
 	databaseURL := os.Getenv("VIRTROID_TEST_DATABASE_URL")
 	if databaseURL == "" {

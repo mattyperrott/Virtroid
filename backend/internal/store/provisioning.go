@@ -147,6 +147,8 @@ type ProvisioningSummary struct {
 	SparesCreated  int
 	// RuntimesReset counts runtimes whose VM was deleted with their data.
 	RuntimesReset int
+	// HostsRemoved counts deleted VMs' hosts removed once no runtime named them.
+	HostsRemoved int
 }
 
 // lostRuntimeDataMessage is the runtime log entry for a runtime whose VM, and
@@ -788,6 +790,18 @@ func (s *Store) ReconcileProvisionedVMs(ctx context.Context, policy Provisioning
 			return summary, err
 		}
 	}
+	// The deleted report keeps a VM's host while a runtime still names it,
+	// and those runtimes only move off above, so the host goes now, or it
+	// stays listed as a stale node. Its node key was revoked with the report.
+	result, err = tx.ExecContext(ctx,
+		`DELETE FROM hosts h
+		  WHERE h.id IN (SELECT id FROM provisioned_vms WHERE state = 'deleted')
+		    AND NOT EXISTS (SELECT 1 FROM runtimes r WHERE r.host_id = h.id AND r.deleted_at IS NULL)`,
+	)
+	if err != nil {
+		return summary, err
+	}
+	summary.HostsRemoved = rowsAffected(result)
 
 	if policy.MaxVMs > 0 && policy.WarmSpares > 0 {
 		var live int

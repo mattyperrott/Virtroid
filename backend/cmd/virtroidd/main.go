@@ -248,8 +248,8 @@ func provisioningLoop(ctx context.Context, pg *store.Store, cfg config.ServerCon
 				return
 			}
 			if summary != (store.ProvisioningSummary{}) {
-				log.Printf("provisioning: timed_out=%d accounts_gone=%d retired=%d node_silent=%d node_silent_held=%d spares_created=%d runtimes_reset=%d",
-					summary.TimedOut, summary.AccountsGone, summary.Retired, summary.NodeSilent, summary.NodeSilentHeld, summary.SparesCreated, summary.RuntimesReset)
+				log.Printf("provisioning: timed_out=%d accounts_gone=%d retired=%d node_silent=%d node_silent_held=%d spares_created=%d runtimes_reset=%d hosts_removed=%d",
+					summary.TimedOut, summary.AccountsGone, summary.Retired, summary.NodeSilent, summary.NodeSilentHeld, summary.SparesCreated, summary.RuntimesReset, summary.HostsRemoved)
 			}
 		})
 	}
