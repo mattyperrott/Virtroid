@@ -73,6 +73,9 @@ type watcher struct {
 	now       func() time.Time
 	scanned   map[string]time.Time
 	nextCheck map[string]time.Time
+	// rejected are the transfers the second node contradicted, by
+	// transaction and address: each is said once and not asked about again.
+	rejected map[string]bool
 }
 
 func newWatcher(wallet addressDeriver, control controlPlane, transfers transferSource, verifier transferVerifier) *watcher {
@@ -84,6 +87,7 @@ func newWatcher(wallet addressDeriver, control controlPlane, transfers transferS
 		now:       time.Now,
 		scanned:   make(map[string]time.Time),
 		nextCheck: make(map[string]time.Time),
+		rejected:  make(map[string]bool),
 	}
 }
 
@@ -128,6 +132,7 @@ func (w *watcher) checkAddress(ctx context.Context, watched watchedAddress, now 
 	}
 	// One transaction can carry several transfers to the address.
 	totals := make(map[string]int64)
+	blockTimes := make(map[string]time.Time)
 	var order []string
 	latest := since
 	for _, transfer := range transfers {
@@ -136,32 +141,69 @@ func (w *watcher) checkAddress(ctx context.Context, watched watchedAddress, now 
 		}
 		if _, seen := totals[transfer.TxID]; !seen {
 			order = append(order, transfer.TxID)
+			blockTimes[transfer.TxID] = transfer.BlockTime
 		}
 		totals[transfer.TxID] += transfer.AmountMicro
 		if transfer.BlockTime.After(latest) {
 			latest = transfer.BlockTime
 		}
 	}
+	// Each transaction stands alone. One that can't be checked or reported
+	// now is asked about again next time, and one the second node contradicts
+	// is left out; neither keeps the address's other deposits from being
+	// credited.
+	var waiting []error
+	var retryFrom time.Time
 	for _, txID := range order {
-		blockTime, err := w.verifier.verifyTransfer(ctx, txID, watched.Address, totals[txID])
-		if err != nil {
-			return fmt.Errorf("verify %s: %w", txID, err)
+		if w.rejected[txID+watched.Address] {
+			continue
 		}
-		credited, err := w.control.reportDeposit(ctx, depositReport{
-			TxID:        txID,
-			Address:     watched.Address,
-			Index:       watched.Index,
-			AmountMicro: totals[txID],
-			BlockTime:   blockTime,
-		})
-		if err != nil {
-			return fmt.Errorf("report %s: %w", txID, err)
-		}
-		if credited {
-			log.Printf("payments: credited %s to index %d (%d micro-USDT)", txID, watched.Index, totals[txID])
+		err := w.credit(ctx, watched, txID, totals[txID])
+		switch {
+		case err == nil:
+		case errors.Is(err, errTransferRejected):
+			w.rejected[txID+watched.Address] = true
+			log.Printf("payments: index %d: NOT CREDITED: TronGrid lists %s as %d micro-USDT to %s, but %v; check it by hand",
+				watched.Index, txID, totals[txID], watched.Address, err)
+		default:
+			waiting = append(waiting, err)
+			if at := blockTimes[txID]; retryFrom.IsZero() || at.Before(retryFrom) {
+				retryFrom = at
+			}
 		}
 	}
-	w.scanned[watched.Address] = latest.Add(-scanOverlap)
+	// The next scan starts an overlap before the newest transfer seen, never
+	// earlier than this one did, and no later than a transfer still waiting.
+	next := latest.Add(-scanOverlap)
+	if next.Before(since) {
+		next = since
+	}
+	if !retryFrom.IsZero() && retryFrom.Before(next) {
+		next = retryFrom
+	}
+	w.scanned[watched.Address] = next
+	return errors.Join(waiting...)
+}
+
+// credit checks one transaction on the second node and reports it.
+func (w *watcher) credit(ctx context.Context, watched watchedAddress, txID string, amountMicro int64) error {
+	blockTime, err := w.verifier.verifyTransfer(ctx, txID, watched.Address, amountMicro)
+	if err != nil {
+		return fmt.Errorf("verify %s: %w", txID, err)
+	}
+	credited, err := w.control.reportDeposit(ctx, depositReport{
+		TxID:        txID,
+		Address:     watched.Address,
+		Index:       watched.Index,
+		AmountMicro: amountMicro,
+		BlockTime:   blockTime,
+	})
+	if err != nil {
+		return fmt.Errorf("report %s: %w", txID, err)
+	}
+	if credited {
+		log.Printf("payments: credited %s to index %d (%d micro-USDT)", txID, watched.Index, amountMicro)
+	}
 	return nil
 }
 

@@ -17,6 +17,16 @@ storage are paid from.
   addresses its own seed derives, so every address users see is one this
   wallet can spend. Addresses whose wallet was opened in the last day are
   checked every 30 seconds, others every 30 minutes.
+- The second node must show the USDT contract's own Transfer event for the
+  same amount to the address, in a transaction that succeeded. Which contract
+  the transaction called doesn't matter, so an exchange's batch payout or a
+  swap that pays the address counts like a plain transfer.
+- Each transfer is handled alone. One the second node doesn't have yet, or
+  that `virtroidd` didn't take, is tried again every cycle without holding up
+  the address's other deposits. One the second node contradicts (another
+  amount, or a failed transaction) is logged once as `NOT CREDITED` with its
+  transaction ID and left out: the two providers disagree, so look at it by
+  hand. A restart looks at the last 30 days again.
 
 Deposits are swept into a treasury and swapped into what running Virtroid
 costs; see [Treasury](#treasury).

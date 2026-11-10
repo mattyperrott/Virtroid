@@ -171,8 +171,19 @@ type tronNode struct {
 	client  *http.Client
 }
 
-// verifyTransfer checks that txID is a solidified, successful USDT transfer
-// of exactly amountMicro to address, and returns its block time.
+// errTransferRejected means the second node's record of a transaction is not
+// the transfer TronGrid listed. Asking again will not change that, unlike a
+// transaction the node has not solidified yet or a request that failed.
+var errTransferRejected = errors.New("the second node does not show this transfer")
+
+// verifyTransfer checks that txID is a solidified, successful transaction in
+// which the USDT contract moved exactly amountMicro to address, and returns
+// its block time.
+//
+// What counts is the USDT contract's own Transfer events, not which contract
+// the transaction called: an exchange's batch payout or a swap pays the
+// address through another contract. Only the USDT contract can log an event
+// under its address, and a call that fails leaves no events.
 func (n tronNode) verifyTransfer(ctx context.Context, txID, address string, amountMicro int64) (time.Time, error) {
 	body, _ := json.Marshal(map[string]string{"value": txID})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -182,10 +193,9 @@ func (n tronNode) verifyTransfer(ctx context.Context, txID, address string, amou
 	}
 	req.Header.Set("Content-Type", "application/json")
 	var info struct {
-		ID              string `json:"id"`
-		BlockTimeStamp  int64  `json:"blockTimeStamp"`
-		ContractAddress string `json:"contract_address"`
-		Receipt         struct {
+		ID             string `json:"id"`
+		BlockTimeStamp int64  `json:"blockTimeStamp"`
+		Receipt        struct {
 			Result string `json:"result"`
 		} `json:"receipt"`
 		Log []struct {
@@ -201,12 +211,9 @@ func (n tronNode) verifyTransfer(ctx context.Context, txID, address string, amou
 		return time.Time{}, errors.New("the transaction is not solidified yet")
 	}
 	if info.Receipt.Result != "SUCCESS" {
-		return time.Time{}, fmt.Errorf("the transaction did not succeed: %q", info.Receipt.Result)
+		return time.Time{}, fmt.Errorf("%w: the transaction did not succeed: %q", errTransferRejected, info.Receipt.Result)
 	}
 	usdt, _ := tron.AddressBytes(tron.USDTContract)
-	if !strings.EqualFold(info.ContractAddress, hex.EncodeToString(usdt)) {
-		return time.Time{}, errors.New("the transaction did not call the USDT contract")
-	}
 	recipient, err := tron.AddressBytes(address)
 	if err != nil {
 		return time.Time{}, err
@@ -220,12 +227,12 @@ func (n tronNode) verifyTransfer(ctx context.Context, txID, address string, amou
 		}
 		value, ok := new(big.Int).SetString(entry.Data, 16)
 		if !ok {
-			return time.Time{}, errors.New("the transfer amount is unreadable")
+			return time.Time{}, fmt.Errorf("%w: the transfer amount is unreadable", errTransferRejected)
 		}
 		total.Add(&total, value)
 	}
 	if !total.IsInt64() || total.Int64() != amountMicro {
-		return time.Time{}, fmt.Errorf("the node shows %s to the address, not %d", total.String(), amountMicro)
+		return time.Time{}, fmt.Errorf("%w: the node shows %s to the address, not %d", errTransferRejected, total.String(), amountMicro)
 	}
 	return time.UnixMilli(info.BlockTimeStamp).UTC(), nil
 }

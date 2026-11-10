@@ -65,33 +65,52 @@ func TestVerifyTransferChecksTheNodesRecord(t *testing.T) {
 	if err != nil || !blockTime.Equal(time.UnixMilli(1791900048000)) {
 		t.Fatalf("verify = %v %v", blockTime, err)
 	}
-	for name, check := range map[string]func() error{
-		"amount": func() error {
+	// A payout that reaches the address through another contract (an
+	// exchange's batch send, a swap) is the same deposit: the USDT contract
+	// logged the transfer.
+	info = transactionInfo(t, testRecipient, 69190552, "SUCCESS", "41"+strings.Repeat("ab", 20))
+	if _, err := node.verifyTransfer(ctx, testTxID, testRecipient, 69190552); err != nil {
+		t.Fatalf("a transfer made through another contract: %v", err)
+	}
+	// But not a transfer some other token logged.
+	info = transactionInfo(t, testRecipient, 69190552, "SUCCESS", "")
+	info["log"].([]map[string]any)[0]["address"] = strings.Repeat("ab", 20)
+	if _, err := node.verifyTransfer(ctx, testTxID, testRecipient, 69190552); !errors.Is(err, errTransferRejected) {
+		t.Fatalf("a transfer of another token: %v", err)
+	}
+	info = transactionInfo(t, testRecipient, 69190552, "SUCCESS", "")
+
+	// What the node contradicts is rejected for good; what it doesn't have
+	// yet is only not known yet.
+	for name, check := range map[string]struct {
+		verify   func() error
+		rejected bool
+	}{
+		"amount": {rejected: true, verify: func() error {
 			_, err := node.verifyTransfer(ctx, testTxID, testRecipient, 69190553)
 			return err
-		},
-		"recipient": func() error {
+		}},
+		"recipient": {rejected: true, verify: func() error {
 			_, err := node.verifyTransfer(ctx, testTxID, tron.USDTContract, 69190552)
 			return err
-		},
-		"failed": func() error {
+		}},
+		"failed": {rejected: true, verify: func() error {
 			info = transactionInfo(t, testRecipient, 69190552, "REVERT", "")
 			_, err := node.verifyTransfer(ctx, testTxID, testRecipient, 69190552)
 			return err
-		},
-		"contract": func() error {
-			info = transactionInfo(t, testRecipient, 69190552, "SUCCESS", "41"+strings.Repeat("ab", 20))
-			_, err := node.verifyTransfer(ctx, testTxID, testRecipient, 69190552)
-			return err
-		},
-		"unsolidified": func() error {
+		}},
+		"unsolidified": {rejected: false, verify: func() error {
 			info = map[string]any{}
 			_, err := node.verifyTransfer(ctx, testTxID, testRecipient, 69190552)
 			return err
-		},
+		}},
 	} {
-		if err := check(); err == nil {
+		err := check.verify()
+		if err == nil {
 			t.Fatalf("%s: verification passed", name)
+		}
+		if errors.Is(err, errTransferRejected) != check.rejected {
+			t.Fatalf("%s: rejected for good = %v, want %v (%v)", name, !check.rejected, check.rejected, err)
 		}
 		info = transactionInfo(t, testRecipient, 69190552, "SUCCESS", "")
 	}
@@ -159,9 +178,15 @@ type fakeTransfers struct {
 	calls     map[string]int
 }
 
-func (f *fakeTransfers) transfersTo(_ context.Context, address string, _ time.Time) ([]usdtTransfer, error) {
+func (f *fakeTransfers) transfersTo(_ context.Context, address string, since time.Time) ([]usdtTransfer, error) {
 	f.calls[address]++
-	return f.byAddress[address], nil
+	var transfers []usdtTransfer
+	for _, transfer := range f.byAddress[address] {
+		if !transfer.BlockTime.Before(since) {
+			transfers = append(transfers, transfer)
+		}
+	}
+	return transfers, nil
 }
 
 type fakeVerifier struct{ fail bool }
@@ -232,6 +257,92 @@ func TestWatcherReportsVerifiedDepositsOnceAndSkipsForeignAddresses(t *testing.T
 	}
 	if _, ok := control.credited[strings.Repeat("b", 64)+second]; ok {
 		t.Fatal("an unverified transfer was reported")
+	}
+}
+
+// verifierByTx answers per transaction; one it has no answer for verifies.
+type verifierByTx map[string]error
+
+func (v verifierByTx) verifyTransfer(_ context.Context, txID, _ string, _ int64) (time.Time, error) {
+	if err := v[txID]; err != nil {
+		return time.Time{}, err
+	}
+	return time.UnixMilli(1791900048000).UTC(), nil
+}
+
+func TestWatcherCreditsADepositBehindOneItCannot(t *testing.T) {
+	wallet, err := tron.OpenWallet("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, _ := wallet.Address(1)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	viewed := now.Add(-time.Hour)
+	control := &fakeControl{credited: map[string]int64{}, addresses: []watchedAddress{{Index: 1, Address: address, ViewedAt: &viewed}}}
+	contradicted, unsettled, fine := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	// Newest first, as TronGrid lists them: the two that can't be credited
+	// come before the one that can.
+	transfers := &fakeTransfers{calls: map[string]int{}, byAddress: map[string][]usdtTransfer{address: {
+		{TxID: contradicted, To: address, AmountMicro: 30_000_000, BlockTime: now.Add(-1 * time.Hour)},
+		{TxID: unsettled, To: address, AmountMicro: 40_000_000, BlockTime: now.Add(-5 * time.Hour)},
+		{TxID: fine, To: address, AmountMicro: 50_000_000, BlockTime: now.Add(-6 * time.Hour)},
+	}}}
+	verifier := verifierByTx{
+		contradicted: fmt.Errorf("%w: the node shows 0 to the address, not 30000000", errTransferRejected),
+		unsettled:    errors.New("the transaction is not solidified yet"),
+	}
+	w := newWatcher(wallet, control, transfers, verifier)
+	w.now = func() time.Time { return now }
+	watched := control.addresses[0]
+
+	err = w.checkAddress(context.Background(), watched, now)
+	if err == nil || !strings.Contains(err.Error(), unsettled) || strings.Contains(err.Error(), contradicted) {
+		t.Fatalf("check = %v, want only the unsettled transfer still waiting", err)
+	}
+	if got := control.credited[fine+address]; got != 50_000_000 {
+		t.Fatalf("the deposit behind the others was credited %d", got)
+	}
+	if len(control.credited) != 1 {
+		t.Fatalf("credited %v", control.credited)
+	}
+	// The next scan comes back for the unsettled transfer, though it is
+	// older than the overlap before the newest one.
+	if cursor := w.scanned[address]; cursor.After(now.Add(-5 * time.Hour)) {
+		t.Fatalf("the next scan starts at %s, after the transfer still waiting", cursor)
+	}
+
+	// Once the node has it, it is credited; the contradicted one is never
+	// asked about again, and never credited.
+	delete(verifier, unsettled)
+	verifier[contradicted] = errors.New("asked about a rejected transfer again")
+	if err := w.checkAddress(context.Background(), watched, now.Add(time.Minute)); err != nil {
+		t.Fatalf("second check: %v", err)
+	}
+	if got := control.credited[unsettled+address]; got != 40_000_000 {
+		t.Fatalf("the transfer that settled was credited %d", got)
+	}
+	if _, ok := control.credited[contradicted+address]; ok || len(control.credited) != 2 {
+		t.Fatalf("credited %v", control.credited)
+	}
+}
+
+func TestWatcherScanNeverStartsEarlierThanTheLast(t *testing.T) {
+	wallet, err := tron.OpenWallet("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, _ := wallet.Address(1)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	control := &fakeControl{credited: map[string]int64{}}
+	w := newWatcher(wallet, control, &fakeTransfers{calls: map[string]int{}, byAddress: map[string][]usdtTransfer{}}, fakeVerifier{})
+	watched := watchedAddress{Index: 1, Address: address}
+	for range 3 {
+		if err := w.checkAddress(context.Background(), watched, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if cursor, want := w.scanned[address], now.Add(-firstScanWindow); !cursor.Equal(want) {
+		t.Fatalf("an address with no transfers is scanned from %s, want %s", cursor, want)
 	}
 }
 
