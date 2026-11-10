@@ -44,6 +44,13 @@ func treasuryConfigFromEnv() (treasuryConfig, time.Duration, error) {
 			*setting.into = micro
 		}
 	}
+	if raw := strings.TrimSpace(os.Getenv("PAYMENTS_MAX_DAILY_FEE_TRX")); raw != "" {
+		sun, err := decimalToMicro(raw, false)
+		if err != nil || sun < cfg.SweepFeeSun {
+			return cfg, 0, fmt.Errorf("PAYMENTS_MAX_DAILY_FEE_TRX must be at least the %s TRX one sweep is sent", sunToTRX(cfg.SweepFeeSun))
+		}
+		cfg.MaxDailyFeeSun = sun
+	}
 	if raw := strings.TrimSpace(os.Getenv("PAYMENTS_SIA_TARGET_SC")); raw != "" {
 		target, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || target < 0 {

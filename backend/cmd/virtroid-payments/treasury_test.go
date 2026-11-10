@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -33,19 +37,43 @@ type fakeChain struct {
 	balances map[string]accountBalance
 	sent     []sentTx
 	outcomes map[string]bool
+	// outgoing is the USDT the treasury sent; swept is the USDT an address
+	// with an entry sent, which for a deposit address is its sweeps.
 	outgoing []usdtTransfer
+	swept    map[string][]usdtTransfer
 	sentErr  error
+	// trxOut is the TRX the chain shows the treasury sent.
+	trxOut   []trxTransfer
+	trxErr   error
+	trxReads int
 }
 
 func (f *fakeChain) account(_ context.Context, address string) (accountBalance, error) {
 	return f.balances[address], nil
 }
-func (f *fakeChain) usdtSent(_ context.Context, _ string, since time.Time) ([]usdtTransfer, error) {
+func (f *fakeChain) usdtSent(_ context.Context, address string, since time.Time) ([]usdtTransfer, error) {
 	if f.sentErr != nil {
 		return nil, f.sentErr
 	}
+	list := f.outgoing
+	if swept, ok := f.swept[address]; ok {
+		list = swept
+	}
 	var transfers []usdtTransfer
-	for _, transfer := range f.outgoing {
+	for _, transfer := range list {
+		if !transfer.BlockTime.Before(since) {
+			transfers = append(transfers, transfer)
+		}
+	}
+	return transfers, nil
+}
+func (f *fakeChain) trxSent(_ context.Context, _ string, since time.Time) ([]trxTransfer, error) {
+	f.trxReads++
+	if f.trxErr != nil {
+		return nil, f.trxErr
+	}
+	var transfers []trxTransfer
+	for _, transfer := range f.trxOut {
 		if !transfer.BlockTime.Before(since) {
 			transfers = append(transfers, transfer)
 		}
@@ -164,9 +192,10 @@ func newHarness(t *testing.T, mode string) *treasuryHarness {
 	treasuryAddress, _ := wallet.Address(0)
 	deposit, _ := wallet.Address(1)
 	h := &treasuryHarness{
-		wallet:   wallet,
-		control:  &fakeTreasuryControl{watched: []watchedAddress{{Index: 1, Address: deposit}}, sia: siaWalletState{Address: testSiaAddress, ConfirmedHastings: "25000" + strings.Repeat("0", 24)}},
-		chain:    &fakeChain{balances: map[string]accountBalance{treasuryAddress: {TRXSun: 200_000_000}}, outcomes: map[string]bool{}},
+		wallet:  wallet,
+		control: &fakeTreasuryControl{watched: []watchedAddress{{Index: 1, Address: deposit}}, sia: siaWalletState{Address: testSiaAddress, ConfirmedHastings: "25000" + strings.Repeat("0", 24)}},
+		chain: &fakeChain{balances: map[string]accountBalance{treasuryAddress: {TRXSun: 200_000_000}}, outcomes: map[string]bool{},
+			swept: map[string][]usdtTransfer{deposit: nil}},
 		swaps:    &fakeSwaps{},
 		treasury: treasuryAddress,
 		deposit:  deposit,
@@ -442,5 +471,237 @@ func TestSentSinceCountsUnconfirmedPaymentsOnce(t *testing.T) {
 	}
 	if len(h.t.paid) != 2 {
 		t.Fatalf("kept %d payments, want the 2 from the last day", len(h.t.paid))
+	}
+}
+
+// settle marks the newest sent transaction solidified with the given
+// outcome and returns its ID.
+func (h *treasuryHarness) settle(succeeded bool) string {
+	id := tron.TxID(h.chain.sent[len(h.chain.sent)-1].raw)
+	txID := fmt.Sprintf("%x", id)
+	h.chain.outcomes[txID] = succeeded
+	return txID
+}
+
+func (h *treasuryHarness) cycle(t *testing.T) {
+	t.Helper()
+	if err := h.t.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// failSweep runs one round for the harness's deposit address: the treasury
+// tops it up, the address sweeps, and the sweep fails, burning the fee and
+// leaving the USDT where it was.
+func (h *treasuryHarness) failSweep(t *testing.T, now time.Time) {
+	t.Helper()
+	before := len(h.chain.sent)
+	h.cycle(t)
+	if len(h.chain.sent) != before+1 {
+		t.Fatalf("sent %d transactions, want a fee top-up; logs = %q", len(h.chain.sent)-before, h.logs)
+	}
+	topUp := h.settle(true)
+	h.chain.trxOut = append(h.chain.trxOut, trxTransfer{TxID: topUp, To: h.deposit, AmountSun: 15_000_000, BlockTime: now})
+	h.chain.balances[h.deposit] = accountBalance{USDTMicro: 120_000_000, TRXSun: 15_000_000}
+	h.cycle(t)
+	if len(h.chain.sent) != before+2 {
+		t.Fatalf("sent %d transactions, want the sweep after the top-up", len(h.chain.sent)-before)
+	}
+	h.settle(false)
+	h.chain.balances[h.deposit] = accountBalance{USDTMicro: 120_000_000}
+}
+
+func TestSweepsThatKeepFailingStopGettingFees(t *testing.T) {
+	h := newHarness(t, treasuryLive)
+	start := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	now := start
+	h.t.now = func() time.Time { return now }
+	h.chain.balances[h.deposit] = accountBalance{USDTMicro: 120_000_000}
+
+	h.failSweep(t, now)
+	now = now.Add(time.Hour)
+	h.failSweep(t, now)
+
+	// Two top-ups moved nothing: there is no third.
+	now = now.Add(time.Hour)
+	sent := len(h.chain.sent)
+	h.cycle(t)
+	if len(h.chain.sent) != sent {
+		t.Fatalf("a third fee top-up was sent after two sweeps failed")
+	}
+	if !h.logged("NOT SWEEPING 120.000000 USDT at "+h.deposit) || !h.logged("its last 2 fee top-ups moved no USDT") ||
+		!h.logged("The next try is after 2026-11-17 12:00 UTC") {
+		t.Fatalf("logs = %q", h.logs)
+	}
+
+	// A restart remembers nothing itself, and the chain still says no.
+	cfg := defaultTreasuryConfig()
+	cfg.Mode = treasuryLive
+	restarted := newTreasury(cfg, h.wallet, h.control, h.chain, h.swaps, fakeCredits{}, fakeEther{wei: big.NewInt(0)})
+	restarted.pace = func() {}
+	restarted.logf = func(string, ...any) {}
+	restarted.now = func() time.Time { return now }
+	if err := restarted.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.chain.sent) != sent {
+		t.Fatalf("a restarted treasury sent a third fee top-up")
+	}
+
+	// Still no the minute before the first of them is a week old, and one
+	// more try the minute after.
+	now = start.Add(sweepRetryAfter - time.Minute)
+	h.cycle(t)
+	if len(h.chain.sent) != sent {
+		t.Fatalf("retried before %s had passed", sweepRetryAfter)
+	}
+	now = start.Add(sweepRetryAfter + time.Minute)
+	h.cycle(t)
+	if len(h.chain.sent) != sent+1 {
+		t.Fatalf("no retry after %s", sweepRetryAfter)
+	}
+}
+
+func TestAnAddressWhoseSweepsWorkKeepsGettingFees(t *testing.T) {
+	h := newHarness(t, treasuryLive)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	h.t.now = func() time.Time { return now }
+	// Three deposits in a day, each topped up and swept.
+	for range 3 {
+		h.chain.balances[h.deposit] = accountBalance{USDTMicro: 120_000_000, TRXSun: 2_000_000}
+		before := len(h.chain.sent)
+		h.cycle(t)
+		if len(h.chain.sent) != before+1 {
+			t.Fatalf("no fee top-up for a deposit whose earlier sweeps worked; logs = %q", h.logs)
+		}
+		h.chain.trxOut = append(h.chain.trxOut, trxTransfer{TxID: h.settle(true), To: h.deposit, AmountSun: 13_000_000, BlockTime: now})
+		h.chain.balances[h.deposit] = accountBalance{USDTMicro: 120_000_000, TRXSun: 15_000_000}
+		h.cycle(t)
+		if len(h.chain.sent) != before+2 {
+			t.Fatalf("no sweep after the top-up")
+		}
+		now = now.Add(time.Minute)
+		h.chain.swept[h.deposit] = append(h.chain.swept[h.deposit], usdtTransfer{TxID: h.settle(true), To: h.treasury, AmountMicro: 120_000_000, BlockTime: now})
+		now = now.Add(time.Hour)
+	}
+}
+
+func TestFeeTopUpsKeepToTheDailyCap(t *testing.T) {
+	h := newHarness(t, treasuryLive)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	h.t.now = func() time.Time { return now }
+	h.t.cfg.MaxDailyFeeSun = 40_000_000
+	// 12 TRX went out for fees three hours ago, and 30 two days ago.
+	h.chain.trxOut = []trxTransfer{
+		{TxID: strings.Repeat("a", 64), To: testRecipient, AmountSun: 12_000_000, BlockTime: now.Add(-3 * time.Hour)},
+		{TxID: strings.Repeat("b", 64), To: testRecipient, AmountSun: 30_000_000, BlockTime: now.Add(-48 * time.Hour)},
+	}
+	for index := int64(1); index <= 3; index++ {
+		address, _ := h.wallet.Address(uint32(index))
+		if index > 1 {
+			h.control.watched = append(h.control.watched, watchedAddress{Index: index, Address: address})
+		}
+		h.chain.balances[address] = accountBalance{USDTMicro: 50_000_000}
+	}
+	h.cycle(t)
+	// 12 + 15 fits in 40; a second 15 would not.
+	if len(h.chain.sent) != 1 {
+		t.Fatalf("sent %d fee top-ups, want one within the cap", len(h.chain.sent))
+	}
+	if !h.logged("PAYMENTS_MAX_DAILY_FEE_TRX") {
+		t.Fatalf("logs = %q", h.logs)
+	}
+	if h.chain.trxReads != 1 {
+		t.Fatalf("read the treasury's transfers %d times in one cycle", h.chain.trxReads)
+	}
+}
+
+func TestNoFeeTopUpWhileTheTreasurysTransfersCannotBeRead(t *testing.T) {
+	h := newHarness(t, treasuryLive)
+	h.chain.balances[h.deposit] = accountBalance{USDTMicro: 120_000_000}
+	h.chain.trxErr = errors.New("status 429")
+	h.cycle(t)
+	if len(h.chain.sent) != 0 || !h.logged("no fee top-ups until they can be read") {
+		t.Fatalf("sent=%d logs=%q", len(h.chain.sent), h.logs)
+	}
+}
+
+func TestTrxSentKeepsOnlyTheAddresssOwnSuccessfulTRXTransfers(t *testing.T) {
+	owner, _ := tron.AddressBytes(testRecipient)
+	other, _ := tron.AddressBytes(tron.USDTContract)
+	// TronGrid's /v1/accounts/{address}/transactions entries.
+	entry := func(tx, kind, result string, from, to []byte, amount int64) map[string]any {
+		return map[string]any{
+			"txID": tx, "block_timestamp": int64(1791900048000),
+			"ret": []map[string]any{{"contractRet": result, "fee": 268000}},
+			"raw_data": map[string]any{"contract": []map[string]any{{
+				"type": kind,
+				"parameter": map[string]any{
+					"type_url": "type.googleapis.com/protocol." + kind,
+					"value":    map[string]any{"amount": amount, "owner_address": hex.EncodeToString(from), "to_address": hex.EncodeToString(to)},
+				},
+			}}},
+		}
+	}
+	pages := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if r.URL.Path != "/v1/accounts/"+testRecipient+"/transactions" || query.Get("only_from") != "true" ||
+			query.Get("only_confirmed") != "true" || query.Get("min_timestamp") == "" {
+			http.NotFound(w, r)
+			return
+		}
+		pages++
+		response := map[string]any{"success": true}
+		if query.Get("fingerprint") == "" {
+			response["data"] = []any{
+				entry(strings.Repeat("A", 64), "TransferContract", "SUCCESS", owner, other, 15_000_000),
+				entry(strings.Repeat("b", 64), "TriggerSmartContract", "SUCCESS", owner, other, 9_000_000),
+				entry(strings.Repeat("c", 64), "TransferContract", "OUT_OF_TIME", owner, other, 9_000_000),
+				entry(strings.Repeat("d", 64), "TransferContract", "SUCCESS", other, owner, 9_000_000),
+			}
+			response["meta"] = map[string]any{"fingerprint": "next"}
+		} else {
+			response["data"] = []any{entry(strings.Repeat("e", 64), "TransferContract", "SUCCESS", owner, other, 7)}
+			response["meta"] = map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+	grid := tronGrid{baseURL: server.URL, client: server.Client()}
+	sent, err := grid.trxSent(context.Background(), testRecipient, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages != 2 || len(sent) != 2 {
+		t.Fatalf("pages=%d sent=%+v", pages, sent)
+	}
+	if sent[0].TxID != strings.Repeat("a", 64) || sent[0].To != tron.USDTContract || sent[0].AmountSun != 15_000_000 ||
+		!sent[0].BlockTime.Equal(time.UnixMilli(1791900048000)) || sent[1].AmountSun != 7 {
+		t.Fatalf("sent = %+v", sent)
+	}
+
+	// An entry it can't read stops the count rather than shrinking it.
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		bad := entry(strings.Repeat("f", 64), "TransferContract", "SUCCESS", owner, other, 1)
+		bad["raw_data"].(map[string]any)["contract"].([]map[string]any)[0]["parameter"].(map[string]any)["value"].(map[string]any)["to_address"] = "not-hex"
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": []any{bad}, "meta": map[string]any{}})
+	}))
+	defer broken.Close()
+	if _, err := (tronGrid{baseURL: broken.URL, client: broken.Client()}).trxSent(context.Background(), testRecipient, time.Now()); err == nil {
+		t.Fatal("an unreadable recipient was skipped")
+	}
+}
+
+func TestTreasuryConfigReadsTheDailyFeeCap(t *testing.T) {
+	t.Setenv("PAYMENTS_MAX_DAILY_FEE_TRX", "300")
+	cfg, _, err := treasuryConfigFromEnv()
+	if err != nil || cfg.MaxDailyFeeSun != 300_000_000 {
+		t.Fatalf("cap = %d, %v", cfg.MaxDailyFeeSun, err)
+	}
+	// Less than one sweep's fee would stop every sweep.
+	t.Setenv("PAYMENTS_MAX_DAILY_FEE_TRX", "10")
+	if _, _, err := treasuryConfigFromEnv(); err == nil {
+		t.Fatal("a cap below one sweep's fee was accepted")
 	}
 }

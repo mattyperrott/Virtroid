@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,15 +34,26 @@ const (
 	pendingTimeout = 10 * time.Minute
 	// refillShare: a balance is topped up once it is this far below target.
 	refillShare = 0.10
+
+	// An address whose last maxUnsweptTopUps fee top-ups moved no USDT has
+	// sweeps that fail, each one burning the fee it was sent. It gets no
+	// further top-up until one of those is sweepRetryAfter old.
+	maxUnsweptTopUps = 2
+	sweepRetryAfter  = 7 * 24 * time.Hour
+
+	pendingTopUp = "fee top-up"
+	pendingSweep = "sweep"
 )
 
 type treasuryConfig struct {
 	Mode string
 	// Deposits of at least SweepMinMicro USDT are swept; the deposit address
 	// needs SweepFeeSun TRX to pay for it, which the treasury sends first.
+	// No more than MaxDailyFeeSun leaves the treasury for that in a day.
 	SweepMinMicro    int64
 	SweepFeeSun      int64
 	SweepFeeLimitSun int64
+	MaxDailyFeeSun   int64
 	// The treasury keeps at least TreasuryTRXFloorSun TRX for fees, topping
 	// up to TreasuryTRXTargetSun.
 	TreasuryTRXFloorSun  int64
@@ -70,6 +82,7 @@ func defaultTreasuryConfig() treasuryConfig {
 		SweepMinMicro:        20_000_000,
 		SweepFeeSun:          15_000_000,
 		SweepFeeLimitSun:     30_000_000,
+		MaxDailyFeeSun:       150_000_000,
 		TreasuryTRXFloorSun:  50_000_000,
 		TreasuryTRXTargetSun: 150_000_000,
 		SiaTargetSC:          20_000,
@@ -100,6 +113,7 @@ type siaWalletState struct {
 type treasuryChain interface {
 	account(ctx context.Context, address string) (accountBalance, error)
 	usdtSent(ctx context.Context, address string, since time.Time) ([]usdtTransfer, error)
+	trxSent(ctx context.Context, address string, since time.Time) ([]trxTransfer, error)
 	nowBlock(ctx context.Context) (tron.BlockRef, error)
 	broadcast(ctx context.Context, rawData, signature []byte) (string, error)
 	txOutcome(ctx context.Context, txID string) (bool, bool, error)
@@ -143,6 +157,13 @@ type treasury struct {
 	// paid is what this process paid exchanges in the last day, until the
 	// chain shows it confirmed.
 	paid []exchangePayment
+	// topUps are the fee top-ups this process sent, until the chain shows
+	// them confirmed.
+	topUps []trxTransfer
+	// fees is the TRX the chain shows the treasury sent, read at most once
+	// a cycle.
+	fees     []trxTransfer
+	feesRead bool
 }
 
 // exchangePayment is USDT the treasury sent an exchange.
@@ -189,6 +210,7 @@ func (t *treasury) cycle(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("watch list: %w", err)
 	}
+	t.fees, t.feesRead = nil, false
 	for _, address := range watched {
 		if address.Index <= treasuryIndex || address.Index > int64(^uint32(0)>>1) {
 			continue
@@ -210,11 +232,17 @@ func (t *treasury) sweep(ctx context.Context, watched watchedAddress, treasuryAd
 		switch {
 		case err == nil && done:
 			delete(t.pending, watched.Address)
+			if !succeeded {
+				t.forgetTopUp(pending)
+			}
 			t.logf("treasury: %s for %s %s (%s)", pending.kind, watched.Address, map[bool]string{true: "succeeded", false: "failed"}[succeeded], pending.txID)
 		case now.Sub(pending.at) < pendingTimeout:
 			return nil
 		default:
 			delete(t.pending, watched.Address)
+			// It never landed, so it cost nothing; had it landed after all,
+			// the chain's record counts it.
+			t.forgetTopUp(pending)
 			t.logf("treasury: %s for %s not solidified after %s; looking again", pending.kind, watched.Address, pendingTimeout)
 		}
 	}
@@ -227,6 +255,15 @@ func (t *treasury) sweep(ctx context.Context, watched watchedAddress, treasuryAd
 	}
 	if balance.TRXSun < t.cfg.SweepFeeSun {
 		topUp := t.cfg.SweepFeeSun - balance.TRXSun
+		refusal, err := t.topUpRefusal(ctx, treasuryAddress, watched.Address, topUp, now)
+		if err != nil {
+			return err
+		}
+		if refusal != "" {
+			t.logf("treasury: NOT SWEEPING %s USDT at %s (index %d): %s",
+				microToDecimal(balance.USDTMicro), watched.Address, watched.Index, refusal)
+			return nil
+		}
 		t.plan("send %s TRX from the treasury to %s (index %d) to pay for sweeping its %s USDT",
 			sunToTRX(topUp), watched.Address, watched.Index, microToDecimal(balance.USDTMicro))
 		if !t.live() {
@@ -236,7 +273,8 @@ func (t *treasury) sweep(ctx context.Context, watched watchedAddress, treasuryAd
 		if err != nil {
 			return err
 		}
-		t.pending[watched.Address] = pendingTx{txID: txID, kind: "fee top-up", at: now}
+		t.pending[watched.Address] = pendingTx{txID: txID, kind: pendingTopUp, at: now}
+		t.topUps = append(t.topUps, trxTransfer{TxID: strings.ToLower(txID), To: watched.Address, AmountSun: topUp, BlockTime: now})
 		return nil
 	}
 	t.plan("sweep %s USDT from %s (index %d) to the treasury", microToDecimal(balance.USDTMicro), watched.Address, watched.Index)
@@ -247,8 +285,97 @@ func (t *treasury) sweep(ctx context.Context, watched watchedAddress, treasuryAd
 	if err != nil {
 		return err
 	}
-	t.pending[watched.Address] = pendingTx{txID: txID, kind: "sweep", at: now}
+	t.pending[watched.Address] = pendingTx{txID: txID, kind: pendingSweep, at: now}
 	return nil
+}
+
+// forgetTopUp drops a fee top-up this process sent that moved nothing.
+func (t *treasury) forgetTopUp(pending pendingTx) {
+	if pending.kind != pendingTopUp {
+		return
+	}
+	kept := t.topUps[:0]
+	for _, topUp := range t.topUps {
+		if topUp.TxID != strings.ToLower(pending.txID) {
+			kept = append(kept, topUp)
+		}
+	}
+	t.topUps = kept
+}
+
+// feesSent is the TRX the treasury sent over the last sweepRetryAfter: what
+// the chain shows, and this process's top-ups it doesn't show yet. Fee
+// top-ups are the only TRX the treasury sends.
+func (t *treasury) feesSent(ctx context.Context, treasuryAddress string, now time.Time) ([]trxTransfer, error) {
+	since := now.Add(-sweepRetryAfter)
+	if !t.feesRead {
+		sent, err := t.chain.trxSent(ctx, treasuryAddress, since)
+		if err != nil {
+			return nil, err
+		}
+		t.fees, t.feesRead = sent, true
+	}
+	confirmed := make(map[string]bool, len(t.fees))
+	for _, transfer := range t.fees {
+		confirmed[transfer.TxID] = true
+	}
+	all := append([]trxTransfer(nil), t.fees...)
+	kept := t.topUps[:0]
+	for _, topUp := range t.topUps {
+		if topUp.BlockTime.Before(since) {
+			continue
+		}
+		kept = append(kept, topUp)
+		if !confirmed[topUp.TxID] {
+			all = append(all, topUp)
+		}
+	}
+	t.topUps = kept
+	return all, nil
+}
+
+// topUpRefusal says why a deposit address gets no fee top-up now, or nothing
+// when it may have one.
+//
+// A top-up is the one thing the treasury sends that may bring nothing back:
+// a sweep that fails burns the fee and leaves the USDT where it was, and the
+// address then looks exactly as it did before. So what was sent is counted
+// from the chain, which a restart doesn't forget. A day's top-ups stay
+// within MaxDailyFeeSun, and an address whose last maxUnsweptTopUps top-ups
+// moved no USDT waits sweepRetryAfter for another.
+func (t *treasury) topUpRefusal(ctx context.Context, treasuryAddress, address string, topUp int64, now time.Time) (string, error) {
+	sent, err := t.feesSent(ctx, treasuryAddress, now)
+	if err != nil {
+		return "", fmt.Errorf("the treasury's TRX transfers (no fee top-ups until they can be read): %w", err)
+	}
+	var today int64
+	var toAddress []time.Time
+	for _, transfer := range sent {
+		if transfer.BlockTime.After(now.Add(-24 * time.Hour)) {
+			today += transfer.AmountSun
+		}
+		if transfer.To == address {
+			toAddress = append(toAddress, transfer.BlockTime)
+		}
+	}
+	if today+topUp > t.cfg.MaxDailyFeeSun {
+		return fmt.Sprintf("the treasury sent %s TRX for fees in the last day, and no more than %s may go in a day (PAYMENTS_MAX_DAILY_FEE_TRX)",
+			sunToTRX(today), sunToTRX(t.cfg.MaxDailyFeeSun)), nil
+	}
+	if len(toAddress) < maxUnsweptTopUps {
+		return "", nil
+	}
+	slices.SortFunc(toAddress, func(a, b time.Time) int { return b.Compare(a) })
+	oldest := toAddress[maxUnsweptTopUps-1]
+	moved, err := t.chain.usdtSent(ctx, address, oldest)
+	if err != nil {
+		return "", fmt.Errorf("the address's USDT transfers (no fee top-up until they can be read): %w", err)
+	}
+	if len(moved) > 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("its last %d fee top-ups moved no USDT, so its sweeps are failing; look at its transactions. The next try is after %s",
+		maxUnsweptTopUps, oldest.Add(sweepRetryAfter).UTC().Format("2006-01-02 15:04 MST")), nil
 }
 
 // swapNeed is something the treasury should buy: amount of to, in to's

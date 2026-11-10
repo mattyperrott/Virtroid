@@ -77,6 +77,15 @@ The treasury is the seed's address at index 0 (accounts start at 1). Every
    treasury first sends the address 15 TRX, then the address sends its whole
    USDT balance. Each transaction is built and signed in this service; a
    Tron node only relays it.
+
+   A sweep that fails burns its fee and leaves the USDT where it was, so
+   what the treasury sends for fees is counted from the chain, which a
+   restart doesn't forget. No more than `PAYMENTS_MAX_DAILY_FEE_TRX` (150)
+   TRX goes out for fees in 24 hours. An address whose last two top-ups
+   moved no USDT gets no third until the older one is a week old; the log
+   says `NOT SWEEPING` with the address every cycle until then. Its deposits
+   are still credited: look at the address's transactions for why the sweep
+   fails. If the treasury's transfers can't be read, no top-up is sent.
 2. **Swaps through SimpleSwap** (floating rate), sending only to addresses
    set in `.env`:
    - **TRX** for fees, when the treasury holds less than 50 TRX, up to 150.

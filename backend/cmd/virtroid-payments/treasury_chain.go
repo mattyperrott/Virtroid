@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -54,12 +55,101 @@ func (g tronGrid) account(ctx context.Context, address string) (accountBalance, 
 	return balance, nil
 }
 
-// nowBlock is the newest block, which new transactions name.
 // usdtSent lists the confirmed USDT transfers address made since the given time.
 func (g tronGrid) usdtSent(ctx context.Context, address string, since time.Time) ([]usdtTransfer, error) {
 	return g.transfersFrom(ctx, address, since)
 }
 
+// trxTransfer is TRX an address sent.
+type trxTransfer struct {
+	TxID      string
+	To        string
+	AmountSun int64
+	BlockTime time.Time
+}
+
+// trxSent lists the confirmed TRX transfers address made since the given
+// time, following TronGrid's pages. Anything else the address sent (token
+// transfers, contract calls) is left out.
+func (g tronGrid) trxSent(ctx context.Context, address string, since time.Time) ([]trxTransfer, error) {
+	owner, err := tron.AddressBytes(address)
+	if err != nil {
+		return nil, err
+	}
+	query := url.Values{}
+	query.Set("only_from", "true")
+	query.Set("only_confirmed", "true")
+	query.Set("limit", "200")
+	query.Set("min_timestamp", strconv.FormatInt(since.UnixMilli(), 10))
+	var sent []trxTransfer
+	for page := 0; page < 50; page++ {
+		var response struct {
+			Success bool `json:"success"`
+			Data    []struct {
+				TxID           string `json:"txID"`
+				BlockTimestamp int64  `json:"block_timestamp"`
+				Ret            []struct {
+					ContractRet string `json:"contractRet"`
+				} `json:"ret"`
+				RawData struct {
+					Contract []struct {
+						Type      string `json:"type"`
+						Parameter struct {
+							Value struct {
+								Amount       int64  `json:"amount"`
+								OwnerAddress string `json:"owner_address"`
+								ToAddress    string `json:"to_address"`
+							} `json:"value"`
+						} `json:"parameter"`
+					} `json:"contract"`
+				} `json:"raw_data"`
+			} `json:"data"`
+			Meta struct {
+				Fingerprint string `json:"fingerprint"`
+			} `json:"meta"`
+		}
+		endpoint := strings.TrimRight(g.baseURL, "/") + "/v1/accounts/" + url.PathEscape(address) + "/transactions?" + query.Encode()
+		if err := g.getJSON(ctx, endpoint, &response); err != nil {
+			return nil, err
+		}
+		if !response.Success {
+			return nil, errors.New("TronGrid did not answer for the account's transactions")
+		}
+		for _, item := range response.Data {
+			if len(item.RawData.Contract) != 1 || item.RawData.Contract[0].Type != "TransferContract" {
+				continue
+			}
+			if len(item.Ret) == 0 || item.Ret[0].ContractRet != "SUCCESS" {
+				continue
+			}
+			value := item.RawData.Contract[0].Parameter.Value
+			if !strings.EqualFold(value.OwnerAddress, hex.EncodeToString(owner)) || value.Amount <= 0 {
+				continue
+			}
+			recipient, err := hex.DecodeString(value.ToAddress)
+			if err != nil {
+				return nil, fmt.Errorf("unreadable recipient %q in transaction %s", value.ToAddress, item.TxID)
+			}
+			to, err := tron.AddressFromBytes(recipient)
+			if err != nil {
+				return nil, fmt.Errorf("unreadable recipient %q in transaction %s", value.ToAddress, item.TxID)
+			}
+			sent = append(sent, trxTransfer{
+				TxID:      strings.ToLower(item.TxID),
+				To:        to,
+				AmountSun: value.Amount,
+				BlockTime: time.UnixMilli(item.BlockTimestamp).UTC(),
+			})
+		}
+		if response.Meta.Fingerprint == "" || len(response.Data) == 0 {
+			return sent, nil
+		}
+		query.Set("fingerprint", response.Meta.Fingerprint)
+	}
+	return nil, errors.New("too many pages of transactions")
+}
+
+// nowBlock is the newest block, which new transactions name.
 func (g tronGrid) nowBlock(ctx context.Context) (tron.BlockRef, error) {
 	var block struct {
 		BlockID     string `json:"blockID"`
