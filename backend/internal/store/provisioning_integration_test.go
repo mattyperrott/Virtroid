@@ -743,7 +743,7 @@ func newTrialVMFixture(t *testing.T, ctx context.Context) (*trialVMFixture, int)
 		_, _ = st.db.ExecContext(cleanupCtx, `DELETE FROM provisioned_vms WHERE region = $1`, region)
 	})
 	var trialsBefore int
-	if err := st.db.QueryRowContext(ctx, trialVMsSQL).Scan(&trialsBefore); err != nil {
+	if err := st.db.QueryRowContext(ctx, freeVMsSQL, st.pricing.UnfundedBelowMicro()).Scan(&trialsBefore); err != nil {
 		t.Fatalf("count trial VMs: %v", err)
 	}
 	return &trialVMFixture{t: t, ctx: ctx, st: st, region: region, policy: ProvisioningPolicy{
@@ -1015,5 +1015,134 @@ func TestPostgresTrialVMsStayWithinTheLimitWhenRacing(t *testing.T) {
 	}
 	if granted != room {
 		t.Fatalf("%d VMs granted, want %d", granted, room)
+	}
+}
+
+// deposit credits accountID a deposit of micro, as the payments service
+// reports one.
+func (f *trialVMFixture) deposit(accountID string, micro int64) {
+	f.t.Helper()
+	wallet, err := f.st.AccountWallet(f.ctx, accountID)
+	if err != nil {
+		f.t.Fatalf("open wallet: %v", err)
+	}
+	if credited, err := f.st.CreditDeposit(f.ctx, DepositCredit{
+		TxID: strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", ""), Address: "T-test-" + accountID, Index: wallet.DepositIndex,
+		AmountMicro: micro, BlockTime: time.Now(),
+	}); err != nil || !credited {
+		f.t.Fatalf("credit deposit = %v, %v", credited, err)
+	}
+}
+
+// spend charges accountID micro of runtime time.
+func (f *trialVMFixture) spend(accountID string, micro int64) {
+	f.t.Helper()
+	if _, err := f.st.db.ExecContext(f.ctx,
+		`INSERT INTO account_ledger (account_id, kind, amount_micro, reference) VALUES ($1, 'runtime', $2, $3)`,
+		accountID, -micro, "ci:"+uuid.NewString(),
+	); err != nil {
+		f.t.Fatalf("charge the account: %v", err)
+	}
+}
+
+func (f *trialVMFixture) freeVMs() int {
+	f.t.Helper()
+	fleet, err := f.st.OperatorVMs(f.ctx)
+	if err != nil {
+		f.t.Fatalf("operator VMs: %v", err)
+	}
+	return fleet.TrialVMs
+}
+
+func TestPostgresADepositThatCannotStartARuntimeBuysNoVMs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	f, _ := newTrialVMFixture(t, ctx)
+	pricing := Pricing{RuntimeHourMicro: 100_000, StorageGiBMonthMicro: 50_000}
+	f.st.SetPricing(pricing)
+	enough := pricing.MinimumStartMicro()
+	// With charging on, VMs earlier tests left with unfunded paid accounts
+	// count too.
+	before := f.freeVMs()
+	f.policy.TrialMaxVMs = before + 1
+
+	mustNotAsk := func() bool {
+		t.Error("the source's limit was asked about an account that pays")
+		return false
+	}
+
+	// The smallest deposit there is ends the trial, as any does.
+	dust := f.account("trial")
+	f.deposit(dust, 1)
+	var source string
+	if err := f.st.db.QueryRowContext(ctx, `SELECT source FROM account_entitlements WHERE account_id = $1`, dust).Scan(&source); err != nil || source != "paid" {
+		t.Fatalf("source after a deposit = %q, %v", source, err)
+	}
+	// But nobody is paying for a VM it asks for, which wiping or deleting an
+	// empty runtime does without spending anything. The source's limit still
+	// applies to it,
+	dustRuntime := f.runtime(dust, false)
+	f.refused(dust, VMRequest{CleanupRuntimeID: dustRuntime, AllowTrialVM: func() bool { return false }}, ErrTrialVMRate)
+	// and the VM it gets takes the free pool's room,
+	asked := 0
+	dustVM := f.mustEnsure(dust, VMRequest{CleanupRuntimeID: dustRuntime, AllowTrialVM: func() bool { asked++; return true }})
+	if asked != 1 {
+		t.Fatalf("the source's limit was asked %d times for one new VM", asked)
+	}
+	if got := f.freeVMs(); got != before+1 {
+		t.Fatalf("the console counts %d VMs nobody pays for, want %d", got, before+1)
+	}
+	trial := f.account("trial")
+	f.refused(trial, VMRequest{}, ErrTrialVMCapacity)
+	// which is then full for the next such account, one millionth short of
+	// a start.
+	short := f.account("trial")
+	f.deposit(short, enough-1)
+	shortRuntime := f.runtime(short, false)
+	f.refused(short, VMRequest{CleanupRuntimeID: shortRuntime}, ErrTrialVMCapacity)
+
+	// A balance that can start a runtime is paying: the pool doesn't hold it
+	// back, and the VM it already has leaves the pool at once.
+	f.deposit(short, 1)
+	f.mustEnsure(short, VMRequest{CleanupRuntimeID: shortRuntime, AllowTrialVM: mustNotAsk})
+	f.mustEnsure(f.account("operator"), VMRequest{AllowTrialVM: mustNotAsk})
+	f.deposit(dust, enough)
+	trialVM := f.mustEnsure(trial, VMRequest{})
+
+	// Spending the balance puts the account's VM back in the pool.
+	f.spend(dust, enough)
+	if got := f.freeVMs(); got != before+2 {
+		t.Fatalf("the console counts %d VMs nobody pays for, want %d", got, before+2)
+	}
+	next := f.account("trial")
+	f.refused(next, VMRequest{}, ErrTrialVMCapacity)
+	f.deleteVM(trialVM.ID)
+	f.refused(next, VMRequest{}, ErrTrialVMCapacity)
+	f.deleteVM(dustVM.ID)
+	f.mustEnsure(next, VMRequest{})
+
+	// Removing stored data still goes past a full pool, whatever the balance.
+	broke := f.account("trial")
+	f.deposit(broke, 1)
+	f.mustEnsure(broke, VMRequest{CleanupRuntimeID: f.runtime(broke, true), AllowTrialVM: func() bool { return false }})
+}
+
+func TestPostgresPaidAccountsAreNotHeldBackWhileChargingIsOff(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	f, trialsBefore := newTrialVMFixture(t, ctx)
+	f.policy.TrialMaxVMs = trialsBefore + 1
+	f.mustEnsure(f.account("trial"), VMRequest{})
+
+	// No prices means no balance to judge by: a paid account is as paid as
+	// any, even one an adjustment left below zero.
+	paid := f.account("paid")
+	f.spend(paid, 5)
+	f.mustEnsure(paid, VMRequest{CleanupRuntimeID: f.runtime(paid, false), AllowTrialVM: func() bool {
+		t.Error("the source's limit was asked about a paid account")
+		return false
+	}})
+	if got := f.freeVMs(); got != trialsBefore+1 {
+		t.Fatalf("the console counts %d VMs nobody pays for, want %d", got, trialsBefore+1)
 	}
 }

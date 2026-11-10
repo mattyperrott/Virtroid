@@ -79,8 +79,10 @@ type ProvisionedVM struct {
 type ProvisioningPolicy struct {
 	Regions []string
 	MaxVMs  int
-	// TrialMaxVMs is how many of MaxVMs free trial accounts may hold, which
-	// keeps the rest for paying accounts and bounds what trials can spend.
+	// TrialMaxVMs is how many of MaxVMs may be VMs nobody is paying for:
+	// those of free trials, and of paid accounts whose balance can't start a
+	// runtime. It keeps the rest for accounts that pay and bounds what the
+	// others can spend.
 	TrialMaxVMs  int
 	WarmSpares   int
 	SetupTimeout time.Duration
@@ -94,12 +96,13 @@ type ProvisioningPolicy struct {
 	UpSince         time.Time
 }
 
-// VMRequest says what a VM is wanted for, for the limits on free trials.
+// VMRequest says what a VM is wanted for, for the limits on accounts that
+// aren't paying.
 type VMRequest struct {
 	// CleanupRuntimeID is the runtime a wipe or deletion needs the VM for.
 	CleanupRuntimeID string
-	// AllowTrialVM is asked when a trial account is about to get a VM, and only
-	// then: asking again for a VM it already has doesn't count.
+	// AllowTrialVM is asked when an account that isn't paying is about to get
+	// a VM, and only then: asking again for a VM it already has doesn't count.
 	AllowTrialVM func() bool
 }
 
@@ -107,12 +110,18 @@ type VMRequest struct {
 // not handed to an account.
 const spareNodeQuietAfter = 5 * time.Minute
 
-// trialVMsSQL counts the VMs free trials hold. An account's entitlement goes
-// with the account but its VM is paid for until it is deleted, so deleting an
-// account doesn't free the slot early.
-const trialVMsSQL = `SELECT COUNT(*) FROM provisioned_vms p
+// freeVMsSQL counts the VMs nobody is paying for: those free trials hold,
+// and those of paid accounts whose balance is under $1, which is
+// Pricing.UnfundedBelowMicro (0 counts no paid account). An account's
+// entitlement goes with the account but its VM is paid for until it is
+// deleted, so deleting an account doesn't free the slot early.
+const freeVMsSQL = `SELECT COUNT(*) FROM provisioned_vms p
 	 LEFT JOIN account_entitlements e ON e.account_id = p.account_id
-	WHERE p.state <> 'deleted' AND p.account_id IS NOT NULL AND COALESCE(e.source, 'trial') = 'trial'`
+	WHERE p.state <> 'deleted' AND p.account_id IS NOT NULL
+	  AND (LOWER(TRIM(COALESCE(e.source, 'trial'))) = 'trial'
+	       OR (LOWER(TRIM(e.source)) = 'paid' AND $1::bigint > 0
+	           AND (SELECT COALESCE(SUM(l.amount_micro), 0) FROM account_ledger l
+	                 WHERE l.account_id = p.account_id) < $1::bigint))`
 
 // provisionedVMLastSeenSQL is when the VM aliased p last showed signs of
 // life: its node's last heartbeat, or else when it became ready.
@@ -244,8 +253,8 @@ func (s *Store) AccountProvisionedRegion(ctx context.Context, accountID string, 
 }
 
 // EnsureAccountVM returns the account's runtime VM, claiming a warm spare or
-// requesting a new VM when it has none. It never exceeds policy.MaxVMs, and a
-// free trial account gets one only within policy.TrialMaxVMs.
+// requesting a new VM when it has none. It never exceeds policy.MaxVMs, and
+// an account that isn't paying gets one only within policy.TrialMaxVMs.
 func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, policy ProvisioningPolicy, request VMRequest) (ProvisionedVM, error) {
 	accountID = strings.TrimSpace(accountID)
 	region = strings.ToLower(strings.TrimSpace(region))
@@ -275,7 +284,7 @@ func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, p
 		return ProvisionedVM{}, err
 	}
 
-	if err := checkTrialVMLimitsTX(ctx, tx, accountID, policy, request); err != nil {
+	if err := checkFreeVMLimitsTX(ctx, tx, accountID, policy, s.pricing, request); err != nil {
 		return ProvisionedVM{}, err
 	}
 
@@ -327,8 +336,14 @@ func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, p
 	return vm, tx.Commit()
 }
 
-// checkTrialVMLimitsTX refuses a free trial account a VM its share of the fleet
-// has no room for. Paying accounts are limited only by MaxVMs.
+// checkFreeVMLimitsTX refuses an account that isn't paying a VM the free
+// share of the fleet has no room for. Accounts that pay are limited only by
+// MaxVMs.
+//
+// Not paying is a free trial, or a paid account whose balance can't start a
+// runtime. What decides is the balance, not that a deposit was once made: a
+// wipe or deletion asks for a VM without spending anything, so a deposit of
+// any size would otherwise buy VMs without end.
 //
 // Removing stored data can't wait on a queue of new trials, or anyone able to
 // fill it could keep people from deleting their data. So a wipe or deletion of
@@ -336,7 +351,7 @@ func (s *Store) EnsureAccountVM(ctx context.Context, accountID, region string, p
 // comes from. A runtime without data has no such claim: wiping or deleting one
 // asks for a VM too, and an account that costs nothing to make can always have
 // an empty runtime.
-func checkTrialVMLimitsTX(ctx context.Context, tx *sql.Tx, accountID string, policy ProvisioningPolicy, request VMRequest) error {
+func checkFreeVMLimitsTX(ctx context.Context, tx *sql.Tx, accountID string, policy ProvisioningPolicy, pricing Pricing, request VMRequest) error {
 	var source string
 	err := tx.QueryRowContext(ctx,
 		`SELECT source FROM account_entitlements WHERE account_id::text = $1`,
@@ -345,7 +360,17 @@ func checkTrialVMLimitsTX(ctx context.Context, tx *sql.Tx, accountID string, pol
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err == nil && source != "trial" {
+	switch source = strings.ToLower(strings.TrimSpace(source)); {
+	case err != nil || source == "trial":
+	case source == "paid" && pricing.Enabled():
+		balance, err := accountBalance(ctx, tx, accountID)
+		if err != nil {
+			return err
+		}
+		if balance >= pricing.UnfundedBelowMicro() {
+			return nil
+		}
+	default:
 		return nil
 	}
 
@@ -368,7 +393,7 @@ func checkTrialVMLimitsTX(ctx context.Context, tx *sql.Tx, accountID string, pol
 		limit = max(2*limit, 1)
 	}
 	var held int
-	if err := tx.QueryRowContext(ctx, trialVMsSQL).Scan(&held); err != nil {
+	if err := tx.QueryRowContext(ctx, freeVMsSQL, pricing.UnfundedBelowMicro()).Scan(&held); err != nil {
 		return err
 	}
 	if held >= limit {

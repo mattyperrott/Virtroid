@@ -36,6 +36,17 @@ func (p Pricing) MinimumStartMicro() int64 {
 	return p.RuntimeHourMicro / 6
 }
 
+// UnfundedBelowMicro is the balance under which a paid account cannot start
+// a runtime. Nobody is paying for a VM such an account asks for, so it shares
+// the free trials' VMs. Zero while charging is off, when every paid account
+// counts as funded.
+func (p Pricing) UnfundedBelowMicro() int64 {
+	if !p.Enabled() {
+		return 0
+	}
+	return max(p.MinimumStartMicro(), 1)
+}
+
 // SetPricing sets what paid accounts are charged. Call it before serving.
 func (s *Store) SetPricing(pricing Pricing) {
 	s.pricing = pricing

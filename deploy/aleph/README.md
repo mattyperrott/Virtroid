@@ -264,7 +264,15 @@ Accounts cost nothing to make, so free trials can't use all of that.
 the rest for paying accounts, and `PROVISIONER_TRIAL_VMS_PER_SOURCE_HOUR`
 (default 3, 0 turns it off) is how many new ones one address may ask for in an
 hour, across all its accounts. Past either, a trial is asked to try again, or to
-deposit: a deposit moves an account out of the trials at once.
+deposit: a deposit that can start a runtime moves an account out of the trials
+at once.
+
+What counts is the balance, not that a deposit was once made. A paid account
+whose balance can't start a runtime (ten minutes of runtime credit) isn't
+paying for a VM it asks for, which wiping or deleting an empty runtime does
+without spending anything. Its VM comes from the trials' share and under the
+same limit per address, and counts there for as long as the balance stays that
+low. The console's trial VM count includes them.
 
 Wiping or deleting a runtime that holds data needs its account's VM too, and
 can't be left waiting behind new trials. It may hold as many VMs again, and the

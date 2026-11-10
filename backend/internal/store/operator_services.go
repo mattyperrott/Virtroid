@@ -62,7 +62,8 @@ type OperatorVM struct {
 // OperatorVMs is the runtime VM fleet: VMs that exist or were deleted in the
 // last week, and how many VM-hours existed in the last 24 hours.
 type OperatorVMs struct {
-	VMs               []OperatorVM
+	VMs []OperatorVM
+	// TrialVMs is how many VMs nobody is paying for: see freeVMsSQL.
 	TrialVMs          int
 	VMHours24h        float64
 	ProvisionerSeen   *time.Time
@@ -204,7 +205,7 @@ func (s *Store) OperatorVMs(ctx context.Context) (OperatorVMs, error) {
 	if err := rows.Close(); err != nil {
 		return out, err
 	}
-	if err := s.db.QueryRowContext(ctx, trialVMsSQL).Scan(&out.TrialVMs); err != nil {
+	if err := s.db.QueryRowContext(ctx, freeVMsSQL, s.pricing.UnfundedBelowMicro()).Scan(&out.TrialVMs); err != nil {
 		return out, err
 	}
 	// A VM is paid for from its request until it is deleted.

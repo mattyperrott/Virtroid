@@ -36,6 +36,11 @@ time, as each account's VM has room for one. From then on the account's use is
 charged to its balance. Accounts the operator gave another entitlement source
 are never charged.
 
+A deposit of any size ends the trial, but only a balance that can start a
+runtime gets a VM outside the trials' share: a paid account below that is held
+to the same VM limits as a trial, for wiping and deleting too (see
+[Cost](../aleph/README.md#cost)).
+
 - Runtime time: `RUNTIME_PRICE_PER_HOUR_MICRO` (millionths of a USDT, default
   100000, i.e. 0.10 USDT) per hour a runtime is running, charged every minute
   into one ledger entry per runtime and hour. A runtime keeps running after
