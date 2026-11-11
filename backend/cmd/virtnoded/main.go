@@ -1,7 +1,6 @@
 package main
 
 import (
-	"archive/tar"
 	"archive/zip"
 	"bufio"
 	"bytes"
@@ -1233,7 +1232,7 @@ func (n *nodeAgent) handleRuntimeFileImport(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	remotePath := "/sdcard/Download/" + filename
-	if err := n.copyRuntimeMediaToContainer(ctx, containerNameForRuntime(runtime.ID), "/data/media/0/Download", filename, body); err != nil {
+	if err := n.copyRuntimeMediaToContainer(ctx, runtime.ID, "/data/media/0/Download", filename, body); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "save file into runtime"})
 		return
 	}
@@ -1293,7 +1292,7 @@ func (n *nodeAgent) handleRuntimePhotoImport(w http.ResponseWriter, r *http.Requ
 	}
 	remoteDir := "/sdcard/Pictures/Virtroid"
 	remotePath := remoteDir + "/" + filename
-	if err := n.copyRuntimeMediaToContainer(ctx, containerNameForRuntime(runtime.ID), "/data/media/0/Pictures/Virtroid", filename, body); err != nil {
+	if err := n.copyRuntimeMediaToContainer(ctx, runtime.ID, "/data/media/0/Pictures/Virtroid", filename, body); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "save photo into runtime"})
 		return
 	}
@@ -1353,7 +1352,7 @@ func (n *nodeAgent) handleRuntimeVideoImport(w http.ResponseWriter, r *http.Requ
 	}
 	remoteDir := "/sdcard/Movies/Virtroid"
 	remotePath := remoteDir + "/" + filename
-	if err := n.copyRuntimeMediaToContainer(ctx, containerNameForRuntime(runtime.ID), "/data/media/0/Movies/Virtroid", filename, body); err != nil {
+	if err := n.copyRuntimeMediaToContainer(ctx, runtime.ID, "/data/media/0/Movies/Virtroid", filename, body); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "save video into runtime"})
 		return
 	}
@@ -2109,6 +2108,9 @@ func (n *nodeAgent) ensureRuntimeRunning(ctx context.Context, runtime runtimeAss
 	// snapshot until a stop commits one.
 	if err := markUnsavedSession(n.cfg.RuntimeRoot, runtime.ID); err != nil {
 		return fmt.Errorf("mark the session unsaved before starting its container: %w", err)
+	}
+	if err := n.loadRuntimeBpf(ctx, containerName); err != nil {
+		return fmt.Errorf("load the runtime's BPF programs: %w", err)
 	}
 	if err := n.startContainer(ctx, containerName); err != nil {
 		return fmt.Errorf("start container: %w", err)
@@ -3063,6 +3065,13 @@ func (n *nodeAgent) createContainer(ctx context.Context, containerName string, r
 	if err := n.confineRuntime(body["HostConfig"].(map[string]any), profile); err != nil {
 		return err
 	}
+	if profile == runtimeProfileUserns {
+		set, err := premountRuntimeImage(ctx, runtimeImage)
+		if err != nil {
+			return fmt.Errorf("prepare the runtime image's APEX payloads: %w", err)
+		}
+		body["HostConfig"].(map[string]any)["Annotations"] = usernsAnnotations(set, containerName)
+	}
 	if networkName = strings.TrimSpace(networkName); networkName != "" {
 		body["HostConfig"].(map[string]any)["NetworkMode"] = networkName
 		body["NetworkingConfig"] = map[string]any{
@@ -3274,16 +3283,26 @@ func (n *nodeAgent) adbConnectWithRetry(ctx context.Context, serial string, retr
 	}
 }
 
-func (n *nodeAgent) copyRuntimeMediaToContainer(ctx context.Context, containerName, targetDir, filename string, contents []byte) error {
+// copyRuntimeMediaToContainer saves an imported file into targetDir (below
+// /data) of the runtime's running container, owned as that directory is. The
+// directory is made inside the container; the file is written into the
+// runtime's data directory here (writeRuntimeDataFile says why).
+func (n *nodeAgent) copyRuntimeMediaToContainer(ctx context.Context, runtimeID, targetDir, filename string, contents []byte) error {
 	if path.Base(filename) != filename || filename == "." || filename == ".." {
 		return errors.New("runtime media filename is invalid")
 	}
+	rel, ok := strings.CutPrefix(targetDir, "/data/")
+	if !ok || path.Clean(targetDir) != targetDir {
+		return errors.New("runtime media directory is not below /data")
+	}
+	containerName := containerNameForRuntime(runtimeID)
 	uid, gid, err := n.runtimeMediaDirectoryOwnership(ctx, containerName, targetDir)
 	if err != nil {
 		return err
 	}
 	targetPath := path.Join(targetDir, filename)
-	if err := n.copyFileToContainer(ctx, containerName, targetPath, contents, 0o660, uid, gid); err != nil {
+	dataDir := filepath.Join(n.cfg.RuntimeRoot, runtimeID, "data")
+	if err := writeRuntimeDataFile(dataDir, path.Join(rel, filename), contents, 0o660, uid, gid); err != nil {
 		return err
 	}
 	restoreCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -4641,11 +4660,18 @@ func (n *nodeAgent) stopAndRemoveContainer(ctx context.Context, containerName st
 	return n.removeContainer(ctx, containerName)
 }
 
-func (n *nodeAgent) stopContainer(ctx context.Context, containerName string) error {
+func (n *nodeAgent) stopContainer(ctx context.Context, containerName string) (err error) {
 	inspect, err := n.inspectContainer(ctx, containerName)
 	if err != nil {
 		return err
 	}
+	// A runtime in a user namespace has a bpffs of its own (named after its
+	// container), filled again before each start: it goes once it stops.
+	defer func() {
+		if err == nil {
+			n.releaseRuntimeBpf(context.WithoutCancel(ctx), containerName)
+		}
+	}()
 
 	if inspect.State.Running {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker/containers/"+url.PathEscape(containerName)+"/stop?t=20", nil)
@@ -5120,53 +5146,6 @@ func (n *nodeAgent) execInContainerCaptureAny(ctx context.Context, containerName
 	}
 
 	return lastOutput, lastErr
-}
-
-func (n *nodeAgent) copyFileToContainer(ctx context.Context, containerName string, targetPath string, contents []byte, mode int64, uid int, gid int) error {
-	parentDir := path.Dir(targetPath)
-	fileName := path.Base(targetPath)
-
-	var archive bytes.Buffer
-	tw := tar.NewWriter(&archive)
-	if err := tw.WriteHeader(&tar.Header{
-		Name: fileName,
-		Mode: mode,
-		Size: int64(len(contents)),
-		Uid:  uid,
-		Gid:  gid,
-	}); err != nil {
-		return err
-	}
-	if _, err := tw.Write(contents); err != nil {
-		return err
-	}
-	if err := tw.Close(); err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPut,
-		"http://docker/containers/"+url.PathEscape(containerName)+"/archive?path="+url.QueryEscape(parentDir),
-		bytes.NewReader(archive.Bytes()),
-	)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-tar")
-
-	resp, err := n.docker.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("docker archive copy failed: status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	return nil
 }
 
 func (n *nodeAgent) waitForViewerPort(ctx context.Context, runtime runtimeAssignment, containerName string) error {

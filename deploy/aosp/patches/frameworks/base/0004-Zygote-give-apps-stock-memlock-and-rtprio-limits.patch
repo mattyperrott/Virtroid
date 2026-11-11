@@ -1,0 +1,61 @@
+From ba1d6814254943769494a5863e743554e45832b3 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 12:52:37 +0000
+Subject: [PATCH] Zygote: give apps stock memlock and rtprio limits
+
+On a phone apps inherit 64 KiB of RLIMIT_MEMLOCK from init and an RLIMIT_RTPRIO of 0 from the kernel. A Virtroid runtime in a user namespace starts with RLIMIT_MEMLOCK unlimited and RLIMIT_RTPRIO 10, since its services can no longer raise their own there, and init keeps the hard memlock limit (system/core 0006). Lower both, soft and hard, in every process the zygote specializes except system_server, so no app can lock memory beyond 64 KiB or take a real-time priority.
+
+Change-Id: I7436b048a99e9efa45266947e215a1a5f6ebb72a
+---
+ core/jni/com_android_internal_os_Zygote.cpp | 28 +++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/core/jni/com_android_internal_os_Zygote.cpp b/core/jni/com_android_internal_os_Zygote.cpp
+index a92c6c871..5bfe44f22 100644
+--- a/core/jni/com_android_internal_os_Zygote.cpp
++++ b/core/jni/com_android_internal_os_Zygote.cpp
+@@ -565,6 +565,24 @@ static void ensureInAppMountNamespace(fail_fn_t fail_fn) {
+   gInAppMountNamespace = true;
+ }
+ 
++// Lowers a limit, soft and hard, to at most cap. Lowering needs no privilege.
++static void CapRLimit(int resource, rlim_t cap, fail_fn_t fail_fn) {
++  struct rlimit rl;
++  if (getrlimit(resource, &rl) == -1) {
++    fail_fn(CREATE_ERROR("getrlimit(%d) failed: %s", resource, strerror(errno)));
++  }
++  if (rl.rlim_cur <= cap && rl.rlim_max <= cap) {
++    return;
++  }
++  rl.rlim_cur = std::min(rl.rlim_cur, cap);
++  rl.rlim_max = std::min(rl.rlim_max, cap);
++  if (setrlimit(resource, &rl) == -1) {
++    fail_fn(CREATE_ERROR("setrlimit(%d, {%lu, %lu}) failed: %s", resource,
++                         static_cast<unsigned long>(rl.rlim_cur),
++                         static_cast<unsigned long>(rl.rlim_max), strerror(errno)));
++  }
++}
++
+ // Sets the resource limits via setrlimit(2) for the values in the
+ // two-dimensional array of integers that's passed in. The second dimension
+ // contains a tuple of length 3: (resource, rlim_cur, rlim_max). nullptr is
+@@ -1988,6 +2006,16 @@ static void SpecializeCommon(JNIEnv* env, uid_t uid, gid_t gid, jintArray gids,
+     SetGids(env, gids, is_child_zygote, fail_fn);
+     SetRLimits(env, rlimits, fail_fn);
+ 
++    // Apps get stock Android's limits: 64 KiB of locked memory (init's own,
++    // inherited) and no real-time priority (the kernel's default). A Virtroid
++    // runtime in a user namespace starts with higher ones, for the services
++    // that need them and could not raise them there, and init keeps its hard
++    // memlock limit; lower both for every process but system_server.
++    if (!is_system_server) {
++        CapRLimit(RLIMIT_MEMLOCK, 64 * 1024, fail_fn);
++        CapRLimit(RLIMIT_RTPRIO, 0, fail_fn);
++    }
++
+     if (need_pre_initialize_native_bridge) {
+         // Due to the logic behind need_pre_initialize_native_bridge we know that
+         // instruction_set contains a value.
+-- 
+2.43.0
+

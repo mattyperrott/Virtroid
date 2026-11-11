@@ -1,0 +1,38 @@
+From dc6723b080a5c8c062a04258209d2d6162c305b0 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 12:52:37 +0000
+Subject: [PATCH] NetBpfLoad: finalize when the host preloaded
+
+In a Virtroid runtime in a user namespace the runtime's root may not load BPF programs, so the host loads and pins the image's own into the bpffs it gives the runtime, and marks that with /sys/fs/bpf/virtroid_preloaded. When it is there, set bpf.progs_loaded and stop, as the loaders do when they are done.
+
+Change-Id: If9be39821bc3535d9328fb6cd01f1b77cd8db6d3
+---
+ bpf/loader/NetBpfLoad.cpp | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index 1155228..a8e3270 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -1971,5 +1971,18 @@ int main(int argc, char** argv, char * const envp[]) {
+         return 0;
+     }
+ 
++    // A Virtroid runtime in a user namespace: the host loaded and pinned the
++    // image's programs in the bpffs it gave the runtime (a runtime's root may
++    // not load any), and marks that with this directory. Only finalize.
++    if (!access("/sys/fs/bpf/virtroid_preloaded", F_OK)) {
++        ALOGI("programs were loaded by the host");
++        if (!SetProperty("bpf.progs_loaded", "1")) {
++            ALOGE("Failed to set bpf.progs_loaded property to 1.");
++            return 125;
++        }
++        ALOGI("success.");
++        return 0;
++    }
++
+     return android::bpf::doLoad(argv, envp);
+ }
+-- 
+2.43.0
+

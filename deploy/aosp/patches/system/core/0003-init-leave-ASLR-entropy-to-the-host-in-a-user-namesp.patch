@@ -1,0 +1,67 @@
+From 6633f4f3961a5e0f4c30adc25fb804460591ed65 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 04:50:32 +0000
+Subject: [PATCH 3/4] init: leave ASLR entropy to the host in a user namespace
+
+In a user namespace (a Virtroid runtime) /proc/sys/vm/mmap_rnd_bits and mmap_rnd_compat_bits belong to the host's root: init can neither read nor change them, and SetMmapRndBits aborted the boot. The host owns the kernel's settings there, and a Virtroid VM sets these to their maximums before any runtime starts, so skip the step and say so.
+
+Change-Id: I47f294b444596b6f4ab17b8a24e67e3192949262
+---
+ init/security.cpp | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/init/security.cpp b/init/security.cpp
+index 7115fbb..dfeb437 100644
+--- a/init/security.cpp
++++ b/init/security.cpp
+@@ -27,7 +27,9 @@
+ #include <unistd.h>
+ 
+ #include <fstream>
++#include <sstream>
+ 
++#include <android-base/file.h>
+ #include <android-base/logging.h>
+ #include <android-base/properties.h>
+ #include <android-base/unique_fd.h>
+@@ -75,6 +77,23 @@ static bool SetHighestAvailableOptionValue(const std::string& path, int min, int
+     return true;
+ }
+ 
++// Whether init runs in a user namespace of its own, as a Virtroid runtime
++// does: only the initial namespace maps the whole id range onto itself.
++static bool InUserNamespace() {
++    std::string map;
++    if (!android::base::ReadFileToString("/proc/self/uid_map", &map)) {
++        return false;
++    }
++    std::istringstream lines(map);
++    unsigned long long inside = 0, outside = 0, count = 0;
++    if (!(lines >> inside >> outside >> count)) {
++        return false;
++    }
++    std::string rest;
++    bool more = static_cast<bool>(lines >> rest);
++    return more || inside != 0 || outside != 0 || count != 4294967295ULL;
++}
++
+ #define MMAP_RND_PATH "/proc/sys/vm/mmap_rnd_bits"
+ #define MMAP_RND_COMPAT_PATH "/proc/sys/vm/mmap_rnd_compat_bits"
+ 
+@@ -102,6 +121,13 @@ static bool SetMmapRndBitsMin(int start, int min, bool compat) {
+ // ec9ee4acd97c drivers: char: random: add get_random_long()
+ // 5ef11c35ce86 mm: ASLR: use get_random_long()
+ Result<void> SetMmapRndBitsAction(const BuiltinArguments&) {
++    // In a user namespace these settings belong to the host's root: this init
++    // can neither read nor change them. A Virtroid VM sets them to their
++    // maximums before any runtime starts (deploy/aleph/nix/vm-init.sh).
++    if (InUserNamespace()) {
++        LOG(INFO) << "In a user namespace: mmap_rnd_bits is the host's to set";
++        return {};
++    }
+ // values are arch-dependent
+ #if defined(USER_MODE_LINUX)
+     // uml does not support mmap_rnd_bits
+-- 
+2.43.0
+

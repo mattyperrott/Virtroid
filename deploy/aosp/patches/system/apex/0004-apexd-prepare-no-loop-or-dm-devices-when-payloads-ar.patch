@@ -1,0 +1,43 @@
+From 999712a5755230c7acaeb937e7352b62603f0bb0 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 04:53:48 +0000
+Subject: [PATCH] apexd: prepare no loop or dm devices when payloads are
+ pre-mounted
+
+A Virtroid runtime in a user namespace has its APEX payloads pre-mounted by the host under /dev/.vapex (0003) and no /dev/loop-control or device-mapper. Pre-allocating loop devices waited 20 s for loop-control at every boot, and every placeholder dm device failed. When pre-mounted payloads are there, prepare nothing.
+
+Change-Id: Id09c8338dc9739c0b9c281d53fcba46f31fec98a
+---
+ apexd/apexd.cpp | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/apexd/apexd.cpp b/apexd/apexd.cpp
+index 2dbec5f..d0e0c3b 100644
+--- a/apexd/apexd.cpp
++++ b/apexd/apexd.cpp
+@@ -2287,8 +2287,22 @@ Result<void> RevertActiveSessionsAndReboot(
+   return {};
+ }
+ 
++// Whether the host pre-mounted the image's APEX payloads (a Virtroid runtime
++// in a user namespace): apexd then binds them, with no loop or dm devices.
++static bool HasPremountedApexes() {
++  auto exists = PathExists(kVirtroidApexPremountDir);
++  return exists.ok() && *exists && !IsEmptyDirectory(kVirtroidApexPremountDir);
++}
++
+ void PrepareResources(size_t loop_device_cnt,
+                       const std::vector<std::string>& apex_names) {
++  // Such a runtime has no /dev/loop-control (pre-allocating would wait for it
++  // for 20 s) and no device-mapper.
++  if (HasPremountedApexes()) {
++    LOG(INFO) << "APEX payloads are pre-mounted in " << kVirtroidApexPremountDir
++              << ": no loop or dm devices to prepare";
++    return;
++  }
+   LOG(INFO) << "Need to pre-allocate " << loop_device_cnt << " loop devices";
+   if (auto res = loop::PreAllocateLoopDevices(loop_device_cnt); !res.ok()) {
+     LOG(ERROR) << "Failed to pre-allocate loop devices : " << res.error();
+-- 
+2.43.0
+

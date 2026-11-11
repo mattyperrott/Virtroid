@@ -136,8 +136,14 @@ pkgs.runCommand "virtroid-rootfs.erofs" {
 
   # The initrd bind-mounts DHCP's resolv.conf over this placeholder.
   touch etc/resolv.conf
-  printf 'root:x:0:0:root:/run/root:/bin/false\ntor:x:990:990:tor:/var/empty:/bin/false\n' > etc/passwd
-  printf 'root:x:0:\ndocker:x:998:\ntor:x:990:\n' > etc/group
+  printf 'root:x:0:0:root:/run/root:/bin/false\ntor:x:990:990:tor:/var/empty:/bin/false\nvirtroid-runtime:x:989:989:runtime id range:/var/empty:/bin/false\n' > etc/passwd
+  printf 'root:x:0:\ndocker:x:998:\ntor:x:990:\nvirtroid-runtime:x:989:\n' > etc/group
+  # userns-1 runtimes' ids are mapped into this range by
+  # virtroid-runtime-wrapper: a runtime's root is uid 1000000 on the VM. A
+  # million ids cover Android's, apps and isolated processes of its first ten
+  # users included. The wrapper and virtnoded read it.
+  printf 'virtroid-runtime:1000000:1000000\n' > etc/subuid
+  printf 'virtroid-runtime:1000000:1000000\n' > etc/subgid
   printf 'hosts: files dns\n' > etc/nsswitch.conf
   printf '127.0.0.1 localhost\n::1 localhost\n' > etc/hosts
   printf 'ID=virtroid\nNAME="Virtroid runtime VM"\n' > etc/os-release

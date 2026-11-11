@@ -28,6 +28,9 @@
 #   BOOT_TEST_NODE=BINARY  a virtnoded to run in place of IMAGE_DIR's, so a
 #                       node change is tested without rebuilding the VM image
 #                       (CGO_ENABLED=0 GOOS=linux go build ./cmd/virtnoded).
+#   BOOT_TEST_WRAPPER=BINARY  likewise a virtroid-runtime-wrapper, Docker's
+#                       runtime for runtimes in a user namespace (CGO_ENABLED=0
+#                       GOOS=linux go build ./cmd/virtroid-runtime-wrapper).
 #                       Like the runtime image, only the image's own is
 #                       measured: a pass with this tests the node, not the
 #                       release.
@@ -80,6 +83,7 @@ node_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev
 # BOOT_TEST_NODE runs on the image's root in place of its virtnoded; with a
 # runtime image under test, the node runs that image, by its tag.
 [ -z "${BOOT_TEST_NODE:-}" ] || cp "$BOOT_TEST_NODE" initrd/virtnoded-under-test
+[ -z "${BOOT_TEST_WRAPPER:-}" ] || cp "$BOOT_TEST_WRAPPER" initrd/wrapper-under-test
 node_env="NODE_SNP_ATTESTATION=off"
 if [ -n "${BOOT_TEST_RUNTIME_IMAGE:-}" ]; then
   runtime_tag=$(tar -xOf "$BOOT_TEST_RUNTIME_IMAGE" manifest.json | sed -n 's/.*"RepoTags":\["\([^"]*\)".*/\1/p')
@@ -144,6 +148,11 @@ if [ -f /virtnoded-under-test ]; then
   real=/bin/virtnoded-under-test
 fi
 \$B rm /mnt/root/bin/virtnoded
+if [ -f /wrapper-under-test ]; then
+  \$B rm /mnt/root/bin/virtroid-runtime-wrapper
+  \$B cp /wrapper-under-test /mnt/root/bin/virtroid-runtime-wrapper
+  \$B chmod 755 /mnt/root/bin/virtroid-runtime-wrapper
+fi
 printf '#!/bin/bash\n%s %s >/run/virtnoded.log 2>&1 &\nexec sleep infinity\n' '$node_env' "\$real" > /mnt/root/bin/virtnoded
 \$B chmod 755 /mnt/root/bin/virtnoded
 
@@ -235,30 +244,77 @@ authorize_adb /srv/virtroid/runtimes/smoke/data
 echo "boot-test: starting a runtime container as virtnoded does (limits, mounts, arguments)"
 . /mnt/lower/etc/virtroid/node.env 2>/dev/null || true
 [ -z "\$under_test" ] || NODE_RUNTIME_IMAGE=\$under_test
-# How virtnoded confines a runtime (backend/cmd/virtnoded/runtime_container.go,
-# whose tests check these match): an image labelled unprivileged-1 gets only
-# these capabilities and the devices Android uses, its own cgroups and this
-# seccomp profile; any other image runs --privileged.
+# How virtnoded confines a runtime (backend/cmd/virtnoded/runtime_container.go
+# and runtime_userns.go, whose tests check these match): an image labelled
+# unprivileged-1 gets only these capabilities and the devices Android uses,
+# its own cgroups and this seccomp profile; one labelled userns-1 the same
+# without loop devices, in a user namespace the wrapper runtime makes, with
+# its APEX set and BPF filesystem named and its services' limits; any other
+# image runs --privileged.
 runtime_caps="CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER FSETID KILL SETGID SETUID SETPCAP SETFCAP NET_BIND_SERVICE NET_RAW NET_ADMIN SYS_CHROOT MKNOD AUDIT_WRITE SYS_ADMIN SYS_RESOURCE SYS_NICE SYS_PTRACE IPC_LOCK SYS_BOOT WAKE_ALARM BLOCK_SUSPEND BPF PERFMON"
 C /bin/bash -c 'cat > /run/runtime-seccomp.json' <<'SECCOMP'
 {"architectures":["SCMP_ARCH_X86_64","SCMP_ARCH_X86","SCMP_ARCH_X32"],"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"action":"SCMP_ACT_ERRNO","args":[{"index":1,"op":"SCMP_CMP_MASKED_EQ","value":4294967295,"valueTwo":2147768445}],"errnoRet":1,"names":["ioctl"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["open_by_handle_at"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["kexec_load","kexec_file_load","init_module","finit_module","delete_module"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["settimeofday","clock_settime","clock_settime64","clock_adjtime","clock_adjtime64","stime"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["swapon","swapoff","acct","iopl","ioperm","syslog"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["perf_event_open"]}]}
 SECCOMP
-# confine IMAGE: virtnoded's docker run options for a runtime of IMAGE,
-# quoted for eval.
+# profile IMAGE: the container profile IMAGE's label names.
+profile() {
+  C /bin/docker image inspect -f '{{index .Config.Labels "io.virtroid.container-profile"}}' "\$1" 2>/dev/null
+}
+# confine IMAGE NAME [PROFILE]: virtnoded's docker run options for runtime
+# NAME of IMAGE (as PROFILE, if given), quoted for eval.
 confine() {
-  if [ "\$(C /bin/docker image inspect -f '{{index .Config.Labels "io.virtroid.container-profile"}}' "\$1" 2>/dev/null)" != unprivileged-1 ]; then
+  prof=\${3:-\$(profile "\$1")}
+  if [ "\$prof" != unprivileged-1 ] && [ "\$prof" != userns-1 ]; then
     echo --privileged
     return
   fi
   opts="--cap-drop ALL"
   for c in \$runtime_caps; do opts="\$opts --cap-add \$c"; done
-  for d in /dev/ashmem /dev/fuse /dev/loop-control /dev/dma_heap/system /dev/net/tun \$(\$B ls /dev | \$B grep '^loop[0-9][0-9]*\$' | \$B sed 's#^#/dev/#'); do
+  # In a user namespace apexd binds the APEX payloads the VM premounted: no
+  # loop devices.
+  loops=""
+  [ "\$prof" = userns-1 ] || loops="/dev/loop-control \$(\$B ls /dev | \$B grep '^loop[0-9][0-9]*\$' | \$B sed 's#^#/dev/#')"
+  for d in /dev/ashmem /dev/fuse /dev/dma_heap/system /dev/net/tun \$loops; do
     [ -e "\$d" ] && opts="\$opts --device \$d"
   done
   binder=\$(\$B awk '/^Character/ {c = 1} /^Block/ {c = 0} c && \$2 == "binder" {print \$1}' /proc/devices)
-  echo "\$opts --device /dev/kmsg:/dev/kmsg:w --device-cgroup-rule 'c \$binder:* rwm' --security-opt seccomp=/run/runtime-seccomp.json --security-opt writable-cgroups=true"
+  opts="\$opts --device /dev/kmsg:/dev/kmsg:w --device-cgroup-rule 'c \$binder:* rwm' --security-opt seccomp=/run/runtime-seccomp.json --security-opt writable-cgroups=true"
+  if [ "\$prof" = userns-1 ]; then
+    apex_set=\$(C /bin/virtroid-runtime-wrapper premount-image "\$1" | \$B tail -1)
+    opts="\$opts --runtime virtroid-userns --annotation io.virtroid.userns=1 --annotation io.virtroid.apex-set=\$apex_set --annotation io.virtroid.bpffs=\$2 --ulimit memlock=-1:-1 --ulimit nice=40:40 --ulimit rtprio=10:10"
+  fi
+  echo "\$opts"
 }
-smoke_confinement=\$(confine "\$NODE_RUNTIME_IMAGE")
+# prepare IMAGE NAME: what virtnoded does before each start of a runtime in
+# a user namespace (runtime_userns.go loadRuntimeBpf): a fresh BPF filesystem
+# for NAME, filled by the image's own loaders in a short loading pass outside
+# any user namespace, with no network and no data. Nothing for other images.
+prepare() {
+  [ "\$(profile "\$1")" = userns-1 ] || return 0
+  apex_set=\$(C /bin/virtroid-runtime-wrapper premount-image "\$1" | \$B tail -1)
+  [ -n "\$apex_set" ] || return 1
+  C /bin/virtroid-runtime-wrapper bpf-mount "\$2" || return 1
+  C /bin/docker rm -f "\$2-bpfload" >/dev/null 2>&1
+  eval "C /bin/docker run -d --name \$2-bpfload \$(confine "\$1" "\$2" unprivileged-1)" \
+    --runtime virtroid-userns --annotation io.virtroid.apex-set=\$apex_set --network none \
+    "\$1" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest androidboot.redroid_width=720 \
+    androidboot.redroid_height=1280 androidboot.redroid_dpi=320 >/dev/null || return 1
+  loaded=""
+  for i in \$(\$B seq 1 90); do
+    loaded=\$(C /bin/docker exec "\$2-bpfload" /system/bin/getprop bpf.progs_loaded 2>/dev/null | \$B tr -d '\r')
+    [ "\$loaded" = 1 ] && break
+    [ "\$(C /bin/docker inspect -f '{{.State.Running}}' "\$2-bpfload" 2>/dev/null)" = true ] || break
+    \$B sleep 1
+  done
+  pid=\$(C /bin/docker inspect -f '{{.State.Pid}}' "\$2-bpfload" 2>/dev/null)
+  if [ "\$loaded" != 1 ] || ! C /bin/virtroid-runtime-wrapper bpf-copy /proc/\$pid/root/sys/fs/bpf "\$2"; then
+    echo "boot-test: the BPF loading pass for \$2 did not finish"
+    C /bin/docker logs "\$2-bpfload" 2>&1 | \$B tail -10
+    C /bin/docker rm -f "\$2-bpfload" >/dev/null 2>&1
+    return 1
+  fi
+  C /bin/docker rm -f "\$2-bpfload" >/dev/null
+}
+smoke_confinement=\$(confine "\$NODE_RUNTIME_IMAGE" smoke)
 echo "boot-test: runtime confinement: \$(echo "\$smoke_confinement" | \$B cut -c1-60)..."
 # A Tor runtime, set up as virtnoded does: its bridge joins the firewall's Tor
 # set before it exists. Nothing from it is forwarded, so Android resolving a
@@ -268,6 +324,7 @@ C /bin/docker network create -o com.docker.network.bridge.name=vrt-smoke virtroi
 # smoke [ARG...]: the runtime container, with these further arguments to
 # Android's init (evaluated again, as the confinement options are).
 smoke() {
+  prepare "\$NODE_RUNTIME_IMAGE" smoke || return 1
   eval "C /bin/docker run -d --name smoke \$smoke_confinement" --network virtroid-guest-smoke \
     -p 127.0.0.1:15555:5555 \
     --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
@@ -304,6 +361,10 @@ if [ "\$booted" != 1 ]; then
   fail "Android did not finish booting"
 fi
 memory "Android booted"
+# system_server must stay up, not only finish booting once: it is checked
+# again after the viewer and app tests, past the first minute's alarms.
+system_server=\$(C /bin/docker exec smoke /system/bin/pidof system_server 2>/dev/null | \$B tr -d '\r')
+booted_at=\$(\$B date +%s)
 echo "boot-test: Android booted: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.fingerprint | \$B tr -d '\r')"
 echo "boot-test: Android security patch: \$(C /bin/adb -s 127.0.0.1:15555 shell getprop ro.build.version.security_patch | \$B tr -d '\r')"
 # The location feed's directory, mounted as virtnoded mounts it: Android sees
@@ -537,6 +598,33 @@ if C /bin/test -d /tmp/apks; then
   done
 fi
 
+# overlays_alone WHEN: no overlay was mounted on an upper directory another
+# still used, the hazard of the id-mapped rootfs (the wrapper replaces
+# Docker's overlay with its own on the same upper and work directories). The
+# kernel warns of each; its log holds 128 KiB, so this runs twice, before
+# early lines could be lost.
+overlays_alone() {
+  n=\$(\$B dmesg | \$B grep -c "is in-use as upperdir/workdir")
+  echo "boot-test: overlays sharing an upper directory (\$1): \$n"
+  if [ "\$n" != 0 ]; then
+    \$B dmesg | \$B grep -B4 "is in-use as upperdir/workdir" | \$B head -24 | \$B sed 's/^/boot-test:   /'
+    fail "two overlays used one upper directory"
+  fi
+}
+# The same system_server as at boot, at least 75 s on (a restarted
+# system_server finishes booting again, so boot_completed doesn't show it),
+# and no crash of the system process logged.
+left=\$((booted_at + 75 - \$(\$B date +%s)))
+[ "\$left" -le 0 ] || \$B sleep "\$left"
+now=\$(C /bin/docker exec smoke /system/bin/pidof system_server 2>/dev/null | \$B tr -d '\r')
+crashes=\$(C /bin/docker exec smoke /system/bin/logcat -d -b crash 2>/dev/null | \$B grep -c "FATAL EXCEPTION IN SYSTEM PROCESS")
+echo "boot-test: system_server pid \$system_server at boot, \${now:-none} \$((\$(\$B date +%s) - booted_at)) s on; \$crashes system-process crashes"
+if [ -z "\$system_server" ] || [ "\$now" != "\$system_server" ] || [ "\$crashes" != 0 ]; then
+  C /bin/docker exec smoke /system/bin/logcat -d -b crash 2>/dev/null | \$B grep -E -A3 "FATAL EXCEPTION IN SYSTEM PROCESS" | \$B head -24 | \$B sed 's/^/boot-test:   /'
+  fail "system_server did not stay up"
+fi
+overlays_alone "after the first runtime's checks"
+
 booted_on() { # booted_on PORT TRIES: Android finished booting
   for i in \$(\$B seq 1 \$2); do
     C /bin/adb connect 127.0.0.1:\$1 >/dev/null 2>&1
@@ -577,7 +665,8 @@ again_as SM-S901B BP2A.250605.031.A3
 # BOOT_TEST_UPGRADE_FROM (the third disk): Android from the older image
 # writes its data, then this image boots on the same data.
 android() { # android NAME IMAGE PORT [ARGS]: ARGS, one string, to Android's init
-  eval "C /bin/docker run -d --name \$1 \$(confine "\$2")" -p 127.0.0.1:\$3:5555 \
+  prepare "\$2" "\$1" || fail "prepare \$1 of \$2"
+  eval "C /bin/docker run -d --name \$1 \$(confine "\$2" "\$1")" -p 127.0.0.1:\$3:5555 \
     --memory \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} --memory-swap \${NODE_RUNTIME_MEMORY_BYTES:-3221225472} \
     --cpus 2 --shm-size \${NODE_RUNTIME_SHM_BYTES:-268435456} \
     -v /srv/virtroid/runtimes/upgrade/data:/data "\$2" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest \
@@ -653,7 +742,9 @@ if C /bin/test -f /tmp/gnss-probe.apk; then
   model=\$(X 'getprop ro.product.model')
   echo "boot-test: location: the node's runtime is a \$model named \$(X 'settings get global device_name'), timezone \$(X 'getprop persist.sys.timezone')"
   [ "\$(X 'settings get global device_name')" = "\$model" ] || fail "the node's runtime is not named as its phone"
-  C /bin/docker cp /tmp/gnss-probe.apk "\$ct:/data/local/tmp/gnss-probe.apk" >/dev/null || fail "could not copy the probe into the runtime"
+  # Through docker exec, not docker cp: Docker cannot write into the rootfs of
+  # a runtime in a user namespace, and refuses even a copy below /data.
+  C /bin/sh -c "docker exec -i \$ct /system/bin/sh -c 'cat > /data/local/tmp/gnss-probe.apk' < /tmp/gnss-probe.apk" || fail "could not copy the probe into the runtime"
   X 'pm install -r -g /data/local/tmp/gnss-probe.apk' | \$B grep -q Success || fail "could not install the probe"
   X 'logcat -c'
   X 'am start -W -n io.virtroid.gnssprobe/.Probe' >/dev/null
@@ -744,6 +835,7 @@ if C /bin/test -f /tmp/gnss-probe.apk; then
   [ "\$(X "cat \$L/after-the-save")" = unsaved ] || fail "a crash lost what the session wrote after its last save"
   echo "boot-test: persistence: a container that died came back with its unsaved data"
 fi
+overlays_alone "at the end"
 echo "boot-test: --- virtnoded log ---"
 C /bin/cat /run/virtnoded.log | \$B tail -8
 echo "boot-test: PASS"

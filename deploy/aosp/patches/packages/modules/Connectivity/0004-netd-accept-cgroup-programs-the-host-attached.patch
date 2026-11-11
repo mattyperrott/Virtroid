@@ -1,0 +1,109 @@
+From 41a1d60d4fa6f6b668737959d4cd79edc41dc89c Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 10:30:37 +0000
+Subject: [PATCH] netd: accept cgroup programs the host attached
+
+In a Virtroid runtime in a user namespace, the runtime's root may not attach programs to its cgroup: netd's attach failed (EINVAL) and netd aborted at every start. The VM loads and pins the image's programs in a bpffs it makes for the runtime, attaches netd's to the runtime's cgroup before it starts, and marks that with /sys/fs/bpf/virtroid_netd_attached. With the marker, netd checks each program is there but doesn't attach it, and a refused BPF_PROG_QUERY no longer aborts it; a query that works and finds nothing attached still does.
+
+Change-Id: I4adae3987185b961da3fcbe548460326eceedf0d
+---
+ bpf/netd/BpfHandler.cpp | 51 ++++++++++++++++++++++++++++++-----------
+ 1 file changed, 37 insertions(+), 14 deletions(-)
+
+diff --git a/bpf/netd/BpfHandler.cpp b/bpf/netd/BpfHandler.cpp
+index 5dc5414..6318f2b 100644
+--- a/bpf/netd/BpfHandler.cpp
++++ b/bpf/netd/BpfHandler.cpp
+@@ -55,12 +55,22 @@ constexpr int TOTAL_UID_STATS_ENTRIES_LIMIT = STATS_MAP_SIZE * 0.9;
+ static_assert(STATS_MAP_SIZE - TOTAL_UID_STATS_ENTRIES_LIMIT > 100,
+               "The limit for stats map is to high, stats data may be lost due to overflow");
+ 
++// A Virtroid runtime in a user namespace: its root may not attach programs to
++// its cgroup, so the VM attaches netd's before the runtime starts, from the
++// programs pinned here, and then makes this directory in the bpffs it gave it.
++static constexpr const char kHostAttachedMarker[] = "/sys/fs/bpf/virtroid_netd_attached";
++
++static bool attachedByHost() {
++    return !access(kHostAttachedMarker, F_OK);
++}
++
+ static Status attachProgramToCgroup(const char* programPath, const unique_fd& cgroupFd,
+                                     bpf_attach_type type) {
+     unique_fd cgroupProg(retrieveProgram(programPath));
+     if (!cgroupProg.ok()) {
+         return statusFromErrno(errno, fmt::format("Failed to get program from {}", programPath));
+     }
++    if (attachedByHost()) return netdutils::status::ok;
+     if (bpf::attachProgram(type, cgroupProg, cgroupFd)) {
+         return statusFromErrno(errno, fmt::format("Program {} attach failed", programPath));
+     }
+@@ -75,6 +85,19 @@ static Status checkProgramAccessible(const char* programPath) {
+     return netdutils::status::ok;
+ }
+ 
++// A program of this type must be attached to the cgroup. A runtime in a user
++// namespace may be refused the query as well as the attach; only then does
++// the VM's marker stand for it. A query that works and finds none still aborts.
++static void requireAttached(const unique_fd& cg_fd, bpf_attach_type type) {
++    const int attached = queryProgram(cg_fd, type);
++    if (attached > 0) return;
++    if (attached < 0 && attachedByHost()) {
++        ALOGI("cgroup program type %d: attached by the host (query refused here)", type);
++        return;
++    }
++    abort();
++}
++
+ static Status initPrograms(const char* cg2_path) {
+     if (!cg2_path) return Status("cg2_path is NULL");
+ 
+@@ -165,32 +188,32 @@ static Status initPrograms(const char* cg2_path) {
+ 
+         // This should trivially pass, since we just attached up above,
+         // but BPF_PROG_QUERY is only implemented on 4.19+ kernels.
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_EGRESS) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_INGRESS) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_SOCK_CREATE) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET4_BIND) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET6_BIND) <= 0) abort();
++        requireAttached(cg_fd, BPF_CGROUP_INET_EGRESS);
++        requireAttached(cg_fd, BPF_CGROUP_INET_INGRESS);
++        requireAttached(cg_fd, BPF_CGROUP_INET_SOCK_CREATE);
++        requireAttached(cg_fd, BPF_CGROUP_INET4_BIND);
++        requireAttached(cg_fd, BPF_CGROUP_INET6_BIND);
+     }
+ 
+     if (isAtLeastKernelVersion(5, 10)) {
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_SOCK_RELEASE) <= 0) abort();
++        requireAttached(cg_fd, BPF_CGROUP_INET_SOCK_RELEASE);
+     }
+ 
+     if (isAtLeastV) {
+         // V requires 4.19+, so technically this 2nd 'if' is not required, but it
+         // doesn't hurt us to try to support AOSP forks that try to support older kernels.
+         if (isAtLeastKernelVersion(4, 19)) {
+-            if (queryProgram(cg_fd, BPF_CGROUP_INET4_CONNECT) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_INET6_CONNECT) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP4_RECVMSG) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP6_RECVMSG) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP4_SENDMSG) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP6_SENDMSG) <= 0) abort();
++            requireAttached(cg_fd, BPF_CGROUP_INET4_CONNECT);
++            requireAttached(cg_fd, BPF_CGROUP_INET6_CONNECT);
++            requireAttached(cg_fd, BPF_CGROUP_UDP4_RECVMSG);
++            requireAttached(cg_fd, BPF_CGROUP_UDP6_RECVMSG);
++            requireAttached(cg_fd, BPF_CGROUP_UDP4_SENDMSG);
++            requireAttached(cg_fd, BPF_CGROUP_UDP6_SENDMSG);
+         }
+ 
+         if (isAtLeastKernelVersion(5, 4)) {
+-            if (queryProgram(cg_fd, BPF_CGROUP_GETSOCKOPT) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_SETSOCKOPT) <= 0) abort();
++            requireAttached(cg_fd, BPF_CGROUP_GETSOCKOPT);
++            requireAttached(cg_fd, BPF_CGROUP_SETSOCKOPT);
+         }
+     }
+ 
+-- 
+2.43.0
+

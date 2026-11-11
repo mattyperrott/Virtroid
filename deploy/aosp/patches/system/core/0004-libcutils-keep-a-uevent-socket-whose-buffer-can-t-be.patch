@@ -1,0 +1,38 @@
+From f777bbbe8d930c8355999cca2b4d36fc18d1ff55 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 04:50:33 +0000
+Subject: [PATCH 4/4] libcutils: keep a uevent socket whose buffer can't be
+ forced up
+
+SO_RCVBUFFORCE needs CAP_NET_ADMIN over the kernel's own network namespace, which a process in a user namespace never has, so ueventd in a Virtroid runtime could not open its socket and aborted; it is critical, so init rebooted. A container's network namespace only receives uevents for its own devices: when forcing is refused (EPERM), keep the socket with the buffer SO_RCVBUF gave. Other failures still fail.
+
+Change-Id: I3811098f3a6e960ab221be122cdb9f4f220fdb50
+---
+ libcutils/uevent.cpp | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/libcutils/uevent.cpp b/libcutils/uevent.cpp
+index f01a479..c828e3c 100644
+--- a/libcutils/uevent.cpp
++++ b/libcutils/uevent.cpp
+@@ -120,8 +120,15 @@ int uevent_create_socket(int buf_sz, bool passcred) {
+      * healthd. */
+     if (buf_sz_readback < 2 * buf_sz) {
+         if (setsockopt(s, SOL_SOCKET, SO_RCVBUFFORCE, &buf_sz, sizeof(buf_sz)) < 0) {
+-            close(s);
+-            return -1;
++            /* Forcing needs CAP_NET_ADMIN over the kernel's own network
++             * namespace, which a process in a user namespace (a Virtroid
++             * runtime's ueventd) never has. Its network namespace only gets
++             * uevents for its own devices, so the buffer SO_RCVBUF gave is
++             * enough: keep the socket. */
++            if (errno != EPERM) {
++                close(s);
++                return -1;
++            }
+         }
+     }
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,98 @@
+From 9b30fcbda3c4c0c66a6043f9958b0179a11e2561 Mon Sep 17 00:00:00 2001
+From: Virtroid <build@virtroid.local>
+Date: Tue, 10 Nov 2026 18:20:10 +0000
+Subject: [PATCH] apexd: bind-mount pre-mounted payloads for namespaced
+ runtimes
+
+In a user namespace the kernel refuses to mount an APEX payload fs from a
+loop/dm block device, so apexd-bootstrap activates no APEX and init reboots
+(reboot_on_failure). When the host wrapper has mounted the payloads outside
+the namespace and bound the tree in at /dev/.vapex, bind-mount the pre-mounted
+payload at the APEX mount point instead of making a block device; a bind of an
+already-mounted source is allowed in a user namespace. The APEX is still
+signature-verified and the mounted image is still checked; only the mount
+mechanism changes. The directory is absent for normal containers, which keep
+the block-device path.
+
+Change-Id: I7434b04133ff60cc1073ae730a03020e479e9cd5
+---
+ apexd/apexd.cpp | 56 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+diff --git a/apexd/apexd.cpp b/apexd/apexd.cpp
+index 3a877ac..2dbec5f 100644
+--- a/apexd/apexd.cpp
++++ b/apexd/apexd.cpp
+@@ -132,6 +132,24 @@ Result<std::vector<std::string>> StagePackagesImpl(
+ 
+ namespace {
+ 
++// Virtroid: when a runtime runs in a user namespace, mounting an APEX
++// payload's loop/dm block device is not permitted by the kernel. If the host
++// pre-mounted the payloads outside the namespace (where it is allowed) and
++// bound the staging tree in, apexd bind-mounts the pre-mounted payload instead
++// of creating a block device. The directory is a fixed path the host wrapper
++// creates only for namespaced containers, so stock behaviour is unchanged
++// when it is absent.
++static constexpr const char* kVirtroidApexPremountDir = "/dev/.vapex";
++std::optional<std::string> GetPremountedApexPayload(const ApexFile& apex) {
++  std::string payload =
++      std::string(kVirtroidApexPremountDir) + "/" + apex.GetManifest().name();
++  auto exists = PathExists(payload);
++  if (!exists.ok() || !*exists || IsEmptyDirectory(payload)) {
++    return std::nullopt;
++  }
++  return payload;
++}
++
+ static constexpr const char* kBuildFingerprintSysprop = "ro.build.fingerprint";
+ 
+ // This should be in UAPI, but it's not :-(
+@@ -450,6 +468,44 @@ Result<MountedApexData> MountPackageImpl(const ApexFile& apex,
+ 
+   const std::string& full_path = apex.GetPath();
+ 
++  // Virtroid: bind-mount a host pre-mounted payload instead of creating a
++  // block device, so activation works inside a user namespace. The APEX is
++  // still signature-verified; only the mount mechanism changes.
++  if (auto premount = GetPremountedApexPayload(apex); premount.has_value()) {
++    auto verity_data = apex.VerifyApexVerity(apex.GetBundledPublicKey());
++    if (!verity_data.ok()) {
++      return Error() << "Failed to verify Apex Verity data for " << full_path
++                     << ": " << verity_data.error();
++    }
++    if (mount(premount->c_str(), mount_point.c_str(), nullptr,
++              MS_BIND, nullptr) != 0) {
++      return ErrnoError() << "Bind-mounting pre-mounted payload failed for "
++                          << full_path;
++    }
++    uint32_t ro_flags =
++        MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOATIME | MS_NODEV | MS_DIRSYNC;
++    if (apex.GetManifest().nocode()) {
++      ro_flags |= MS_NOEXEC;
++    }
++    if (mount(nullptr, mount_point.c_str(), nullptr, ro_flags, nullptr) != 0) {
++      PLOG(WARNING) << "Could not remount " << mount_point
++                    << " read-only; continuing";
++    }
++    if (auto status = VerifyMountedImage(apex, mount_point); !status.ok()) {
++      if (umount2(mount_point.c_str(), UMOUNT_NOFOLLOW) != 0) {
++        PLOG(ERROR) << "Failed to umount " << mount_point;
++      }
++      return Error() << "Failed to verify " << full_path << ": "
++                     << status.error();
++    }
++    scope_guard.Disable();
++    LOG(VERBOSE) << "Bind-mounted pre-mounted payload for " << full_path
++                 << " on " << mount_point;
++    return MountedApexData(apex.GetManifest().version(), /*loop_name=*/"",
++                           apex.GetPath(), mount_point, /*verity_name=*/"",
++                           /*linear_name=*/"");
++  }
++
+   // Step 2. Create a block device for the payload
+ 
+   std::string block_device;
+-- 
+2.43.0
+

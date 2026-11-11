@@ -1,0 +1,32 @@
+From df1a3e0bb2d0ba4bd6b8ced02f65b351f84a6117 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 12:52:37 +0000
+Subject: [PATCH] rootdir: keep the hard memlock limit
+
+init set RLIMIT_MEMLOCK to 64 KiB, hard limit included, and its services raised it again where they need more (keystore2 unlimited, netd 1 GiB). Raising a hard limit needs CAP_SYS_RESOURCE over the host's user namespace, which init in a Virtroid runtime's user namespace doesn't have, so keystore2 aborted at every start. Lower only the soft limit; the zygote gives apps the 64 KiB hard limit they had (frameworks/base 0004).
+
+Change-Id: I01232358e5af8a4cac37d2e9b734c8df1fb7aae6
+---
+ rootdir/init.rc | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/rootdir/init.rc b/rootdir/init.rc
+index 55ccde1..cc03afb 100644
+--- a/rootdir/init.rc
++++ b/rootdir/init.rc
+@@ -46,8 +46,10 @@ on early-init
+     # Allow up to 32K FDs per process
+     setrlimit nofile 32768 32768
+ 
+-    # set RLIMIT_MEMLOCK to 64KB
+-    setrlimit memlock 65536 65536
++    # set RLIMIT_MEMLOCK to 64KB, keeping the hard limit: in a user namespace
++    # (a Virtroid runtime) a lowered one could not be raised again for the
++    # services that need more (keystore2, netd). The zygote lowers it for apps.
++    setrlimit memlock 65536 unlimited
+ 
+     # Set up linker config subdirectories based on mount namespaces
+     mkdir /linkerconfig/bootstrap 0755
+-- 
+2.43.0
+

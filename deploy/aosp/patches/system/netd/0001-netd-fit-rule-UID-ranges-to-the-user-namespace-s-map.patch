@@ -1,0 +1,110 @@
+From e7d8aecb74cd51aaa028abf08f4ec0a502cbe531 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 19:38:16 +0000
+Subject: [PATCH] netd: fit rule UID ranges to the user namespace's map
+
+A FIB rule's UID range is read in the caller's user namespace, and the
+kernel refuses (EINVAL) a range whose first or last UID that namespace
+doesn't map. ConnectivityService gives the default network every app's
+UIDs, 0 to INT32_MAX; a runtime in a user namespace maps 0 to 999999,
+so netd failed to add the explicit, implicit and default network rules
+and apps had no route ("connect: Network is unreachable").
+
+No process or socket in the namespace can have an unmapped UID. A range
+that starts in a mapped extent and runs past its end, into UIDs no other
+extent maps, matches the same sockets when it ends with that extent, so
+modifyIpRule ends it there, for adds and deletes alike. Ranges with both
+ends mapped are unchanged, which outside a user namespace is every range.
+
+Change-Id: I75b6350433a9caa7145c5f29c1fe47977de8a22b
+---
+ server/RouteController.cpp | 58 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+
+diff --git a/server/RouteController.cpp b/server/RouteController.cpp
+index 34d0104..1ee3401 100644
+--- a/server/RouteController.cpp
++++ b/server/RouteController.cpp
+@@ -25,7 +25,9 @@
+ #include <private/android_filesystem_config.h>
+ #include <sys/stat.h>
+ 
++#include <atomic>
+ #include <map>
++#include <vector>
+ 
+ #include "DummyNetwork.h"
+ #include "Fwmark.h"
+@@ -253,6 +255,59 @@ int padInterfaceName(const char* input, char* name, size_t* length, uint16_t* pa
+     return 0;
+ }
+ 
++// The UIDs netd's user namespace maps, each extent as its first and last UID in this namespace
++// (/proc/self/uid_map). Outside a user namespace one extent holds every UID.
++struct UidExtent {
++    uid_t first;
++    uid_t last;
++};
++
++static const std::vector<UidExtent>& mappedUidExtents() {
++    static const std::vector<UidExtent> extents = [] {
++        std::vector<UidExtent> out;
++        std::string map;
++        if (!android::base::ReadFileToString("/proc/self/uid_map", &map)) {
++            ALOGE("cannot read /proc/self/uid_map: %s", strerror(errno));
++            return out;
++        }
++        for (const std::string& line : android::base::Split(map, "\n")) {
++            unsigned long long inside, outside, count;
++            if (sscanf(line.c_str(), "%llu %llu %llu", &inside, &outside, &count) != 3 ||
++                count == 0 || inside + count - 1 >= INVALID_UID) {
++                continue;
++            }
++            out.push_back({static_cast<uid_t>(inside), static_cast<uid_t>(inside + count - 1)});
++        }
++        return out;
++    }();
++    return extents;
++}
++
++// A rule's UID range is in netd's user namespace, and the kernel refuses a range whose first or
++// last UID that namespace doesn't map (EINVAL). Android asks for ranges such as every app's,
++// 0 to INT32_MAX, of which a runtime in a user namespace maps only the start. No process or
++// socket in the namespace has an unmapped UID, so a range that starts in a mapped extent and runs
++// past its end, into UIDs no other extent maps, matches the same sockets ending with the extent:
++// the rule the kernel can hold. Any other range is left as it is, so both ends mapped (always the
++// case outside a user namespace) changes nothing, and the rest still fail as before.
++static void fitUidRangeToNamespace(uid_t* uidStart, uid_t* uidEnd) {
++    const std::vector<UidExtent>& extents = mappedUidExtents();
++    const UidExtent* first = nullptr;
++    for (const UidExtent& e : extents) {
++        if (e.first <= *uidStart && *uidStart <= e.last) first = &e;
++    }
++    if (first == nullptr || *uidEnd <= first->last) return;
++    for (const UidExtent& e : extents) {
++        if (&e != first && e.last > first->last && e.first <= *uidEnd) return;
++    }
++    static std::atomic<bool> logged = false;
++    if (!logged.exchange(true)) {
++        ALOGI("UID range %u-%u ends at %u, the last UID this user namespace maps", *uidStart,
++              *uidEnd, first->last);
++    }
++    *uidEnd = first->last;
++}
++
+ // Adds or removes a routing rule for IPv4 and IPv6.
+ //
+ // + If |table| is non-zero, the rule points at the specified routing table. Otherwise, the table is
+@@ -299,6 +354,9 @@ int padInterfaceName(const char* input, char* name, size_t* length, uint16_t* pa
+     }
+ 
+     bool isUidRule = (uidStart != INVALID_UID);
++    if (isUidRule) {
++        fitUidRangeToNamespace(&uidStart, &uidEnd);
++    }
+ 
+     // Assemble a rule request and put it in an array of iovec structures.
+     fib_rule_hdr rule = {
+-- 
+2.43.0
+

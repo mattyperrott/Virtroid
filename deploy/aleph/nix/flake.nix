@@ -34,14 +34,17 @@
         patches = [ ../kernel-ashmem.patch ];
       };
 
-      # virtnoded and viewercrypt, built from this repository's backend.
+      # virtnoded, viewercrypt and virtroid-runtime-wrapper, built from this
+      # repository's backend.
       pkgsGo = nixpkgs-go.legacyPackages.${system};
       virtroid-node = (pkgsGo.buildGoModule.override { go = pkgsGo.go_1_27; }) {
         pname = "virtroid-node";
         version = self.shortRev or "dirty";
         src = lib.cleanSource ../../../backend;
         vendorHash = "sha256-JlO4ci2IBvgc7/d/fvwp0RjlY/FDYBlu3edgNQBkO40=";
-        subPackages = [ "cmd/virtnoded" "cmd/viewercrypt" ];
+        # virtroid-runtime-wrapper: the OCI runtime dockerd starts userns-1
+        # runtimes through (vm-init.sh, backend/cmd/virtnoded/runtime_userns.go).
+        subPackages = [ "cmd/virtnoded" "cmd/viewercrypt" "cmd/virtroid-runtime-wrapper" ];
         env.CGO_ENABLED = 0;
         ldflags = [ "-s" "-w" ];
         doCheck = false;

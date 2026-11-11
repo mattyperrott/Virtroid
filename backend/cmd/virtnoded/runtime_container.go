@@ -25,6 +25,11 @@ import (
 const (
 	runtimeProfileLabel        = "io.virtroid.container-profile"
 	runtimeProfileUnprivileged = "unprivileged-1"
+	// The image boots in a user namespace through virtroid-runtime-wrapper:
+	// its root is an unprivileged uid on the VM. The VM prepares what Android
+	// can't do itself there: its APEX payloads and BPF programs
+	// (runtime_userns.go).
+	runtimeProfileUserns = "userns-1"
 	// apexd puts each of the image's 40 APEXes on a loop device.
 	runtimeMinLoopDevices = 40
 )
@@ -112,18 +117,21 @@ func (n *nodeAgent) confineRuntime(hostConfig map[string]any, profile string) er
 		procDevicesPath = "/proc/devices"
 	}
 	procDevices, err := os.ReadFile(procDevicesPath)
-	if err != nil && profile == runtimeProfileUnprivileged {
+	if err != nil && (profile == runtimeProfileUnprivileged || profile == runtimeProfileUserns) {
 		return fmt.Errorf("unprivileged runtime: %w", err)
 	}
 	return confineRuntimeHost(hostConfig, profile, devRoot, string(procDevices))
 }
 
 func confineRuntimeHost(hostConfig map[string]any, profile, devRoot, procDevices string) error {
-	if profile != runtimeProfileUnprivileged {
+	if profile != runtimeProfileUnprivileged && profile != runtimeProfileUserns {
 		hostConfig["Privileged"] = true
 		return nil
 	}
-	devices, rules, err := unprivilegedRuntimeDeviceConfig(devRoot, procDevices)
+	userns := profile == runtimeProfileUserns
+	// In a user namespace apexd binds the APEX payloads the VM premounted, so
+	// the runtime gets no loop devices.
+	devices, rules, err := unprivilegedRuntimeDeviceConfig(devRoot, procDevices, !userns)
 	if err != nil {
 		return fmt.Errorf("unprivileged runtime: %w", err)
 	}
@@ -131,6 +139,12 @@ func confineRuntimeHost(hostConfig map[string]any, profile, devRoot, procDevices
 	hostConfig["CapAdd"] = unprivilegedRuntimeCapabilities
 	hostConfig["Devices"] = devices
 	hostConfig["DeviceCgroupRules"] = rules
+	if userns {
+		// The wrapper puts it in a user namespace (Docker doesn't know) and
+		// hands its cgroup over to the namespace's root.
+		hostConfig["Runtime"] = usernsRuntimeName
+		hostConfig["Ulimits"] = usernsRuntimeUlimits()
+	}
 	hostConfig["SecurityOpt"] = []string{
 		"seccomp=" + runtimeSeccompProfile(),
 		// The container's own cgroup subtree, which Android's init splits
@@ -144,10 +158,12 @@ var loopDevicePattern = regexp.MustCompile(`^loop[0-9]+$`)
 
 // unprivilegedRuntimeDeviceConfig lists the devices (from devRoot, the VM's
 // /dev) and the binder cgroup rule (its major from procDevices, the VM's
-// /proc/devices). Every loop device goes in: apexd takes whichever are free,
-// so a runtime can see the ones other runtimes' APEXes sit on, which hold
-// only the image's own system files.
-func unprivilegedRuntimeDeviceConfig(devRoot, procDevices string) ([]map[string]string, []string, error) {
+// /proc/devices). With withLoops every loop device goes in: apexd takes
+// whichever are free, so a runtime can see the ones other runtimes' APEXes
+// sit on, which hold only the image's own system files. Without (a runtime in
+// a user namespace, whose APEXes the VM premounts) neither they nor
+// /dev/loop-control do.
+func unprivilegedRuntimeDeviceConfig(devRoot, procDevices string, withLoops bool) ([]map[string]string, []string, error) {
 	var devices []map[string]string
 	add := func(path, permissions string) {
 		devices = append(devices, map[string]string{
@@ -155,6 +171,9 @@ func unprivilegedRuntimeDeviceConfig(devRoot, procDevices string) ([]map[string]
 		})
 	}
 	for _, device := range unprivilegedRuntimeDevices {
+		if !withLoops && device.path == "/dev/loop-control" {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(devRoot, strings.TrimPrefix(device.path, "/dev/"))); err != nil {
 			if device.optional && errors.Is(err, os.ErrNotExist) {
 				continue
@@ -174,12 +193,14 @@ func unprivilegedRuntimeDeviceConfig(devRoot, procDevices string) ([]map[string]
 			loops = append(loops, number)
 		}
 	}
-	if len(loops) < runtimeMinLoopDevices {
-		return nil, nil, fmt.Errorf("%d loop devices, Android needs %d", len(loops), runtimeMinLoopDevices)
-	}
-	sort.Ints(loops)
-	for _, number := range loops {
-		add(fmt.Sprintf("/dev/loop%d", number), "rwm")
+	if withLoops {
+		if len(loops) < runtimeMinLoopDevices {
+			return nil, nil, fmt.Errorf("%d loop devices, Android needs %d", len(loops), runtimeMinLoopDevices)
+		}
+		sort.Ints(loops)
+		for _, number := range loops {
+			add(fmt.Sprintf("/dev/loop%d", number), "rwm")
+		}
 	}
 	major, err := characterDeviceMajor(procDevices, "binder")
 	if err != nil {

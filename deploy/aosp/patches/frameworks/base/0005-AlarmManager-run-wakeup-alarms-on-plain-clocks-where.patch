@@ -1,0 +1,68 @@
+From 748808928ca4beafa92d5bbceb81af7eaf156cf3 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 17:34:27 +0000
+Subject: [PATCH] AlarmManager: run wakeup alarms on plain clocks where alarm
+ clocks are refused
+
+In a user namespace (a Virtroid runtime) timerfd_create() refuses CLOCK_REALTIME_ALARM and CLOCK_BOOTTIME_ALARM: they need CAP_WAKE_ALARM in the initial namespace. AlarmManagerService's native init then failed, and its fallback for a missing alarm driver crashed system_server at the first listener alarm (a NullPointerException on the alarm's absent PendingIntent).
+
+When the kernel refuses an alarm clock with EPERM, use the same clock without the wakeup: the realtime and boottime bases are unchanged, and nothing in such a runtime suspends.
+
+Change-Id: I4291642b678140e918c062488c62a9efcb3026de
+---
+ ...droid_server_alarm_AlarmManagerService.cpp | 32 ++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp b/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp
+index 3247da766..34ae6c299 100644
+--- a/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp
++++ b/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp
+@@ -185,6 +185,36 @@ static void log_timerfd_create_error(clockid_t id)
+     ALOGE("timerfd_create(%u) failed: %s", id, strerror(errno));
+ }
+ 
++// Virtroid: in a user namespace the kernel refuses the alarm clocks
++// (timerfd_create() wants CAP_WAKE_ALARM in the initial namespace). Nothing
++// there suspends, so the wakeup alarms run on the same clocks without waking
++// anything: without timers AlarmManager falls back to a path that crashed
++// system_server at the first listener alarm.
++static int create_timerfd(clockid_t id)
++{
++    int fd = timerfd_create(id, TFD_NONBLOCK);
++    if (fd >= 0 || errno != EPERM) {
++        return fd;
++    }
++    clockid_t plain;
++    switch (id) {
++    case CLOCK_REALTIME_ALARM:
++        plain = CLOCK_REALTIME;
++        break;
++    case CLOCK_BOOTTIME_ALARM:
++        plain = CLOCK_BOOTTIME;
++        break;
++    default:
++        return fd;
++    }
++    ALOGW("timerfd_create(%u) not permitted; using clock %u, which wakes nothing", id, plain);
++    fd = timerfd_create(plain, TFD_NONBLOCK);
++    if (fd < 0) {
++        errno = EPERM;
++    }
++    return fd;
++}
++
+ static jlong android_server_alarm_AlarmManagerService_init(JNIEnv*, jobject)
+ {
+     int epollfd;
+@@ -197,7 +227,7 @@ static jlong android_server_alarm_AlarmManagerService_init(JNIEnv*, jobject)
+     }
+ 
+     for (size_t i = 0; i < fds.size(); i++) {
+-        fds[i] = timerfd_create(android_alarm_to_clockid[i], TFD_NONBLOCK);
++        fds[i] = create_timerfd(android_alarm_to_clockid[i]);
+         if (fds[i] < 0) {
+             log_timerfd_create_error(android_alarm_to_clockid[i]);
+             close(epollfd);
+-- 
+2.43.0
+

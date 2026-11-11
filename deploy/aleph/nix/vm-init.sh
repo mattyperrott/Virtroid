@@ -55,6 +55,11 @@ setting() { # setting KEY VALUE
 setting kernel.unprivileged_bpf_disabled 1
 setting net.ipv4.ip_forward 1
 setting kernel.kptr_restrict 2
+# The most mmap randomisation x86-64 has (also the kernel's default,
+# CONFIG_ARCH_MMAP_RND_BITS). Android's init raises it itself, but not in a
+# user namespace, where it leaves it to the VM (deploy/aosp/patches/system/core
+# 0003). The kernel has no 32-bit emulation, so no mmap_rnd_compat_bits.
+setting vm.mmap_rnd_bits 32
 setting kernel.dmesg_restrict 1
 setting kernel.yama.ptrace_scope 1
 # hardened_malloc's guard pages make far more mappings than the default
@@ -173,7 +178,14 @@ chmod 0700 /srv/virtroid/tor /run/tor
 # --- Docker, the runtime image, and the node ------------------------------------
 # Docker's store starts empty each boot (the disk is new), so the image and
 # layers that run are always the ones loaded from the measured root below.
+# Runtimes whose image says userns-1 start through the wrapper runtime, which
+# puts each in a user namespace (its ids in virtroid-runtime's range in
+# /etc/subuid, its rootfs id-mapped) and sets up what Android can't do there
+# itself (backend/cmd/virtroid-runtime-wrapper). Docker doesn't know of the
+# namespace, so its image store keeps the image's own owners and older images
+# run as before (runc).
 dockerd --data-root /srv/virtroid/docker --exec-root /run/docker --pidfile /run/docker.pid \
+  --add-runtime virtroid-userns=/bin/virtroid-runtime-wrapper \
   --log-level warn >/var/log/dockerd.log 2>&1 &
 dockerd_pid=$!
 for _ in $(seq 1 60); do

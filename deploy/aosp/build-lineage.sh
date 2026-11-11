@@ -285,12 +285,14 @@ stage_package() {
   # image: deploy/aleph/build-runtime-image.sh picks files out by name.
   local entries=()
   mapfile -t entries < <(sudo ls -A "${mnt}/system" | grep -vx vendor)
-  # The label tells virtnoded the image boots in its unprivileged container
-  # (backend/cmd/virtnoded/runtime_container.go); stock ReDroid needs
-  # --privileged.
+  # The label tells virtnoded how the image boots
+  # (backend/cmd/virtnoded/runtime_container.go): userns-1 in a user
+  # namespace, through virtroid-runtime-wrapper, with the APEX payloads and BPF
+  # programs prepared by the VM (the system/apex, system/core, frameworks/base
+  # and Connectivity patches make that work). Stock ReDroid needs --privileged.
   sudo tar --xattrs -c -C "${mnt}" vendor -C "${mnt}/system" "${entries[@]}" |
     sudo docker import -c 'ENTRYPOINT ["/init", "androidboot.hardware=redroid"]' \
-      -c 'LABEL io.virtroid.container-profile=unprivileged-1' - "${ref}" >/dev/null
+      -c 'LABEL io.virtroid.container-profile=userns-1' - "${ref}" >/dev/null
   unmount
   rmdir "${mnt}/system" "${mnt}/vendor" "${mnt}"
   sudo docker save "${ref}" -o "${out}/saved.tar"

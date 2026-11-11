@@ -1,0 +1,120 @@
+From 6ec5291eb9442df32c7559238cef39343a060d66 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Wed, 11 Nov 2026 17:34:27 +0000
+Subject: [PATCH] apexd: restore pre-mounted APEXes when it starts again
+
+apexd is a lazy service: when it starts after boot (system_server restarted, say) it rebuilds its list of active APEXes from /proc/mounts, following each mount's loop or dm device to its APEX file. A payload the host pre-mounted for a runtime in a user namespace (0003) is bound from /dev/.vapex/<name>; its device is one of the host's, whose backing file is no file in the runtime, so apexd restored no APEX at all and PackageManager found none of their apps ("There must be exactly one permissions manager; found []"), crashing system_server at every start.
+
+A mount at /apex/<name>@<version> that is the same directory as /dev/.vapex/<name> is now restored as the package's pre-installed APEX of that version, as activation records it. The premount directory moves to apex_constants.h for this.
+
+Change-Id: I4206f04a1c0a20556ebdea8ef1692f2657395ecc
+---
+ apexd/apex_constants.h  |  3 +++
+ apexd/apex_database.cpp | 39 ++++++++++++++++++++++++++++++++++++---
+ apexd/apexd.cpp         |  1 -
+ 3 files changed, 39 insertions(+), 4 deletions(-)
+
+diff --git a/apexd/apex_constants.h b/apexd/apex_constants.h
+index 4cda34c..cb7662a 100644
+--- a/apexd/apex_constants.h
++++ b/apexd/apex_constants.h
+@@ -28,6 +28,9 @@ namespace apex {
+ enum class ApexPartition { System, SystemExt, Product, Vendor, Odm };
+ 
+ static constexpr const char* kApexDataDir = "/data/apex";
++// Virtroid: where the host binds the APEX payloads it pre-mounted for a
++// runtime in a user namespace (apexd.cpp, MountPackageImpl).
++static constexpr const char* kVirtroidApexPremountDir = "/dev/.vapex";
+ static constexpr const char* kActiveApexPackagesDataDir = "/data/apex/active";
+ static constexpr const char* kApexBackupDir = "/data/apex/backup";
+ static constexpr const char* kApexDecompressedDir = "/data/apex/decompressed";
+diff --git a/apexd/apex_database.cpp b/apexd/apex_database.cpp
+index 814ae7c..04ad2f3 100644
+--- a/apexd/apex_database.cpp
++++ b/apexd/apex_database.cpp
+@@ -23,6 +23,8 @@
+ #include <android-base/strings.h>
+ #include <libdm/dm.h>
+ 
++#include <sys/stat.h>
++
+ #include <filesystem>
+ #include <fstream>
+ #include <string>
+@@ -31,6 +33,7 @@
+ 
+ #include "apex_constants.h"
+ #include "apex_file.h"
++#include "apex_file_repository.h"
+ #include "apexd_utils.h"
+ #include "string_log.h"
+ 
+@@ -242,6 +245,33 @@ Result<MountedApexData> ResolveMountInfo(const BlockDevice& block,
+   return result;
+ }
+ 
++// Virtroid: an APEX whose payload the host pre-mounted is a bind of
++// kVirtroidApexPremountDir/<name> (MountPackageImpl). Its block device is one
++// of the host's, whose backing file is no file here: the APEX is the
++// package's pre-installed one, as activation recorded it. Without this a
++// lazily started apexd restored no package, and PackageManager, restarted
++// with system_server, found none of the APEXes' apps.
++std::optional<MountedApexData> ResolvePremountedMount(
++    const std::string& package, int64_t version,
++    const std::string& mount_point) {
++  const std::string payload =
++      std::string(kVirtroidApexPremountDir) + "/" + package;
++  struct stat bound, premounted;
++  if (stat(mount_point.c_str(), &bound) != 0 ||
++      stat(payload.c_str(), &premounted) != 0 ||
++      bound.st_dev != premounted.st_dev || bound.st_ino != premounted.st_ino) {
++    return std::nullopt;
++  }
++  auto apex = ApexFileRepository::GetInstance().GetPreInstalledApex(package);
++  if (!apex.has_value() || apex->get().GetManifest().version() != version) {
++    LOG(WARNING) << mount_point << " is bound from " << payload
++                 << " but no pre-installed APEX of that version is known";
++    return std::nullopt;
++  }
++  return MountedApexData(version, /*loop_name=*/"", apex->get().GetPath(),
++                         mount_point, /*verity_name=*/"", /*linear_name=*/"");
++}
++
+ }  // namespace
+ 
+ // Parses active APEX mounts from /proc/mounts and populates the DB.
+@@ -282,13 +312,16 @@ void MountedApexDatabase::PopulateFromMounts()
+     if (IsTempMountPoint(mount_point)) {
+       continue;
+     }
+-    auto mount_data = ResolveMountInfo(BlockDevice(block), mount_point);
++    auto [package, version] = ParseMountPoint(mount_point);
++    std::optional<MountedApexData> premounted =
++        ResolvePremountedMount(package, version, mount_point);
++    auto mount_data = premounted.has_value()
++                          ? Result<MountedApexData>(std::move(*premounted))
++                          : ResolveMountInfo(BlockDevice(block), mount_point);
+     if (!mount_data.ok()) {
+       LOG(WARNING) << "Can't resolve mount info " << mount_data.error();
+       continue;
+     }
+-
+-    auto [package, version] = ParseMountPoint(mount_point);
+     mount_data->version = version;
+     LOG(INFO) << "Found " << mount_point << " backed by"
+               << (mount_data->deleted ? " deleted " : " ") << "file "
+diff --git a/apexd/apexd.cpp b/apexd/apexd.cpp
+index d0e0c3b..650ebba 100644
+--- a/apexd/apexd.cpp
++++ b/apexd/apexd.cpp
+@@ -139,7 +139,6 @@ namespace {
+ // of creating a block device. The directory is a fixed path the host wrapper
+ // creates only for namespaced containers, so stock behaviour is unchanged
+ // when it is absent.
+-static constexpr const char* kVirtroidApexPremountDir = "/dev/.vapex";
+ std::optional<std::string> GetPremountedApexPayload(const ApexFile& apex) {
+   std::string payload =
+       std::string(kVirtroidApexPremountDir) + "/" + apex.GetManifest().name();
+-- 
+2.43.0
+

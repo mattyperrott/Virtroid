@@ -322,9 +322,11 @@ gets every device of the VM, including its disks and the device-mapper
 volumes (the encrypted data volume all its runtimes share among them), a
 writable sysfs and `/proc/sys`, and every capability, including setting
 the VM's clock: root in Android is root on the VM. The image's label
-`io.virtroid.container-profile=unprivileged-1` (set by `build-lineage.sh`'s
-package stage) tells virtnoded it boots without that, and the node then
-gives its container (`backend/cmd/virtnoded/runtime_container.go`):
+`io.virtroid.container-profile` (set by `build-lineage.sh`'s package stage)
+tells virtnoded how it boots: `unprivileged-1` without that, and
+`userns-1` (our image since build 43) the same way inside a user namespace
+of its own ([User namespaces](#user-namespaces)). For both the node gives
+its container (`backend/cmd/virtnoded/runtime_container.go`):
 
 - **Capabilities:** what the image's services declare (init gives each its
   own) and init's own for mounts, devices and cgroups. Not `SYS_MODULE`,
@@ -362,8 +364,9 @@ runtimes the same way (a node test keeps the two in step) and checks that
 the runtime can't open the VM's disks or volumes, read its kernel log, set
 its clock, or write sysfs.
 
-**What it doesn't stop.** The container keeps `CAP_SYS_ADMIN` in the VM's
-own user namespace, and SELinux is off, so a process that gets Android's
+**What it doesn't stop, without a user namespace.** An `unprivileged-1`
+container keeps `CAP_SYS_ADMIN` in the VM's own user namespace, and SELinux
+is off, so a process that gets Android's
 root (an app exploiting a system service, say) can still mount a fresh
 sysfs or procfs and change the VM's settings: most sysctls, or unbinding
 the VM's disks from their driver. The kernel log, the disks themselves, the
@@ -373,8 +376,8 @@ it), unprivileged BPF (off until the VM reboots) and the kernel's lockdown
 (on from boot), which keeps everyone,
 the VM's root included, from reading or writing kernel memory or a
 device's PCI configuration (`deploy/aleph/kernel-virtroid.fragment`).
-Closing the rest means a user namespace for each runtime: [User
-namespaces](#user-namespaces).
+A `userns-1` runtime's root holds its capabilities only in its own user
+namespace: [User namespaces](#user-namespaces).
 
 ## Memory allocator and C library
 
@@ -415,28 +418,58 @@ each) and that none fell back to Scudo.
 
 ### User namespaces
 
-The next milestone: each runtime's root maps to an unprivileged range of
-the VM's users, so its capabilities cover only its own namespaces. What it
-takes:
+Built 2026-11-12 (VM image 34, a candidate). A `userns-1` image's runtime
+runs in a user namespace that maps its ids 0 to 999999 to the VM's 1000000
+to 1999999 (the VM's `virtroid-runtime` user in `/etc/subuid` and
+`/etc/subgid`), so its root's capabilities cover only its own namespaces.
+Docker starts it through a runtime of our own, `virtroid-userns`
+(`backend/cmd/virtroid-runtime-wrapper`, which then runs runc), which the
+node names with annotations for the user namespace, the image's APEX set
+and the runtime's BPF filesystem (`backend/cmd/virtnoded/runtime_userns.go`).
+Docker itself maps no ids (no `userns-remap`), so other containers and older
+images are unchanged. Every runtime on a VM gets the same range: they are
+all the one account's.
 
-1. **APEXes.** apexd mounts each APEX's ext4 image from a loop device,
-   which a user namespace can't. Have the node mount the image's APEXes
-   once per VM, read-only, and patch apexd to bind those mounts instead
-   (which also frees the 40 loop devices each runtime holds).
-2. **netd's BPF programs.** Loading them needs `CAP_BPF` and `NET_ADMIN`
-   outside the namespace. Either the node loads them for the runtime, or
-   BPF tokens (Linux 6.9 and later) delegate a bpffs; to be tried.
-3. **One range per runtime.** Docker maps every container through one
-   daemon-wide range (`userns-remap`), so all runtimes' roots would be the
-   same VM user and could reach each other's files. Distinct ranges mean
-   starting runtimes through containerd or runc directly, or idmapped
-   mounts of each runtime's data; to be chosen.
-4. **Data ownership.** Existing runtimes' files are owned by the VM's real
-   ids: map them at the first start (idmapped mounts) or chown them once.
-5. **Device nodes and mounts** Android makes itself (`mknod`, configfs):
-   check each fails harmlessly, as most already do in the container.
-6. **The check:** `boot-test.sh` with the runtime unable to mount sysfs or
-   procfs, write any sysctl, or see another runtime's files.
+- **Rootfs.** An overlay mount can't be id-mapped, but its layers can. On
+  create the wrapper replaces Docker's overlay with one of the same layers,
+  each an id-mapped clone, at the same path, so no two overlays ever share
+  the writable layer, and gives runc a bind of it, since the namespace's
+  root can't pass through Docker's directories. Files keep their owners on
+  disk. If Docker keeps the overlay mounted across a stop, the next start
+  binds it again.
+- **Data and binds.** `/data` and every read-only bind are id-mapped too, so
+  their files read inside with the ids they have on disk, and a runtime's
+  data looks on disk as an unprivileged runtime's does: either boots on the
+  other's. Docker can't copy into an id-mapped rootfs, so the node writes
+  imported files into the runtime's data directory itself
+  (`backend/cmd/virtnoded/runtime_data_file.go`).
+- **APEXes.** apexd can't mount loop devices in a user namespace. The node
+  copies each image's pre-installed APEX files once, through a container
+  that never starts, and mounts them read-only
+  (`virtroid-runtime-wrapper premount-image`); the wrapper binds that set at
+  `/dev/.vapex`, and apexd binds from it (`patches/system/apex` 0003 to
+  0005). These runtimes get no loop devices.
+- **BPF.** Before each start, a short loading pass of the image, outside any
+  user namespace and with no network or data, fills a BPF filesystem for the
+  runtime; the wrapper binds it at `/sys/fs/bpf` and attaches netd's cgroup
+  programs, and NetBpfLoad and netd accept that
+  (`patches/packages/modules/Connectivity` 0004 and 0005).
+- **Android's other changes.** init leaves ASLR entropy to the VM, which
+  sets it (`patches/system/core` 0003); libcutils keeps a uevent socket whose
+  buffer it can't raise (0004); binderfs is mounted without global binder
+  stats (0005); the hard memlock limit is kept (0006); apps get stock
+  memlock and rtprio limits (`patches/frameworks/base` 0004); AlarmManager
+  runs wakeup alarms on plain clocks where the alarm clocks are refused
+  (0005); netd ends a rule's UID range where the namespace's map ends
+  (`patches/system/netd` 0001). The node gives these runtimes unlimited
+  memlock, nice 40 and rtprio 10.
+- **Checks.** `boot-test.sh` starts its runtimes the same way and also fails
+  if system_server doesn't stay up or if the kernel logs an overlay mounted
+  on an upper directory another still uses. Image 34 passed the boot,
+  upgrade (on build 39's data) and initrd tests.
+
+Still open: a range of its own for each runtime, should a VM ever hold more
+than one account's.
 
 ## Milestones
 
@@ -548,7 +581,8 @@ takes:
    library hardening, unprivileged BPF locked off and the VM kernel's
    lockdown: build 41 (2026-11-10: boot, upgrade and initrd tests passed),
    see [Memory allocator and C library](#memory-allocator-and-c-library).
-   User namespaces next.
+   User namespaces: build 46 in VM image 34 (2026-11-12: boot, upgrade and
+   initrd tests passed), see [User namespaces](#user-namespaces).
 7. **Release.** Done: VM image 19 (2026-10-28). Still to write: a monthly
    rebuild runbook.
 
