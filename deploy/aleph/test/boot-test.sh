@@ -120,7 +120,7 @@ fail() {
   echo "boot-test: debug shell on ttyS1"
   while true; do \$B sh </dev/ttyS1 >/dev/ttyS1 2>&1; done
 }
-for m in dm-mod dm-bufio dm-verity dm-crypt; do \$B insmod /lib/modules/\$m.ko || fail "insmod \$m"; done
+\$B grep -qw device-mapper /proc/misc || fail "no device-mapper in the kernel"
 \$B mkdir -p /dev/mapper /run/cryptsetup
 \$B mknod /dev/mapper/control c 10 236 2>/dev/null
 \$B ip link set lo up
@@ -241,7 +241,7 @@ echo "boot-test: starting a runtime container as virtnoded does (limits, mounts,
 # seccomp profile; any other image runs --privileged.
 runtime_caps="CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER FSETID KILL SETGID SETUID SETPCAP SETFCAP NET_BIND_SERVICE NET_RAW NET_ADMIN SYS_CHROOT MKNOD AUDIT_WRITE SYS_ADMIN SYS_RESOURCE SYS_NICE SYS_PTRACE IPC_LOCK SYS_BOOT WAKE_ALARM BLOCK_SUSPEND BPF PERFMON"
 C /bin/bash -c 'cat > /run/runtime-seccomp.json' <<'SECCOMP'
-{"architectures":["SCMP_ARCH_X86_64","SCMP_ARCH_X86","SCMP_ARCH_X32"],"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"action":"SCMP_ACT_ERRNO","args":[{"index":1,"op":"SCMP_CMP_MASKED_EQ","value":4294967295,"valueTwo":2147768445}],"errnoRet":1,"names":["ioctl"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["open_by_handle_at"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["kexec_load","kexec_file_load","init_module","finit_module","delete_module"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["settimeofday","clock_settime","clock_settime64","clock_adjtime","clock_adjtime64","stime"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["swapon","swapoff","acct","iopl","ioperm","syslog"]}]}
+{"architectures":["SCMP_ARCH_X86_64","SCMP_ARCH_X86","SCMP_ARCH_X32"],"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"action":"SCMP_ACT_ERRNO","args":[{"index":1,"op":"SCMP_CMP_MASKED_EQ","value":4294967295,"valueTwo":2147768445}],"errnoRet":1,"names":["ioctl"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["open_by_handle_at"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["kexec_load","kexec_file_load","init_module","finit_module","delete_module"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["settimeofday","clock_settime","clock_settime64","clock_adjtime","clock_adjtime64","stime"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["swapon","swapoff","acct","iopl","ioperm","syslog"]},{"action":"SCMP_ACT_ERRNO","errnoRet":1,"names":["perf_event_open"]}]}
 SECCOMP
 # confine IMAGE: virtnoded's docker run options for a runtime of IMAGE,
 # quoted for eval.
@@ -319,6 +319,46 @@ if [ "\$smoke_confinement" != --privileged ]; then
   reach=\$(C /bin/docker exec smoke /system/bin/sh -c 'for d in /dev/vd? /dev/dm-? /dev/block/vd? /dev/block/dm-? /dev/mapper/control; do [ -e \$d ] && toybox head -c 1 \$d >/dev/null 2>&1 && echo \$d; done; toybox timeout 3 toybox head -c 1 /dev/kmsg >/dev/null 2>&1 && echo kernel-log; date -s "\$(date "+%Y-%m-%d %H:%M:%S")" >/dev/null 2>&1 && echo clock; grep -q " /sys sysfs rw" /proc/mounts && echo sysfs' 2>/dev/null | \$B tr '\n' ' ')
   echo "boot-test: unprivileged runtime reaches: \${reach:-none of the VM}"
   [ -z "\$reach" ] || fail "an unprivileged runtime reaches the VM: \$reach"
+fi
+# The VM kernel's hardening (kernel-virtroid.fragment, vm-init.sh): lockdown
+# from boot, and unprivileged BPF off until reboot, which Android's loader
+# accepts (deploy/aosp/patches/packages/modules/Connectivity 0003).
+\$B grep -q " /sys/kernel/security " /proc/mounts || \$B mount -t securityfs securityfs /sys/kernel/security
+lockdown=\$(\$B cat /sys/kernel/security/lockdown 2>&1)
+echo "boot-test: kernel lockdown: \$lockdown"
+[ "\$lockdown" = "none integrity [confidentiality]" ] || fail "the kernel is not locked down"
+# An upgrade test from an image whose loader insists on 0 unlocks it through
+# BOOT_TEST_SED; that is said, and nothing else may differ.
+bpf=\$(C /bin/cat /proc/sys/kernel/unprivileged_bpf_disabled)
+if C /bin/grep -qx "setting kernel.unprivileged_bpf_disabled 1" /sbin/init; then
+  [ "\$bpf" = 1 ] || fail "unprivileged BPF is not locked off"
+else
+  echo "boot-test: unprivileged BPF left at \$bpf for this test (BOOT_TEST_SED)"
+fi
+# NetBpfLoad logs to the kernel log, netd to logcat (either may have rotated
+# out by now: Android booting with the lock on is what proves they took it).
+seen=""
+\$B dmesg | \$B grep -q "NetBpfLoad: unprivileged BPF is locked off by the host" && seen="NetBpfLoad"
+C /bin/docker exec smoke /system/bin/logcat -d -s NetdUpdatable 2>/dev/null | \$B grep -q "unprivileged BPF is locked off by the host" && seen="\$seen netd"
+echo "boot-test: unprivileged BPF locked off, as logged by: \${seen:-neither}"
+# netd hosts the DNS resolver, so it creates no BPF maps and loads no programs:
+# neither CAP_BPF (39) nor CAP_SYS_ADMIN (21), either of which would allow it.
+netd_caps=\$(C /bin/docker exec smoke /system/bin/sh -c 'grep CapEff /proc/\$(pidof -s netd)/status' 2>/dev/null | \$B awk '{print \$2}')
+echo "boot-test: netd's effective capabilities: \${netd_caps:-none found}"
+[ -n "\$netd_caps" ] || fail "netd is not running"
+[ "\$(( 0x\$netd_caps & ((1 << 39) | (1 << 21)) ))" = 0 ] || fail "netd can create BPF maps"
+# hardened_malloc (deploy/aosp/patches/bionic): every 64-bit process reserves
+# its size-class regions up front, about 1.5 TiB of address space where Scudo
+# reserves a few GiB, and none may have fallen back to Scudo.
+if C /bin/docker exec smoke /system/bin/sh -c 'grep -q "instead of hardened_malloc" /system/lib64/libc.so' 2>/dev/null; then
+  sizes=\$(C /bin/docker exec smoke /system/bin/sh -c 'for p in system_server surfaceflinger zygote64 netd com.android.systemui; do echo "\$p \$(grep VmSize /proc/\$(pidof -s \$p)/status | toybox tr -dc 0-9)"; done' 2>/dev/null)
+  echo "\$sizes" | \$B sed 's/^/boot-test: hardened_malloc: VmSize kB of /'
+  small=\$(echo "\$sizes" | \$B awk '\$2 < 1073741824 { print \$1 }' | \$B tr '\n' ' ')
+  [ -z "\$small" ] || fail "processes without hardened_malloc's reservations: \$small"
+  scudo=\$(C /bin/docker exec smoke /system/bin/logcat -d 2>/dev/null | \$B grep -c "instead of hardened_malloc")
+  [ "\${scudo:-0}" = 0 ] || fail "\$scudo processes fell back to Scudo"
+else
+  echo "boot-test: hardened_malloc: not in this image"
 fi
 # An image that offers arm64 must be able to run it: ARM-only apps (SimpleX
 # ships no x86_64 build) load through the native bridge, and ARM executables

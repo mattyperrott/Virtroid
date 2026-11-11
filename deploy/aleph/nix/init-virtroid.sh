@@ -26,9 +26,8 @@ fatal() {
 owner=$(/bin/busybox sed -n 's/.*\bowner=\(0x[0-9a-fA-F]*\).*/\1/p' /proc/cmdline)
 [ -n "$owner" ] || fatal "booted without owner=0x... on the cmdline"
 
-for module in dm-mod dm-bufio dm-verity dm-crypt; do
-    /bin/busybox insmod "/lib/modules/${module}.ko" 2>&1 || fatal "cannot load ${module}"
-done
+# Device-mapper is built into the kernel, which loads no modules.
+/bin/busybox grep -qw device-mapper /proc/misc || fatal "the kernel has no device-mapper"
 /bin/busybox mkdir -p /dev/mapper /run/cryptsetup
 /bin/busybox mknod /dev/mapper/control c 10 236 2>/dev/null
 

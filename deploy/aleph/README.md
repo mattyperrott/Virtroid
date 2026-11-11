@@ -39,8 +39,9 @@ accepts the measurement has checked all of it:
   reproducible byte for byte ([Build host](../aosp/README.md#build-host)).
 
 Writable state lives only in memory and on the VM's own data disk, which the
-VM encrypts with a key only it and the provisioner hold. Once booted, the VM
-loads no further kernel modules.
+VM encrypts with a key only it and the provisioner hold. The VM's kernel has
+device-mapper built in and can't load modules at all, so its initrd
+(`nix/initrd.nix`, adapted from Aleph's) carries none.
 
 ## How a VM comes up
 
@@ -295,9 +296,13 @@ limit per address doesn't apply. So free trials cost at most
   on Sia instead ([`deploy/vps/indexd.md`](../vps/indexd.md)): a stopped
   runtime then holds no VM, and its next start restores it on whichever VM
   the account gets.
-- The stock ReDroid 14 image turns unprivileged BPF on: its bpfloader sets
-  `kernel.unprivileged_bpf_disabled` to 0, and Android reboots if it cannot.
-  In a runtime VM that reaches only the one account's VM; on the VPS it is
-  host-wide today. The custom AOSP image is to drop this.
+- Unprivileged BPF is off until the VM reboots
+  (`kernel.unprivileged_bpf_disabled` 1, set by `vm-init.sh`), and the kernel
+  is locked down in confidentiality mode from boot
+  (`kernel-virtroid.fragment`). Our Android image's BPF loader and netd
+  accept the lock. Stock ReDroid's sets the value to 0 and reboots Android if it can't,
+  so stock images no longer boot in a runtime VM. The VPS is still set up
+  for stock images, so there unprivileged BPF stays on host-wide
+  (`deploy/vps/sysctl-virtroid-hardening.conf`).
 - Tetragon (intrusion detection) and the custom AOSP image are next; the first
   build uses the stock ReDroid 14 image the VPS runs today.

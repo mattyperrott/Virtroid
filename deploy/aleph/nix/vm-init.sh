@@ -36,14 +36,36 @@ for device in binder hwbinder vndbinder; do
   [ -e "/dev/binderfs/${device}" ] || die "binderfs has no ${device} device"
 done
 
-# The initrd loaded the only modules this kernel builds (dm-*); nothing may
-# load another one for the rest of this boot.
-echo 1 > /proc/sys/kernel/modules_disabled || die "cannot lock module loading"
-# unprivileged_bpf_disabled starts at 2 (off, but changeable), not 1 (off until
-# reboot): the stock ReDroid 14 image's bpfloader sets it to 0, and Android
-# reboots when it cannot. The custom AOSP image is to drop that requirement.
-sysctl -q -w net.ipv4.ip_forward=1 kernel.kptr_restrict=2 kernel.dmesg_restrict=1 \
-  kernel.unprivileged_bpf_disabled=2 kernel.yama.ptrace_scope=2 2>/dev/null || true
+# Kernel settings, shared by every runtime. Each is read back, and the boot
+# stops if one didn't take: a missing kernel option once left
+# kernel.yama.ptrace_scope unset without a word. The one that matters most
+# takes a value only a reboot undoes.
+setting() { # setting KEY VALUE
+  local path="/proc/sys/${1//.//}"
+  echo "$2" > "$path" 2>/dev/null
+  [ "$(cat "$path" 2>/dev/null)" = "$2" ] || die "cannot set $1 to $2"
+}
+# No code reaches the kernel through a module: it is built without module
+# loading (kernel-virtroid.fragment), which no setting can turn back on.
+[ ! -e /proc/modules ] || die "this kernel can load modules"
+# Unprivileged processes can't create BPF maps or load programs until reboot.
+# Our Android's loader accepts this (deploy/aosp/patches/packages/modules/
+# Connectivity 0003), and its unprivileged processes only use the maps it
+# pins. Stock ReDroid's insists on 0 and can't boot here.
+setting kernel.unprivileged_bpf_disabled 1
+setting net.ipv4.ip_forward 1
+setting kernel.kptr_restrict 2
+setting kernel.dmesg_restrict 1
+setting kernel.yama.ptrace_scope 1
+# hardened_malloc's guard pages make far more mappings than the default
+# 65530 allows (deploy/aosp/patches/bionic).
+setting vm.max_map_count 1048576
+# No following a symlink or hard link someone else planted, or writing a FIFO
+# or file someone else made, in a shared sticky directory.
+setting fs.protected_symlinks 1
+setting fs.protected_hardlinks 1
+setting fs.protected_fifos 2
+setting fs.protected_regular 2
 
 # --- Secrets from the provisioner, held in memory only ------------------------
 read_secret() {

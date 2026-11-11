@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 10 Nov 2026 02:18:34 +0000
+Subject: [PATCH] Accept unprivileged BPF locked off by the host
+
+NetBpfLoad wants kernel.unprivileged_bpf_disabled at 0 and fails, which reboots Android, when it can't write it. From 25Q2 netd also checks at start that it can create a map, which takes CAP_BPF when that setting isn't 0, and aborts if it can't. A host that runs Android in a container can lock the setting at 1, which no one can undo until reboot, so a root exploit in the container can't turn unprivileged BPF back on. Since Linux 6.5 that setting only stops processes without CAP_BPF from creating maps and loading programs; the maps and programs the loaders pin stay usable by the processes that read them. So on 6.5 and later both accept the setting locked at 1 (isUnprivilegedBpfLockedOff in BpfUtils.h).
+
+netd's check is there for module updates that may one day create maps from netd; nothing in this build does, and its modules only change with the image. netd isn't given CAP_BPF instead, since it hosts the DNS resolver, which parses what the network sends.
+
+Change-Id: I07f7e5541c4cb9a7a41f85dbaeb80febf1518125
+---
+ bpf/headers/include/bpf/BpfUtils.h | 18 ++++++++++++++++++
+ bpf/loader/NetBpfLoad.cpp          |  6 +++++-
+ bpf/netd/BpfHandler.cpp            | 12 +++++++++---
+ 3 files changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/bpf/headers/include/bpf/BpfUtils.h b/bpf/headers/include/bpf/BpfUtils.h
+index 2cf1d06..40b868c 100644
+--- a/bpf/headers/include/bpf/BpfUtils.h
++++ b/bpf/headers/include/bpf/BpfUtils.h
+@@ -17,6 +17,7 @@
+ #pragma once
+ 
+ #include <errno.h>
++#include <fcntl.h>
+ #include <linux/if_ether.h>
+ #include <linux/pfkeyv2.h>
+ #include <net/if.h>
+@@ -26,6 +27,7 @@
+ #include <sys/socket.h>
+ #include <sys/system_properties.h>
+ #include <sys/utsname.h>
++#include <unistd.h>
+ 
+ #include <android-base/properties.h>
+ #include <log/log.h>
+@@ -74,6 +76,22 @@ const bool isAtLeast25Q4 = (api_level_full >= 3610);  // 36.1
+ const bool isAtLeast26Q1 = (api_level_full >= 3612);  // 36.1+
+ const bool isAtLeast26Q2 = (api_level_full >= 3700);  // 37.0
+ 
++// Whether unprivileged BPF is locked off: kernel.unprivileged_bpf_disabled at
++// 1, which nothing can undo until the kernel restarts, as a host that runs
++// Android in a container may set it. Since Linux 6.5 that only stops processes
++// without CAP_BPF from creating maps and loading programs. Everything else is
++// still checked by capabilities and bpffs permissions, so the maps and
++// programs the loaders pin keep working for the processes that use them.
++static inline bool isUnprivilegedBpfLockedOff() {
++    if (!isAtLeastKernelVersion(6, 5, 0)) return false;
++    const int fd = open("/proc/sys/kernel/unprivileged_bpf_disabled", O_RDONLY | O_CLOEXEC);
++    if (fd < 0) return false;
++    char value[3] = {};
++    const ssize_t len = read(fd, value, sizeof(value));
++    close(fd);
++    return len == 2 && value[0] == '1' && value[1] == '\n';
++}
++
+ // See kernel's net/core/sock_diag.c __sock_gen_cookie()
+ // the implementation of which guarantees 0 will never be returned,
+ // primarily because 0 is used to mean not yet initialized,
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index 0efdb1c..1155228 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -1778,8 +1778,12 @@ static int doLoad(char** argv, char * const envp[]) {
+         // but we need 0 (enabled)
+         // (this writeFile is known to fail on at least 4.19, but always defaults to 0 on
+         // pre-5.13, on 5.13+ it depends on CONFIG_BPF_UNPRIV_DEFAULT_OFF)
++        // (or the host locked it at 1, which we can work with: see BpfUtils.h)
+         if (!writeFile("/proc/sys/kernel/unprivileged_bpf_disabled", "0\n") &&
+-            isAtLeastKernelVersion(5, 13)) return 23;
++            isAtLeastKernelVersion(5, 13)) {
++            if (!isUnprivilegedBpfLockedOff()) return 23;
++            ALOGI("unprivileged BPF is locked off by the host; continuing");
++        }
+     }
+ 
+     if (isAtLeastU) {
+diff --git a/bpf/netd/BpfHandler.cpp b/bpf/netd/BpfHandler.cpp
+index 7367ec5..5dc5414 100644
+--- a/bpf/netd/BpfHandler.cpp
++++ b/bpf/netd/BpfHandler.cpp
+@@ -288,9 +288,15 @@ Status BpfHandler::init(const char* cg2_path) {
+         int key = 1;
+         int value = 123;
+         unique_fd map(bpf::createMap(BPF_MAP_TYPE_ARRAY, sizeof(key), sizeof(value), 2, 0));
+-        if (!map.ok()) return statusFromErrno(errno, fmt::format("map create failed"));
+-        int rv = bpf::writeToMapEntry(map, &key, &value, BPF_ANY);
+-        if (rv) return statusFromErrno(errno, fmt::format("map write failed (rv={})", rv));
++        if (!map.ok() && errno == EPERM && bpf::isUnprivilegedBpfLockedOff()) {
++            // netd has no CAP_BPF, so with unprivileged BPF locked off it
++            // can't create maps; it only needs the ones the loaders pinned.
++            ALOGI("unprivileged BPF is locked off by the host; netd creates no maps");
++        } else {
++            if (!map.ok()) return statusFromErrno(errno, fmt::format("map create failed"));
++            int rv = bpf::writeToMapEntry(map, &key, &value, BPF_ANY);
++            if (rv) return statusFromErrno(errno, fmt::format("map write failed (rv={})", rv));
++        }
+     }
+ 
+     return netdutils::status::ok;
+-- 
+2.43.0
+

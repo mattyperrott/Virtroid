@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 10 Nov 2026 02:17:29 +0000
+Subject: [PATCH] keep hardened_malloc in programs started with privileges
+
+DISABLE_HARDENED_MALLOC switches a process to Scudo. A program run with
+AT_SECURE (file capabilities or a setuid bit) must not take that choice
+from whoever started it, so the variable joins the others cleared for
+such programs.
+---
+ libc/bionic/libc_init_common.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/libc/bionic/libc_init_common.cpp b/libc/bionic/libc_init_common.cpp
+index 7df0b01f1..c889572b4 100644
+--- a/libc/bionic/libc_init_common.cpp
++++ b/libc/bionic/libc_init_common.cpp
+@@ -303,6 +303,7 @@ static bool __is_unsafe_environment_variable(const char* name) {
+   // security transition.
+   static constexpr const char* UNSAFE_VARIABLE_NAMES[] = {
+       "ANDROID_DNS_MODE",
++      "DISABLE_HARDENED_MALLOC",
+       "GCONV_PATH",
+       "GETCONF_DIR",
+       "HOSTALIASES",

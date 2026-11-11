@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: inthewaves <inthewaves@pm.me>
+Date: Sun, 7 Jun 2026 22:11:50 -0700
+Subject: [PATCH] fix h_malloc_wrapper integration for Cuttlefish builds
+
+Fixes build errors:
+
+error: frameworks/libs/native_bridge_support/android_api/libc/Android.bp:27:1: m
+  odule "libnative_bridge_guest_libc" variant "android_native_bridge_arm64_armv8-a
+  _static": module source path "frameworks/libs/native_bridge_support/android_api/
+  libc/bionic/h_malloc_wrapper.cpp" does not exist
+
+Test: lunch aosp_cf_x86_64_only_phone-cur-userdebug with hardened_malloc fix boots
+(cherry picked from commit c5c896907100ab3f99faac4c1cb7deca943b1411)
+---
+ libc/Android.bp | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/libc/Android.bp b/libc/Android.bp
+index 45558b5c8..0fb438902 100644
+--- a/libc/Android.bp
++++ b/libc/Android.bp
+@@ -185,7 +185,7 @@ cc_defaults {
+             ],
+         },
+         lib64: {
+-            srcs: ["bionic/h_malloc_wrapper.cpp"],
++            srcs: [":libc_h_malloc_wrapper_src"],
+             cflags: [
+                 "-DH_MALLOC_PREFIX",
+                 "-DUSE_H_MALLOC",
+@@ -211,7 +211,7 @@ cc_library_static {
+             static_libs: ["libjemalloc5"],
+         },
+         lib64: {
+-            srcs: ["bionic/h_malloc_wrapper.cpp"],
++            srcs: [":libc_h_malloc_wrapper_src"],
+             static_libs: ["libhardened_malloc"],
+         },
+     },
+@@ -1388,6 +1388,11 @@ cc_library_static {
+     ],
+ }
+ 
++filegroup {
++    name: "libc_h_malloc_wrapper_src",
++    srcs: ["bionic/h_malloc_wrapper.cpp"],
++}
++
+ filegroup {
+     name: "libc_sources_shared",
+     srcs: [

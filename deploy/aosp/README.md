@@ -67,14 +67,19 @@ doesn't compile with the tree's clang. Whether they boot has not been tested.
    node), its NMEA, and the GNSS chip of the phone the persona claims.
 3. **Fewer container privileges.** Our image runs without `Privileged:
    true`: [Container confinement](#container-confinement). Stock ReDroid
-   still needs it. Still open: whether our image needs
-   `kernel.unprivileged_bpf_disabled` settable to 0, which stock ReDroid's
-   `bpfloader` does, so the VM can lock it at 1
-   (`deploy/aleph/nix/vm-init.sh`); unprivileged, the container can't set
-   it through Docker's read-only `/proc/sys`.
+   still needs it, and it needs `kernel.unprivileged_bpf_disabled` at 0.
+   Ours doesn't: its BPF loader and netd accept the setting locked at 1
+   (`patches/packages/modules/Connectivity` 0003), which the VM sets for its
+   whole boot (`deploy/aleph/nix/vm-init.sh`). netd checks at start that it
+   can create a BPF map, and with the lock on only CAP_BPF allows that. netd
+   doesn't get CAP_BPF, since it hosts the DNS resolver, which reads what the
+   network sends. Only the two loaders create maps; netd just uses the ones
+   they pinned.
 4. **Hardening that ports to a container.** GrapheneOS's `hardened_malloc`
-   first. Its other changes (network permission toggle, exec spawning) are
-   frameworks patches to assess one by one.
+   and its other C library hardening: [Memory allocator and C
+   library](#memory-allocator-and-c-library). Its frameworks changes
+   (exec spawning, the network permission toggle) are still to assess one by
+   one.
 5. **Personas.** Build properties already come from the node at start (the
    `0002-allow-override-ro.-prop` patch). Keep rotating them on every start,
    with new app device IDs only on Restart with New Persona. Still open:
@@ -337,7 +342,9 @@ gives its container (`backend/cmd/virtnoded/runtime_container.go`):
   past the container: shutting down a filesystem (`/data` is the VM's data
   volume), opening files by handle (anywhere on that volume), loading
   kernels or modules, setting the clock, swap, process accounting and raw
-  I/O.
+  I/O. Also perf events, a large part of the kernel Android doesn't use:
+  apps on phones can't open them either, and init only logs that its probe
+  failed.
 - **sysfs and `/proc`:** Docker's, read-only and masked.
 
 The image needed four changes for it: apexd no longer fails when it can't
@@ -358,11 +365,53 @@ its clock, or write sysfs.
 **What it doesn't stop.** The container keeps `CAP_SYS_ADMIN` in the VM's
 own user namespace, and SELinux is off, so a process that gets Android's
 root (an app exploiting a system service, say) can still mount a fresh
-sysfs or procfs and change the VM's settings: sysctls, or unbinding the
-VM's disks from their driver. The kernel log, the disks themselves, the
+sysfs or procfs and change the VM's settings: most sysctls, or unbinding
+the VM's disks from their driver. The kernel log, the disks themselves, the
 clock and the usermode-helper hooks (`kernel.modprobe`, core dumps) are out
-of its reach. Closing the rest means a user namespace for each runtime:
-[User namespaces](#user-namespaces).
+of its reach, and so are module loading (the VM's kernel is built without
+it), unprivileged BPF (off until the VM reboots) and the kernel's lockdown
+(on from boot), which keeps everyone,
+the VM's root included, from reading or writing kernel memory or a
+device's PCI configuration (`deploy/aleph/kernel-virtroid.fragment`).
+Closing the rest means a user namespace for each runtime: [User
+namespaces](#user-namespaces).
+
+## Memory allocator and C library
+
+Every 64-bit process allocates with GrapheneOS's
+[hardened_malloc](https://github.com/GrapheneOS/hardened_malloc) (MIT),
+pinned in `local_manifests/hardened_malloc.xml`, instead of Scudo:
+allocator metadata kept apart from the heap, guard pages around slabs and
+large allocations, random slot choice, canaries, freed memory zeroed and
+checked for writes after free, and quarantines that delay reuse. The C
+library carries GrapheneOS's own integration and its other hardening,
+ported from its Android 17 branch to LineageOS 23.2 (`patches/bionic`;
+each patch keeps its author and names the GrapheneOS commit):
+
+- hardened_malloc for 64-bit processes, with a `DISABLE_HARDENED_MALLOC`
+  variable that switches one process to Scudo for debugging; GWP-ASan
+  sampling never enabled.
+- Stacks: guard pages between a thread's stack and its TLS, thread state
+  behind a guard page, a random gap above each stack, an 8 MiB default
+  stack.
+- The stack canary read-only once set, with its first byte zeroed on 64-bit
+  so a string overflow can't copy it.
+- `pthread_atfork` handlers in their own mapping, read-only between
+  registrations; thread-local destructors' pointers mangled.
+- Blocking `getrandom` with no `/dev/urandom` fallback; `brk` and `sbrk`
+  stubbed out.
+
+Left out: memory tagging (Arm only), GrapheneOS's opt-outs for Pixel
+hardware services, and its per-app opt-out, which needs GrapheneOS's
+kernel and frameworks. Nothing here adds a symbol or header to the C
+library apps see. Our own patch 0019 clears `DISABLE_HARDENED_MALLOC` for
+programs that start with privileges, as for `LD_PRELOAD`.
+
+hardened_malloc's guard pages need many more memory mappings than Linux
+allows by default, so the VM raises `vm.max_map_count` to 1048576
+(`deploy/aleph/nix/vm-init.sh`). `boot-test.sh` checks that system
+processes and apps carry its reservations (about 1.5 TiB of address space
+each) and that none fell back to Scudo.
 
 ### User namespaces
 
@@ -495,8 +544,11 @@ takes:
    fix with its satellites, not mock. Still to check: a map app showing the
    runtime's place.
 6. **Hardening.** Unprivileged container: built (2026-10-27), see
-   [Container confinement](#container-confinement); user namespaces next.
-   Still open: the BPF setting and `hardened_malloc`.
+   [Container confinement](#container-confinement). hardened_malloc, the C
+   library hardening, unprivileged BPF locked off and the VM kernel's
+   lockdown: build 41 (2026-11-10: boot, upgrade and initrd tests passed),
+   see [Memory allocator and C library](#memory-allocator-and-c-library).
+   User namespaces next.
 7. **Release.** Done: VM image 19 (2026-10-28). Still to write: a monthly
    rebuild runbook.
 
@@ -508,7 +560,10 @@ takes:
 - **Build host.** Provider and budget, for the first build and monthly
   rebuilds.
 - **Personas.** Rotating (as now) or one uniform persona.
-- **GrapheneOS changes.** Which, beyond `hardened_malloc`.
+- **GrapheneOS changes.** Which frameworks changes next. Exec spawning
+  gives every app its own address-space layout and hardened_malloc secrets
+  instead of the zygote's, at a cost in app start time and memory on 2-vCPU,
+  4 GiB VMs.
 
 ## Risks
 

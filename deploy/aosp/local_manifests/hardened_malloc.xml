@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  GrapheneOS's hardened_malloc (MIT licence), pinned. libc uses it for every
+  64-bit process (patches/bionic): GrapheneOS's own integration, ported to
+  LineageOS 23.2.
+-->
+<manifest>
+  <remote name="grapheneos" fetch="https://github.com/GrapheneOS/" />
+  <project path="external/hardened_malloc" name="hardened_malloc" remote="grapheneos" groups="virtroid" revision="bf37d54560a62b50da72e8fda56abf04f23b5fd2" upstream="main" />
+</manifest>

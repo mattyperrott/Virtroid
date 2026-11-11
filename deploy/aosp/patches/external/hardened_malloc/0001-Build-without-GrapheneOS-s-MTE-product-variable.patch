@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Virtroid build <build@virtroid.invalid>
+Date: Tue, 10 Nov 2026 02:24:48 +0000
+Subject: [PATCH] Build without GrapheneOS's MTE product variable
+
+device_has_arm_mte exists only in GrapheneOS's build system, and Soong refuses a property it doesn't know. Memory tagging is an Arm feature, and this image is x86_64 only.
+---
+ Android.bp | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index 1cb24ee..59b1004 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -72,9 +72,6 @@ cc_library {
+         debuggable: {
+             cflags: ["-DCONFIG_LABEL_MEMORY=true"],
+         },
+-        device_has_arm_mte: {
+-            cflags: ["-DHAS_ARM_MTE", "-march=armv8-a+dotprod+memtag"]
+-        },
+     },
+     apex_available: [
+         "com.android.runtime",

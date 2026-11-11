@@ -214,6 +214,9 @@ func characterDeviceMajor(procDevices, driver string) (int, error) {
 // filesystem (/data is the VM's data volume), opening files by handle
 // (anywhere on that volume, other runtimes' among them), loading kernels or
 // modules, setting the VM's clock, swap and process accounting, and raw I/O.
+// Also perf events, a large part of the kernel that Android needs none of:
+// on phones apps can't open them either (perf_event_paranoid 3), and init
+// only logs that its probe of them failed.
 func runtimeSeccompProfile() string {
 	deny := func(names ...string) map[string]any {
 		return map[string]any{"names": names, "action": "SCMP_ACT_ERRNO", "errnoRet": seccompEPERM}
@@ -231,6 +234,7 @@ func runtimeSeccompProfile() string {
 			deny("kexec_load", "kexec_file_load", "init_module", "finit_module", "delete_module"),
 			deny("settimeofday", "clock_settime", "clock_settime64", "clock_adjtime", "clock_adjtime64", "stime"),
 			deny("swapon", "swapoff", "acct", "iopl", "ioperm", "syslog"),
+			deny("perf_event_open"),
 		},
 	}
 	encoded, _ := json.Marshal(profile)

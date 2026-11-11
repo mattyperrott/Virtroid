@@ -200,7 +200,7 @@ func TestOurRuntimeRunsUnprivileged(t *testing.T) {
 			denied[name] = true
 		}
 	}
-	for _, name := range []string{"ioctl(FS_IOC_SHUTDOWN)", "open_by_handle_at", "kexec_load", "kexec_file_load", "init_module", "finit_module", "clock_settime", "settimeofday", "swapon", "iopl"} {
+	for _, name := range []string{"ioctl(FS_IOC_SHUTDOWN)", "open_by_handle_at", "kexec_load", "kexec_file_load", "init_module", "finit_module", "clock_settime", "settimeofday", "swapon", "iopl", "perf_event_open"} {
 		if !denied[name] {
 			t.Fatalf("%s allowed", name)
 		}

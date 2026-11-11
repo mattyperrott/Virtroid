@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rdevshp <rdevshp@gmail.com>
+Date: Tue, 12 May 2026 12:36:42 +0000
+Subject: [PATCH] fix pointer aliasing in malloc dispatch tables in
+ InitNativeAllocatorDispatch
+
+(cherry picked from commit fcec60db34116111bbfe9600c4810cf42458d445)
+
+Ported to LineageOS 23.2 for Virtroid: also brings the log line that
+GrapheneOS added in 3840af75d ("keep hardened_malloc opt-out after
+clean fork+exec"), whose /proc/self/attr/grapheneos_flags check needs
+GrapheneOS's kernel and is left out.
+---
+ libc/bionic/malloc_common.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/libc/bionic/malloc_common.cpp b/libc/bionic/malloc_common.cpp
+index dc457227a..a96f41675 100644
+--- a/libc/bionic/malloc_common.cpp
++++ b/libc/bionic/malloc_common.cpp
+@@ -393,9 +393,9 @@ void InitNativeAllocatorDispatch(libc_globals* globals) {
+     &__scudo_malloc_dispatch;
+ 
+   if (!hardened_impl) {
+-    globals->malloc_dispatch_table = __scudo_malloc_dispatch;
+-    globals->current_dispatch_table = &globals->malloc_dispatch_table;
+-    globals->default_dispatch_table = &globals->malloc_dispatch_table;
++    async_safe_format_log(ANDROID_LOG_INFO, "malloc_common", "using scudo instead of hardened_malloc");
++    globals->current_dispatch_table = &__scudo_malloc_dispatch;
++    globals->default_dispatch_table = &__scudo_malloc_dispatch;
+   }
+ 
+   native_allocator_dispatch = table;

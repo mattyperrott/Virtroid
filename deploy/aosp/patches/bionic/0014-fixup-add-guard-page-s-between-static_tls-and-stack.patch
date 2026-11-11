@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Micay <daniel.micay@grapheneos.org>
+Date: Tue, 22 Sep 2026 13:36:41 -0400
+Subject: [PATCH] fixup! add guard page(s) between static_tls and stack
+
+Add missing stack size overflow check.
+
+(cherry picked from commit b777629641e802a0aa947090812aef264b466c6c)
+---
+ libc/bionic/pthread_create.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/libc/bionic/pthread_create.cpp b/libc/bionic/pthread_create.cpp
+index e37209d8f..578a83ecb 100644
+--- a/libc/bionic/pthread_create.cpp
++++ b/libc/bionic/pthread_create.cpp
+@@ -226,7 +226,10 @@ ThreadMapping __allocate_thread_mapping(size_t stack_size, size_t stack_guard_si
+   const StaticTlsLayout& layout = __libc_shared_globals()->static_tls_layout;
+ 
+   // Address calculated using stack_size is passed to mprotect later, so make it page-aligned.
++  const size_t unaligned_stack_size = stack_size;
+   stack_size = __builtin_align_up(stack_size, page_size());
++  if (stack_size < unaligned_stack_size) return {};
++
+   // Round up static TLS layout size to be multiple of page size as well.
+   size_t static_tls_layout_size = __builtin_align_up(layout.size(), page_size());
+ 

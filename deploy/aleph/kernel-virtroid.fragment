@@ -1,10 +1,9 @@
 # Virtroid's additions to Aleph's SEV-SNP guest kernel whitelist
-# (aleph-vm nix/kernel-config.fragment). build-runtime.sh removes any line
-# Aleph already has for these symbols, appends these, and Aleph's kernel
-# build then fails if Kconfig drops any of them.
+# (aleph-vm nix/kernel-config.fragment). nix/kernel.nix removes any line
+# Aleph already has for these symbols, appends these, and the build then
+# fails if Kconfig drops any of them.
 #
-# Built in rather than modules: the encrypted rootfs carries no modules for
-# this exact kernel.
+# Everything is built in: this kernel loads no modules (see the end).
 
 # Android (ReDroid) talks over binder. Mounting binderfs creates these
 # devices; they can only be added later through an ioctl, which the root's
@@ -212,6 +211,56 @@ CONFIG_ASHMEM=y
 # No usermode helpers: the kernel never runs a program of its own accord. A
 # runtime's root can mount a fresh procfs and write kernel.modprobe, whose
 # program the kernel would otherwise run as the VM's root the next time it
-# asks for a module. Modules load only from the initrd, by path.
+# asks for a module or a key.
 CONFIG_STATIC_USERMODEHELPER=y
 CONFIG_STATIC_USERMODEHELPER_PATH=""
+
+# Hardening. The kernel is what stands between a runtime and the VM: SELinux
+# is off inside the container, and a runtime's root keeps the capabilities
+# Android needs (deploy/aosp/README.md, Container confinement).
+#
+# Lockdown in confidentiality mode, from boot, until the VM stops: nothing,
+# the VM's root included, reads or writes kernel memory (through BPF or perf
+# among others) or touches a device's PCI configuration, which a runtime's
+# root could otherwise reach through a sysfs it mounts itself. No Android BPF
+# program reads kernel memory. Tetragon in runtime VMs (README roadmap) would
+# need integrity mode instead, since it reads kernel memory from BPF.
+CONFIG_SECURITY=y
+CONFIG_SECURITY_LOCKDOWN_LSM=y
+CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y
+CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y
+# securityfs, where /sys/kernel/security/lockdown shows the mode (the boot
+# test reads it there). Writing that file can only raise the mode.
+CONFIG_SECURITYFS=y
+# Yama, so a process can trace only its own descendants (vm-init.sh sets
+# ptrace_scope 1). Android's crash handler names its dumper with
+# PR_SET_PTRACER, so crash reports still work.
+CONFIG_SECURITY_YAMA=y
+# BPF programs run only JIT-compiled: no interpreter left to serve as a
+# Spectre gadget.
+CONFIG_BPF_JIT_ALWAYS_ON=y
+# Memory is zeroed when freed as well as when allocated, and functions clear
+# the registers they used before returning.
+CONFIG_INIT_ON_FREE_DEFAULT_ON=y
+CONFIG_ZERO_CALL_USED_REGS=y
+# The most mmap randomization x86_64 offers (28 bits by default), and nothing
+# mapped in the first 64 KiB, where a NULL dereference lands.
+CONFIG_ARCH_MMAP_RND_BITS=32
+CONFIG_DEFAULT_MMAP_MIN_ADDR=65536
+# Report any kernel mapping that is writable and executable at boot.
+CONFIG_DEBUG_WX=y
+# No loadable modules. Lockdown refuses unsigned ones, and signing them would
+# take either a key made afresh by each build, so no two builds would share a
+# launch measurement, or a key in this repository, which anyone could sign
+# with. Device-mapper, the only part Aleph's kernel left as modules that we
+# use, is built in instead (nix/initrd.nix ships no modules).
+# CONFIG_MODULES is not set
+# CONFIG_MODULE_UNLOAD is not set
+# CONFIG_MODULE_COMPRESS is not set
+# CONFIG_MODULE_COMPRESS_XZ is not set
+# CONFIG_MODULE_COMPRESS_ALL is not set
+# CONFIG_STRICT_MODULE_RWX is not set
+CONFIG_BLK_DEV_DM=y
+CONFIG_DM_BUFIO=y
+CONFIG_DM_VERITY=y
+CONFIG_DM_CRYPT=y

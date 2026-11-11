@@ -13,7 +13,7 @@ let
   fragment = pkgs.runCommand "kernel-config-virtroid.fragment" { } ''
     cp ${alephNix}/kernel-config.fragment fragment
     chmod u+w fragment
-    for symbol in $(grep -oE '^CONFIG_[A-Z0-9_]+' ${extraFragment} | sort -u); do
+    for symbol in $(grep -oE '^(# )?CONFIG_[A-Z0-9_]+' ${extraFragment} | sed 's/^# //' | sort -u); do
       sed -i -E "/^''${symbol}=/d; /^# ''${symbol} is not set$/d" fragment
     done
     cat fragment ${extraFragment} > $out
@@ -62,7 +62,9 @@ let
   kernel = pkgs.linuxKernel.manualConfig {
     inherit (base) version src modDirVersion;
     inherit configfile;
-    config = { CONFIG_MODULES = "y"; };
+    # Built without module support (kernel-virtroid.fragment), so there is no
+    # modules output either.
+    config = { CONFIG_MODULES = "n"; };
     kernelPatches = map (patch: { name = baseNameOf patch; inherit patch; }) patches;
   };
 in

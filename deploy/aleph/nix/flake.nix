@@ -101,16 +101,14 @@
         chmod +x $out
       '';
 
-      initrd = pkgs.callPackage "${alephNix}/initrd.nix" {
+      # Our own initrd.nix: Aleph's ships dm-* modules, and our kernel has
+      # those built in and loads no modules.
+      initrd = pkgs.callPackage ./initrd.nix {
         inherit (aleph) attest-agent;
-        inherit kernel;
         init-script = initScript;
         init-common-script = "${alephNix}/init-common.sh";
         udhcpc-script = "${alephNix}/udhcpc.script";
         udhcpc6-script = "${alephNix}/udhcpc6.script";
-        withVerity = true;
-        withNft = false;
-        withLuks = true;
       };
 
       # Same layout as aleph-vm's instanceImage, so its bundle script packages
