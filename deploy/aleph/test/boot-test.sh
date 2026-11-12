@@ -99,7 +99,7 @@ standin=""
 if [ -n "${BOOT_TEST_GNSS_PROBE:-}" ]; then
   cp "$BOOT_TEST_GNSS_PROBE" initrd/gnss-probe.apk
   go=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
-    --inputs-from "$flake" nixpkgs-go#go_1_27)/bin/go
+    "$flake#go")/bin/go
   (cd "$repo/backend" && GOTOOLCHAIN=local GOPROXY=off CGO_ENABLED=0 GOCACHE="$work/go-cache" GOPATH="$work/go" \
     "$go" build -o "$work/standin" ./cmd/standin-control-plane)
   "$work/standin" -listen 127.0.0.1:18580 -node-key "$node_key" -node-id smoke-node \

@@ -37,7 +37,18 @@
       # virtnoded, viewercrypt and virtroid-runtime-wrapper, built from this
       # repository's backend.
       pkgsGo = nixpkgs-go.legacyPackages.${system};
-      virtroid-node = (pkgsGo.buildGoModule.override { go = pkgsGo.go_1_27; }) {
+      # Go 1.27.4 (GO-2026-6859, net/http) is only on nixpkgs' staging branch
+      # so far, so take the pinned 1.27.3 recipe with 1.27.4's source, the
+      # same change as nixpkgs' (NixOS/nixpkgs#586269). Drop this once
+      # nixos-unstable has 1.27.4 and the pin moves to it.
+      go = pkgsGo.go_1_27.overrideAttrs (_: {
+        version = "1.27.4";
+        src = pkgsGo.fetchurl {
+          url = "https://go.dev/dl/go1.27.4.src.tar.gz";
+          hash = "sha256-c8+4VxrsDAEXdofbhxY9Rqog6XeWcncokaoXZU2aYJk=";
+        };
+      });
+      virtroid-node = (pkgsGo.buildGoModule.override { inherit go; }) {
         pname = "virtroid-node";
         version = self.shortRev or "dirty";
         src = lib.cleanSource ../../../backend;
@@ -126,7 +137,7 @@
     in
     {
       packages.${system} = {
-        inherit kernel virtroid-node rootfs rootImage initrd runtimeImage;
+        inherit kernel go virtroid-node rootfs rootImage initrd runtimeImage;
         default = runtimeImage;
       };
     };

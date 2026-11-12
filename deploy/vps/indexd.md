@@ -104,7 +104,7 @@ including snapshots saved since the copy.
 ## Turning it on
 
 1. Release images built with Go 1.27: set `GO_BUILD_IMAGE` in `.env` to
-   `golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132`.
+   `golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea`.
 2. A dedicated group for the secrets `virtroidd` reads:
 
    ```sh
