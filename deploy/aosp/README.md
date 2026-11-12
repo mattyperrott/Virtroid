@@ -294,6 +294,7 @@ Aleph serves it by its SHA-256 at
 | 24 | 34 (`20261102T174239Z-user`) | `46b84e32014fe41bdaae9c0a6cc06d006698712e81db4ca8b02d7031ae9f253e` | `f13ab1e3ffacb20dee23bda6df13d9d33fdedac69c5523ca8e7d2a1eafd72262` |
 | 26 | 36 (`20261103T140345Z-user`) | `0b638fb2c026c9ddca8b96ee28752e5ca7bfb40dc83a5d9dd2d66c2ee392c762` | `4902576064edb00b87322d208a43c0d22afefe7fd0baef0c7d6668ea8ba7beba` |
 | 29 | 39 (`20261105T013215Z-user`) | `055c0e3b9f068dc513794cce048fd3c6538ffb0a574bf208553855f715fffea5` | `cbebf0ca74ffd5dd3f8c939b1ee0f3383f2e6be629934a9d621ef969963888a0` |
+| 34 | 46 (`20261111T194116Z-user`) | `3983c675086c6687185266658d2014be1081e2613d64370aa4beb7899e4a142f` | `bb50cbf4f61e86b9d8df1af66e64e8096ff06d0a0e022a923a9e4e733f680933` |
 
 The copyleft apps built in as prebuilts (`device/virtroid/prebuilt-sources.sha256`)
 go out the same way: `app-sources.sh` puts each one's source beside the
@@ -418,7 +419,7 @@ each) and that none fell back to Scudo.
 
 ### User namespaces
 
-Built 2026-11-12 (VM image 34, a candidate). A `userns-1` image's runtime
+Live since 2026-11-12 in VM image 34. A `userns-1` image's runtime
 runs in a user namespace that maps its ids 0 to 999999 to the VM's 1000000
 to 1999999 (the VM's `virtroid-runtime` user in `/etc/subuid` and
 `/etc/subgid`), so its root's capabilities cover only its own namespaces.
@@ -581,8 +582,9 @@ than one account's.
    library hardening, unprivileged BPF locked off and the VM kernel's
    lockdown: build 41 (2026-11-10: boot, upgrade and initrd tests passed),
    see [Memory allocator and C library](#memory-allocator-and-c-library).
-   User namespaces: build 46 in VM image 34 (2026-11-12: boot, upgrade and
-   initrd tests passed), see [User namespaces](#user-namespaces).
+   User namespaces: build 46 (2026-11-12: boot, upgrade and initrd tests
+   passed), see [User namespaces](#user-namespaces). Both live since
+   2026-11-12 in VM image 34.
 7. **Release.** Done: VM image 19 (2026-10-28). Still to write: a monthly
    rebuild runbook.
 
