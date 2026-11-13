@@ -17,8 +17,10 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.View
 import android.view.animation.LinearInterpolator
+import androidx.core.animation.doOnEnd
 import io.virtroid.client.R
 import kotlin.math.PI
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** Animated client-side topology inspired by the operator console system-pulse illustration. */
@@ -54,10 +56,26 @@ class WelcomeNetworkView @JvmOverloads constructor(
         typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
     }
 
-    private var phase = 0f
+    private var phase = REST_PHASE
     private var animator: ValueAnimator? = null
     private var spotlightShader: Shader? = null
     private var coreGlowShader: Shader? = null
+
+    // Everything that only depends on the view's size, built in onSizeChanged
+    // so that drawing a frame allocates nothing.
+    private var core = Node(0f, 0f, NodeKind.CORE)
+    private var phone = Node(0f, 0f, NodeKind.PHONE)
+    private var runtime = Node(0f, 0f, NodeKind.RUNTIME)
+    private var vault = Node(0f, 0f, NodeKind.VAULT)
+    private val networkPath = Path()
+    private val vaultPath = Path()
+    private val cone = Path()
+    private val networkMeasure = PathMeasure()
+    private val vaultMeasure = PathMeasure()
+    private var connectionDashes: Array<DashPathEffect> = emptyArray()
+    private val nodeRect = RectF()
+    private val iconRect = RectF()
+    private val packetPosition = FloatArray(2)
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
@@ -82,6 +100,47 @@ class WelcomeNetworkView @JvmOverloads constructor(
             floatArrayOf(0f, 1f),
             Shader.TileMode.CLAMP,
         )
+
+        core = Node(width * 0.5f, height * 0.215f, NodeKind.CORE)
+        phone = Node(width * 0.19f, height * 0.36f, NodeKind.PHONE)
+        runtime = Node(width * 0.81f, height * 0.36f, NodeKind.RUNTIME)
+        vault = Node(width * 0.5f, height * 0.455f, NodeKind.VAULT)
+
+        networkPath.rewind()
+        networkPath.moveTo(phone.x + dp(34f), phone.y)
+        networkPath.cubicTo(
+            width * 0.33f,
+            phone.y,
+            width * 0.39f,
+            core.y + dp(39f),
+            core.x,
+            core.y + dp(39f),
+        )
+        networkPath.cubicTo(
+            width * 0.61f,
+            core.y + dp(39f),
+            width * 0.67f,
+            runtime.y,
+            runtime.x - dp(34f),
+            runtime.y,
+        )
+        vaultPath.rewind()
+        vaultPath.moveTo(core.x, core.y + dp(42f))
+        vaultPath.cubicTo(core.x, core.y + dp(78f), vault.x, vault.y - dp(64f), vault.x, vault.y - dp(34f))
+        networkMeasure.setPath(networkPath, false)
+        vaultMeasure.setPath(vaultPath, false)
+
+        cone.rewind()
+        cone.moveTo(width * 0.43f, 0f)
+        cone.lineTo(width * 0.57f, 0f)
+        cone.lineTo(width * 0.64f, height * 0.34f)
+        cone.lineTo(width * 0.36f, height * 0.34f)
+        cone.close()
+
+        // The connections' dashes move with the phase: one effect per step of
+        // their 3 + 7 dp period, instead of a new effect each frame.
+        val step = dashStep()
+        connectionDashes = Array(DASH_STEPS) { DashPathEffect(floatArrayOf(dp(3f), dp(7f)), it * step) }
     }
 
     override fun onAttachedToWindow() {
@@ -90,14 +149,13 @@ class WelcomeNetworkView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
-        animator?.cancel()
-        animator = null
+        stopMotion()
         super.onDetachedFromWindow()
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)
-        if (visibility == VISIBLE) startMotion() else animator?.pause()
+        if (visibility == VISIBLE) startMotion() else stopMotion()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -107,36 +165,7 @@ class WelcomeNetworkView @JvmOverloads constructor(
 
         drawGrid(canvas)
         drawSpotlight(canvas)
-
-        val core = Node(width * 0.5f, height * 0.215f, NodeKind.CORE)
-        val phone = Node(width * 0.19f, height * 0.36f, NodeKind.PHONE)
-        val runtime = Node(width * 0.81f, height * 0.36f, NodeKind.RUNTIME)
-        val vault = Node(width * 0.5f, height * 0.455f, NodeKind.VAULT)
-
-        val networkPath = Path().apply {
-            moveTo(phone.x + dp(34f), phone.y)
-            cubicTo(
-                width * 0.33f,
-                phone.y,
-                width * 0.39f,
-                core.y + dp(39f),
-                core.x,
-                core.y + dp(39f),
-            )
-            cubicTo(
-                width * 0.61f,
-                core.y + dp(39f),
-                width * 0.67f,
-                runtime.y,
-                runtime.x - dp(34f),
-                runtime.y,
-            )
-        }
-        val vaultPath = Path().apply {
-            moveTo(core.x, core.y + dp(42f))
-            cubicTo(core.x, core.y + dp(78f), vault.x, vault.y - dp(64f), vault.x, vault.y - dp(34f))
-        }
-        drawConnections(canvas, networkPath, vaultPath)
+        drawConnections(canvas)
 
         drawNode(canvas, phone, "Physical Device", "Viewer Controller", index = 1)
         drawNode(canvas, core, "Virtroid", "Private Link", index = 0, emphasized = true)
@@ -163,13 +192,6 @@ class WelcomeNetworkView @JvmOverloads constructor(
     }
 
     private fun drawSpotlight(canvas: Canvas) {
-        val cone = Path().apply {
-            moveTo(width * 0.43f, 0f)
-            lineTo(width * 0.57f, 0f)
-            lineTo(width * 0.64f, height * 0.34f)
-            lineTo(width * 0.36f, height * 0.34f)
-            close()
-        }
         fillPaint.shader = spotlightShader
         canvas.drawPath(cone, fillPaint)
         fillPaint.shader = null
@@ -178,28 +200,28 @@ class WelcomeNetworkView @JvmOverloads constructor(
         fillPaint.shader = null
     }
 
-    private fun drawConnections(canvas: Canvas, networkPath: Path, vaultPath: Path) {
+    private fun drawConnections(canvas: Canvas) {
         val dashOffset = -phase * dp(36f)
         strokePaint.color = accentShadow
         strokePaint.alpha = 116
         strokePaint.strokeWidth = dp(1f)
-        strokePaint.pathEffect = DashPathEffect(floatArrayOf(dp(3f), dp(7f)), dashOffset)
+        if (connectionDashes.isNotEmpty()) {
+            strokePaint.pathEffect = connectionDashes[Math.floorMod((dashOffset / dashStep()).roundToInt(), DASH_STEPS)]
+        }
         canvas.drawPath(networkPath, strokePaint)
         canvas.drawPath(vaultPath, strokePaint)
         strokePaint.pathEffect = null
 
-        drawPacket(canvas, networkPath, phase)
-        drawPacket(canvas, vaultPath, (phase + 0.48f) % 1f)
+        drawPacket(canvas, networkMeasure, phase)
+        drawPacket(canvas, vaultMeasure, (phase + 0.48f) % 1f)
     }
 
-    private fun drawPacket(canvas: Canvas, path: Path, progress: Float) {
-        val measure = PathMeasure(path, false)
-        val position = FloatArray(2)
-        measure.getPosTan(measure.length * progress.coerceIn(0f, 1f), position, null)
+    private fun drawPacket(canvas: Canvas, measure: PathMeasure, progress: Float) {
+        measure.getPosTan(measure.length * progress.coerceIn(0f, 1f), packetPosition, null)
         fillPaint.color = withAlpha(accent, 38)
-        canvas.drawCircle(position[0], position[1], dp(8f), fillPaint)
+        canvas.drawCircle(packetPosition[0], packetPosition[1], dp(8f), fillPaint)
         fillPaint.color = accentHighlight
-        canvas.drawCircle(position[0], position[1], dp(2.6f), fillPaint)
+        canvas.drawCircle(packetPosition[0], packetPosition[1], dp(2.6f), fillPaint)
     }
 
     private fun drawNode(
@@ -214,22 +236,22 @@ class WelcomeNetworkView @JvmOverloads constructor(
         val cx = node.x
         val cy = node.y + offset
         val half = dp(if (emphasized) 39f else 32f)
-        val rect = RectF(cx - half, cy - half, cx + half, cy + half)
+        nodeRect.set(cx - half, cy - half, cx + half, cy + half)
 
         if (emphasized) {
             val pulse = (0.5f + 0.5f * sin(phase * 2f * PI)).toFloat()
             strokePaint.color = accent
             strokePaint.alpha = (22 + pulse * 28).toInt()
             strokePaint.strokeWidth = dp(10f)
-            canvas.drawRect(rect, strokePaint)
+            canvas.drawRect(nodeRect, strokePaint)
         }
 
         fillPaint.color = withAlpha(surface, 236)
-        canvas.drawRect(rect, fillPaint)
+        canvas.drawRect(nodeRect, fillPaint)
         strokePaint.color = if (emphasized) accent else accentShadow
         strokePaint.alpha = if (emphasized) 150 else 100
         strokePaint.strokeWidth = dp(1f)
-        canvas.drawRect(rect, strokePaint)
+        canvas.drawRect(nodeRect, strokePaint)
 
         drawNodeIcon(canvas, node.kind, cx, cy, emphasized)
         canvas.drawText(label, cx, cy + half + dp(23f), labelPaint)
@@ -262,52 +284,54 @@ class WelcomeNetworkView @JvmOverloads constructor(
                 canvas.drawRect(cx - size / 2f, cy, cx + size / 2f, cy + size, strokePaint)
             }
             NodeKind.VAULT -> {
-                val oval = RectF(cx - dp(13f), cy - dp(12f), cx + dp(13f), cy - dp(4f))
-                canvas.drawOval(oval, strokePaint)
+                iconRect.set(cx - dp(13f), cy - dp(12f), cx + dp(13f), cy - dp(4f))
+                canvas.drawOval(iconRect, strokePaint)
                 canvas.drawLine(cx - dp(13f), cy - dp(8f), cx - dp(13f), cy + dp(11f), strokePaint)
                 canvas.drawLine(cx + dp(13f), cy - dp(8f), cx + dp(13f), cy + dp(11f), strokePaint)
-                canvas.drawArc(
-                    RectF(cx - dp(13f), cy + dp(7f), cx + dp(13f), cy + dp(15f)),
-                    0f,
-                    180f,
-                    false,
-                    strokePaint,
-                )
-                canvas.drawArc(
-                    RectF(cx - dp(13f), cy - dp(2f), cx + dp(13f), cy + dp(6f)),
-                    0f,
-                    180f,
-                    false,
-                    strokePaint,
-                )
+                iconRect.set(cx - dp(13f), cy + dp(7f), cx + dp(13f), cy + dp(15f))
+                canvas.drawArc(iconRect, 0f, 180f, false, strokePaint)
+                iconRect.set(cx - dp(13f), cy - dp(2f), cx + dp(13f), cy + dp(6f))
+                canvas.drawArc(iconRect, 0f, 180f, false, strokePaint)
             }
         }
     }
 
+    /**
+     * Two full trips of the packets each time the screen shows, starting and
+     * ending on the frame shown when animations are off (REST_PHASE), so it
+     * neither jumps nor keeps drawing frames on a screen left open. It plays
+     * again the next time the window becomes visible.
+     */
     private fun startMotion() {
         if (!isAttachedToWindow || windowVisibility != VISIBLE) return
+        if (animator != null) return
+        phase = REST_PHASE
         if (!ValueAnimator.areAnimatorsEnabled()) {
-            animator?.cancel()
-            animator = null
-            phase = 0.34f
             invalidate()
             return
         }
-        if (animator?.isStarted == true) {
-            animator?.resume()
-            return
-        }
-        animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 6_400L
+        animator = ValueAnimator.ofFloat(REST_PHASE, REST_PHASE + CYCLES).apply {
+            duration = CYCLE_MS * CYCLES
             interpolator = LinearInterpolator()
-            repeatCount = ValueAnimator.INFINITE
             addUpdateListener {
-                phase = it.animatedValue as Float
+                phase = (it.animatedValue as Float) % 1f
+                invalidate()
+            }
+            doOnEnd {
+                phase = REST_PHASE
                 invalidate()
             }
             start()
         }
     }
+
+    private fun stopMotion() {
+        animator?.cancel()
+        animator = null
+        phase = REST_PHASE
+    }
+
+    private fun dashStep(): Float = dp(10f) / DASH_STEPS
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
@@ -327,4 +351,11 @@ class WelcomeNetworkView @JvmOverloads constructor(
     private data class Node(val x: Float, val y: Float, val kind: NodeKind)
 
     private enum class NodeKind { PHONE, CORE, RUNTIME, VAULT }
+
+    private companion object {
+        const val CYCLE_MS = 6_400L
+        const val CYCLES = 2
+        const val REST_PHASE = 0.34f
+        const val DASH_STEPS = 30 // across the dashes' 3 + 7 dp period
+    }
 }

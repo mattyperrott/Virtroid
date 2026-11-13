@@ -13,6 +13,7 @@ import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import android.view.animation.LinearInterpolator
+import androidx.core.animation.doOnEnd
 import io.virtroid.client.R
 import kotlin.math.PI
 import kotlin.math.min
@@ -82,6 +83,29 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
     private val energyMeasure = PathMeasure(energy, false)
     private val glint = polygon(145f, 110f, 170f, 110f, 240f, 325f, 215f, 325f)
 
+    // Drawn every frame of the motion: built once, not per frame.
+    private val upperHighlight = Path().apply {
+        moveTo(158f, 159f)
+        lineTo(269f, 159f)
+        lineTo(269f, 191f)
+    }
+    private val middleHighlight = Path().apply {
+        moveTo(269f, 199f)
+        lineTo(269f, 206f)
+        lineTo(159f, 246f)
+    }
+    private val lowerHighlight = Path().apply {
+        moveTo(163f, 258f)
+        lineTo(271f, 216f)
+        lineTo(272f, 255f)
+        lineTo(166f, 262f)
+    }
+    private val energySegment = Path()
+
+    // The energy dash's phase, one effect per art unit of its 12 + 8 period
+    // (about 0.2 dp at the mark's size), instead of a new effect each frame.
+    private val energyDashes = Array(ENERGY_DASH_PERIOD) { DashPathEffect(floatArrayOf(12f, 8f), it.toFloat()) }
+
     private val screenShader = LinearGradient(
         160f,
         158f,
@@ -132,14 +156,13 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
-        animator?.cancel()
-        animator = null
+        stopMotion()
         super.onDetachedFromWindow()
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)
-        if (visibility == VISIBLE) startMotion() else animator?.pause()
+        if (visibility == VISIBLE) startMotion() else stopMotion()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -183,12 +206,7 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
             strokePaint.color = primaryHighlight
             strokePaint.alpha = 153
             strokePaint.strokeWidth = 2f
-            val highlight = Path().apply {
-                moveTo(158f, 159f)
-                lineTo(269f, 159f)
-                lineTo(269f, 191f)
-            }
-            canvas.drawPath(highlight, strokePaint)
+            canvas.drawPath(upperHighlight, strokePaint)
         }
     }
 
@@ -198,12 +216,7 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
             strokePaint.color = primaryHighlight
             strokePaint.alpha = 90
             strokePaint.strokeWidth = 1f
-            val highlight = Path().apply {
-                moveTo(269f, 199f)
-                lineTo(269f, 206f)
-                lineTo(159f, 246f)
-            }
-            canvas.drawPath(highlight, strokePaint)
+            canvas.drawPath(middleHighlight, strokePaint)
         }
     }
 
@@ -213,13 +226,7 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
             strokePaint.color = primaryHighlight
             strokePaint.alpha = 100
             strokePaint.strokeWidth = 2f
-            val highlight = Path().apply {
-                moveTo(163f, 258f)
-                lineTo(271f, 216f)
-                lineTo(272f, 255f)
-                lineTo(166f, 262f)
-            }
-            canvas.drawPath(highlight, strokePaint)
+            canvas.drawPath(lowerHighlight, strokePaint)
             drawFill(canvas, lowerEdge, null, primaryShadow)
         }
     }
@@ -234,16 +241,17 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
     private fun drawEnergy(canvas: Canvas, scale: Float) {
         if (phase !in 0.23f..0.60f) return
         val local = ((phase - 0.23f) / 0.37f).coerceIn(0f, 1f)
-        val segment = Path()
         val end = energyMeasure.length * local
         val start = (end - energyMeasure.length * 0.24f).coerceAtLeast(0f)
-        energyMeasure.getSegment(start, end, segment, true)
+        energySegment.rewind()
+        energyMeasure.getSegment(start, end, energySegment, true)
         val fade = min((local / 0.18f).coerceAtMost(1f), ((1f - local) / 0.16f).coerceAtMost(1f))
         strokePaint.color = primaryHighlight
         strokePaint.alpha = (220f * fade.coerceAtLeast(0f)).toInt()
         strokePaint.strokeWidth = pxToArt(dpToPx(1.1f), scale)
-        strokePaint.pathEffect = DashPathEffect(floatArrayOf(12f, 8f), -energyMeasure.length * local)
-        canvas.drawPath(segment, strokePaint)
+        // The dash runs with the energy: phase -length * local, within one period.
+        strokePaint.pathEffect = energyDashes[Math.floorMod(Math.round(-energyMeasure.length * local), ENERGY_DASH_PERIOD)]
+        canvas.drawPath(energySegment, strokePaint)
         strokePaint.pathEffect = null
     }
 
@@ -303,29 +311,38 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
         return clamped * clamped * (3f - 2f * clamped)
     }
 
+    /**
+     * One cycle each time the screen shows, then the mark rests (phase 0, which
+     * is also where the cycle ends): a screen left open draws no more frames.
+     * It plays again the next time the window becomes visible.
+     */
     private fun startMotion() {
         if (!isAttachedToWindow || windowVisibility != VISIBLE) return
+        if (animator != null) return
+        phase = 0f
         if (!ValueAnimator.areAnimatorsEnabled()) {
-            animator?.cancel()
-            animator = null
-            phase = 0f
             invalidate()
             return
         }
-        if (animator?.isStarted == true) {
-            animator?.resume()
-            return
-        }
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 5_600L
+            duration = CYCLE_MS
             interpolator = LinearInterpolator()
-            repeatCount = ValueAnimator.INFINITE
             addUpdateListener {
                 phase = it.animatedValue as Float
                 invalidate()
             }
+            doOnEnd {
+                phase = 0f
+                invalidate()
+            }
             start()
         }
+    }
+
+    private fun stopMotion() {
+        animator?.cancel()
+        animator = null
+        phase = 0f
     }
 
     private fun dpToPx(value: Float): Float = value * resources.displayMetrics.density
@@ -343,6 +360,8 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
     }
 
     private companion object {
+        const val CYCLE_MS = 5_600L
+        const val ENERGY_DASH_PERIOD = 20 // the dash's 12 on + 8 off, in art units
         const val ART_LEFT = 140f
         const val ART_TOP = 122f
         const val ART_WIDTH = 152f
