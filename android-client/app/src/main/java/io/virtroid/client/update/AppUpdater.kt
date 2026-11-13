@@ -12,8 +12,11 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
@@ -22,7 +25,9 @@ import java.util.concurrent.TimeUnit
  * when its APK matches the SHA-256 published beside it, names this package,
  * has a higher version code, and is signed with the same certificate as the
  * installed app; Android's installer then asks the user to confirm, and
- * itself refuses an APK signed with another key.
+ * itself refuses an APK signed with another key. An APK whose signature
+ * can't be read is refused too, and every download is capped in size and
+ * time.
  */
 class AppUpdater(private val context: Context) {
 
@@ -32,8 +37,13 @@ class AppUpdater(private val context: Context) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(2, TimeUnit.MINUTES)
         .followRedirects(true)
+        // GitHub sends downloads on to its storage over HTTPS; never follow a
+        // redirect down to plain HTTP.
+        .followSslRedirects(false)
         .build()
+    private val apkClient = client.newBuilder().callTimeout(20, TimeUnit.MINUTES).build()
 
     /** The newest release, when it is newer than this app. */
     suspend fun newerRelease(): Release? = withContext(Dispatchers.IO) {
@@ -45,7 +55,8 @@ class AppUpdater(private val context: Context) {
         val body = client.newCall(request).execute().use { response ->
             if (response.code == 404) return@withContext null
             if (!response.isSuccessful) throw IOException("GitHub answered ${response.code}")
-            response.body?.string() ?: throw IOException("GitHub sent no release")
+            val source = response.body ?: throw IOException("GitHub sent no release")
+            readAtMost(source.byteStream(), MAX_RELEASE_BYTES).toString(Charsets.UTF_8)
         }
         val release = JSONObject(body)
         val version = release.optString("tag_name").removePrefix("v")
@@ -73,10 +84,10 @@ class AppUpdater(private val context: Context) {
         val dir = File(context.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
         val apk = File(dir, "Virtroid-${release.version}.apk")
         val expected = download(release.sha256Url).toString(Charsets.US_ASCII).trim().take(64).lowercase()
-        client.newCall(Request.Builder().url(release.apkUrl).build()).execute().use { response ->
+        apkClient.newCall(Request.Builder().url(release.apkUrl).build()).execute().use { response ->
             if (!response.isSuccessful) throw IOException("download answered ${response.code}")
             val source = response.body ?: throw IOException("download was empty")
-            apk.outputStream().use { out -> source.byteStream().copyTo(out) }
+            apk.outputStream().use { out -> copyAtMost(source.byteStream(), out, MAX_APK_BYTES) }
         }
         val actual = sha256(apk)
         if (expected.length != 64 || actual != expected) {
@@ -89,7 +100,7 @@ class AppUpdater(private val context: Context) {
 
     private fun verifyPackage(apk: File) {
         val pm = context.packageManager
-        val archive = pm.getPackageArchiveInfo(apk.path, PackageManager.GET_SIGNING_CERTIFICATES)
+        val archive = pm.getPackageArchiveInfo(apk.path, ARCHIVE_SIGNER_FLAGS)
             ?: throw IOException("the download is not an Android app")
         val installed = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
         if (archive.packageName != context.packageName) {
@@ -98,8 +109,7 @@ class AppUpdater(private val context: Context) {
         if (archive.longVersionCode <= installed.longVersionCode) {
             throw IOException("the download is not newer than this app")
         }
-        val archiveSigners = signers(archive)
-        if (archiveSigners.isNotEmpty() && archiveSigners != signers(installed)) {
+        if (!sameSigners(signers(archive), signers(installed))) {
             throw IOException("the download is not signed by Virtroid's key")
         }
     }
@@ -133,7 +143,8 @@ class AppUpdater(private val context: Context) {
     private fun download(url: String): ByteArray =
         client.newCall(Request.Builder().url(url).build()).execute().use { response ->
             if (!response.isSuccessful) throw IOException("download answered ${response.code}")
-            response.body?.bytes() ?: throw IOException("download was empty")
+            val source = response.body ?: throw IOException("download was empty")
+            readAtMost(source.byteStream(), MAX_CHECKSUM_BYTES)
         }
 
     companion object {
@@ -141,6 +152,44 @@ class AppUpdater(private val context: Context) {
         private const val PREFS = "app_updates"
         private const val KEY_CHECKED_AT = "checked_at"
         private const val CHECK_EVERY_MS = 24L * 60 * 60 * 1000
+        // Releases' APKs are about 5 MB; anything far larger is not one.
+        const val MAX_APK_BYTES = 64L * 1024 * 1024
+        private const val MAX_CHECKSUM_BYTES = 1024L
+        private const val MAX_RELEASE_BYTES = 1024L * 1024
+
+        /**
+         * What to ask of a downloaded APK. Android 9 and 10 read an archive's
+         * signers only when asked with the deprecated GET_SIGNATURES; with
+         * GET_SIGNING_CERTIFICATES alone they return no signers, and the
+         * signer check would refuse every update. Asking with both fills in
+         * signingInfo on every version; only signingInfo is read.
+         */
+        @Suppress("DEPRECATION")
+        const val ARCHIVE_SIGNER_FLAGS = PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+
+        /**
+         * Whether a download's signers are the installed app's: the same
+         * non-empty set. A signature that can't be read never passes.
+         */
+        fun sameSigners(download: Set<String>, installed: Set<String>): Boolean =
+            download.isNotEmpty() && download == installed
+
+        /** Copies [input] to [output], refusing more than [limit] bytes. */
+        fun copyAtMost(input: InputStream, output: OutputStream, limit: Long): Long {
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) return total
+                total += read
+                if (total > limit) throw IOException("the download is larger than $limit bytes")
+                output.write(buffer, 0, read)
+            }
+        }
+
+        /** Reads all of [input], refusing more than [limit] bytes. */
+        fun readAtMost(input: InputStream, limit: Long): ByteArray =
+            ByteArrayOutputStream().also { copyAtMost(input, it, limit) }.toByteArray()
 
         /** Compares dotted versions such as 0.4.10 and 0.4.9 numerically. */
         fun compareVersions(left: String, right: String): Int {
