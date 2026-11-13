@@ -32,6 +32,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Opens Shield on sending out, for its own widget. Not exported: any
+             app can start MainActivity, so it alone mustn't open there (after
+             putting an address of its own on the clipboard, say). -->
+        <activity-alias
+            android:name=".ui.SendOut"
+            android:exported="false"
+            android:targetActivity=".ui.MainActivity" />
+
         <activity
             android:name=".ui.AboutActivity"
             android:exported="false" />

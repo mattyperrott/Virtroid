@@ -48,8 +48,10 @@ class MainActivity : ComponentActivity() {
         WatchService.start(this)
     }
 
+    // Only Shield itself can start the SendOut alias; what other apps put on
+    // an intent for this activity opens nothing.
     private fun handle(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_SEND_OUT, false) == true) model.openSendOut()
+        if (intent?.component?.className == SEND_OUT) model.openSendOut()
     }
 
     private fun copy(text: String) {
@@ -62,9 +64,10 @@ class MainActivity : ComponentActivity() {
         getSystemService(ClipboardManager::class.java).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
 
     companion object {
-        private const val EXTRA_SEND_OUT = "sendOut"
+        // The manifest's not-exported alias for this activity.
+        private const val SEND_OUT = "io.virtroid.shield.ui.SendOut"
 
         fun intent(context: Context, sendOut: Boolean = false): Intent =
-            Intent(context, MainActivity::class.java).apply { if (sendOut) putExtra(EXTRA_SEND_OUT, true) }
+            if (sendOut) Intent().setClassName(context, SEND_OUT) else Intent(context, MainActivity::class.java)
     }
 }
