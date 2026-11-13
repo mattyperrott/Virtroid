@@ -198,6 +198,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/__qa__/state":
                 self.reply({"runtimes": list(STATE.runtimes.values()), "entitlement": entitlement()})
                 return
+            if path == "/api/v1/me/identity/recovery":
+                rec = getattr(STATE, "recovery", None)
+                self.reply(rec or {"error": "not found"}, 200 if rec else 404)
+                return
             if path == "/api/v1/me/runtimes":
                 self.reply({"items": self.visible_runtimes()})
                 return
@@ -311,6 +315,10 @@ class Handler(BaseHTTPRequestHandler):
                     },
                     201,
                 )
+                return
+            if path == "/api/v1/me/identity/recovery":
+                STATE.recovery = body
+                self.reply(body, 201)
                 return
             if path == "/api/v1/me/identity/register" or path.endswith("/capability"):
                 self.reply({"status": "ok"})
