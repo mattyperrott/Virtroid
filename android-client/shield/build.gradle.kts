@@ -106,6 +106,18 @@ val verifyReleaseSigningConfiguration = tasks.register("verifyReleaseSigningConf
 }
 tasks.matching { it.name == "assembleRelease" }.configureEach { dependsOn(verifyReleaseSigningConfiguration) }
 
+// Only the launcher is open to other apps.
+extra["releaseExportedComponents"] = setOf("io.virtroid.shield.ui.MainActivity")
+extra["releasePermissions"] = setOf(
+    "android.permission.INTERNET",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE", // WatchService (see the manifest)
+    "android.permission.RECEIVE_BOOT_COMPLETED", // WatchService starts at boot
+    "android.permission.POST_NOTIFICATIONS", // never asked for; shows WatchService's notice if allowed
+    "io.virtroid.shield.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION", // androidx.core, signature-level
+)
+apply(from = rootProject.file("gradle/release-manifest-checks.gradle.kts"))
+
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.appcompat:appcompat:1.7.1")

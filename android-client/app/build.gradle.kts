@@ -194,6 +194,25 @@ tasks.matching { it.name in releaseArtifactTaskNames }.configureEach {
     dependsOn(verifyReleaseSecurityManifest)
 }
 
+// Only the launcher is open to other apps.
+extra["releaseExportedComponents"] = setOf("io.virtroid.client.LauncherActivity")
+extra["releasePermissions"] = setOf(
+    "android.permission.INTERNET",
+    "android.permission.REQUEST_INSTALL_PACKAGES", // installing its own signed updates (AppUpdater)
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_DATA_SYNC", // the viewer's stream
+    "android.permission.FOREGROUND_SERVICE_MICROPHONE", // the phone's microphone in a runtime call
+    "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING", // the notification relay
+    "android.permission.POST_NOTIFICATIONS", // asked for on the permissions screen
+    "android.permission.RECEIVE_BOOT_COMPLETED", // restarting the notification relay
+    "android.permission.CAMERA", // asked for: photos and videos to import into a runtime
+    "android.permission.RECORD_AUDIO", // asked for: the microphone in a runtime
+    "android.permission.USE_BIOMETRIC", // androidx.biometric: app unlock
+    "android.permission.USE_FINGERPRINT", // androidx.biometric on Android 9
+    "io.virtroid.client.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION", // androidx.core, signature-level
+)
+apply(from = rootProject.file("gradle/release-manifest-checks.gradle.kts"))
+
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.appcompat:appcompat:1.7.1")

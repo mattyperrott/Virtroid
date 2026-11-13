@@ -82,3 +82,12 @@ val verifyReleaseSigningConfiguration = tasks.register("verifyReleaseSigningConf
 tasks.matching { it.name in setOf("assembleRelease", "packageRelease") }.configureEach {
     dependsOn(verifyReleaseSigningConfiguration)
 }
+
+// Nothing is open to other apps: provisioning needs DUMP, which only the shell has.
+extra["releaseExportedComponents"] = emptySet<String>()
+extra["releasePermissions"] = setOf(
+    "android.permission.INTERNET",
+    "android.permission.ACCESS_NETWORK_STATE", // the upload job's network constraint
+    "android.permission.RECEIVE_BOOT_COMPLETED", // the upload job persists across reboots
+)
+apply(from = rootProject.file("gradle/release-manifest-checks.gradle.kts"))
