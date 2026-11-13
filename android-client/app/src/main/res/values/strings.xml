@@ -670,6 +670,8 @@
     <string name="permissions_done">Done</string>
     <string name="permissions_not_now">Not now</string>
     <string name="permissions_open_settings">Open Android permission settings</string>
+    <string name="permissions_in_settings">Settings</string>
+    <string name="permissions_android_wont_ask">Android won\'t ask again. Tap Settings to allow it in Android settings.</string>
     <string name="privacy_app_permissions">App permissions</string>
     <string name="privacy_app_permissions_body">Review notifications, microphone, and camera access</string>
     <string name="session_camera_permissions_setup_required">Grant camera access from Settings → Privacy &amp; Security → App permissions before using camera import.</string>

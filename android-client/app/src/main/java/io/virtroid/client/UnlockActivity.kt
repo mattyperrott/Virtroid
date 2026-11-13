@@ -10,7 +10,6 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
@@ -23,6 +22,7 @@ import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
 import io.virtroid.client.ui.VirtroidMotion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -61,7 +61,7 @@ class UnlockActivity : AppCompatActivity() {
 
         // The keyboard counts as a bar, so the passphrase field centres above it.
         ViewCompat.setOnApplyWindowInsetsListener(binding.unlockRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
+            val bars = insets.getInsets(SafeArea.barsAndKeyboard())
             view.updatePadding(
                 left = 24 + bars.left,
                 top = 28 + bars.top,

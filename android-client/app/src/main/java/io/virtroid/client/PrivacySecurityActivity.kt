@@ -1,6 +1,5 @@
 package io.virtroid.client
 
-import io.virtroid.client.update.UpdatePrompt
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -10,30 +9,31 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenPrivacySecurityBinding
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.ClipboardAutoClear
+import io.virtroid.client.security.ProtectedAlertDialogBuilder
 import io.virtroid.client.security.applyScreenCaptureProtection
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptPinCode
 import io.virtroid.client.security.showConfirmation
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidSheet
+import io.virtroid.client.update.UpdatePrompt
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import io.virtroid.client.ui.Notice
-import io.virtroid.client.ui.VirtroidSheet
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class PrivacySecurityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPrivacySecurityBinding
@@ -62,8 +62,8 @@ class PrivacySecurityActivity : AppCompatActivity() {
         appLogs = AppLogStore.get(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.privacyRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            val bars = insets.getInsets(SafeArea.bars())
+            view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
             insets
         }
 
@@ -322,7 +322,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
         val labels = AppSettingsStore.AUTO_LOCK_OPTIONS.map { it.first }.toTypedArray()
         val checked = AppSettingsStore.AUTO_LOCK_OPTIONS.indexOfFirst { it.second == appSettings.autoLockTimeoutMs }
             .coerceAtLeast(0)
-        MaterialAlertDialogBuilder(this)
+        ProtectedAlertDialogBuilder(this)
             .setTitle(getString(R.string.privacy_auto_lock_timer))
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 appSettings.autoLockTimeoutMs = AppSettingsStore.AUTO_LOCK_OPTIONS[which].second
@@ -337,7 +337,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
         val values = listOf(3, 5, 10)
         val labels = values.map { getString(R.string.privacy_failed_attempts_value, it) }.toTypedArray()
         val checked = values.indexOf(appSettings.failedAttemptsThreshold).coerceAtLeast(1)
-        MaterialAlertDialogBuilder(this)
+        ProtectedAlertDialogBuilder(this)
             .setTitle(getString(R.string.privacy_failed_attempts_backoff))
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 appSettings.failedAttemptsThreshold = values[which]
@@ -352,7 +352,7 @@ class PrivacySecurityActivity : AppCompatActivity() {
         val labels = AppSettingsStore.INACTIVITY_OPTIONS.map { it.first }.toTypedArray()
         val checked = AppSettingsStore.INACTIVITY_OPTIONS.indexOfFirst { it.second == appSettings.uiInactivityTimeoutMs }
             .coerceAtLeast(1)
-        MaterialAlertDialogBuilder(this)
+        ProtectedAlertDialogBuilder(this)
             .setTitle(getString(R.string.privacy_ui_inactivity_timeout))
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 appSettings.uiInactivityTimeoutMs = AppSettingsStore.INACTIVITY_OPTIONS[which].second

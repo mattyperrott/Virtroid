@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -24,11 +25,17 @@ import android.os.HandlerThread
 import android.util.Size
 import android.view.Surface
 import android.view.TextureView
+import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.isVisible
+import androidx.core.view.updateLayoutParams
 import io.virtroid.client.databinding.ScreenCameraCaptureBinding
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.SafeArea
 import java.io.File
 import java.time.Instant
 import java.time.ZoneOffset
@@ -65,6 +72,7 @@ class CameraCaptureActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding = ScreenCameraCaptureBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        keepControlsClearOfSystemBars()
         recordVideoAudio = intent.getBooleanExtra(EXTRA_RECORD_AUDIO, false)
 
         binding.cameraCloseButton.setOnClickListener { finish() }
@@ -107,14 +115,67 @@ class CameraCaptureActivity : AppCompatActivity() {
         super.onPause()
     }
 
-    @SuppressLint("MissingPermission")
+    /**
+     * The preview fills the screen behind the system bars (on every Android
+     * version, as Android 15 and later draw this way anyway); the controls add
+     * the bars and the camera cutout to the margins the layout gave them, so
+     * the shutter stays clear of three-button navigation.
+     */
+    private fun keepControlsClearOfSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controls = listOf(
+            binding.cameraCloseButton,
+            binding.cameraRecordingStatus,
+            binding.cameraCaptureHint,
+            binding.cameraShutterButton,
+        )
+        val layoutMargins = controls.associateWith { view ->
+            val params = view.layoutParams as ViewGroup.MarginLayoutParams
+            Insets.of(params.leftMargin, params.topMargin, params.rightMargin, params.bottomMargin)
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val safe = insets.getInsets(SafeArea.bars())
+            for ((view, margins) in layoutMargins) {
+                view.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    setMargins(
+                        margins.left + safe.left,
+                        margins.top + safe.top,
+                        margins.right + safe.right,
+                        margins.bottom + safe.bottom,
+                    )
+                }
+            }
+            insets
+        }
+    }
+
     private fun openCamera(texture: SurfaceTexture) {
         if (cameraDevice != null || cameraThread != null) return
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             finish()
             return
         }
+        // Policy can disable the camera, its service can be gone, and the
+        // permission can be taken away after the check above: each closes this
+        // screen with a message instead of crashing the app.
+        try {
+            startCamera(texture)
+        } catch (error: CameraAccessException) {
+            cameraFailed()
+        } catch (error: SecurityException) {
+            cameraFailed()
+        } catch (error: IllegalArgumentException) {
+            cameraFailed()
+        }
+    }
 
+    private fun cameraFailed() {
+        closeCamera()
+        fail(getString(R.string.session_camera_unavailable))
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startCamera(texture: SurfaceTexture) {
         val manager = getSystemService(CameraManager::class.java)
         selectedCameraId = manager.cameraIdList.firstOrNull { id ->
             manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) ==

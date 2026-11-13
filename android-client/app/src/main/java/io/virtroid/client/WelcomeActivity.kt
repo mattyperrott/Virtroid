@@ -6,10 +6,10 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import io.virtroid.client.databinding.ScreenWelcomeBinding
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.SafeArea
 
 class WelcomeActivity : AppCompatActivity() {
     private lateinit var binding: ScreenWelcomeBinding
@@ -25,7 +25,7 @@ class WelcomeActivity : AppCompatActivity() {
         val topInset = resources.getDimensionPixelSize(R.dimen.space_16)
         val bottomInset = resources.getDimensionPixelSize(R.dimen.space_24)
         ViewCompat.setOnApplyWindowInsetsListener(binding.welcomeRoot) { _, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(SafeArea.bars())
             binding.welcomeBrand.updatePadding(
                 left = horizontalInset + bars.left,
                 top = topInset + bars.top,

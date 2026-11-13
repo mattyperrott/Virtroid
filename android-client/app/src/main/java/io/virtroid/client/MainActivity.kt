@@ -5,21 +5,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.os.Bundle
-import android.view.WindowManager
 import android.view.LayoutInflater
+import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.Lifecycle
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
-import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withResumed
 import androidx.lifecycle.withStarted
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeState
 import io.virtroid.client.api.RuntimeSummary
@@ -30,26 +28,24 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.RuntimeCardBinding
-import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.databinding.ScreenMyRuntimesBinding
+import io.virtroid.client.device.DeviceRuntimeProfile
+import io.virtroid.client.push.NotificationRelayManager
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.BlobKeyEnvelopeCrypto
-import io.virtroid.client.update.UpdatePrompt
+import io.virtroid.client.security.ConfidentialRuntimeGuard
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
-import io.virtroid.client.security.ConfidentialRuntimeGuard
+import io.virtroid.client.security.ProtectedAlertDialogBuilder
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
-import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import io.virtroid.client.security.showConfirmation
-import io.virtroid.client.push.NotificationRelayManager
+import io.virtroid.client.security.unlockAccountKeyWithBiometric
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
 import io.virtroid.client.ui.VirtroidMotion
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import io.virtroid.client.update.UpdatePrompt
 import java.io.IOException
 import java.time.Duration
 import java.time.Instant
@@ -57,7 +53,11 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.max
-import io.virtroid.client.ui.Notice
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ScreenMyRuntimesBinding
@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.mainContentLayout) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(SafeArea.bars())
             view.updatePadding(
                 left = 24 + bars.left,
                 top = 76 + bars.top,
@@ -1166,7 +1166,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSessionPrepareError(error: Throwable, runtime: RuntimeSummary) {
         val message = error.virtroidDisplayMessage(this)
-        MaterialAlertDialogBuilder(this)
+        ProtectedAlertDialogBuilder(this)
             .setTitle(getString(R.string.session_prepare_failed_title))
             .setMessage(message)
             .setNegativeButton(getString(R.string.controls_cancel), null)

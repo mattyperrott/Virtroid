@@ -11,7 +11,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -24,12 +23,13 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.databinding.ScreenSystemLogsBinding
 import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
 import io.virtroid.client.ui.VirtroidMotion
-import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import io.virtroid.client.ui.Notice
+import kotlinx.coroutines.launch
 
 class SystemLogsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSystemLogsBinding
@@ -48,8 +48,8 @@ class SystemLogsActivity : AppCompatActivity() {
         appLogs = AppLogStore.get(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.systemLogsRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            val bars = insets.getInsets(SafeArea.bars())
+            view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
             insets
         }
 

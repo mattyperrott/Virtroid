@@ -7,7 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
@@ -29,13 +28,14 @@ import io.virtroid.client.security.RuntimeRegion
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.unlockAccountKeyWithBiometric
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidSheet
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import io.virtroid.client.ui.Notice
-import io.virtroid.client.ui.VirtroidSheet
 
 class NewRuntimeActivity : AppCompatActivity() {
     private lateinit var binding: ScreenCreateSessionBinding
@@ -79,8 +79,8 @@ class NewRuntimeActivity : AppCompatActivity() {
         identityKeyManager = IdentityKeyManager(this, api)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.newRuntimeRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            val bars = insets.getInsets(SafeArea.barsAndKeyboard())
+            view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
             insets
         }
 

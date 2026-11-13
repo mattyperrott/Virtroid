@@ -2,7 +2,6 @@ package io.virtroid.client.security
 
 import android.app.Activity
 import android.content.Context
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.R
 import io.virtroid.client.ui.VirtroidSheet
 
@@ -25,7 +24,7 @@ fun Context.showConfirmation(
             .show()
         return
     }
-    val dialog = MaterialAlertDialogBuilder(this)
+    val dialog = ProtectedAlertDialogBuilder(this)
         .setTitle(title)
         .setMessage(message)
         .setNegativeButton(getString(R.string.controls_cancel)) { _, _ -> onCancelled() }

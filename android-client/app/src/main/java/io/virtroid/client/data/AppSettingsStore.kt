@@ -36,6 +36,14 @@ class AppSettingsStore(private val context: Context) {
         get() = prefs.getBoolean(KEY_PERMISSIONS_SETUP_COMPLETED, false)
         set(value) = prefs.edit().putBoolean(KEY_PERMISSIONS_SETUP_COMPLETED, value).apply()
 
+    /**
+     * Permissions this app has asked Android for at least once: whether they
+     * are granted is always checked with Android, never kept here.
+     */
+    var permissionsRequested: Set<String>
+        get() = prefs.getStringSet(KEY_PERMISSIONS_REQUESTED, emptySet()).orEmpty().toSet()
+        set(value) = prefs.edit().putStringSet(KEY_PERMISSIONS_REQUESTED, value).apply()
+
     var uiInactivityTimeoutMs: Long
         get() = prefs.getLong(KEY_UI_INACTIVITY_TIMEOUT_MS, DEFAULT_UI_INACTIVITY_TIMEOUT_MS)
         set(value) = prefs.edit().putLong(KEY_UI_INACTIVITY_TIMEOUT_MS, value.coerceAtLeast(30_000L)).apply()
@@ -242,6 +250,7 @@ class AppSettingsStore(private val context: Context) {
         private const val KEY_FAILED_ATTEMPTS_THRESHOLD = "failed_attempts_threshold"
         private const val KEY_BLOCK_SCREEN_CAPTURE = "block_screen_capture"
         private const val KEY_PERMISSIONS_SETUP_COMPLETED = "permissions_setup_completed"
+        private const val KEY_PERMISSIONS_REQUESTED = "permissions_requested"
         private const val KEY_UI_INACTIVITY_TIMEOUT_MS = "ui_inactivity_timeout_ms"
         private const val LEGACY_KEY_AUTO_DELETE_METADATA = "auto_delete_metadata"
         private const val LEGACY_KEY_CLEAR_POST_TRANSFER_ARTIFACTS = "clear_post_transfer_artifacts"

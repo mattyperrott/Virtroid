@@ -19,7 +19,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
@@ -31,6 +30,12 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAppInstallBinding
 import io.virtroid.client.security.CatalogIconPolicy
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+import java.io.IOException
+import java.util.Locale
+import javax.net.ssl.HttpsURLConnection
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -38,13 +43,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
-import javax.net.ssl.HttpsURLConnection
-import java.util.Locale
-import kotlin.math.roundToInt
-import io.virtroid.client.ui.Notice
 
 /**
  * Browses the F-Droid catalog a page at a time and picks the apps a runtime
@@ -79,8 +79,8 @@ class AppInstallActivity : AppCompatActivity() {
         runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID)?.takeIf { it.isNotBlank() }
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.appInstallRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            val bars = insets.getInsets(SafeArea.barsAndKeyboard())
+            view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
             insets
         }
 

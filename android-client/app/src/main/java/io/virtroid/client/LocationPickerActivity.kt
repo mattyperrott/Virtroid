@@ -17,24 +17,24 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.data.City
 import io.virtroid.client.data.CityCatalog
 import io.virtroid.client.databinding.ScreenLocationPickerBinding
+import io.virtroid.client.security.ProtectedAlertDialogBuilder
 import io.virtroid.client.security.RuntimeRegion
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
-import kotlin.math.roundToInt
 
 /**
  * Picks where a runtime's Android believes it is, from the city list bundled
@@ -55,8 +55,8 @@ class LocationPickerActivity : AppCompatActivity() {
         binding.locationResultsCard.clipToOutline = true
         WindowCompat.setDecorFitsSystemWindows(window, false)
         ViewCompat.setOnApplyWindowInsetsListener(binding.locationPickerRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            val bars = insets.getInsets(SafeArea.barsAndKeyboard())
+            view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
             insets
         }
 
@@ -135,7 +135,7 @@ class LocationPickerActivity : AppCompatActivity() {
             addView(latitudeInput)
             addView(longitudeInput)
         }
-        val dialog = MaterialAlertDialogBuilder(this)
+        val dialog = ProtectedAlertDialogBuilder(this)
             .setTitle(getString(R.string.location_coordinates_title))
             .setMessage(getString(R.string.location_coordinates_body))
             .setView(fields)

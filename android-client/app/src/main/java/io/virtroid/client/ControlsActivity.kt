@@ -11,12 +11,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.withStarted
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.virtroid.client.api.EntitlementSummary
 import io.virtroid.client.api.RuntimeEgress
 import io.virtroid.client.api.RuntimeLogEntry
@@ -30,20 +28,22 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionControlsBinding
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
+import io.virtroid.client.security.ProtectedAlertDialogBuilder
 import io.virtroid.client.security.RegionSeal
 import io.virtroid.client.security.RuntimeRegion
 import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
-import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import io.virtroid.client.security.showConfirmation
+import io.virtroid.client.security.unlockAccountKeyWithBiometric
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidSheet
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.IOException
-import io.virtroid.client.ui.Notice
-import io.virtroid.client.ui.VirtroidSheet
 
 class ControlsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenSessionControlsBinding
@@ -92,7 +92,7 @@ class ControlsActivity : AppCompatActivity() {
         }
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.controlsRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(SafeArea.bars())
             view.updatePadding(
                 left = 24 + bars.left,
                 top = 20 + bars.top,
@@ -245,7 +245,7 @@ class ControlsActivity : AppCompatActivity() {
         container.addView(heightInput)
         container.addView(dpiInput)
 
-        MaterialAlertDialogBuilder(this)
+        ProtectedAlertDialogBuilder(this)
             .setTitle(getString(R.string.controls_display_dialog_title))
             .setView(container)
             .setNegativeButton(getString(R.string.controls_cancel), null)
@@ -273,7 +273,7 @@ class ControlsActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(context, R.color.virtroid_on_surface))
             setHintTextColor(ContextCompat.getColor(context, R.color.virtroid_on_surface_muted))
         }
-        val dialog = MaterialAlertDialogBuilder(this)
+        val dialog = ProtectedAlertDialogBuilder(this)
             .setTitle(getString(R.string.controls_edit_runtime))
             .setView(nameInput)
             .setNegativeButton(getString(R.string.controls_cancel), null)

@@ -1,6 +1,5 @@
 package io.virtroid.client.security
 
-import android.app.Dialog
 import android.graphics.Color
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
@@ -35,7 +34,7 @@ private suspend fun AppCompatActivity.promptSecureEntry(
     binding.dialogInput.inputType = inputType
     binding.dialogInputLayout.configureAccessiblePasswordToggle(binding.dialogInput)
 
-    val dialog = Dialog(this).apply {
+    val dialog = ProtectedDialog(this).apply {
         setContentView(binding.root)
         setCancelable(true)
         window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
@@ -107,7 +106,7 @@ suspend fun AppCompatActivity.promptIdentityPasswordSetup(
         binding.passwordInputLayout.configureAccessiblePasswordToggle(binding.passwordInput)
         binding.passwordConfirmInputLayout.configureAccessiblePasswordToggle(binding.passwordConfirmInput)
 
-        val dialog = Dialog(this).apply {
+        val dialog = ProtectedDialog(this).apply {
             setContentView(binding.root)
             setCancelable(true)
             window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
@@ -166,7 +165,7 @@ suspend fun AppCompatActivity.promptIdentityRecovery(): IdentityRecoveryInput? =
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         binding.recoveryPasswordInputLayout.configureAccessiblePasswordToggle(binding.recoveryPasswordInput)
 
-        val dialog = Dialog(this).apply {
+        val dialog = ProtectedDialog(this).apply {
             setContentView(binding.root)
             setCancelable(true)
             window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())

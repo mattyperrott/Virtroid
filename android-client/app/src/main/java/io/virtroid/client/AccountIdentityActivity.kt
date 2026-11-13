@@ -9,7 +9,6 @@ import android.widget.ImageButton
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import io.virtroid.client.api.TrustedDeviceSummary
@@ -19,11 +18,11 @@ import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenAccountIdentityBinding
+import io.virtroid.client.push.NotificationRelayManager
+import io.virtroid.client.push.RuntimeNotificationKeys
 import io.virtroid.client.security.AccountKeyBiometricStore
 import io.virtroid.client.security.AppLockStore
 import io.virtroid.client.security.DeviceIdentityStore
-import io.virtroid.client.push.NotificationRelayManager
-import io.virtroid.client.push.RuntimeNotificationKeys
 import io.virtroid.client.security.IdentityKeyManager
 import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.authenticateStrongBiometric
@@ -33,12 +32,13 @@ import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.promptIdentityPasswordSetup
 import io.virtroid.client.security.showConfirmation
-import kotlinx.coroutines.launch
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidSheet
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import io.virtroid.client.ui.Notice
-import io.virtroid.client.ui.VirtroidSheet
+import kotlinx.coroutines.launch
 
 class AccountIdentityActivity : AppCompatActivity() {
     private lateinit var binding: ScreenAccountIdentityBinding
@@ -74,8 +74,8 @@ class AccountIdentityActivity : AppCompatActivity() {
         appLogs = AppLogStore.get(this)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.accountIdentityRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            val bars = insets.getInsets(SafeArea.bars())
+            view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
             insets
         }
 

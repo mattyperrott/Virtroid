@@ -1,5 +1,6 @@
 package org.client.scrcpy;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -7,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.os.Binder;
 import android.os.Build;
@@ -17,6 +19,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 
 import io.virtroid.client.BuildConfig;
+import io.virtroid.client.LauncherActivity;
 import io.virtroid.client.R;
 import io.virtroid.client.security.TlsPins;
 import io.virtroid.client.viewer.RouteChooser;
@@ -318,10 +321,25 @@ public class Scrcpy extends Service {
         Notification notification = buildForegroundNotification();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             int foregroundTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && physicalMicrophoneEnabled) {
+            // The microphone type needs RECORD_AUDIO now, not when the session
+            // screen checked it.
+            boolean microphone = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && physicalMicrophoneEnabled
+                    && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            if (microphone) {
                 foregroundTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
             }
-            startForeground(NOTIFICATION_ID, notification, foregroundTypes);
+            try {
+                startForeground(NOTIFICATION_ID, notification, foregroundTypes);
+            } catch (SecurityException refused) {
+                if (!microphone) {
+                    throw refused;
+                }
+                // Android refused the microphone type: the stream goes on
+                // without the phone's microphone instead of crashing.
+                debugLog("microphone foreground type refused", refused);
+                physicalMicrophoneEnabled = false;
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
@@ -345,16 +363,13 @@ public class Scrcpy extends Service {
     }
 
     private Notification buildForegroundNotification() {
-        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        if (launchIntent == null) {
-            launchIntent = new Intent();
-        }
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
-        }
-        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, launchIntent, pendingIntentFlags);
+        // This app's launcher, named: never an empty intent for whatever matches it.
+        Intent launchIntent = new Intent(this, LauncherActivity.class)
+                .setAction(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent contentIntent = PendingIntent.getActivity(
+                this, 0, launchIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         Notification.Builder builder;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

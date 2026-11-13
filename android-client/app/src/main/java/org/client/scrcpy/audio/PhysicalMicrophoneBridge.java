@@ -74,15 +74,27 @@ public final class PhysicalMicrophoneBridge {
             return;
         }
 
-        AudioRecord candidate = new AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                .setAudioFormat(new AudioFormat.Builder()
-                        .setSampleRate(SAMPLE_RATE)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .build())
-                .setBufferSizeInBytes(Math.max(minimum * 2, FRAME_BYTES * 4))
-                .build();
+        AudioRecord candidate;
+        try {
+            candidate = new AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setSampleRate(SAMPLE_RATE)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                            .build())
+                    .setBufferSizeInBytes(Math.max(minimum * 2, FRAME_BYTES * 4))
+                    .build();
+        } catch (SecurityException revoked) {
+            // RECORD_AUDIO taken away since the check above.
+            frameSink.end();
+            stateListener.onStateChanged(false, "permission-required");
+            return;
+        } catch (UnsupportedOperationException unsupported) {
+            frameSink.end();
+            stateListener.onStateChanged(false, "initialization-failed");
+            return;
+        }
         if (candidate.getState() != AudioRecord.STATE_INITIALIZED) {
             candidate.release();
             frameSink.end();

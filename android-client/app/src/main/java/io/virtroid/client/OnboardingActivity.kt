@@ -10,7 +10,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
@@ -26,16 +25,17 @@ import io.virtroid.client.security.IdentityPasswordStore
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPasswordSetup
 import io.virtroid.client.security.promptIdentityRecovery
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+import java.io.IOException
+import java.util.UUID
+import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.IOException
-import java.util.UUID
-import kotlin.random.Random
-import io.virtroid.client.ui.Notice
 
 class OnboardingActivity : AppCompatActivity() {
     private lateinit var binding: ScreenIdentityProvisioningBinding
@@ -64,7 +64,7 @@ class OnboardingActivity : AppCompatActivity() {
         identityKeyManager = IdentityKeyManager(this, api)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.onboardingRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(SafeArea.bars())
             view.updatePadding(
                 left = 24 + bars.left,
                 top = 24 + bars.top,

@@ -1,7 +1,6 @@
 package io.virtroid.client.ui
 
 import android.app.Activity
-import android.app.Dialog
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.view.View
@@ -12,6 +11,7 @@ import androidx.core.view.isVisible
 import io.virtroid.client.R
 import io.virtroid.client.databinding.DialogVirtroidSheetBinding
 import io.virtroid.client.databinding.ItemSheetRowBinding
+import io.virtroid.client.security.ProtectedDialog
 
 /**
  * The app's own dialog in place of the stock white one: a title, an optional
@@ -19,7 +19,7 @@ import io.virtroid.client.databinding.ItemSheetRowBinding
  */
 class VirtroidSheet(private val activity: Activity) {
     private val binding = DialogVirtroidSheetBinding.inflate(activity.layoutInflater)
-    private val dialog = Dialog(activity).apply {
+    private val dialog = ProtectedDialog(activity).apply {
         setContentView(binding.root)
         setCancelable(true)
         window?.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())

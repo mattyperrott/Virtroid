@@ -13,13 +13,24 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import io.virtroid.client.data.AppLogStore
 import io.virtroid.client.data.AppSettingsStore
 import io.virtroid.client.databinding.ScreenPermissionsBinding
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
+
+/**
+ * Whether Android has stopped showing its dialog for a permission, judged
+ * after a request: still refused, no rationale to show, and asked for before.
+ * A first request can't refuse it for good (that takes a second refusal), so
+ * a first refusal with no rationale is the dialog being dismissed, which
+ * Android doesn't count.
+ */
+internal fun androidWontAsk(granted: Boolean, showRationale: Boolean, requestedBefore: Boolean): Boolean =
+    !granted && !showRationale && requestedBefore
 
 class PermissionsActivity : AppCompatActivity() {
     private lateinit var binding: ScreenPermissionsBinding
@@ -27,11 +38,25 @@ class PermissionsActivity : AppCompatActivity() {
     private lateinit var appLogs: AppLogStore
     private var settingsMode = false
 
+    // Permissions Android no longer shows its dialog for, as the last request
+    // found: their buttons open Android settings instead of doing nothing.
+    private val askedOut = mutableSetOf<String>()
+
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { results ->
+        val requestedBefore = appSettings.permissionsRequested
         results.forEach { (permission, granted) ->
             appLogs.info("App permission ${permission.substringAfterLast('.')} granted=$granted", "permissions")
+            if (androidWontAsk(granted, shouldShowRequestPermissionRationale(permission), permission in requestedBefore)) {
+                askedOut += permission
+            } else {
+                askedOut -= permission
+            }
+        }
+        appSettings.permissionsRequested = requestedBefore + results.keys
+        if (results.keys.any(askedOut::contains)) {
+            Notice.show(this, getString(R.string.permissions_android_wont_ask))
         }
         renderPermissions()
     }
@@ -48,8 +73,8 @@ class PermissionsActivity : AppCompatActivity() {
         settingsMode = intent.getBooleanExtra(EXTRA_SETTINGS_MODE, false)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.permissionsRoot) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            val bars = insets.getInsets(SafeArea.bars())
+            view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
             insets
         }
 
@@ -96,7 +121,12 @@ class PermissionsActivity : AppCompatActivity() {
             renderPermissions()
             return
         }
-        permissionRequest.launch(missing.toTypedArray())
+        val askable = missing.filterNot(askedOut::contains)
+        if (askable.isEmpty()) {
+            openAndroidSettings()
+            return
+        }
+        permissionRequest.launch(askable.toTypedArray())
     }
 
     private fun renderPermissions() {
@@ -110,16 +140,19 @@ class PermissionsActivity : AppCompatActivity() {
             binding.notificationPermissionButton,
             notificationsGranted,
             available = true,
+            inSettings = notificationPermission()?.let(askedOut::contains) == true,
         )
         renderPermissionButton(
             binding.microphonePermissionButton,
             microphoneGranted,
             available = microphoneAvailable,
+            inSettings = Manifest.permission.RECORD_AUDIO in askedOut,
         )
         renderPermissionButton(
             binding.cameraPermissionButton,
             cameraGranted,
             available = cameraAvailable,
+            inSettings = Manifest.permission.CAMERA in askedOut,
         )
 
         val allGranted = notificationsGranted && microphoneGranted && cameraGranted
@@ -140,12 +173,14 @@ class PermissionsActivity : AppCompatActivity() {
         button: com.google.android.material.button.MaterialButton,
         granted: Boolean,
         available: Boolean,
+        inSettings: Boolean,
     ) {
         button.isEnabled = available && !granted
         button.text = getString(
             when {
                 !available -> R.string.permissions_unavailable
                 granted -> R.string.permissions_allowed
+                inSettings -> R.string.permissions_in_settings
                 else -> R.string.permissions_allow
             },
         )

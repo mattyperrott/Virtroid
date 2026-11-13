@@ -28,6 +28,7 @@
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:name=".UnlockActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="false" />
         <activity
             android:name=".PrivacySecurityActivity"
@@ -43,10 +44,12 @@
             android:exported="false" />
         <activity
             android:name=".AppInstallActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="false"
             android:theme="@style/Theme.Virtroid.Modal" />
         <activity
             android:name=".LocationPickerActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="false"
             android:theme="@style/Theme.Virtroid.Modal" />
         <activity
@@ -72,6 +75,7 @@
             android:exported="false" />
         <activity
             android:name=".NewRuntimeActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="false" />
         <activity
             android:name=".SessionActivity"

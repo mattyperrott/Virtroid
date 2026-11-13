@@ -38,20 +38,21 @@ import io.virtroid.client.data.SessionStore
 import io.virtroid.client.databinding.ScreenSessionViewerBinding
 import io.virtroid.client.device.DeviceRuntimeProfile
 import io.virtroid.client.security.ConfidentialRuntimeGuard
-import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.SnapshotRollbackException
+import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
+import io.virtroid.client.ui.Notice
+import io.virtroid.client.ui.SafeArea
 import io.virtroid.client.ui.VirtroidMotion
-import io.virtroid.client.viewer.ScrcpySessionHost
 import io.virtroid.client.viewer.RelayLatencyProbe
+import io.virtroid.client.viewer.ScrcpySessionHost
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import io.virtroid.client.ui.Notice
 import org.client.scrcpy.crypto.ViewerEncryption
 
 class SessionActivity : AppCompatActivity() {
@@ -324,7 +325,7 @@ class SessionActivity : AppCompatActivity() {
             }
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.sessionRoot) { _, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val systemBars = insets.getInsets(SafeArea.bars())
             binding.sessionTopBar.updatePadding(
                 left = resources.getDimensionPixelSize(R.dimen.space_16) + systemBars.left,
                 top = resources.getDimensionPixelSize(R.dimen.space_6) + systemBars.top,
