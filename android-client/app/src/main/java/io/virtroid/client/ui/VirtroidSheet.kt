@@ -86,13 +86,15 @@ class VirtroidSheet(private val activity: Activity) {
         binding.sheetScroll.isVisible = true
     }
 
-    /** The main button; [destructive] makes it red for deleting or revoking. */
-    fun primary(label: String, destructive: Boolean = false, onClick: () -> Unit) = apply {
-        binding.sheetPrimaryButton.text = label
+    /**
+     * The main button; with [holdLabel], for what can't be undone, it is red,
+     * says that, and has to be held.
+     */
+    fun primary(label: String, holdLabel: String? = null, onClick: () -> Unit) = apply {
+        binding.sheetPrimaryButton.text = holdLabel ?: label
         binding.sheetPrimaryButton.isVisible = true
-        if (destructive) {
-            binding.sheetPrimaryButton.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.v_danger))
-            binding.sheetPrimaryButton.setTextColor(activity.getColor(R.color.v_bg))
+        if (holdLabel != null) {
+            binding.sheetPrimaryButton.requireHold(action = label)
         }
         binding.sheetPrimaryButton.setOnClickListener {
             dialog.dismiss()
@@ -116,6 +118,7 @@ class VirtroidSheet(private val activity: Activity) {
     fun show() {
         if (!activity.isFinishing && !activity.isDestroyed) {
             binding.sheetButtons.isVisible = binding.sheetPrimaryButton.isVisible || binding.sheetSecondaryButton.isVisible
+            VirtroidMotion.pressableRows(binding.root)
             dialog.show()
         }
     }

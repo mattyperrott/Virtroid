@@ -28,6 +28,7 @@
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:name=".UnlockActivity"
+            android:theme="@style/Theme.Virtroid.Lock"
             android:windowSoftInputMode="adjustResize"
             android:exported="false" />
         <activity
@@ -75,14 +76,17 @@
             android:exported="false" />
         <activity
             android:name=".NewRuntimeActivity"
+            android:theme="@style/Theme.Virtroid.Rise"
             android:windowSoftInputMode="adjustResize"
             android:exported="false" />
         <activity
             android:name=".SessionActivity"
+            android:theme="@style/Theme.Virtroid.Viewer"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:exported="false" />
         <activity
             android:name=".CameraCaptureActivity"
+            android:theme="@style/Theme.Virtroid.Rise"
             android:exported="false"
             android:screenOrientation="fullSensor" />
         <activity

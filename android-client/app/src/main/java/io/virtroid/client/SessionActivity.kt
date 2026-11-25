@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityOptionsCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -43,6 +44,7 @@ import io.virtroid.client.security.SnapshotRollbackGuard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.ViewerTransition
 import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.viewer.RelayLatencyProbe
 import io.virtroid.client.viewer.ScrcpySessionHost
@@ -146,7 +148,7 @@ class SessionActivity : AppCompatActivity() {
             runOnUiThread {
                 viewerSurfaceResumeJob?.cancel()
                 viewerSurfaceResumeJob = null
-                binding.sessionStreamStatusOverlay.isVisible = false
+                VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, false)
             }
         }
 
@@ -208,7 +210,7 @@ class SessionActivity : AppCompatActivity() {
                         message
                     }
                     binding.sessionStreamProgress.isVisible = false
-                    binding.sessionStreamStatusOverlay.isVisible = true
+                    VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, true)
                     binding.sessionRetryButton.isVisible = !sessionUnavailable
                     val failedHost = sessionHost
                     sessionHost = null
@@ -310,7 +312,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionRetryButton.isVisible = false
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
         binding.sessionStreamProgress.isVisible = true
-        binding.sessionStreamStatusOverlay.isVisible = true
+        VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, true)
         binding.sessionSurfaceView.isOpaque = true
         binding.sessionSurfaceView.setOnTouchListener { view, event ->
             sessionHost?.sendTouch(event, view.width, view.height) ?: false
@@ -395,6 +397,7 @@ class SessionActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        ViewerTransition.finish(this)
         persistActiveSession()
         super.onStop()
     }
@@ -414,6 +417,8 @@ class SessionActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Not onStart: covered only briefly, Android may not have stopped this screen.
+        ViewerTransition.enterViewer(this, runtimeId)
         hideSystemBars()
     }
 
@@ -440,7 +445,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_resuming)
         binding.sessionStreamProgress.isVisible = true
-        binding.sessionStreamStatusOverlay.isVisible = true
+        VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, true)
         binding.sessionRetryButton.isVisible = false
         host.attachSurface(
             surface,
@@ -470,7 +475,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_connecting)
         binding.sessionStreamProgress.isVisible = true
-        binding.sessionStreamStatusOverlay.isVisible = true
+        VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, true)
         binding.sessionRetryButton.isVisible = false
         appLogs.info("Opening viewer transport for $runtimeName", "session")
         sessionHost = ScrcpySessionHost(
@@ -512,7 +517,10 @@ class SessionActivity : AppCompatActivity() {
         if (!cameraMode.equals("photo-import", ignoreCase = true)) {
             return
         }
-        cameraCapture.launch(CameraCaptureActivity.createIntent(this, recordAudio))
+        cameraCapture.launch(
+            CameraCaptureActivity.createIntent(this, recordAudio),
+            ActivityOptionsCompat.makeCustomAnimation(this, R.anim.v_rise_enter, R.anim.v_screen_hold),
+        )
     }
 
     private fun importCapturedMedia(path: String, name: String, kind: String, hasAudio: Boolean) {
@@ -580,7 +588,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionSubtitleText.text = getString(R.string.session_connecting_short)
         binding.sessionStreamStatusText.text = getString(R.string.session_stream_reconnecting)
         binding.sessionStreamProgress.isVisible = true
-        binding.sessionStreamStatusOverlay.isVisible = true
+        VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, true)
         binding.sessionRetryButton.isVisible = false
         viewerReconnectJob = lifecycleScope.launch {
             if (delayMs > 0L) {
@@ -601,7 +609,7 @@ class SessionActivity : AppCompatActivity() {
             }.onFailure { error ->
                 appLogs.warn("Session relay token refresh failed: ${error.message}", "session")
                 binding.sessionStreamProgress.isVisible = false
-                binding.sessionStreamStatusOverlay.isVisible = true
+                VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, true)
                 binding.sessionRetryButton.isVisible = true
                 toast(error.virtroidDisplayMessage(this@SessionActivity))
             }
@@ -691,9 +699,19 @@ class SessionActivity : AppCompatActivity() {
         }
         startActivity(
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            closingOptions(),
         )
         finish()
     }
+
+    /** Back to the list by shrinking into the runtime's card. */
+    private fun closingOptions(): Bundle? =
+        ViewerTransition.leaveViewer(
+            this,
+            runtimeId,
+            binding.sessionSurfaceView,
+            videoCovered = binding.sessionStreamStatusOverlay.isVisible,
+        ) ?: VirtroidMotion.zoomBack(this)
 
     private fun navigateBackToApp() {
         persistActiveSession()
@@ -701,6 +719,7 @@ class SessionActivity : AppCompatActivity() {
         startActivity(
             Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            closingOptions(),
         )
     }
 
@@ -905,7 +924,7 @@ class SessionActivity : AppCompatActivity() {
         binding.sessionSubtitleText.text = getString(R.string.session_heartbeat_stale)
         binding.sessionStreamStatusText.text = getString(R.string.session_heartbeat_stale)
         binding.sessionStreamProgress.isVisible = false
-        binding.sessionStreamStatusOverlay.isVisible = true
+        VirtroidMotion.setVisible(binding.sessionStreamStatusOverlay, true)
         binding.sessionRetryButton.isVisible = false
     }
 

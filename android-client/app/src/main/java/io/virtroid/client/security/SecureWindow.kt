@@ -10,6 +10,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import io.virtroid.client.R
 import io.virtroid.client.data.AppSettingsStore
 
 fun Activity.enableSecureWindow() {
@@ -41,17 +42,22 @@ fun Window.applyScreenCaptureProtection(context: Context) {
  * The app's dialogs. A dialog has a window of its own, which the activity's
  * FLAG_SECURE doesn't cover, so each one takes the screen-capture setting
  * itself before it is first shown. Every dialog goes through this class or
- * [ProtectedAlertDialogBuilder] (DialogProtectionTest checks).
+ * [ProtectedAlertDialogBuilder] (DialogProtectionTest checks), so they also
+ * open and close alike.
  */
 class ProtectedDialog(context: Context) : Dialog(context) {
     init {
+        window?.let { LockCover.watchDialog(it, context) }
         window?.applyScreenCaptureProtection(context)
+        window?.setWindowAnimations(R.style.Animation_Virtroid_Dialog)
     }
 }
 
 /** [MaterialAlertDialogBuilder] whose dialogs take the screen-capture setting, as [ProtectedDialog]. */
 class ProtectedAlertDialogBuilder(context: Context) : MaterialAlertDialogBuilder(context) {
     override fun create(): AlertDialog = super.create().apply {
+        window?.let { LockCover.watchDialog(it, context) }
         window?.applyScreenCaptureProtection(context)
+        window?.setWindowAnimations(R.style.Animation_Virtroid_Dialog)
     }
 }

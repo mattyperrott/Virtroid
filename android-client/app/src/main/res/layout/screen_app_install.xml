@@ -278,6 +278,13 @@
                         android:text="@string/app_install_load_more"
                         android:visibility="gone" />
 
+                    <io.virtroid.client.ui.SkeletonView
+                        android:id="@+id/app_skeleton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="@string/app_install_loading"
+                        app:skeletonShape="appRows" />
+
                     <TextView
                         android:id="@+id/app_empty_text"
                         android:layout_width="match_parent"

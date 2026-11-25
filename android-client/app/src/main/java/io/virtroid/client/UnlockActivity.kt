@@ -1,8 +1,12 @@
 package io.virtroid.client
 
+import android.animation.Animator
 import android.content.Intent
+import android.graphics.drawable.Animatable
 import android.os.Bundle
 import android.text.InputType
+import android.view.View
+import android.widget.TextView
 import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
@@ -25,6 +29,8 @@ import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
 import io.virtroid.client.ui.VirtroidMotion
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -39,6 +45,10 @@ class UnlockActivity : AppCompatActivity() {
     private var requiredPinLength = AppLockStore.LEGACY_PIN_LENGTH
     // Set while a wrong PIN shakes or a right one plays out, so taps then are ignored.
     private var inputLocked = false
+    private var waiting: Animator? = null
+    // Runs while too many wrong entries keep the screen from taking another.
+    private var lockout: Job? = null
+    private var lockoutDots = 0
     private val pinDots by lazy {
         listOf(
             binding.pinDot1,
@@ -49,6 +59,21 @@ class UnlockActivity : AppCompatActivity() {
             binding.pinDot6,
             binding.pinDot7,
             binding.pinDot8,
+        )
+    }
+
+    private val pinButtons by lazy {
+        listOf(
+            binding.pinButton0 to "0",
+            binding.pinButton1 to "1",
+            binding.pinButton2 to "2",
+            binding.pinButton3 to "3",
+            binding.pinButton4 to "4",
+            binding.pinButton5 to "5",
+            binding.pinButton6 to "6",
+            binding.pinButton7 to "7",
+            binding.pinButton8 to "8",
+            binding.pinButton9 to "9",
         )
     }
 
@@ -85,24 +110,13 @@ class UnlockActivity : AppCompatActivity() {
             return
         }
 
-        val pinButtons = listOf(
-            binding.pinButton0 to "0",
-            binding.pinButton1 to "1",
-            binding.pinButton2 to "2",
-            binding.pinButton3 to "3",
-            binding.pinButton4 to "4",
-            binding.pinButton5 to "5",
-            binding.pinButton6 to "6",
-            binding.pinButton7 to "7",
-            binding.pinButton8 to "8",
-            binding.pinButton9 to "9",
-        )
         pinButtons.forEach { (button, value) ->
             button.contentDescription = value
-            VirtroidMotion.pressFeedback(button)
+            VirtroidMotion.keyFeedback(button, label = button.getChildAt(0) as TextView)
             button.setOnClickListener { appendPin(value) }
         }
-        VirtroidMotion.pressFeedback(binding.pinDeleteButton)
+        VirtroidMotion.keyFeedback(binding.pinDeleteButton)
+        VirtroidMotion.keyFeedback(binding.buttonFingerprint)
         binding.pinDeleteButton.setOnClickListener {
             if (!inputLocked && pinBuffer.isNotEmpty()) {
                 val removed = pinBuffer.lastIndex
@@ -119,6 +133,7 @@ class UnlockActivity : AppCompatActivity() {
         renderMode()
         renderBiometric()
         updateDots()
+        showStatus(Status.ENTER)
         if (savedInstanceState == null) {
             val rows = (0 until binding.pinPad.childCount).map { binding.pinPad.getChildAt(it) }
             VirtroidMotion.riseIn(listOf(binding.pinHeader) + rows)
@@ -133,6 +148,7 @@ class UnlockActivity : AppCompatActivity() {
     private fun appendPin(value: String) {
         if (inputLocked || showingPassphrase || pinBuffer.length >= requiredPinLength) return
         pinBuffer.append(value)
+        showStatus(Status.ENTER)
         updateDots()
         VirtroidMotion.popIn(pinDots[pinBuffer.lastIndex])
         if (pinBuffer.length == requiredPinLength) {
@@ -140,19 +156,64 @@ class UnlockActivity : AppCompatActivity() {
                 rejectPin()
                 return
             }
-            // verify() runs two 210,000-iteration PBKDF2 derivations and opens the vault.
+            // verify() runs two 210,000-iteration PBKDF2 derivations and opens
+            // the vault, up to a second or more: the dots move meanwhile.
             inputLocked = true
             val pin = pinBuffer.toString()
+            showWaiting(true)
             lifecycleScope.launch {
                 val matches = withContext(Dispatchers.Default) { appLockStore.verify(pin) }
                 if (matches) {
                     acceptPin()
                 } else {
+                    showWaiting(false)
                     rejectPin()
-                    toast(getString(R.string.lock_invalid_pin))
+                    showStatus(Status.WRONG)
                 }
             }
         }
+    }
+
+    /** While the PIN is checked the dots bob and the pad, which takes no taps, steps back. */
+    private fun showWaiting(show: Boolean) {
+        val dots = pinDots.take(requiredPinLength)
+        if (show) {
+            showStatus(Status.CHECKING)
+            waiting = VirtroidMotion.waitingWave(dots)
+        } else {
+            VirtroidMotion.stopWaiting(waiting, dots)
+            waiting = null
+        }
+        VirtroidMotion.fadeTo(binding.pinPad, if (show) PAD_WAITING_ALPHA else 1f)
+    }
+
+    private enum class Status { ENTER, CHECKING, WRONG, LOCKED_OUT }
+
+    /** The line under the title: what to enter, or what came of it. */
+    private fun showStatus(status: Status) {
+        val passphraseOnly = appLockStore.mode == AppLockStore.LockMode.PASSPHRASE
+        val text = when (status) {
+            Status.ENTER -> if (passphraseOnly) {
+                getString(R.string.unlock_enter_passphrase)
+            } else {
+                getString(R.string.lock_pin_field_hint, requiredPinLength)
+            }
+            Status.CHECKING -> getString(R.string.unlock_subtitle)
+            Status.WRONG -> getString(
+                if (passphraseOnly) R.string.lock_invalid_passphrase else R.string.lock_invalid_pin,
+            )
+            Status.LOCKED_OUT -> lockoutText(appLockStore.lockoutRemainingMs())
+        }
+        VirtroidMotion.changeText(binding.textSubtitle, text)
+        binding.textSubtitle.setTextColor(
+            getColor(
+                when (status) {
+                    Status.ENTER -> R.color.v_text_muted
+                    Status.CHECKING -> R.color.v_accent
+                    Status.WRONG, Status.LOCKED_OUT -> R.color.v_danger
+                },
+            ),
+        )
     }
 
     /** A wrong PIN: the dots turn red and shake, then empty. */
@@ -162,19 +223,38 @@ class UnlockActivity : AppCompatActivity() {
         VirtroidMotion.rejectHaptic(binding.pinDotsRow)
         VirtroidMotion.shake(binding.pinDotsRow) {
             pinBuffer = StringBuilder()
-            updateDots()
-            inputLocked = false
+            if (!showLockoutIfNeeded()) {
+                updateDots()
+                inputLocked = false
+            }
         }
     }
 
-    /** The right PIN: the dots ripple and the lock pulses before the app opens. */
+    /** The right PIN: the dots ripple and the app opens behind it. */
     private fun acceptPin() {
         inputLocked = true
         pinBuffer = StringBuilder(pinBuffer.length).append("x".repeat(pinBuffer.length))
-        VirtroidMotion.confirmHaptic(binding.pinDotsRow)
+        val dots = pinDots.take(requiredPinLength)
+        VirtroidMotion.stopWaiting(waiting, dots)
+        VirtroidMotion.wave(dots)
+        openUnlocked()
+    }
+
+    /** The lock springs open and the pad leaves; the app opens as soon as that shows. */
+    private fun openUnlocked() {
+        // A fingerprint can open the app during a lockout.
+        lockout?.cancel()
+        inputLocked = true
+        VirtroidMotion.confirmHaptic(binding.iconLock)
+        if (!VirtroidMotion.enabled) {
+            launchNext()
+            return
+        }
+        binding.iconLock.setImageResource(R.drawable.ic_lock_opening)
+        (binding.iconLock.drawable as? Animatable)?.start()
         VirtroidMotion.pulse(binding.iconLock)
-        val waveMs = VirtroidMotion.wave(pinDots.take(requiredPinLength))
-        binding.root.postDelayed({ launchMain() }, waveMs)
+        VirtroidMotion.leave(listOf(binding.pinPad, binding.passphraseSection, binding.switchUnlockModeText))
+        binding.root.postDelayed({ launchNext() }, OPEN_MS)
     }
 
     private fun unlockWithPassphrase() {
@@ -183,15 +263,18 @@ class UnlockActivity : AppCompatActivity() {
             return
         }
         binding.unlockButton.isEnabled = false
+        VirtroidMotion.setBusy(binding.unlockButton, true)
+        showStatus(Status.CHECKING)
         lifecycleScope.launch {
             val matches = withContext(Dispatchers.Default) { appLockStore.verify(value) }
             binding.unlockButton.isEnabled = true
+            VirtroidMotion.setBusy(binding.unlockButton, false)
             if (matches) {
-                launchMain()
+                openUnlocked()
             } else {
                 VirtroidMotion.rejectHaptic(binding.passphraseInput)
                 VirtroidMotion.shake(binding.passphraseInput)
-                toast(getString(R.string.lock_invalid_passphrase))
+                if (!showLockoutIfNeeded()) showStatus(Status.WRONG)
             }
         }
     }
@@ -207,7 +290,14 @@ class UnlockActivity : AppCompatActivity() {
         // the app has nothing left to guard.
         if (returnToPrevious && appLockStore.isUnlocked()) {
             finish()
+            return
         }
+        showLockoutIfNeeded()
+    }
+
+    override fun onDestroy() {
+        waiting?.cancel()
+        super.onDestroy()
     }
 
     private fun renderMode() {
@@ -260,7 +350,7 @@ class UnlockActivity : AppCompatActivity() {
                     super.onAuthenticationSucceeded(result)
                     if (appLockStore.unlockWithBiometric(result.cryptoObject?.cipher)) {
                         appLogs.info("Biometric unlock succeeded", "auth")
-                        launchNext()
+                        openUnlocked()
                     } else {
                         toast(getString(R.string.lock_biometric_vault_unavailable))
                     }
@@ -283,13 +373,67 @@ class UnlockActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * After too many wrong entries, counts down to the next one: the time left
+     * under the title, the dots going out with it, and the pad set back. The
+     * time is the app lock's own, which refuses entries until then whatever is
+     * shown. Returns whether it is counting.
+     */
     private fun showLockoutIfNeeded(): Boolean {
-        val remainingMs = appLockStore.lockoutRemainingMs()
-        if (remainingMs <= 0L) {
-            return false
+        if (lockout?.isActive == true) return true
+        if (appLockStore.lockoutRemainingMs() <= 0L) return false
+        inputLocked = true
+        pinBuffer = StringBuilder()
+        updateDots()
+        lockoutDots = requiredPinLength
+        showStatus(Status.LOCKED_OUT)
+        // Read out once, not every second.
+        binding.textSubtitle.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE
+        setEntryEnabled(false)
+        lockout = lifecycleScope.launch {
+            while (true) {
+                val remainingMs = appLockStore.lockoutRemainingMs()
+                if (remainingMs <= 0L) break
+                VirtroidMotion.tickText(binding.textSubtitle, lockoutText(remainingMs))
+                showLockoutDots(remainingMs)
+                // To the next whole second left.
+                delay((remainingMs - 1L) % 1_000L + 1L)
+            }
+            binding.textSubtitle.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            setEntryEnabled(true)
+            updateDots()
+            showStatus(Status.ENTER)
+            VirtroidMotion.pulse(binding.iconLock)
+            inputLocked = false
         }
-        toast(getString(R.string.lock_try_again, (remainingMs / 1_000L).coerceAtLeast(1L)))
         return true
+    }
+
+    private fun lockoutText(remainingMs: Long): String {
+        val seconds = ((remainingMs + 999L) / 1_000L).coerceAtLeast(1L).toInt()
+        return resources.getQuantityString(R.plurals.lock_try_again, seconds, seconds)
+    }
+
+    /** Red dots for the part of the lockout still to go. */
+    private fun showLockoutDots(remainingMs: Long) {
+        val length = AppLockStore.LOCKOUT_MS
+        val left = ((remainingMs * requiredPinLength + length - 1) / length).toInt().coerceIn(0, requiredPinLength)
+        pinDots.take(requiredPinLength).forEachIndexed { index, dot ->
+            dot.setBackgroundResource(if (index < left) R.drawable.bg_pin_dot_error else R.drawable.bg_pin_dot_inactive)
+            if (index in left until lockoutDots) VirtroidMotion.dip(dot)
+        }
+        lockoutDots = left
+    }
+
+    /** The digits, delete and the passphrase's button; a fingerprint still opens the app. */
+    private fun setEntryEnabled(enabled: Boolean) {
+        (pinButtons.map { it.first } + binding.pinDeleteButton).forEach { key ->
+            // A key held down now would not hear the finger leave.
+            if (!enabled) VirtroidMotion.cancelPress(key)
+            key.isEnabled = enabled
+            VirtroidMotion.fadeTo(key, if (enabled) 1f else PAD_WAITING_ALPHA)
+        }
+        binding.unlockButton.isEnabled = enabled
     }
 
     private fun updateDots() {
@@ -306,13 +450,10 @@ class UnlockActivity : AppCompatActivity() {
         }
     }
 
-    private fun launchMain() {
-        launchNext()
-    }
-
     private fun launchNext() {
         if (returnToPrevious) {
             finish()
+            VirtroidMotion.closeWith(this, R.anim.v_zoom_enter, R.anim.v_zoom_exit)
             return
         }
         val sessionStore = SessionStore(this)
@@ -324,10 +465,10 @@ class UnlockActivity : AppCompatActivity() {
             !AppSettingsStore(this).permissionsSetupCompleted -> PermissionsActivity.createIntent(this)
             else -> Intent(this, MainActivity::class.java)
         }
-        startActivity(
-            destination.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
-        finish()
+        // Not CLEAR_TASK: Android covers the next screen with a blank starting
+        // window for that. Finishing what is underneath leaves the same task.
+        startActivity(destination, VirtroidMotion.zoomInto(this))
+        finishAffinity()
     }
 
     private fun launchOnboarding() {
@@ -344,6 +485,9 @@ class UnlockActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_RETURN_TO_PREVIOUS = "return_to_previous"
+        private const val PAD_WAITING_ALPHA = 0.35f
+        // Until the ripple is done: building the next screen would freeze it part way.
+        private const val OPEN_MS = 190L
         private const val BIOMETRIC_AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG
     }
 }

@@ -36,6 +36,7 @@ import androidx.core.view.updateLayoutParams
 import io.virtroid.client.databinding.ScreenCameraCaptureBinding
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 import java.io.File
 import java.time.Instant
 import java.time.ZoneOffset
@@ -534,6 +535,11 @@ class CameraCaptureActivity : AppCompatActivity() {
             }
             ?: sizes.firstOrNull()
             ?: Size(1280, 720)
+    }
+
+    override fun finish() {
+        super.finish()
+        VirtroidMotion.closeWith(this, R.anim.v_screen_hold, R.anim.v_rise_exit)
     }
 
     companion object {

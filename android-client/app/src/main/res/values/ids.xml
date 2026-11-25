@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- What ui/VirtroidMotion is already moving a view to. -->
+    <item name="motion_alpha" type="id" />
+    <item name="motion_busy" type="id" />
+    <item name="motion_key" type="id" />
+    <item name="motion_text" type="id" />
+    <item name="motion_visible" type="id" />
+    <item name="motion_color" type="id" />
+    <item name="motion_color_animator" type="id" />
+    <item name="motion_background" type="id" />
+</resources>

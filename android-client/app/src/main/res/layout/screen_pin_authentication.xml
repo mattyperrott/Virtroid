@@ -44,7 +44,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="Unlock Identity" />
+                android:text="@string/unlock_title" />
 
             <TextView
                 android:id="@+id/text_subtitle"
@@ -53,14 +53,18 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:gravity="center"
-                android:text="Decrypting local state"
-                android:textColor="@color/v_accent" />
+                android:accessibilityLiveRegion="polite"
+                android:text="@string/unlock_enter_passphrase"
+                android:textColor="@color/v_text_muted" />
 
             <LinearLayout
                 android:id="@+id/pinDotsRow"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="32dp"
+                android:layout_marginTop="20dp"
+                android:clipToPadding="false"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
                 android:gravity="center"
                 android:orientation="horizontal">
 
@@ -126,7 +130,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
-            android:layout_marginTop="42dp"
+            android:layout_marginTop="30dp"
             android:layout_marginEnd="8dp"
             android:orientation="vertical"
             android:visibility="gone">
@@ -157,7 +161,7 @@
             android:id="@+id/pinPad"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="48dp"
+            android:layout_marginTop="36dp"
             android:gravity="center"
             android:orientation="vertical">
 
@@ -293,6 +297,7 @@
 
                 <ImageButton
                     android:id="@+id/pinDeleteButton"
+                    android:stateListAnimator="@null"
                     android:layout_width="80dp"
                     android:layout_height="80dp"
                     android:background="@drawable/bg_pin_key_clear"

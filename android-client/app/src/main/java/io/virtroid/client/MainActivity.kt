@@ -5,9 +5,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.LayoutInflater
+import android.view.View
 import android.view.WindowManager
-import android.view.animation.AccelerateDecelerateInterpolator
+import android.widget.ImageView
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -42,8 +45,11 @@ import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.showConfirmation
 import io.virtroid.client.security.unlockAccountKeyWithBiometric
+import io.virtroid.client.ui.LiveSweep
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.TabBar
+import io.virtroid.client.ui.ViewerTransition
 import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.update.UpdatePrompt
 import java.io.IOException
@@ -75,6 +81,9 @@ class MainActivity : AppCompatActivity() {
     private var runtimePollJob: Job? = null
     private var refreshJob: Job? = null
     private var connectJob: Job? = null
+    private var refreshSaysErrors = false
+    // The runtime being connected to, whose button shows it.
+    private var connectingRuntimeId: String? = null
     private val runtimeProvisioningStartedAtMs = mutableMapOf<String, Long>()
     private val runtimeProvisioningLogMessages = mutableMapOf<String, List<String>>()
     // Runtimes waiting for their private server, and what the server last said.
@@ -85,6 +94,13 @@ class MainActivity : AppCompatActivity() {
     // A delete the controls screen handed over before the list loaded.
     private var pendingDeleteRuntimeId: String? = null
     private val reportedRuntimeErrors = mutableMapOf<String, String>()
+    // The cards on screen, kept from one refresh to the next so what changes
+    // can move, and a tap under way or TalkBack's place survives a refresh.
+    private val runtimeCards = mutableMapOf<String, RuntimeCard>()
+    // False until the list has come once: until then its outline stands in for it.
+    private var listLoaded = false
+    // Null until the log's first count: that one is not news.
+    private var shownBadgeCount: Int? = null
     private val locallyStoppingRuntimeIds = mutableSetOf<String>()
     private val locallyStoppingRuntimeStartedAtMs = mutableMapOf<String, Long>()
     private var latestEntitlement: EntitlementSummary? = null
@@ -121,22 +137,30 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        binding.notificationButton.setOnClickListener {
-            startActivity(SystemLogsActivity.createIntent(this))
-        }
+        binding.bottomNav.setTabs(
+            listOf(binding.runtimesNavButton, binding.accountNavButton, binding.logsNavButton, binding.settingsNavButton),
+            first = binding.runtimesNavButton,
+        )
+        binding.notificationButton.setOnClickListener { openTab(binding.logsNavButton, SystemLogsActivity.createIntent(this)) }
         binding.createRuntimeButton.setOnClickListener {
             openNewRuntime()
         }
         binding.runtimesNavButton.setOnClickListener { refreshRuntimes() }
+        binding.runtimePull.canPull = { !binding.runtimeSkeleton.isLoading }
+        binding.runtimePull.onRefresh = ::refreshFromPull
+        ViewCompat.addAccessibilityAction(binding.runtimeScroll, getString(R.string.home_refresh)) { _, _ ->
+            refreshRuntimes()
+            true
+        }
         binding.accountNavButton.setOnClickListener {
-            startActivity(AccountIdentityActivity.createIntent(this))
+            openTab(binding.accountNavButton, AccountIdentityActivity.createIntent(this))
         }
         binding.logsNavButton.setOnClickListener {
-            startActivity(SystemLogsActivity.createIntent(this))
+            openTab(binding.logsNavButton, SystemLogsActivity.createIntent(this))
         }
         binding.trialBannerText.setOnClickListener { startActivity(WalletActivity.createIntent(this)) }
         binding.settingsNavButton.setOnClickListener {
-            startActivity(PrivacySecurityActivity.createIntent(this))
+            openTab(binding.settingsNavButton, PrivacySecurityActivity.createIntent(this))
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -146,6 +170,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // A live viewer waits behind the list: Back leaves the app, as it does
+        // without one, instead of returning to it.
+        onBackPressedDispatcher.addCallback(this, leaveApp)
         handleRuntimeLifecycleIntent(intent)
         if (savedInstanceState == null) {
             // Not when recreated: the delete already ran.
@@ -165,11 +192,37 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Not onStart: covered only briefly, Android may not have stopped this screen.
+        leaveApp.isEnabled = SessionActivity.liveSessionId != null
+        ViewerTransition.enterList(this) { runtimeCards[it]?.binding?.root }
         NotificationRelayManager(this).ensureRegistered()
         refreshRuntimes(showBusy = false)
+        // Home from a tab's screen, once the bar can be seen again.
+        binding.bottomNav.postDelayed(slideHome, SLIDE_HOME_AFTER_MS)
+    }
+
+    override fun onStop() {
+        ViewerTransition.finish(this)
+        super.onStop()
+    }
+
+    private val leaveApp = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            moveTaskToBack(true)
+        }
+    }
+
+    private val slideHome = Runnable { binding.bottomNav.select(binding.runtimesNavButton) }
+
+    /** Opens a tab's screen, the bar's highlight on its way there. */
+    private fun openTab(tab: ImageView, intent: Intent) {
+        binding.bottomNav.removeCallbacks(slideHome)
+        binding.bottomNav.select(tab, TabBar.SLIDE_AWAY_MS)
+        startActivity(intent)
     }
 
     override fun onPause() {
+        binding.bottomNav.removeCallbacks(slideHome)
         runtimePollJob?.cancel()
         runtimePollJob = null
         super.onPause()
@@ -182,8 +235,21 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    private fun refreshRuntimes(showBusy: Boolean = true) {
+    /** A pull shows its own progress; what goes wrong is still said. */
+    private fun refreshFromPull() {
+        refreshRuntimes(showBusy = false, showErrors = true)
+        val refresh = refreshJob
+        if (refresh?.isActive == true) {
+            refresh.invokeOnCompletion { binding.runtimePull.post(binding.runtimePull::finish) }
+        } else {
+            binding.runtimePull.finish()
+        }
+    }
+
+    private fun refreshRuntimes(showBusy: Boolean = true, showErrors: Boolean = showBusy) {
         if (refreshJob?.isActive == true) {
+            // Asked for now: what goes wrong in the one under way is said.
+            if (showErrors) refreshSaysErrors = true
             return
         }
         // The device key signs only while the phone is unlocked; the list
@@ -208,6 +274,9 @@ class MainActivity : AppCompatActivity() {
         if (showBusy) {
             setBusy(true, getString(R.string.status_refreshing))
         }
+
+        refreshSaysErrors = showErrors
+        if (!listLoaded) binding.runtimeSkeleton.startLoading()
 
         refreshJob = lifecycleScope.launch {
             runCatching {
@@ -238,9 +307,12 @@ class MainActivity : AppCompatActivity() {
             }.onFailure { error ->
                 // The screen closed while it waited: nothing failed.
                 if (error is CancellationException) return@onFailure
+                stopSkeleton()
                 appLogs.error(error.message ?: getString(R.string.status_error), "runtime")
                 if (showBusy) {
                     setBusy(false)
+                }
+                if (refreshSaysErrors) {
                     showError(error)
                 }
             }
@@ -303,27 +375,61 @@ class MainActivity : AppCompatActivity() {
         latestRuntimes = runtimes
         latestRuntimeStates = stateByRuntimeId
         val trialBanner = entitlement?.trialBanner(this)
+        val cardStates = runtimes.associate { it.id to runtimeCardState(it, stateByRuntimeId[it.id]) }
+        // Only when something appears, leaves or changes size, not on every refresh.
+        val firstCards = runtimeCards.isEmpty()
+        val layoutChanges = cardStates.keys.toList() != runtimeCards.keys.toList() ||
+            cardStates.any { (id, state) -> runtimeCards[id]?.state?.hasSameLayout(state) == false } ||
+            binding.trialBannerText.isVisible != (trialBanner != null)
+        val outlined = binding.runtimeSkeleton.isLoading
+        listLoaded = true
+        if (outlined) {
+            stopSkeleton()
+        } else if (layoutChanges && !firstCards && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            VirtroidMotion.animateChanges(binding.mainContentLayout)
+        }
         binding.trialBannerText.isVisible = trialBanner != null
         binding.trialBannerText.text = trialBanner.orEmpty()
-        binding.runtimeListContainer.removeAllViews()
         binding.runtimeEmptyText.isVisible = runtimes.isEmpty()
         binding.runtimeEmptyText.text = if (runtimes.isEmpty()) {
             entitlement?.createRuntimeBlockedMessage(this) ?: getString(R.string.home_empty_subtitle)
         } else {
             getString(R.string.home_empty_subtitle)
         }
-        if (runtimes.isEmpty()) {
-            updateRuntimePolling(runtimes)
-            return
+        (runtimeCards.keys - cardStates.keys).forEach { id ->
+            runtimeCards.remove(id)?.let { binding.runtimeListContainer.removeView(it.binding.root) }
         }
 
         val inflater = LayoutInflater.from(this)
-        runtimes.forEach { runtime ->
-            val cardBinding = RuntimeCardBinding.inflate(inflater, binding.runtimeListContainer, false)
-            bindRuntimeCard(cardBinding, runtime, stateByRuntimeId[runtime.id])
-            binding.runtimeListContainer.addView(cardBinding.root)
+        val newCards = mutableListOf<View>()
+        runtimes.forEachIndexed { index, runtime ->
+            // Taken out and put back, so the map keeps the list's order.
+            val kept = runtimeCards.remove(runtime.id)
+            val card = kept ?: RuntimeCard(RuntimeCardBinding.inflate(inflater, binding.runtimeListContainer, false))
+            runtimeCards[runtime.id] = card
+            bindRuntimeCard(card, runtime, cardStates.getValue(runtime.id))
+            showConnecting(card, runtime.id)
+            val root = card.binding.root
+            if (binding.runtimeListContainer.getChildAt(index) !== root) {
+                binding.runtimeListContainer.removeView(root)
+                binding.runtimeListContainer.addView(root, index)
+            }
+            if (kept == null) newCards += root
+        }
+        // Out of the outline, cards fade in where it was.
+        if (firstCards && !outlined) {
+            VirtroidMotion.riseIn(newCards)
         }
         updateRuntimePolling(runtimes)
+    }
+
+    /** Takes the loading outline away; what changes with it fades and moves into place. */
+    private fun stopSkeleton() {
+        if (!binding.runtimeSkeleton.isLoading) return
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            VirtroidMotion.animateChanges(binding.mainContentLayout, overlap = true)
+        }
+        binding.runtimeSkeleton.stopLoading()
     }
 
     private fun mergeRuntimeState(state: RuntimeState) {
@@ -351,7 +457,8 @@ class MainActivity : AppCompatActivity() {
         renderRuntimes(latestRuntimes)
     }
 
-    private fun bindRuntimeCard(cardBinding: RuntimeCardBinding, runtime: RuntimeSummary, state: RuntimeState?) {
+    /** What the card of [runtime] shows now; also keeps the local stopping and progress markers up to date. */
+    private fun runtimeCardState(runtime: RuntimeSummary, state: RuntimeState?): RuntimeCardState {
         val effectiveState = state?.effectiveState.orEmpty()
         val backendConnectable = state?.canConnectRuntime(runtime.id) == true
         if (runtime.isStoppedForSession() || effectiveState.equals("stopped", ignoreCase = true)) {
@@ -375,18 +482,46 @@ class MainActivity : AppCompatActivity() {
             runtimeProvisioningStartedAtMs.remove(runtime.id)
             runtimeProvisioningLogMessages.remove(runtime.id)
         }
+        return RuntimeCardState(
+            state = state,
+            isLocallyStopping = isLocallyStopping,
+            isLive = isLive,
+            isWaitingForHost = isWaitingForHost,
+            isBusy = isBusy,
+            milestone = if (isLocallyStopping) {
+                runtime.stoppingMilestone()
+            } else {
+                runtime.hostProvisioningMilestone() ?: runtime.provisioningMilestone(effectiveState)
+            },
+        )
+    }
+
+    private fun bindRuntimeCard(card: RuntimeCard, runtime: RuntimeSummary, cardState: RuntimeCardState) {
+        val cardBinding = card.binding
+        val state = cardState.state
+        val isLocallyStopping = cardState.isLocallyStopping
+        val isLive = cardState.isLive
+        val isWaitingForHost = cardState.isWaitingForHost
+        val isBusy = cardState.isBusy
+        // Seen offline before: one that was online when its card first came is not news.
+        if (isLive && card.state?.isLive == false) showCameOnline(card)
+        card.state = cardState
 
         cardBinding.runtimeTitleText.text = runtimeDisplayName(runtime.name)
-        cardBinding.runtimeSubtitleText.text = if (isLocallyStopping) {
-            getString(R.string.runtime_connectivity_stopping)
-        } else if (isWaitingForHost) {
-            getString(
-                if (runtime.id in runtimeHostDeletions) R.string.runtime_connectivity_deleting else R.string.runtime_connectivity_starting,
-            )
-        } else {
-            state?.connectivityLabel(isLive) ?: runtime.connectivityLabel(isLive)
-        }
-        cardBinding.runtimeStatusDot.setBackgroundResource(
+        VirtroidMotion.changeText(
+            cardBinding.runtimeSubtitleText,
+            if (isLocallyStopping) {
+                getString(R.string.runtime_connectivity_stopping)
+            } else if (isWaitingForHost) {
+                getString(
+                    if (runtime.id in runtimeHostDeletions) R.string.runtime_connectivity_deleting else R.string.runtime_connectivity_starting,
+                )
+            } else {
+                state?.connectivityLabel(isLive) ?: runtime.connectivityLabel(isLive)
+            },
+        )
+        VirtroidMotion.changeBackground(
+            cardBinding.runtimeStatusDot,
             when {
                 isLive -> R.drawable.bg_dot_accent
                 isLocallyStopping -> R.drawable.bg_dot_amber
@@ -395,7 +530,8 @@ class MainActivity : AppCompatActivity() {
             },
         )
         VirtroidMotion.setStatusPulse(cardBinding.runtimeStatusDot, isLive || isBusy || isLocallyStopping)
-        cardBinding.runtimeIcon.setColorFilter(
+        VirtroidMotion.changeTint(
+            cardBinding.runtimeIcon,
             getColor(if (isLive) R.color.v_accent else R.color.v_text_muted),
         )
         cardBinding.root.strokeColor = getColor(if (isLive) R.color.v_border else R.color.v_border)
@@ -429,13 +565,9 @@ class MainActivity : AppCompatActivity() {
         cardBinding.liveRuntimeControlsButton.isVisible = isLive
         cardBinding.liveRuntimeControlsButton.isEnabled = isLive
         cardBinding.runtimeActionRow.isVisible = !isLive
-        val provisioningMilestone = if (isLocallyStopping) {
-            runtime.stoppingMilestone()
-        } else {
-            runtime.hostProvisioningMilestone() ?: runtime.provisioningMilestone(effectiveState)
-        }
+        val provisioningMilestone = cardState.milestone
         if (provisioningMilestone != null) {
-            showRuntimeProvisioning(cardBinding, provisioningMilestone, animate = false)
+            showRuntimeProvisioning(cardBinding, provisioningMilestone)
         } else {
             hideRuntimeProvisioning(cardBinding)
         }
@@ -448,9 +580,13 @@ class MainActivity : AppCompatActivity() {
         cardBinding.startRuntimeButton.setTextColor(
             getColor(if (startBlockedByAccount) R.color.v_text_muted else R.color.v_text_primary),
         )
-        cardBinding.startRuntimeButton.iconTint = ColorStateList.valueOf(
-            getColor(if (startBlockedByAccount) R.color.v_text_muted else R.color.v_accent),
-        )
+        // While it is busy its icon is the spinner, with a colour of its own.
+        if (runtime.id != connectingRuntimeId) {
+            VirtroidMotion.setBusy(cardBinding.startRuntimeButton, false)
+            cardBinding.startRuntimeButton.iconTint = ColorStateList.valueOf(
+                getColor(if (startBlockedByAccount) R.color.v_text_muted else R.color.v_accent),
+            )
+        }
         cardBinding.actionControlsButton.isEnabled = actionsEnabled
         cardBinding.deleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
         cardBinding.liveDeleteRuntimeButton.isEnabled = actionsEnabled && (state?.canDelete ?: true)
@@ -494,8 +630,8 @@ class MainActivity : AppCompatActivity() {
         showConfirmation(
             title = getString(R.string.controls_delete_confirm_title),
             message = getString(R.string.controls_delete_confirm_body),
-            confirmLabel = getString(R.string.controls_confirm),
-            destructive = true,
+            confirmLabel = getString(R.string.hold_action_delete_runtime),
+            holdLabel = getString(R.string.hold_to_delete),
             onConfirmed = { deleteRuntime(runtime) },
         )
     }
@@ -545,7 +681,7 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        startActivity(NewRuntimeActivity.createIntent(this))
+        startActivity(NewRuntimeActivity.createIntent(this), VirtroidMotion.riseOver(this))
     }
 
     private fun connectRuntime(runtime: RuntimeSummary) {
@@ -572,7 +708,8 @@ class MainActivity : AppCompatActivity() {
                 // relay token would make the node restart its viewer and cut
                 // that stream, so just bring the screen back.
                 appLogs.info("Returning to the open viewer for ${runtime.name}", "session")
-                startActivity(
+                openViewer(
+                    runtime.id,
                     Intent(this, SessionActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
                 )
                 return
@@ -603,7 +740,10 @@ class MainActivity : AppCompatActivity() {
                         )
                         activeSessionStore.save(updatedSession)
                         appLogs.info("Returning to active session for ${runtime.name}", "session")
-                        startActivity(SessionActivity.createIntent(this@MainActivity, updatedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                        openViewer(
+                            runtime.id,
+                            SessionActivity.createIntent(this@MainActivity, updatedSession).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+                        )
                     } else {
                         activeSessionStore.clear()
                         appLogs.warn("Stored active session is ${state.effectiveStatus}; creating a fresh session", "session")
@@ -629,6 +769,7 @@ class MainActivity : AppCompatActivity() {
         if (connectJob?.isActive == true) {
             return
         }
+        setConnecting(runtime.id)
         setBusy(true, getString(R.string.status_preparing_session))
         appLogs.info("Preparing session for ${runtime.name}", "session")
 
@@ -679,9 +820,7 @@ class MainActivity : AppCompatActivity() {
                     )
                     activeSessionStore.save(activeSession)
                     appLogs.info("Session created for ${readyRuntime.name}", "session")
-                    startActivity(
-                        SessionActivity.createIntent(this@MainActivity, activeSession),
-                    )
+                    openViewer(runtime.id, SessionActivity.createIntent(this@MainActivity, activeSession))
                 }.onFailure { error ->
                     if (error is CancellationException) return@launch
                     setBusy(false)
@@ -690,8 +829,36 @@ class MainActivity : AppCompatActivity() {
                 }
             } finally {
                 connectJob = null
+                setConnecting(null)
             }
         }
+    }
+
+    /** Opens the viewer out of the runtime's card, if that is on screen. */
+    private fun openViewer(runtimeId: String, intent: Intent) {
+        val inFront = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        startActivity(intent, if (inFront) ViewerTransition.leaveList(this, runtimeId, runtimeCards[runtimeId]?.binding?.root) else null)
+    }
+
+    /** Marks a runtime coming online, unless its connection is only coming and going. */
+    private fun showCameOnline(card: RuntimeCard) {
+        val now = SystemClock.elapsedRealtime()
+        val recently = card.cameOnlineAtMs?.let { now - it < CAME_ONLINE_AGAIN_MS } == true
+        card.cameOnlineAtMs = now
+        if (recently || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        VirtroidMotion.confirmHaptic(card.binding.root)
+        LiveSweep.play(card.binding.root)
+    }
+
+    private fun setConnecting(runtimeId: String?) {
+        connectingRuntimeId = runtimeId
+        runtimeCards.forEach { (id, card) -> showConnecting(card, id) }
+    }
+
+    private fun showConnecting(card: RuntimeCard, runtimeId: String) {
+        val connecting = runtimeId == connectingRuntimeId
+        VirtroidMotion.setBusy(card.binding.connectRuntimeButton, connecting)
+        VirtroidMotion.setBusy(card.binding.startRuntimeButton, connecting)
     }
 
     private suspend fun ensureRuntimeReady(
@@ -1014,7 +1181,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setBusy(isBusy: Boolean, message: String? = null) {
-        binding.progressIndicator.isVisible = isBusy
+        VirtroidMotion.setVisible(binding.progressIndicator, isBusy, hidden = View.INVISIBLE)
         binding.statusText.text = getString(R.string.home_secure_client)
         binding.notificationButton.isEnabled = !isBusy
         binding.createRuntimeButton.isEnabled = !isBusy && (latestEntitlement?.canCreateRuntime ?: true)
@@ -1024,6 +1191,10 @@ class MainActivity : AppCompatActivity() {
         val count = appLogs.unresolvedCriticalCount()
         binding.notificationBadgeText.isVisible = count > 0
         binding.notificationBadgeText.text = count.coerceAtMost(99).toString()
+        if (shownBadgeCount?.let { count > it } == true) {
+            VirtroidMotion.popIn(binding.notificationBadgeText)
+        }
+        shownBadgeCount = count
     }
 
     private suspend fun updateProvisioningMetadata(
@@ -1066,37 +1237,18 @@ class MainActivity : AppCompatActivity() {
     private fun showRuntimeProvisioning(
         cardBinding: RuntimeCardBinding,
         milestone: RuntimeProvisioningMilestone,
-        animate: Boolean,
     ) {
-        cardBinding.runtimeProvisioningTitleText.text = milestone.title
+        VirtroidMotion.changeText(cardBinding.runtimeProvisioningTitleText, milestone.title)
         cardBinding.runtimeProvisioningCommandText.text = milestone.command
         cardBinding.runtimeProvisioningDetailText.text = milestone.detail
         cardBinding.runtimeProvisioningEventTrailText.text = milestone.events.joinToString("\n")
-        cardBinding.runtimeInteractiveContent.alpha = 0.08f
+        VirtroidMotion.fadeTo(cardBinding.runtimeInteractiveContent, 0.08f)
         cardBinding.runtimeProvisioningLogContainer.isVisible = true
-        if (animate) {
-            cardBinding.runtimeProvisioningLogContainer.alpha = 0f
-            cardBinding.runtimeProvisioningLogContainer.translationY = -dp(22).toFloat()
-            cardBinding.runtimeProvisioningLogContainer.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(260L)
-                .setInterpolator(AccelerateDecelerateInterpolator())
-                .start()
-        } else {
-            cardBinding.runtimeProvisioningLogContainer.alpha = 1f
-            cardBinding.runtimeProvisioningLogContainer.translationY = 0f
-        }
     }
 
     private fun hideRuntimeProvisioning(cardBinding: RuntimeCardBinding) {
-        cardBinding.runtimeInteractiveContent.alpha = 1f
-        cardBinding.runtimeProvisioningLogContainer.clearAnimation()
+        VirtroidMotion.fadeTo(cardBinding.runtimeInteractiveContent, 1f)
         cardBinding.runtimeProvisioningLogContainer.isVisible = false
-    }
-
-    private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).toInt()
     }
 
     private fun formatTimestamp(value: String?): String {
@@ -1409,6 +1561,25 @@ class MainActivity : AppCompatActivity() {
         val events: List<String>,
     )
 
+    /** A runtime's card on screen and what it last showed. */
+    private class RuntimeCard(val binding: RuntimeCardBinding) {
+        var state: RuntimeCardState? = null
+        var cameOnlineAtMs: Long? = null
+    }
+
+    private class RuntimeCardState(
+        val state: RuntimeState?,
+        val isLocallyStopping: Boolean,
+        val isLive: Boolean,
+        val isWaitingForHost: Boolean,
+        val isBusy: Boolean,
+        val milestone: RuntimeProvisioningMilestone?,
+    ) {
+        /** Whether a card going from this to [other] keeps its parts and its height. */
+        fun hasSameLayout(other: RuntimeCardState): Boolean =
+            isLive == other.isLive && milestone?.events?.size == other.milestone?.events?.size
+    }
+
     private data class RuntimeListState(
         val runtimeStates: List<RuntimeState>,
         val entitlement: EntitlementSummary,
@@ -1419,6 +1590,8 @@ class MainActivity : AppCompatActivity() {
         private const val EXTRA_STOPPING_RUNTIME_ID = "io.virtroid.client.extra.STOPPING_RUNTIME_ID"
         private const val EXTRA_DELETE_RUNTIME_ID = "io.virtroid.client.extra.DELETE_RUNTIME_ID"
         const val DEFAULT_SESSION_BIT_RATE = 4_000_000
+        private const val SLIDE_HOME_AFTER_MS = 120L
+        private const val CAME_ONLINE_AGAIN_MS = 30_000L
         private const val CONNECT_WAIT_MAX_MS = 10 * 60 * 1_000L
         private const val LOCAL_STOPPING_MARKER_GRACE_MS = 45_000L
         const val RUNTIME_POLL_DELAY_MS = 2_000L

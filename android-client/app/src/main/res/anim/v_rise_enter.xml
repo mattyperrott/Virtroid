@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Something new to fill in: it rises over the screen that asked for it. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/fast_out_slow_in">
+    <alpha
+        android:duration="160"
+        android:fromAlpha="0"
+        android:toAlpha="1" />
+    <translate
+        android:duration="320"
+        android:fromYDelta="12%p"
+        android:toYDelta="0" />
+</set>

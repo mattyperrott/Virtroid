@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="SkeletonView">
+        <!-- What the skeleton stands in for, and so its shape and height. -->
+        <attr name="skeletonShape" format="enum">
+            <enum name="runtimeCard" value="0" />
+            <enum name="appRows" value="1" />
+            <enum name="walletBalance" value="2" />
+            <enum name="walletDeposit" value="3" />
+            <enum name="walletHistory" value="4" />
+        </attr>
+    </declare-styleable>
+</resources>

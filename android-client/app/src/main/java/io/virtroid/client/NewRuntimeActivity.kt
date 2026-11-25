@@ -30,6 +30,7 @@ import io.virtroid.client.security.promptIdentityPassword
 import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.ui.VirtroidSheet
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -224,6 +225,7 @@ class NewRuntimeActivity : AppCompatActivity() {
         val runtimeProfile = DeviceRuntimeProfile.from(this)
         val runtimeName = binding.sessionNameInput.text?.toString().orEmpty().trim()
         binding.provisionRuntimeButton.isEnabled = false
+        VirtroidMotion.setBusy(binding.provisionRuntimeButton, true)
         latestProvisionRuntimeLogs = emptyList()
         renderProvisionMilestone(provisionMilestoneForRequest())
         appLogs.info("Runtime creation requested", "runtime")
@@ -249,6 +251,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                     region?.let { saveRegion(baseUrl, accountId, deviceId, runtime.id, it) }
                     waitForRuntimeProvisioned(baseUrl, accountId, deviceId, runtime.id)
                 }.onSuccess {
+                    VirtroidMotion.showDone(binding.provisionRuntimeButton)
                     renderProvisionMilestone(
                         ProvisionMilestone(
                             title = getString(R.string.new_runtime_provision_title_ready),
@@ -274,6 +277,7 @@ class NewRuntimeActivity : AppCompatActivity() {
                     if (it is CancellationException) return@launch
                     appLogs.error(it.message ?: getString(R.string.status_error), "runtime")
                     binding.provisionRuntimeButton.isEnabled = entitlement?.canCreateRuntime ?: false
+                    VirtroidMotion.showFailed(binding.provisionRuntimeButton)
                     renderProvisionMilestone(
                         ProvisionMilestone(
                             title = getString(R.string.new_runtime_provision_title_error),
@@ -429,8 +433,11 @@ class NewRuntimeActivity : AppCompatActivity() {
     }
 
     private fun renderProvisionMilestone(milestone: ProvisionMilestone) {
-        binding.provisionRuntimeLogContainer.isVisible = true
-        binding.provisionRuntimeTitleText.text = milestone.title
+        if (!binding.provisionRuntimeLogContainer.isVisible) {
+            VirtroidMotion.animateChanges(binding.root)
+            binding.provisionRuntimeLogContainer.isVisible = true
+        }
+        VirtroidMotion.changeText(binding.provisionRuntimeTitleText, milestone.title)
         binding.provisionRuntimeCommandText.text = milestone.command
         binding.provisionRuntimeDetailText.text = milestone.detail
         binding.provisionRuntimeEventTrailText.text = milestone.events.joinToString("\n")
@@ -438,6 +445,11 @@ class NewRuntimeActivity : AppCompatActivity() {
 
     private fun toast(message: String) {
         Notice.show(this, message)
+    }
+
+    override fun finish() {
+        super.finish()
+        VirtroidMotion.closeWith(this, R.anim.v_screen_hold, R.anim.v_rise_exit)
     }
 
     companion object {

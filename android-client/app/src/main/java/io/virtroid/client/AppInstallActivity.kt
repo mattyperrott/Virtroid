@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.children
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
@@ -32,6 +33,7 @@ import io.virtroid.client.security.CatalogIconPolicy
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 import java.io.IOException
 import java.util.Locale
 import javax.net.ssl.HttpsURLConnection
@@ -141,6 +143,7 @@ class AppInstallActivity : AppCompatActivity() {
                 if (!append) loaded.clear()
                 loaded.addAll(page.items.filter { app -> loaded.none { it.packageName == app.packageName } })
                 nextOffset = page.nextOffset
+                stopSkeleton()
                 renderCatalog()
             }.onFailure { error ->
                 if (error is kotlinx.coroutines.CancellationException) return@launch
@@ -195,6 +198,7 @@ class AppInstallActivity : AppCompatActivity() {
             finish()
             return
         }
+        VirtroidMotion.setBusy(binding.doneButton, true)
         binding.doneButton.isEnabled = false
         lifecycleScope.launch {
             runCatching {
@@ -206,6 +210,7 @@ class AppInstallActivity : AppCompatActivity() {
                 finish()
             }.onFailure { error ->
                 binding.doneButton.isEnabled = true
+                VirtroidMotion.showFailed(binding.doneButton)
                 appLogs.error("App selection save failed: ${error.message}", "apps")
                 toast(error.virtroidDisplayMessage(this@AppInstallActivity))
             }
@@ -220,11 +225,12 @@ class AppInstallActivity : AppCompatActivity() {
         binding.recommendedHeader.isVisible = false
         binding.allAvailableHeader.isVisible = false
         binding.loadMoreButton.isVisible = false
-        binding.appEmptyText.isVisible = true
-        binding.appEmptyText.text = getString(R.string.app_install_loading)
+        binding.appEmptyText.isVisible = false
+        binding.appSkeleton.startLoading()
     }
 
     private fun renderError() {
+        stopSkeleton()
         binding.recommendedList.removeAllViews()
         binding.allAvailableList.removeAllViews()
         binding.recommendedHeader.isVisible = false
@@ -233,6 +239,12 @@ class AppInstallActivity : AppCompatActivity() {
         binding.appEmptyText.isVisible = true
         binding.appEmptyText.text = getString(R.string.account_apps_catalog_unavailable)
         renderSelected()
+    }
+
+    private fun stopSkeleton() {
+        if (!binding.appSkeleton.isLoading) return
+        VirtroidMotion.animateChanges(binding.root, overlap = true)
+        binding.appSkeleton.stopLoading()
     }
 
     private fun renderCatalog() {
@@ -251,7 +263,8 @@ class AppInstallActivity : AppCompatActivity() {
             available.size,
             available.size,
         )
-        binding.appEmptyText.isVisible = loaded.isEmpty()
+        // This runtime's own apps can come before the catalog does.
+        binding.appEmptyText.isVisible = loaded.isEmpty() && !binding.appSkeleton.isLoading
         binding.appEmptyText.text = getString(R.string.app_install_empty)
         binding.loadMoreButton.isVisible = nextOffset != null
         binding.loadMoreButton.isEnabled = true
@@ -268,9 +281,20 @@ class AppInstallActivity : AppCompatActivity() {
         val apps = selected.values.toList()
         binding.selectedHeader.isVisible = apps.isNotEmpty()
         binding.selectedCount.text = getString(R.string.app_install_selected_count, apps.size, MAX_RUNTIME_APPS)
-        selectionIcons.values.forEach { icons -> icons.removeAll { it.parent?.parent == binding.selectedList } }
-        selectionRows.values.forEach { rows -> rows.removeAll { it.parent == binding.selectedList } }
-        renderAppRows(binding.selectedList, apps)
+        // Rows still selected stay as they are, so only the one picked or
+        // dropped moves. After a full render their icons are no longer known.
+        val kept = binding.selectedList.children
+            .filter { row -> row.tag in selected && selectionRows[row.tag]?.contains(row) == true }
+            .associateBy { it.tag as String }
+        selectionIcons.values.forEach { icons ->
+            icons.removeAll { it.parent?.parent == binding.selectedList && kept.values.none { row -> row === it.parent } }
+        }
+        selectionRows.values.forEach { rows -> rows.removeAll { it.parent == binding.selectedList && it !in kept.values } }
+        binding.selectedList.removeAllViews()
+        apps.forEach { app ->
+            binding.selectedList.addView(divider())
+            binding.selectedList.addView(kept[app.packageName] ?: appRow(app))
+        }
     }
 
     private fun renderAppRows(container: LinearLayout, apps: List<AppCatalogEntry>) {
@@ -290,12 +314,14 @@ class AppInstallActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(76),
             )
+            tag = app.packageName
             isClickable = true
             isFocusable = true
             setOnClickListener {
                 toggleSelection(app)
             }
         }
+        VirtroidMotion.pressableRows(row)
         selectionRows.getOrPut(app.packageName) { mutableListOf() }.add(row)
         updateSelectionAccessibility(row, app, app.packageName in selected)
 
@@ -390,8 +416,12 @@ class AppInstallActivity : AppCompatActivity() {
             selected[packageName] = app
         }
         val isSelected = packageName in selected
-        selectionIcons[packageName]?.forEach { updateSelectionIcon(it, isSelected) }
+        selectionIcons[packageName]?.forEach {
+            updateSelectionIcon(it, isSelected)
+            VirtroidMotion.popIn(it)
+        }
         selectionRows[packageName]?.forEach { updateSelectionAccessibility(it, app, isSelected) }
+        VirtroidMotion.animateChanges(binding.root)
         renderSelected()
     }
 
@@ -440,7 +470,7 @@ class AppInstallActivity : AppCompatActivity() {
             iconCache.put(url, bitmap)
             if (image.tag == url) {
                 image.setImageBitmap(bitmap)
-                image.visibility = View.VISIBLE
+                VirtroidMotion.setVisible(image, true)
                 placeholder.visibility = View.GONE
             }
         }

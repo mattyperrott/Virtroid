@@ -142,6 +142,7 @@ object Notice {
             )
         }
         present(activity, view, message, atTop = true)
+        VirtroidMotion.popIn(view.getChildAt(0))
     }
 
     private fun present(
@@ -155,7 +156,6 @@ object Notice {
         val root = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
         root.findViewWithTag<View>(TAG)?.let { root.removeView(it) }
         view.tag = TAG
-        view.alpha = 0f
         view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         view.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         view.contentDescription = message
@@ -173,11 +173,13 @@ object Notice {
             }
         }
         root.addView(view, params)
-        view.animate().alpha(1f).setDuration(FADE_MS).start()
+        // From the edge it sits by, and back towards it.
+        val away = activity.dp(if (atTop) -12 else 12).toFloat()
+        VirtroidMotion.slideIn(view, fromY = away)
         // Long messages stay up a little longer.
         val visibleMs = (2_400L + message.length * 25L).coerceAtMost(6_000L).coerceAtLeast(minVisibleMs)
         view.postDelayed({
-            view.animate().alpha(0f).setDuration(FADE_MS).withEndAction { root.removeView(view) }.start()
+            view.animate().alpha(0f).translationY(away).setDuration(FADE_MS).withEndAction { root.removeView(view) }.start()
         }, visibleMs)
     }
 

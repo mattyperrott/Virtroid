@@ -311,7 +311,7 @@
                                 android:text="@string/new_runtime_tor_subtitle"
                                 android:layout_marginTop="4dp" />
                         </LinearLayout>
-                        <com.google.android.material.switchmaterial.SwitchMaterial
+                        <io.virtroid.client.ui.TickSwitch
                             android:id="@+id/torEgressSwitch"
                             android:contentDescription="@string/new_runtime_tor_title"
                             android:layout_width="wrap_content"
@@ -394,7 +394,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="Audio Passthrough" />
-                        <com.google.android.material.switchmaterial.SwitchMaterial
+                        <io.virtroid.client.ui.TickSwitch
                             android:id="@+id/audioPassthroughSwitch"
                             android:contentDescription="@string/new_runtime_audio_passthrough"
                             android:layout_width="wrap_content"
@@ -422,7 +422,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="@string/new_runtime_camera_passthrough" />
-                        <com.google.android.material.switchmaterial.SwitchMaterial
+                        <io.virtroid.client.ui.TickSwitch
                             android:id="@+id/cameraPassthroughSwitch"
                             android:contentDescription="@string/new_runtime_camera_passthrough"
                             android:layout_width="wrap_content"

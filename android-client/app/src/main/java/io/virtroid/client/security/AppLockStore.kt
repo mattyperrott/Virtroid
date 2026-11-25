@@ -75,11 +75,21 @@ class AppLockStore(context: Context) {
             return false
         }
 
-        val matches = if (kdfVersion == KDF_VERSION) {
-            val saltBytes = runCatching { Base64.decode(salt, B64_FLAGS) }.getOrNull() ?: return false
-            constantTimeEquals(deriveCredentialHash(saltBytes, secret), hash)
+        val saltBytes = if (kdfVersion == KDF_VERSION) {
+            runCatching { Base64.decode(salt, B64_FLAGS) }.getOrNull() ?: return false
         } else {
-            constantTimeEquals(legacyDigest(salt, secret), hash)
+            null
+        }
+
+        // The check and the vault key are two derivations of the same cost:
+        // side by side they take half as long as one after the other.
+        val vaultKey = if (saltBytes != null) deriveVaultKeyAsync(secret) else null
+        val matches = BackgroundKey.checkAlongside(vaultKey) {
+            if (saltBytes != null) {
+                constantTimeEquals(deriveCredentialHash(saltBytes, secret), hash)
+            } else {
+                constantTimeEquals(legacyDigest(salt, secret), hash)
+            }
         }
 
         if (matches) {
@@ -88,7 +98,7 @@ class AppLockStore(context: Context) {
                 saveCredential(mode, secret, allowLegacyPin = true)
                 return true
             }
-            if (!unlockVault(secret)) {
+            if (!unlockVault(secret, vaultKey?.take())) {
                 appLogs.error("Secure local vault could not be decrypted", "auth")
                 return false
             }
@@ -293,10 +303,21 @@ class AppLockStore(context: Context) {
     private val kdfVersion: String?
         get() = prefs.getString(KEY_KDF, null)
 
-    private fun unlockVault(secret: String): Boolean {
-        val vaultSalt = existingOrNewVaultSalt()
+    /** Opens the vault with [derivedKey], or derives the key now where there is none. */
+    private fun unlockVault(secret: String, derivedKey: ByteArray?): Boolean {
         val vault = SecureLocalVault.get(appContext)
-        return vault.unlockOrCreate(secret, vaultSalt)
+        return if (derivedKey != null) {
+            vault.unlockOrCreate(derivedKey)
+        } else {
+            vault.unlockOrCreate(secret, existingOrNewVaultSalt())
+        }
+    }
+
+    /** Derives the vault key on another thread; null before there is a vault salt to derive it with. */
+    private fun deriveVaultKeyAsync(secret: String): BackgroundKey? {
+        val vaultSalt = prefs.getString(KEY_VAULT_SALT, null)?.takeIf { it.isNotBlank() } ?: return null
+        val vault = SecureLocalVault.get(appContext)
+        return BackgroundKey { vault.deriveKey(secret, vaultSalt) }
     }
 
     private fun existingOrNewVaultSalt(): String {
@@ -385,7 +406,7 @@ class AppLockStore(context: Context) {
         private const val KDF_VERSION = "pbkdf2-sha256-v1"
         private const val PBKDF2_ITERATIONS = 210_000
         private const val KEY_BYTES = 32
-        private const val LOCKOUT_MS = 30_000L
+        const val LOCKOUT_MS = 30_000L
         const val LEGACY_PIN_LENGTH = 6
         const val NEW_PIN_LENGTH = 8
         private const val B64_FLAGS = Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE

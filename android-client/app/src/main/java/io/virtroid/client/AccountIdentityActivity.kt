@@ -34,6 +34,7 @@ import io.virtroid.client.security.promptIdentityPasswordSetup
 import io.virtroid.client.security.showConfirmation
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.ui.VirtroidSheet
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -372,7 +373,7 @@ class AccountIdentityActivity : AppCompatActivity() {
             title = getString(R.string.account_revoke_device_title),
             message = message,
             confirmLabel = getString(R.string.account_revoke_device_confirm),
-            destructive = true,
+            holdLabel = getString(R.string.hold_to_revoke),
             onConfirmed = { revokeDevice(device) },
         )
     }
@@ -591,7 +592,7 @@ class AccountIdentityActivity : AppCompatActivity() {
             title = getString(R.string.account_delete_local_identity_title),
             message = getString(R.string.account_delete_local_identity_confirm_body),
             confirmLabel = getString(R.string.account_delete_local_identity_confirm),
-            destructive = true,
+            holdLabel = getString(R.string.hold_to_delete),
             onConfirmed = ::deleteServerAccountAndResetLocal,
         )
     }
@@ -649,6 +650,7 @@ class AccountIdentityActivity : AppCompatActivity() {
         // The button turns into an accent tick for a moment.
         button.setImageResource(R.drawable.ic_check)
         button.imageTintList = ColorStateList.valueOf(getColor(R.color.v_accent))
+        VirtroidMotion.popIn(button)
         button.removeCallbacks(null)
         button.postDelayed({
             button.setImageResource(R.drawable.ic_copy)

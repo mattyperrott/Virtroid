@@ -37,6 +37,11 @@ class SecureLocalVault private constructor(context: Context) {
 
     fun unlockOrCreate(secret: String, saltB64: String): Boolean {
         val secretKey = deriveKey(secret, saltB64) ?: return false
+        return unlockOrCreate(secretKey)
+    }
+
+    /** [unlockOrCreate] with a key already derived by [deriveKey]; wipes it. */
+    fun unlockOrCreate(secretKey: ByteArray): Boolean {
         synchronized(lock) {
             val isVersioned = vaultFile.exists() && isVersionedVaultFile()
             var dataKey: ByteArray? = null
@@ -336,7 +341,8 @@ class SecureLocalVault private constructor(context: Context) {
         return KeystoreKeyPolicy.generateAesKey(KEYSTORE_KEY_ALIAS)
     }
 
-    private fun deriveKey(secret: String, saltB64: String): ByteArray? {
+    /** The key the app-lock secret unlocks the vault with: slow, and takes no lock. The caller wipes it. */
+    fun deriveKey(secret: String, saltB64: String): ByteArray? {
         val salt = runCatching { Base64.decode(saltB64, B64_FLAGS) }.getOrNull() ?: return null
         val spec = PBEKeySpec(secret.toCharArray(), salt, PBKDF2_ITERATIONS, KEY_BYTES * 8)
         return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")

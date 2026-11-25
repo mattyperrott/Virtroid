@@ -102,7 +102,7 @@
                         android:layout_marginTop="6dp"
                         android:ellipsize="end"
                         android:maxLines="1"
-                        android:text="@string/runtime_missing_for_session" />
+                        android:text="@string/controls_runtime_subtitle" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/stats_scroller"
@@ -568,7 +568,7 @@
                             android:text="Inject local camera to cloud"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
-                    <com.google.android.material.switchmaterial.SwitchMaterial
+                    <io.virtroid.client.ui.TickSwitch
                         android:id="@+id/cameraPassthroughSwitch"
                         android:contentDescription="@string/new_runtime_camera_passthrough"
                         android:layout_width="wrap_content"

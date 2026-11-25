@@ -11,6 +11,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -29,6 +30,7 @@ import io.virtroid.client.security.copySensitiveToClipboard
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -44,6 +46,8 @@ class WalletActivity : AppCompatActivity() {
     private lateinit var sessionStore: SessionStore
     private val api = VirtroidApi()
     private var shownAddress: String? = null
+    private var shownBalanceMicro: Long? = null
+    private var shownEntries: List<WalletEntry>? = null
     private val timeFormatter = DateTimeFormatter.ofPattern("d MMM, HH:mm").withZone(ZoneId.systemDefault())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,9 +64,14 @@ class WalletActivity : AppCompatActivity() {
             insets
         }
         binding.walletBackButton.setOnClickListener { finish() }
-        binding.walletRefreshButton.setOnClickListener { lifecycleScope.launch { refresh() } }
+        binding.walletRefreshButton.setOnClickListener {
+            VirtroidMotion.spin(binding.walletRefreshButton)
+            lifecycleScope.launch { refresh() }
+        }
         binding.walletCopyButton.setOnClickListener { copyAddress() }
 
+        binding.walletBalanceText.isVisible = false
+        skeletons.forEach { it.startLoading() }
         // While the wallet is open a deposit shows up without a manual refresh.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -92,14 +101,41 @@ class WalletActivity : AppCompatActivity() {
                 } else {
                     getString(R.string.wallet_load_failed, error.virtroidDisplayMessage(this))
                 }
+                if (stopSkeletons()) binding.walletBalanceText.isVisible = true
                 binding.walletStatusText.text = message
                 binding.walletStatusText.visibility = View.VISIBLE
             }
     }
 
+    private val skeletons
+        get() = listOf(binding.walletBalanceSkeleton, binding.walletDepositSkeleton, binding.walletHistorySkeleton)
+
+    /** Takes the loading outlines away, with what replaces them moving into place; false if there were none. */
+    private fun stopSkeletons(): Boolean {
+        if (skeletons.none { it.isLoading }) return false
+        VirtroidMotion.animateChanges(binding.walletRoot, overlap = true)
+        skeletons.forEach { it.stopLoading() }
+        return true
+    }
+
     private suspend fun render(wallet: WalletSummary) {
+        // Drawn first, so everything below shows at once.
+        val newQrCode = if (wallet.depositAddress != shownAddress) {
+            withContext(Dispatchers.Default) { qrCode(wallet.depositAddress) }
+        } else {
+            null
+        }
+        // The first answer fills the screen in, and later ones add to it.
+        if (!stopSkeletons() && (wallet.entries != shownEntries || binding.walletStatusText.isVisible)) {
+            VirtroidMotion.animateChanges(binding.walletRoot)
+        }
+        binding.walletBalanceText.isVisible = true
         binding.walletStatusText.visibility = View.GONE
         binding.walletBalanceText.text = getString(R.string.wallet_amount, formatUsdt(wallet.balanceMicro))
+        if (shownBalanceMicro?.let { wallet.balanceMicro > it } == true) {
+            VirtroidMotion.flashText(binding.walletBalanceText, getColor(R.color.v_accent))
+        }
+        shownBalanceMicro = wallet.balanceMicro
         val pricing = buildList {
             if (wallet.runtimePricePerHourMicro > 0) {
                 add(
@@ -123,12 +159,16 @@ class WalletActivity : AppCompatActivity() {
         binding.walletPricingText.text = pricing.joinToString("\n\n")
         binding.walletPricingText.visibility = if (pricing.isEmpty()) View.GONE else View.VISIBLE
         binding.walletDepositCard.visibility = View.VISIBLE
-        if (wallet.depositAddress != shownAddress) {
+        if (newQrCode != null) {
             shownAddress = wallet.depositAddress
             binding.walletAddressText.text = wallet.depositAddress
-            binding.walletQrImage.setImageBitmap(withContext(Dispatchers.Default) { qrCode(wallet.depositAddress) })
+            binding.walletQrImage.setImageBitmap(newQrCode)
         }
-        renderHistory(wallet.entries)
+        // Rebuilt only when it changed: this runs every few seconds.
+        if (wallet.entries != shownEntries) {
+            shownEntries = wallet.entries
+            renderHistory(wallet.entries)
+        }
     }
 
     private fun renderHistory(entries: List<WalletEntry>) {

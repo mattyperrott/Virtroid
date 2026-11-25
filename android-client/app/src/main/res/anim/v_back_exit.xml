@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Back out: the screen being left goes to the side it came from. Overlapping longer than
+     from Android 13 (anim-v33), which can colour what shows between the two. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/fast_out_slow_in">
+    <alpha
+        android:duration="220"
+        android:fromAlpha="1"
+        android:toAlpha="0" />
+    <translate
+        android:duration="300"
+        android:fromXDelta="0"
+        android:toXDelta="10%p" />
+</set>

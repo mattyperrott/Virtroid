@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Into the runtime, or into the app once unlocked: it opens out towards you. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:backdropColor="@color/v_bg"
+    android:interpolator="@android:interpolator/fast_out_slow_in"
+    android:showBackdrop="true"
+    tools:targetApi="tiramisu">
+    <alpha
+        android:duration="180"
+        android:fromAlpha="0"
+        android:toAlpha="1" />
+    <scale
+        android:duration="320"
+        android:fromXScale="0.92"
+        android:fromYScale="0.92"
+        android:pivotX="50%"
+        android:pivotY="50%"
+        android:toXScale="1"
+        android:toYScale="1" />
+</set>

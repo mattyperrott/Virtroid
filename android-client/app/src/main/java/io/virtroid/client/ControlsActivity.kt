@@ -38,6 +38,7 @@ import io.virtroid.client.security.showConfirmation
 import io.virtroid.client.security.unlockAccountKeyWithBiometric
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 import io.virtroid.client.ui.VirtroidSheet
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -102,6 +103,8 @@ class ControlsActivity : AppCompatActivity() {
             insets
         }
 
+        // Known before the runtime loads, unlike its name.
+        binding.controlsRuntimeSubtitleText.text = getString(R.string.controls_runtime_subtitle, runtimeId)
         binding.controlsBackButton.setOnClickListener { finish() }
         binding.buttonEditRuntime.setOnClickListener { showRenameDialog() }
         binding.displayOutputRow.setOnClickListener { showDisplayDialog() }
@@ -185,7 +188,7 @@ class ControlsActivity : AppCompatActivity() {
         renderIdle(runtime, state)
         renderRegion(runtime)
         renderTor(runtime)
-        binding.controlsRuntimeNameText.text = runtimeDisplayName(runtime.name)
+        VirtroidMotion.changeText(binding.controlsRuntimeNameText, runtimeDisplayName(runtime.name))
         binding.controlsRuntimeSubtitleText.text = getString(R.string.controls_runtime_subtitle, runtime.id)
         binding.controlsStateValue.text = runtime.lifecycleLabel()
         binding.controlsTunnelValue.text = getString(R.string.controls_tunnel_encrypted)
@@ -337,6 +340,7 @@ class ControlsActivity : AppCompatActivity() {
     private fun toggleLogs() {
         if (logsExpanded) {
             logsExpanded = false
+            VirtroidMotion.animateChanges(binding.root)
             binding.controlsLogsText.isVisible = false
             return
         }
@@ -348,6 +352,7 @@ class ControlsActivity : AppCompatActivity() {
                 api.listRuntimeLogs(sessionStore.baseUrl, accountId, deviceId, runtimeId, limit = 20)
             }.onSuccess {
                 logsExpanded = true
+                VirtroidMotion.animateChanges(binding.root)
                 binding.controlsLogsText.isVisible = true
                 binding.controlsLogsText.text = renderLogs(it)
             }.onFailure {
@@ -459,8 +464,8 @@ class ControlsActivity : AppCompatActivity() {
         showConfirmation(
             title = getString(R.string.controls_wipe_confirm_title),
             message = getString(R.string.controls_wipe_confirm_body),
-            confirmLabel = getString(R.string.controls_confirm),
-            destructive = true,
+            confirmLabel = getString(R.string.hold_action_reset_runtime),
+            holdLabel = getString(R.string.hold_to_reset),
             onConfirmed = wipe@{
                 val accountId = sessionStore.accountId ?: return@wipe
                 lifecycleScope.launch {
@@ -553,8 +558,8 @@ class ControlsActivity : AppCompatActivity() {
         showConfirmation(
             title = getString(R.string.controls_delete_confirm_title),
             message = getString(R.string.controls_delete_confirm_body),
-            confirmLabel = getString(R.string.controls_confirm),
-            destructive = true,
+            confirmLabel = getString(R.string.hold_action_delete_runtime),
+            holdLabel = getString(R.string.hold_to_delete),
             onConfirmed = {
                 // The runtime list deletes it, where the runtime's card shows
                 // the progress: the account's private server may first have

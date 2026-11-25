@@ -5,12 +5,15 @@ import android.content.Context
 import io.virtroid.client.R
 import io.virtroid.client.ui.VirtroidSheet
 
-/** Asks to confirm an action in the app's own dialog; [destructive] makes the confirm button red. */
+/**
+ * Asks to confirm an action in the app's own dialog. With [holdLabel], for
+ * what can't be undone, the confirm button is red, says that, and has to be held.
+ */
 fun Context.showConfirmation(
     title: String,
     message: String,
     confirmLabel: String,
-    destructive: Boolean = false,
+    holdLabel: String? = null,
     onCancelled: () -> Unit = {},
     onConfirmed: () -> Unit,
 ) {
@@ -19,7 +22,7 @@ fun Context.showConfirmation(
             .title(title)
             .message(message)
             .secondary(getString(R.string.controls_cancel), onCancelled)
-            .primary(confirmLabel, destructive = destructive, onClick = onConfirmed)
+            .primary(confirmLabel, holdLabel = holdLabel, onClick = onConfirmed)
             .onCancel(onCancelled)
             .show()
         return

@@ -7,12 +7,12 @@
             <objectAnimator
                 android:duration="70"
                 android:propertyName="scaleX"
-                android:valueTo="0.975"
+                android:valueTo="0.96"
                 android:valueType="floatType" />
             <objectAnimator
                 android:duration="70"
                 android:propertyName="scaleY"
-                android:valueTo="0.975"
+                android:valueTo="0.96"
                 android:valueType="floatType" />
             <objectAnimator
                 android:duration="70"
@@ -24,12 +24,14 @@
     <item android:state_enabled="true">
         <set>
             <objectAnimator
-                android:duration="120"
+                android:duration="240"
+                android:interpolator="@android:interpolator/overshoot"
                 android:propertyName="scaleX"
                 android:valueTo="1"
                 android:valueType="floatType" />
             <objectAnimator
-                android:duration="120"
+                android:duration="240"
+                android:interpolator="@android:interpolator/overshoot"
                 android:propertyName="scaleY"
                 android:valueTo="1"
                 android:valueType="floatType" />

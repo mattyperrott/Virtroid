@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_lock with its shackle springing open. Runs off the main thread, so it
+     keeps moving while the next screen is being built. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="24dp"
+            android:height="24dp"
+            android:viewportWidth="24"
+            android:viewportHeight="24">
+            <path
+                android:fillColor="@android:color/transparent"
+                android:strokeColor="@color/v_accent"
+                android:strokeWidth="2"
+                android:strokeLineJoin="round"
+                android:pathData="M7,10.5h10a1.5,1.5 0,0 1,1.5 1.5v7.5a1.5,1.5 0,0 1,-1.5 1.5H7a1.5,1.5 0,0 1,-1.5 -1.5V12A1.5,1.5 0,0 1,7 10.5z" />
+            <path
+                android:fillColor="@android:color/transparent"
+                android:strokeColor="@color/v_accent"
+                android:strokeWidth="2"
+                android:strokeLineCap="round"
+                android:pathData="M12,14.5v2.5" />
+            <group
+                android:name="shackle"
+                android:pivotX="15.5"
+                android:pivotY="10.5">
+                <path
+                    android:fillColor="@android:color/transparent"
+                    android:strokeColor="@color/v_accent"
+                    android:strokeWidth="2"
+                    android:strokeLineCap="round"
+                    android:pathData="M8.5,10.5V7.5a3.5,3.5 0,0 1,7 0v3" />
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="shackle">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="260"
+                android:interpolator="@android:interpolator/overshoot"
+                android:propertyName="rotation"
+                android:valueFrom="0"
+                android:valueTo="32"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+</animated-vector>

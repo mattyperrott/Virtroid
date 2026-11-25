@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What it opens out of. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:backdropColor="@color/v_bg"
+    android:interpolator="@android:interpolator/fast_out_slow_in"
+    android:showBackdrop="true"
+    tools:targetApi="tiramisu">
+    <alpha
+        android:duration="200"
+        android:fromAlpha="1"
+        android:toAlpha="0" />
+    <scale
+        android:duration="320"
+        android:fromXScale="1"
+        android:fromYScale="1"
+        android:pivotX="50%"
+        android:pivotY="50%"
+        android:toXScale="1.06"
+        android:toYScale="1.06" />
+</set>

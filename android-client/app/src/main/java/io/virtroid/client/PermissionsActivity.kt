@@ -21,6 +21,7 @@ import io.virtroid.client.databinding.ScreenPermissionsBinding
 import io.virtroid.client.security.enableSecureWindow
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 
 /**
  * Whether Android has stopped showing its dialog for a permission, judged
@@ -224,11 +225,10 @@ class PermissionsActivity : AppCompatActivity() {
             finish()
             return
         }
-        startActivity(
-            Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
-        finish()
+        // Not CLEAR_TASK: Android covers the next screen with a blank starting
+        // window for that. Finishing what is underneath leaves the same task.
+        startActivity(Intent(this, MainActivity::class.java), VirtroidMotion.zoomInto(this))
+        finishAffinity()
     }
 
     companion object {

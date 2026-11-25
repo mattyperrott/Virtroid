@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A PIN key: a flat tile with a soft lime ripple where it's pressed. -->
+<!-- A PIN key: a flat tile; a press lights it (VirtroidMotion.keyFeedback). -->
 <ripple
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="@color/v_accent_soft">
+    android:color="@color/pin_key_ripple">
     <item>
         <shape android:shape="rectangle">
             <solid android:color="@color/v_surface" />

@@ -233,7 +233,7 @@
                             android:text="@string/privacy_require_pin_biometric_body" />
                     </LinearLayout>
 
-                    <com.google.android.material.switchmaterial.SwitchMaterial
+                    <io.virtroid.client.ui.TickSwitch
                         android:id="@+id/requirePinSwitch"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -268,7 +268,7 @@
                             android:text="@string/privacy_biometric_vault_unlock_body" />
                     </LinearLayout>
 
-                    <com.google.android.material.switchmaterial.SwitchMaterial
+                    <io.virtroid.client.ui.TickSwitch
                         android:id="@+id/biometricUnlockSwitch"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -328,7 +328,7 @@
                         android:layout_weight="1"
                         android:text="@string/privacy_require_unlock_resume" />
 
-                    <com.google.android.material.switchmaterial.SwitchMaterial
+                    <io.virtroid.client.ui.TickSwitch
                         android:id="@+id/requireUnlockResumeSwitch"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -441,7 +441,7 @@
                             android:text="@string/privacy_block_screen_capture_body" />
                     </LinearLayout>
 
-                    <com.google.android.material.switchmaterial.SwitchMaterial
+                    <io.virtroid.client.ui.TickSwitch
                         android:id="@+id/blockScreenCaptureSwitch"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -527,7 +527,7 @@
                             android:text="@string/privacy_auto_clear_clipboard_body" />
                     </LinearLayout>
 
-                    <com.google.android.material.switchmaterial.SwitchMaterial
+                    <io.virtroid.client.ui.TickSwitch
                         android:id="@+id/autoClearClipboardSwitch"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"

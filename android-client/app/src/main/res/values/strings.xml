@@ -122,7 +122,10 @@
     <string name="lock_invalid_pin">Incorrect PIN</string>
     <string name="lock_invalid_passphrase">Incorrect passphrase</string>
     <string name="lock_biometric_vault_unavailable">PIN required to decrypt local vault</string>
-    <string name="lock_try_again">Try again in %1$d seconds</string>
+    <plurals name="lock_try_again">
+        <item quantity="one">Try again in %1$d second</item>
+        <item quantity="other">Try again in %1$d seconds</item>
+    </plurals>
     <string name="lock_pin_prompt">Choose an 8-digit PIN</string>
     <string name="lock_pin_confirm_prompt">Confirm your 8-digit PIN</string>
     <string name="lock_pin_invalid_format">PIN must be exactly 8 digits.</string>
@@ -393,6 +396,13 @@
     <string name="controls_delete_confirm_title">Wipe and delete runtime?</string>
     <string name="controls_delete_confirm_body">This clears saved state, stops any active session, and permanently removes the runtime from your account.</string>
     <string name="controls_confirm">Confirm</string>
+    <!-- On a red button that has to be held down. -->
+    <string name="hold_to_delete">Hold to delete</string>
+    <string name="hold_to_reset">Hold to reset</string>
+    <string name="hold_to_revoke">Hold to revoke</string>
+    <!-- After "Double-tap to", for those who don't hold it. -->
+    <string name="hold_action_delete_runtime">Delete runtime</string>
+    <string name="hold_action_reset_runtime">Reset runtime</string>
     <string name="controls_cancel">Cancel</string>
     <string name="controls_display_dialog_title">Display &amp; Output</string>
     <string name="controls_tunnel_direct">Pinned TLS</string>

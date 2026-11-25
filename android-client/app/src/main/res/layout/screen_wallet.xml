@@ -85,6 +85,14 @@
                     android:layout_marginTop="6dp"
                     android:text="-" />
 
+                <io.virtroid.client.ui.SkeletonView
+                    android:id="@+id/walletBalanceSkeleton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:contentDescription="@string/app_install_loading_more"
+                    app:skeletonShape="walletBalance" />
+
                 <TextView
                     android:id="@+id/walletPricingText"
                     style="@style/VirtroidText.Body.Compact"
@@ -101,6 +109,14 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:visibility="gone" />
+
+            <io.virtroid.client.ui.SkeletonView
+                android:id="@+id/walletDepositSkeleton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:importantForAccessibility="no"
+                app:skeletonShape="walletDeposit" />
 
             <LinearLayout
                 android:id="@+id/walletDepositCard"
@@ -181,6 +197,14 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="28dp"
                 android:text="@string/wallet_history_title" />
+
+            <io.virtroid.client.ui.SkeletonView
+                android:id="@+id/walletHistorySkeleton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:importantForAccessibility="no"
+                app:skeletonShape="walletHistory" />
 
             <LinearLayout
                 android:id="@+id/walletHistoryContainer"

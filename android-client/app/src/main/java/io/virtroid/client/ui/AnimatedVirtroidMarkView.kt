@@ -39,28 +39,13 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
     private val muted = context.getColor(R.color.v_text_muted)
     private val dark = context.getColor(R.color.virtroid_on_primary)
 
-    private val top = Path().apply {
-        moveTo(156f, 151f)
-        lineTo(156f, 145f)
-        quadTo(156f, 132f, 169f, 132f)
-        lineTo(257f, 132f)
-        quadTo(270f, 132f, 271f, 146f)
-        lineTo(271f, 151f)
-        close()
-    }
-    private val upper = polygon(156f, 158f, 270f, 158f, 270f, 192f, 156f, 172f)
-    private val middle = polygon(156f, 178f, 270f, 198f, 270f, 207f, 156f, 249f)
-    private val lower = polygon(160f, 255f, 273f, 211f, 275f, 258f, 160f, 265f)
-    private val lowerEdge = polygon(161f, 265f, 275f, 258f, 274f, 254f, 163f, 262f)
-    private val bottom = Path().apply {
-        moveTo(161f, 274f)
-        lineTo(275f, 268f)
-        lineTo(275f, 287f)
-        quadTo(275f, 300f, 262f, 301f)
-        lineTo(175f, 301f)
-        quadTo(162f, 301f, 161f, 288f)
-        close()
-    }
+    private val shape = VirtroidMarkShape()
+    private val top = shape.top
+    private val upper = shape.upper
+    private val middle = shape.middle
+    private val lower = shape.lower
+    private val bottom = shape.bottom
+    private val lowerEdge = VirtroidMarkShape.polygon(161f, 265f, 275f, 258f, 274f, 254f, 163f, 262f)
     private val speaker = Path().apply {
         moveTo(208f, 282f)
         lineTo(233f, 280f)
@@ -81,7 +66,7 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
         lineTo(284f, 207f)
     }
     private val energyMeasure = PathMeasure(energy, false)
-    private val glint = polygon(145f, 110f, 170f, 110f, 240f, 325f, 215f, 325f)
+    private val glint = VirtroidMarkShape.polygon(145f, 110f, 170f, 110f, 240f, 325f, 215f, 325f)
 
     // Drawn every frame of the motion: built once, not per frame.
     private val upperHighlight = Path().apply {
@@ -171,9 +156,9 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
         val contentHeight = height - paddingTop - paddingBottom
         if (contentWidth <= 0 || contentHeight <= 0) return
 
-        val scale = min(contentWidth / ART_WIDTH, contentHeight / ART_HEIGHT)
-        val left = paddingLeft + (contentWidth - ART_WIDTH * scale) / 2f - ART_LEFT * scale
-        val topOffset = paddingTop + (contentHeight - ART_HEIGHT * scale) / 2f - ART_TOP * scale
+        val scale = min(contentWidth / VirtroidMarkShape.WIDTH, contentHeight / VirtroidMarkShape.HEIGHT)
+        val left = paddingLeft + (contentWidth - VirtroidMarkShape.WIDTH * scale) / 2f - VirtroidMarkShape.LEFT * scale
+        val topOffset = paddingTop + (contentHeight - VirtroidMarkShape.HEIGHT * scale) / 2f - VirtroidMarkShape.TOP * scale
 
         canvas.save()
         canvas.translate(left, topOffset)
@@ -349,22 +334,8 @@ class AnimatedVirtroidMarkView @JvmOverloads constructor(
 
     private fun pxToArt(value: Float, scale: Float): Float = value / scale
 
-    private fun polygon(vararg values: Float): Path = Path().apply {
-        moveTo(values[0], values[1])
-        var index = 2
-        while (index < values.size) {
-            lineTo(values[index], values[index + 1])
-            index += 2
-        }
-        close()
-    }
-
     private companion object {
         const val CYCLE_MS = 5_600L
         const val ENERGY_DASH_PERIOD = 20 // the dash's 12 on + 8 off, in art units
-        const val ART_LEFT = 140f
-        const val ART_TOP = 122f
-        const val ART_WIDTH = 152f
-        const val ART_HEIGHT = 190f
     }
 }

@@ -27,6 +27,7 @@ import io.virtroid.client.security.promptIdentityPasswordSetup
 import io.virtroid.client.security.promptIdentityRecovery
 import io.virtroid.client.ui.Notice
 import io.virtroid.client.ui.SafeArea
+import io.virtroid.client.ui.VirtroidMotion
 import java.io.IOException
 import java.util.UUID
 import kotlin.random.Random
@@ -111,6 +112,7 @@ class OnboardingActivity : AppCompatActivity() {
     private suspend fun createIdentity() {
         val password = pendingIdentityPassword ?: return
         binding.continueSetupButton.isEnabled = false
+        VirtroidMotion.setBusy(binding.continueSetupButton, true)
         val identity = ensurePreviewIdentity()
         showProvisioningLog()
 
@@ -156,6 +158,7 @@ class OnboardingActivity : AppCompatActivity() {
                 command = "> launch secure client",
                 detail = "provisioning completed_",
             )
+            VirtroidMotion.showDone(binding.continueSetupButton)
             delay(FINAL_VISUAL_DELAY_MS)
         }.onSuccess {
             launchMain()
@@ -168,6 +171,7 @@ class OnboardingActivity : AppCompatActivity() {
             )
             toast(message)
             binding.continueSetupButton.isEnabled = true
+            VirtroidMotion.showFailed(binding.continueSetupButton)
         }
     }
 
@@ -182,6 +186,7 @@ class OnboardingActivity : AppCompatActivity() {
         if (!identityPasswordStore.isConfigured(accountId, deviceId)) {
             val password = pendingIdentityPassword ?: return
             binding.continueSetupButton.isEnabled = false
+            VirtroidMotion.setBusy(binding.continueSetupButton, true)
             showProvisioningLog()
             runCatching {
                 updateActiveMilestone(
@@ -199,6 +204,7 @@ class OnboardingActivity : AppCompatActivity() {
                     command = "> launch secure client",
                     detail = "provisioning completed_",
                 )
+                VirtroidMotion.showDone(binding.continueSetupButton)
                 delay(FINAL_VISUAL_DELAY_MS)
             }.onFailure {
                 updateActiveMilestone(
@@ -208,6 +214,7 @@ class OnboardingActivity : AppCompatActivity() {
                 )
                 toast(it.message ?: getString(R.string.status_error))
                 binding.continueSetupButton.isEnabled = true
+                VirtroidMotion.showFailed(binding.continueSetupButton)
                 return
             }
         }
@@ -252,6 +259,7 @@ class OnboardingActivity : AppCompatActivity() {
             return
         }
         binding.continueSetupButton.isEnabled = false
+        VirtroidMotion.setBusy(binding.continueSetupButton, true)
         showProvisioningLog()
 
         runCatching {
@@ -321,6 +329,7 @@ class OnboardingActivity : AppCompatActivity() {
                 command = "> launch secure client",
                 detail = "encrypted runtime snapshots are available_",
             )
+            VirtroidMotion.showDone(binding.continueSetupButton)
             delay(FINAL_VISUAL_DELAY_MS)
         }.onSuccess {
             toast(getString(R.string.identity_recovery_success))
@@ -334,6 +343,7 @@ class OnboardingActivity : AppCompatActivity() {
             )
             toast(message)
             binding.continueSetupButton.isEnabled = true
+            VirtroidMotion.showFailed(binding.continueSetupButton)
             if (returnToWelcomeOnExit) finish()
         }
     }
@@ -461,13 +471,20 @@ class OnboardingActivity : AppCompatActivity() {
         binding.passphraseOptionCard.setBackgroundResource(
             if (configured) R.drawable.bg_selected_card_24 else R.drawable.bg_surface_stroke_24,
         )
-        binding.passphraseOptionIndicator.setBackgroundResource(
+        VirtroidMotion.changeBackground(
+            binding.passphraseOptionIndicator,
             if (configured) R.drawable.bg_dot_accent else R.drawable.bg_dot_accent_outline,
         )
     }
 
     private fun setStatusIndicator(container: View, check: ImageView, provisioned: Boolean) {
-        container.setBackgroundResource(
+        // Only as it turns: this is rendered again on every step.
+        if (provisioned && container.isLaidOut && !container.isActivated) {
+            VirtroidMotion.popIn(container)
+        }
+        container.isActivated = provisioned
+        VirtroidMotion.changeBackground(
+            container,
             if (provisioned) R.drawable.bg_status_pill_success else R.drawable.bg_status_pill_muted,
         )
         check.setColorFilter(getColor(if (provisioned) R.color.v_bg else R.color.v_text_dim))
@@ -549,11 +566,10 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun launchMain() {
-        startActivity(
-            PermissionsActivity.createIntent(this)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
-        finish()
+        // Not CLEAR_TASK: Android covers the next screen with a blank starting
+        // window for that. Finishing what is underneath leaves the same task.
+        startActivity(PermissionsActivity.createIntent(this), VirtroidMotion.zoomInto(this))
+        finishAffinity()
     }
 
     private fun toast(message: String) {
